@@ -124,3 +124,63 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
         "a successful jump closes the overlay"
     );
 }
+
+#[test]
+fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
+    let mut session = session_in_diff_view();
+
+    press_keys(&session, b"\t");
+    let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
+    for _ in 0..8 {
+        if wait_for_row(&mut session, on_code_line, 300).is_ok() {
+            break;
+        }
+        press_keys(&session, b"j");
+    }
+    wait_for_row(&mut session, on_code_line, 2000)
+        .expect("the cursor should reach the unchanged `# Pagination` line (old 1, new 1)");
+
+    session.send_input(b"c");
+    press_keys(&session, b"nit");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains("1 pending", 5000)
+        .expect("the comment should be kept as a draft");
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Approve", 5000)
+        .expect("r should offer the review verdicts");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains("Summary", 5000)
+        .expect("a verdict should ask for the summary");
+    session.send_input(b"\r");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !session.get_cli_calls().contains("mr approve 2") && Instant::now() < deadline {
+        session.settle(100);
+    }
+    let calls = session.get_cli_calls();
+    let drafts = calls
+        .lines()
+        .filter(|c| c.ends_with("/merge_requests/2/draft_notes"))
+        .count();
+    let publishes = calls.lines().filter(|c| c.contains("bulk_publish")).count();
+    assert_eq!(
+        (drafts, publishes),
+        (1, 1),
+        "one draft, published once:\n{calls}"
+    );
+    assert!(
+        calls.contains("mr approve 2 -R test-owner/test-repo"),
+        "{calls}"
+    );
+
+    let bodies =
+        std::fs::read_to_string(format!("{}.stdin", session.sandbox.log_path.display())).unwrap();
+    let draft: serde_json::Value = serde_json::from_str(bodies.lines().next().unwrap()).unwrap();
+    assert_eq!(draft["note"], "nit");
+    assert_eq!(draft["position"]["new_path"], "docs/readme.md");
+    assert_eq!(draft["position"]["new_line"], 1, "the draft keeps its line");
+}

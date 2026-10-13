@@ -35,10 +35,10 @@ pub enum Event {
         branches: Vec<String>,
     },
     FetchFailed(crate::app::Tab, String),
+    /// The view is built off the event loop: parsing and highlighting a large
+    /// diff takes seconds.
     DiffFetched {
-        mr_iid: u64,
-        project_path: String,
-        raw_diff: String,
+        diff_view: Box<crate::app::DiffView>,
         comments: Vec<crate::domain::mr::DiscussionNote>,
         /// GitHub's viewed state of the PR's files; `None` when sync is off,
         /// on GitLab, or when the fetch failed (local marks apply instead).
@@ -94,13 +94,19 @@ pub enum Event {
     /// the item so the handler can insert it into the loaded set if absent.
     IssueFetched(u64, Result<crate::domain::issues::Issue, String>),
     MrFetched(u64, Result<crate::domain::mr::MergeRequest, String>),
-    /// Lazy follow-up fetch for the full `stack.entries` of a stacked GitHub PR,
-    /// needed by the inspector breakdown. `Ok(Some(_))` is the entries list,
-    /// `Ok(None)` means the PR is not in a stack, `Err` is the API failure.
-    StackEntriesFetched {
+    /// On-demand stack fetch for one GitHub PR. `Ok(None)` means the PR is not
+    /// in a stack, `Err` is the API failure.
+    PrStackFetched {
         pr_number: u64,
         project_path: String,
-        result: Result<Option<Vec<crate::domain::mr::StackEntry>>, String>,
+        result: Result<Option<crate::domain::mr::PrStack>, String>,
+    },
+    /// Batch stack positions for the PRs in `pr_numbers`, fetched only while the
+    /// Stack column needs them. A queried PR absent from `stacks` is not stacked.
+    PrStackSummariesFetched {
+        project_path: String,
+        pr_numbers: Vec<u64>,
+        stacks: std::collections::HashMap<u64, crate::domain::mr::StackInfo>,
     },
     /// A optimistic UI mutation for `runner_id` failed; restore the row's
     /// prior `status`/`active` fields. Sender fills `status`/`active` with

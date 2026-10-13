@@ -1,5 +1,6 @@
 use crate::backend::{Backend, BackendKind, IssueUpdate, MrUpdate};
 use crate::config::Config;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::scope::Scope;
 use anyhow::{Context, Result};
 
@@ -28,7 +29,9 @@ impl GitlabClient {
                     .await
                     .is_github()
             }
-            _ => config.backend.is_some_and(BackendKind::is_github),
+            _ => crate::git_helpers::detect_backend_without_remote(config.backend)
+                .await
+                .is_github(),
         };
         let backend = crate::backend::create_backend(is_github);
         Ok(Self {
@@ -180,12 +183,33 @@ impl GitlabClient {
         self.backend.get_mr_diff(project, iid).await
     }
 
-    pub async fn get_pr_stack_entries(
+    pub async fn get_pr_stack(
         &self,
         project: &str,
         pr_number: u64,
-    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
-        self.backend.get_pr_stack_entries(project, pr_number).await
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
+        self.backend.get_pr_stack(project, pr_number).await
+    }
+
+    pub async fn list_pr_stack_summaries(
+        &self,
+        project: &str,
+        pr_numbers: &[u64],
+    ) -> Result<std::collections::HashMap<u64, crate::domain::mr::StackInfo>> {
+        self.backend
+            .list_pr_stack_summaries(project, pr_numbers)
+            .await
+    }
+
+    pub async fn merge_pr_stack(
+        &self,
+        project: &str,
+        pr_number: u64,
+        method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        self.backend
+            .merge_pr_stack(project, pr_number, method)
+            .await
     }
 
     pub async fn list_mr_notes(
@@ -295,17 +319,46 @@ impl GitlabClient {
             .await
     }
 
-    pub async fn add_mr_comment(
+    pub async fn submit_review(
         &self,
         project: &str,
         iid: u64,
+        event: ReviewEvent,
         body: &str,
-        file_path: Option<&str>,
-        line: Option<u64>,
-        old_line: Option<u64>,
+        comments: &[DraftComment],
+    ) -> Result<()> {
+        if let Some(comment) = comments
+            .iter()
+            .find(|c| c.line_num.is_none() && c.old_line_num.is_none())
+        {
+            anyhow::bail!("comment on {} has no diff line", comment.file_path);
+        }
+        self.backend
+            .submit_review(project, iid, event, body, comments)
+            .await
+    }
+
+    pub async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
     ) -> Result<()> {
         self.backend
-            .add_mr_comment(project, iid, body, file_path, line, old_line)
+            .reply_to_thread(project, iid, thread_id, body)
+            .await
+    }
+
+    pub async fn set_thread_resolved(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<()> {
+        self.backend
+            .set_thread_resolved(project, iid, thread_id, resolved)
             .await
     }
 

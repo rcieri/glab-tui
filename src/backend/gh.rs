@@ -8,6 +8,7 @@ use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
 use crate::event::Event;
 use crate::scope::Scope;
@@ -400,35 +401,6 @@ impl GhBackend {
             .as_deref()
     }
 
-    async fn fetch_pr_stacks_for_repo(
-        &self,
-        project: &str,
-        pr_numbers: &[u64],
-    ) -> std::collections::HashMap<u64, crate::domain::mr::StackInfo> {
-        if pr_numbers.is_empty() {
-            return std::collections::HashMap::new();
-        }
-        let owner = project.split('/').next().unwrap_or(project);
-        let repo = project.split('/').nth(1).unwrap_or(project);
-        let query = pr_stack_graphql_query(owner, repo, pr_numbers);
-        match self
-            .run_gh(
-                &["api", "graphql", "-f", &format!("query={query}")],
-                "Fetching PR Stacks",
-            )
-            .await
-        {
-            Ok(raw) => parse_pr_stacks_response(&raw),
-            // Stack info is a non-critical decoration: an empty map means
-            // "no PR in this batch is in a stack" — identical to the
-            // pre-stack behaviour. Matches the GitLab `list_mr_state`
-            // follow-up path in `fetch.rs:347` which also swallows errors
-            // for the same reason. The terminal-commands bar still records
-            // the failure (see `run_gh_command`), so it isn't truly silent.
-            Err(_) => std::collections::HashMap::new(),
-        }
-    }
-
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
         let tx = self.tx.clone();
         let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -444,6 +416,40 @@ impl GhBackend {
         })
         .await
     }
+
+    /// Builds the diff GitHub refuses to serve (over 20,000 lines) with git,
+    /// in the recently used clone whose `origin` is `project`.
+    async fn diff_pr_locally(&self, project: &str, pr_number: u64) -> Result<String> {
+        let lookup_project = project.to_string();
+        let checkout = tokio::task::spawn_blocking(move || {
+            crate::utils::cache::find_local_checkout(&lookup_project)
+        })
+        .await
+        .context("looking up a local clone")?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "the diff of PR #{pr_number} is over GitHub's 20,000-line limit and needs a \
+                 local clone of {project}; run glab-tui in a clone of {project} once, then retry"
+            )
+        })?;
+        let raw = self
+            .run_gh(
+                &[
+                    "pr",
+                    "view",
+                    &pr_number.to_string(),
+                    "-R",
+                    project,
+                    "--json",
+                    "baseRefOid,headRefOid",
+                ],
+                "Fetching PR Commit IDs",
+            )
+            .await?;
+        let commits: PrDiffCommits = serde_json::from_str(&raw)
+            .with_context(|| format!("parsing the commit ids of PR #{pr_number}"))?;
+        diff_pr_in_checkout(self.tx.as_ref(), &checkout, pr_number, &commits).await
+    }
 }
 
 async fn run_gh_command(
@@ -451,7 +457,6 @@ async fn run_gh_command(
     args: &[&str],
     desc: &str,
 ) -> Result<String> {
-    let label = desc.to_uppercase();
     let cmd_str = format!("gh {}", args.join(" "));
 
     let output = Command::new("gh")
@@ -460,28 +465,141 @@ async fn run_gh_command(
         .await
         .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     if output.status.success() {
         let s = String::from_utf8(output.stdout)?;
-        if let Some(ref tx) = tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status: "Success".to_string(),
-            });
-        }
+        log_terminal_command(tx.as_ref(), desc, &cmd_str, "Success".to_string());
         Ok(s)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if let Some(ref tx) = tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status: format!("Failed: {}", err_msg),
-            });
-        }
+        log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {}", err_msg));
         anyhow::bail!("gh command failed: {}", err_msg)
     }
+}
+
+fn log_terminal_command(
+    tx: Option<&UnboundedSender<Event>>,
+    desc: &str,
+    cmd_str: &str,
+    status: String,
+) {
+    if let Some(tx) = tx {
+        let _ = tx.send(Event::TerminalCommandLogged {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+            status,
+        });
+    }
+}
+
+/// Marker GitHub puts in the error when a PR's diff exceeds the 20,000 lines
+/// it serves (`PullRequest.diff too_large`, HTTP 406).
+const PR_DIFF_TOO_LARGE_MARKER: &str = "too_large";
+
+fn is_pr_diff_too_large(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains(PR_DIFF_TOO_LARGE_MARKER)
+}
+
+#[derive(Deserialize)]
+struct PrDiffCommits {
+    #[serde(rename = "baseRefOid")]
+    base: String,
+    #[serde(rename = "headRefOid")]
+    head: String,
+}
+
+/// A full SHA-1 or SHA-256 object name. Anything else is refused before it
+/// reaches a git command line, where it could be read as an option.
+fn is_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// `git -C <checkout>` that can never prompt: the TUI owns the terminal.
+fn git_in(checkout: &str) -> Command {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(checkout)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null());
+    command
+}
+
+async fn has_commit(checkout: &str, oid: &str) -> bool {
+    git_in(checkout)
+        .args(["cat-file", "-e", &format!("{oid}^{{commit}}")])
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success())
+}
+
+async fn run_git_command(
+    tx: Option<&UnboundedSender<Event>>,
+    checkout: &str,
+    args: &[&str],
+    desc: &str,
+) -> Result<String> {
+    let cmd_str = format!("git -C {checkout} {}", args.join(" "));
+    let output = git_in(checkout)
+        .args(args)
+        .output()
+        .await
+        .with_context(|| format!("Failed to execute: {cmd_str}"))?;
+    if output.status.success() {
+        log_terminal_command(tx, desc, &cmd_str, "Success".to_string());
+        // Local files can be in any encoding; the diff view only needs text.
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log_terminal_command(tx, desc, &cmd_str, format!("Failed: {}", err_msg));
+        anyhow::bail!("git command failed: {}", err_msg)
+    }
+}
+
+/// Diffs a PR with git in `checkout`, fetching its base and head commits from
+/// `origin` only when the clone lacks them. Fetching without a destination
+/// ref writes nothing but `FETCH_HEAD`, so the clone's branches, index and
+/// working tree are left as they were.
+async fn diff_pr_in_checkout(
+    tx: Option<&UnboundedSender<Event>>,
+    checkout: &str,
+    pr_number: u64,
+    commits: &PrDiffCommits,
+) -> Result<String> {
+    for oid in [&commits.base, &commits.head] {
+        if !is_object_id(oid) {
+            anyhow::bail!("unexpected commit id {oid:?} for PR #{pr_number}");
+        }
+    }
+    if !(has_commit(checkout, &commits.base).await && has_commit(checkout, &commits.head).await) {
+        let pr_head = format!("pull/{pr_number}/head");
+        run_git_command(
+            tx,
+            checkout,
+            &["fetch", "--no-tags", "origin", &commits.base, &pr_head],
+            "Fetching PR Commits",
+        )
+        .await?;
+    }
+    // Pinned flags keep user diff config (colour, external drivers, textconv,
+    // prefixes, octal-quoted paths) out of the text the diff view parses.
+    let range = format!("{}...{}", commits.base, commits.head);
+    run_git_command(
+        tx,
+        checkout,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &range,
+        ],
+        "Diffing PR Locally",
+    )
+    .await
 }
 
 /// Build the GraphQL query that finds the PRs which close (or closed) an issue.
@@ -620,13 +738,14 @@ fn parse_pr_stacks_response(
     map
 }
 
-/// Build a GraphQL query to fetch all entries in a PR's stack.
+/// Build a GraphQL query to fetch a PR's stack position and all its entries.
 fn pr_stack_entries_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
          pullRequest(number:{pr_number}) {{ \
+         stackEntry {{ position }} \
          stack {{ \
            number \
            size \
@@ -662,11 +781,12 @@ mod pr_stack_entries_types {
 
     #[derive(Deserialize)]
     pub(super) struct GhStackEntriesPr {
+        #[serde(rename = "stackEntry")]
+        pub(super) stack_entry: Option<pr_stack_types::GhPrStackEntryObj>,
         pub(super) stack: Option<GhStackEntriesStackObj>,
     }
 
     #[derive(Deserialize)]
-    #[allow(dead_code)]
     pub(super) struct GhStackEntriesStackObj {
         pub(super) number: u64,
         pub(super) size: usize,
@@ -696,9 +816,7 @@ mod pr_stack_entries_types {
     }
 }
 
-fn parse_pr_stack_entries_response(
-    raw: &str,
-) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+fn parse_pr_stack_entries_response(raw: &str) -> Result<Option<crate::domain::mr::PrStack>> {
     let Ok(resp) = serde_json::from_str::<pr_stack_entries_types::GhStackEntriesResp>(raw) else {
         return Ok(None);
     };
@@ -711,14 +829,13 @@ fn parse_pr_stack_entries_response(
     let Some(pr) = repo.pull_request else {
         return Ok(None);
     };
-    let Some(stack) = pr.stack else {
+    let (Some(stack), Some(own_entry)) = (pr.stack, pr.stack_entry) else {
         return Ok(None);
     };
-    let Some(entries_obj) = stack.entries else {
-        return Ok(None);
-    };
-    let mut list: Vec<crate::domain::mr::StackEntry> = entries_obj
-        .nodes
+    let mut entries: Vec<crate::domain::mr::StackEntry> = stack
+        .entries
+        .map(|e| e.nodes)
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|node| {
             let pr_details = node.pull_request?;
@@ -731,11 +848,70 @@ fn parse_pr_stack_entries_response(
             })
         })
         .collect();
-    if list.is_empty() {
-        return Ok(None);
+    entries.sort_by_key(|e| e.position);
+    Ok(Some(crate::domain::mr::PrStack {
+        info: crate::domain::mr::StackInfo {
+            number: stack.number,
+            size: stack.size,
+            position: own_entry.position,
+        },
+        entries,
+    }))
+}
+
+/// How long to wait between polls of a pending asynchronous merge, and how
+/// many polls to make before reporting it as still running.
+const ASYNC_MERGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const ASYNC_MERGE_MAX_POLLS: u32 = 90;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AsyncMergeStatus {
+    Pending,
+    Merged,
+    Enqueued,
+    Failed,
+}
+
+#[derive(Deserialize)]
+struct AsyncMergeResult {
+    status: AsyncMergeStatus,
+    #[serde(default)]
+    details: AsyncMergeDetails,
+}
+
+#[derive(Deserialize, Default)]
+struct AsyncMergeDetails {
+    message: Option<String>,
+    uuid: Option<String>,
+}
+
+/// Where an asynchronous merge stands. A merge queue takes over an enqueued
+/// PR, so being enqueued settles the request as much as being merged does.
+#[derive(Debug, PartialEq, Eq)]
+enum AsyncMergeProgress {
+    Settled,
+    Pending { uuid: String },
+}
+
+fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
+    let result: AsyncMergeResult =
+        serde_json::from_str(raw).context("parsing GitHub's asynchronous merge result")?;
+    match result.status {
+        AsyncMergeStatus::Merged | AsyncMergeStatus::Enqueued => Ok(AsyncMergeProgress::Settled),
+        AsyncMergeStatus::Failed => {
+            let message = result
+                .details
+                .message
+                .unwrap_or_else(|| "GitHub reported the merge as failed".to_string());
+            anyhow::bail!("{message}")
+        }
+        AsyncMergeStatus::Pending => result
+            .details
+            .uuid
+            .map(|uuid| AsyncMergeProgress::Pending { uuid })
+            .ok_or_else(|| anyhow::anyhow!("GitHub reported a pending merge without its uuid")),
     }
-    list.sort_by_key(|e| e.position);
-    Ok(Some(list))
 }
 
 /// Build the GraphQL query that finds the issues which a PR closes.
@@ -995,6 +1171,50 @@ mod viewed_files_types {
     }
 }
 
+
+fn github_review_event(event: ReviewEvent) -> &'static str {
+    match event {
+        ReviewEvent::Comment => "COMMENT",
+        ReviewEvent::Approve => "APPROVE",
+        ReviewEvent::RequestChanges => "REQUEST_CHANGES",
+    }
+}
+
+/// One `comments[]` entry of the create-review endpoint. An unchanged line
+/// carries both line numbers; it is anchored on the new side, because GitHub
+/// reads `line` against the side it is given.
+fn github_review_comment(comment: &DraftComment) -> serde_json::Value {
+    let (side, start, end) = match (comment.line_num, comment.old_line_num) {
+        (Some(line), _) => ("RIGHT", line, comment.end_line_num),
+        (None, Some(line)) => ("LEFT", line, comment.end_old_line_num),
+        // `GitlabClient::submit_review` rejects comments without a line first.
+        (None, None) => ("RIGHT", 1, None),
+    };
+    let mut value = serde_json::json!({
+        "path": comment.file_path,
+        "line": start,
+        "side": side,
+        "body": comment.body,
+    });
+    if let Some(end) = end.filter(|&end| end != start) {
+        value["start_line"] = serde_json::json!(start.min(end));
+        value["start_side"] = serde_json::json!(side);
+        value["line"] = serde_json::json!(start.max(end));
+    }
+    value
+}
+
+fn github_review_payload(
+    event: ReviewEvent,
+    body: &str,
+    comments: &[DraftComment],
+) -> serde_json::Value {
+    serde_json::json!({
+        "body": body,
+        "event": github_review_event(event),
+        "comments": comments.iter().map(github_review_comment).collect::<Vec<_>>(),
+    })
+}
 #[async_trait]
 impl Backend for GhBackend {
     fn kind(&self) -> super::BackendKind {
@@ -1443,8 +1663,6 @@ impl Backend for GhBackend {
 
                 let me = self.current_user().await;
                 let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
-                let pr_numbers: Vec<u64> = gh_prs.iter().map(|gp| gp.number).collect();
-                let stacks = self.fetch_pr_stacks_for_repo(project, &pr_numbers).await;
                 Ok(gh_prs
                     .into_iter()
                     .map(|gp| {
@@ -1537,7 +1755,7 @@ impl Backend for GhBackend {
                             project_path: project.to_string(),
                             web_url: gp.url,
                             related_issues,
-                            stack: stacks.get(&gp.number).cloned(),
+                            stack: None,
                             stack_entries: None,
                         }
                     })
@@ -1790,29 +2008,92 @@ impl Backend for GhBackend {
         })
     }
 
-    async fn get_pr_stack_entries(
+    async fn get_pr_stack(
         &self,
         project: &str,
         pr_number: u64,
-    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
         let query = pr_stack_entries_graphql_query(owner, repo, pr_number, 50);
         let raw = self
             .run_gh(
                 &["api", "graphql", "-f", &format!("query={query}")],
-                "Fetching PR Stack Entries",
+                "Fetching PR Stack",
             )
             .await?;
         parse_pr_stack_entries_response(&raw)
     }
 
+    async fn list_pr_stack_summaries(
+        &self,
+        project: &str,
+        pr_numbers: &[u64],
+    ) -> Result<HashMap<u64, crate::domain::mr::StackInfo>> {
+        if pr_numbers.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = pr_stack_graphql_query(owner, repo, pr_numbers);
+        let raw = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching PR Stacks",
+            )
+            .await?;
+        Ok(parse_pr_stacks_response(&raw))
+    }
+
+    /// `gh pr merge` cannot merge a stacked PR: GitHub refuses stacks on the
+    /// GraphQL mutation it calls, and the asynchronous merge endpoint is the
+    /// only one that accepts them.
+    async fn merge_pr_stack(
+        &self,
+        project: &str,
+        pr_number: u64,
+        method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        let endpoint = format!("repos/{project}/pulls/{pr_number}/merge-async");
+        let body = serde_json::json!({ "merge_method": method.as_api_str() }).to_string();
+        let raw = self
+            .raw_api(&endpoint, "PUT", Some(&body), "Merging PR Stack")
+            .await?;
+        let mut progress = parse_async_merge_result(&raw)?;
+        let mut polls = 0;
+        while let AsyncMergeProgress::Pending { uuid } = progress {
+            if polls == ASYNC_MERGE_MAX_POLLS {
+                anyhow::bail!(
+                    "GitHub is still merging PR #{pr_number} after {} seconds; check it on GitHub",
+                    ASYNC_MERGE_POLL_INTERVAL.as_secs() * u64::from(ASYNC_MERGE_MAX_POLLS)
+                );
+            }
+            polls += 1;
+            tokio::time::sleep(ASYNC_MERGE_POLL_INTERVAL).await;
+            let raw = self
+                .raw_api(
+                    &format!("{endpoint}/{uuid}"),
+                    "GET",
+                    None,
+                    "Checking PR Stack Merge",
+                )
+                .await?;
+            progress = parse_async_merge_result(&raw)?;
+        }
+        Ok(())
+    }
+
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
-        self.run_gh(
-            &["pr", "diff", &iid.to_string(), "-R", project],
-            "Fetching PR Diff",
-        )
-        .await
+        match self
+            .run_gh(
+                &["pr", "diff", &iid.to_string(), "-R", project],
+                "Fetching PR Diff",
+            )
+            .await
+        {
+            Err(err) if is_pr_diff_too_large(&err) => self.diff_pr_locally(project, iid).await,
+            result => result,
+        }
     }
 
     async fn list_viewed_files(
@@ -2164,29 +2445,60 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn add_mr_comment(
+    async fn submit_review(
         &self,
         project: &str,
         iid: u64,
+        event: ReviewEvent,
         body: &str,
-        _file_path: Option<&str>,
-        _line: Option<u64>,
-        _old_line: Option<u64>,
+        comments: &[DraftComment],
     ) -> Result<()> {
-        self.run_gh(
-            &[
-                "pr",
-                "comment",
-                &iid.to_string(),
-                "-R",
-                project,
-                "--body",
-                body,
-            ],
-            "ADDING PR COMMENT",
+        let payload = github_review_payload(event, body, comments).to_string();
+        self.raw_api(
+            &format!("/repos/{}/pulls/{}/reviews", project, iid),
+            "POST",
+            Some(&payload),
+            "SUBMITTING REVIEW",
         )
         .await?;
         Ok(())
+    }
+
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()> {
+        let root_comment_id: u64 = thread_id.parse().with_context(|| {
+            format!(
+                "GitHub thread ids are the numeric id of the thread's first comment, got '{}'",
+                thread_id
+            )
+        })?;
+        let payload = serde_json::json!({ "body": body, "in_reply_to": root_comment_id });
+        self.raw_api(
+            &format!("/repos/{}/pulls/{}/comments", project, iid),
+            "POST",
+            Some(&payload.to_string()),
+            "REPLYING TO THREAD",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_thread_resolved(
+        &self,
+        _project: &str,
+        _iid: u64,
+        _thread_id: &str,
+        _resolved: bool,
+    ) -> Result<()> {
+        // Only the GraphQL `resolveReviewThread` mutation resolves a thread,
+        // and it takes the thread's node id, which the REST comment listing
+        // this backend reads does not carry.
+        anyhow::bail!("Resolving review threads isn't supported on GitHub")
     }
 
     // ── PR Field Updates ──
@@ -3461,7 +3773,12 @@ async fn run_gh_raw_api(
                 }
                 Ok(s)
             } else {
-                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let mut err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                // `gh api` prints only the HTTP status on stderr; GitHub's reason
+                // (e.g. "Can not approve your own pull request") is in the body on stdout.
+                if let Some(details) = github_error_details(&out.stdout) {
+                    err_msg = format!("{err_msg}: {details}");
+                }
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
@@ -3484,6 +3801,28 @@ async fn run_gh_raw_api(
             Err(e.into())
         }
     }
+}
+
+fn github_error_details(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let details: Vec<String> = value
+        .get("errors")?
+        .as_array()?
+        .iter()
+        .filter_map(|e| {
+            let text = |key| e.get(key).and_then(serde_json::Value::as_str);
+            match (
+                e.as_str().or_else(|| text("message")),
+                text("field"),
+                text("code"),
+            ) {
+                (Some(message), _, _) => Some(message.to_string()),
+                (None, Some(field), Some(code)) => Some(format!("{field} {code}")),
+                _ => None,
+            }
+        })
+        .collect();
+    (!details.is_empty()).then(|| details.join("; "))
 }
 
 /// Compute duration in seconds between two ISO 8601 timestamps.
@@ -3675,6 +4014,99 @@ mod tests {
         );
         assert!(check_graphql_errors(r#"{"data":{"f0":{"clientMutationId":null}}}"#).is_ok());
         assert!(check_graphql_errors(r#"{"data":null,"errors":[{"message":"x"}]}"#).is_err());
+
+    #[test]
+    fn github_error_details_reads_string_and_object_errors() {
+        let body = br#"{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request",{"resource":"PullRequestReviewComment","code":"custom","message":"line must be part of the diff"},{"resource":"PullRequestReviewComment","field":"in_reply_to","code":"invalid"}],"status":"422"}"#;
+        assert_eq!(
+            github_error_details(body).as_deref(),
+            Some(
+                "Review Can not approve your own pull request; line must be part of the diff; in_reply_to invalid"
+            )
+        );
+        assert_eq!(github_error_details(br#"{"message":"Not Found"}"#), None);
+        assert_eq!(github_error_details(b"not json"), None);
+    }
+
+    #[test]
+    fn a_pending_async_merge_is_polled_by_its_uuid() {
+        let raw = r#"{"status":"pending","details":{"message":"Merge request accepted","uuid":"5f1c","merge_method":"squash","merge_action":"default","expected_head_sha":"abc"}}"#;
+        assert_eq!(
+            parse_async_merge_result(raw).unwrap(),
+            AsyncMergeProgress::Pending {
+                uuid: "5f1c".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn merged_and_enqueued_async_merges_are_settled() {
+        for raw in [
+            r#"{"status":"merged","details":{"message":"Pull request merged","sha":"abc"}}"#,
+            r#"{"status":"enqueued","details":{"message":"Added to the merge queue"}}"#,
+        ] {
+            assert_eq!(
+                parse_async_merge_result(raw).unwrap(),
+                AsyncMergeProgress::Settled
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_async_merge_reports_githubs_message() {
+        let raw = r#"{"status":"failed","details":{"message":"Required status check \"ci\" is failing"}}"#;
+        assert_eq!(
+            parse_async_merge_result(raw).unwrap_err().to_string(),
+            "Required status check \"ci\" is failing"
+        );
+    }
+
+    fn draft(
+        line: Option<u32>,
+        old: Option<u32>,
+        end: Option<u32>,
+        end_old: Option<u32>,
+    ) -> DraftComment {
+        DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: line,
+            old_line_num: old,
+            end_line_num: end,
+            end_old_line_num: end_old,
+            body: "note".to_string(),
+        }
+    }
+
+    #[test]
+    fn review_comment_on_unchanged_line_uses_the_new_side() {
+        let c = github_review_comment(&draft(Some(12), Some(10), None, None));
+        assert_eq!(
+            (c["side"].as_str(), c["line"].as_u64()),
+            (Some("RIGHT"), Some(12))
+        );
+        assert!(c.get("start_line").is_none());
+    }
+
+    #[test]
+    fn review_comment_range_on_old_side_spans_low_to_high() {
+        let c = github_review_comment(&draft(None, Some(9), None, Some(5)));
+        assert_eq!(c["side"], "LEFT");
+        assert_eq!(c["start_side"], "LEFT");
+        assert_eq!(
+            (c["start_line"].as_u64(), c["line"].as_u64()),
+            (Some(5), Some(9))
+        );
+    }
+
+    #[test]
+    fn review_payload_holds_every_comment_in_one_review() {
+        let comments = [
+            draft(Some(1), None, None, None),
+            draft(None, Some(2), None, None),
+        ];
+        let payload = github_review_payload(ReviewEvent::RequestChanges, "summary", &comments);
+        assert_eq!(payload["event"], "REQUEST_CHANGES");
+        assert_eq!(payload["comments"].as_array().map(Vec::len), Some(2));
     }
 
     #[test]
@@ -4380,18 +4812,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pr_stack_entries_graphql_query() {
-        let q = pr_stack_entries_graphql_query("rcieri", "glab-tui", 101, 50);
-        assert!(q.contains("pullRequest(number:101)"));
-        assert!(q.contains("entries(first:50)"));
-    }
-
-    #[test]
-    fn test_parse_pr_stack_entries_response() {
+    fn stack_query_response_carries_the_prs_position_and_its_entries_in_order() {
         let json = r#"{
             "data": {
                 "repository": {
                     "pullRequest": {
+                        "stackEntry": { "position": 2 },
                         "stack": {
                             "number": 7,
                             "size": 3,
@@ -4431,20 +4857,36 @@ mod tests {
                 }
             }
         }"#;
-        let entries = parse_pr_stack_entries_response(json).unwrap().unwrap();
-        assert_eq!(entries.len(), 3);
-        // Sorted by position
-        assert_eq!(entries[0].position, 1);
-        assert_eq!(entries[0].number, 101);
-        assert_eq!(entries[0].state, "merged");
-        assert!(!entries[0].is_draft);
+        let stack = parse_pr_stack_entries_response(json).unwrap().unwrap();
+        let entry =
+            |position, number, title: &str, state: &str, is_draft| crate::domain::mr::StackEntry {
+                position,
+                number,
+                title: title.to_string(),
+                state: state.to_string(),
+                is_draft,
+            };
+        assert_eq!(
+            stack,
+            crate::domain::mr::PrStack {
+                info: crate::domain::mr::StackInfo {
+                    number: 7,
+                    size: 3,
+                    position: 2,
+                },
+                entries: vec![
+                    entry(1, 101, "Base PR", "merged", false),
+                    entry(2, 102, "Middle PR", "open", false),
+                    entry(3, 103, "Top PR", "open", true),
+                ],
+            }
+        );
+    }
 
-        assert_eq!(entries[1].position, 2);
-        assert_eq!(entries[1].number, 102);
-
-        assert_eq!(entries[2].position, 3);
-        assert_eq!(entries[2].number, 103);
-        assert!(entries[2].is_draft);
+    #[test]
+    fn stack_query_response_without_a_stack_entry_means_not_stacked() {
+        let json = r#"{"data":{"repository":{"pullRequest":{"stackEntry":null,"stack":null}}}}"#;
+        assert_eq!(parse_pr_stack_entries_response(json).unwrap(), None);
     }
 
     #[test]
@@ -4478,5 +4920,127 @@ mod tests {
         assert!(!args_merge_commit.contains(&"--squash".to_string()));
         assert!(!args_merge_commit.contains(&"--rebase".to_string()));
         assert!(!args_merge_commit.contains(&"--auto".to_string()));
+    }
+
+    #[test]
+    fn only_githubs_too_large_diff_error_triggers_the_local_fallback() {
+        let too_large = anyhow::anyhow!(
+            "gh command failed: could not find pull request diff: HTTP 406: Sorry, the diff \
+             exceeded the maximum number of lines (20000) \
+             (https://api.github.com/repos/o/r/pulls/1)\nPullRequest.diff too_large"
+        );
+        let not_found = anyhow::anyhow!(
+            "gh command failed: GraphQL: Could not resolve to a PullRequest with the number of 9."
+        );
+        assert!(is_pr_diff_too_large(&too_large));
+        assert!(!is_pr_diff_too_large(&not_found));
+    }
+
+    /// Runs git in `dir` with an identity and no signing, so the developer's
+    /// global config cannot break commit creation.
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.name=glab-tui",
+                "-c",
+                "user.email=glab-tui@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Everything the fallback promises not to touch in a clone.
+    fn clone_state(clone: &std::path::Path) -> [String; 4] {
+        [
+            git(clone, &["symbolic-ref", "HEAD"]),
+            git(clone, &["for-each-ref"]),
+            git(clone, &["status", "--porcelain=v1"]),
+            git(clone, &["diff", "--cached"]),
+        ]
+    }
+
+    #[tokio::test]
+    async fn local_pr_diff_fetches_missing_commits_without_touching_the_clone() {
+        let root = tempfile::tempdir().unwrap();
+        let origin = root.path().join("origin.git");
+        let author = root.path().join("author");
+        let clone = root.path().join("clone");
+        std::fs::create_dir_all(&author).unwrap();
+        git(
+            root.path(),
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "-b",
+                "main",
+                origin.to_str().unwrap(),
+            ],
+        );
+        git(&author, &["init", "-q", "-b", "main"]);
+        git(
+            &author,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        std::fs::write(author.join("kept.txt"), "unchanged\n").unwrap();
+        std::fs::write(author.join("edited.txt"), "before\n").unwrap();
+        git(&author, &["add", "."]);
+        git(&author, &["commit", "-q", "-m", "base"]);
+        git(&author, &["push", "-q", "origin", "main"]);
+        let base = git(&author, &["rev-parse", "HEAD"]).trim().to_string();
+        std::fs::write(author.join("edited.txt"), "after\n").unwrap();
+        std::fs::write(author.join("added.txt"), "new\n").unwrap();
+        git(&author, &["add", "."]);
+        git(&author, &["commit", "-q", "-m", "head"]);
+        let head = git(&author, &["rev-parse", "HEAD"]).trim().to_string();
+        git(&author, &["push", "-q", "origin", "HEAD:refs/pull/7/head"]);
+
+        git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(clone.join("kept.txt"), "staged local edit\n").unwrap();
+        git(&clone, &["add", "kept.txt"]);
+        std::fs::write(clone.join("edited.txt"), "unstaged local edit\n").unwrap();
+        let before = clone_state(&clone);
+
+        let commits = PrDiffCommits {
+            base,
+            head: head.clone(),
+        };
+        let diff = diff_pr_in_checkout(None, clone.to_str().unwrap(), 7, &commits)
+            .await
+            .unwrap();
+
+        let files: Vec<&str> = diff
+            .lines()
+            .filter(|line| line.starts_with("diff --git "))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                "diff --git a/added.txt b/added.txt",
+                "diff --git a/edited.txt b/edited.txt",
+            ]
+        );
+        assert_eq!(clone_state(&clone), before);
+        git(&clone, &["cat-file", "-e", &format!("{head}^{{commit}}")]);
     }
 }

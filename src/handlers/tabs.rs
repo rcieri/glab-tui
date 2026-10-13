@@ -9,6 +9,41 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Fetches the MR/PR diff and opens the diff view when it is built. A second
+/// request while one is in flight is dropped: it would repeat every CLI call
+/// and build the view twice.
+fn spawn_open_diff(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
+    mr_iid: u64,
+    project_context: String,
+) {
+    if app.diff_loading {
+        return;
+    }
+    let Some(client) = app.gitlab_client.clone() else {
+        app.show_error("No backend client available to fetch diff".to_string());
+        return;
+    };
+    app.diff_loading = true;
+    let sync_viewed = app.config.sync_viewed_files;
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let event =
+            match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid, sync_viewed)
+                .await
+            {
+                Ok((diff_view, comments, viewed_files)) => Event::DiffFetched {
+                    diff_view,
+                    comments,
+                    viewed_files,
+                },
+                Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err)),
+            };
+        let _ = tx.send(event);
+    });
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -70,6 +105,123 @@ pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender
     }
     app.pending_mr_related_issues_iid = Some(iid);
     app.pending_mr_related_issues_since = Some(std::time::Instant::now());
+}
+
+/// Run `action` on the PR once the session knows its stack. When it does not
+/// yet, the stack is fetched first and the action runs once it lands (see
+/// `Event::PrStackFetched`).
+fn with_pr_stack(
+    app: &mut App,
+    mr: &crate::domain::mr::MergeRequest,
+    action: crate::app::StackAction,
+    tx: &UnboundedSender<Event>,
+) {
+    use crate::domain::mr::StackLookup;
+    let pr = app.mr_ref(mr);
+    let is_known = matches!(
+        app.pr_stack(&pr.0, pr.1),
+        Some(StackLookup::NotStacked | StackLookup::Full(_))
+    );
+    // Stacks exist only in GitHub repositories; anywhere else the answer is
+    // already known to be "not stacked".
+    let can_be_stacked = app.is_github() && app.scope.is_repository();
+    if !is_known && can_be_stacked {
+        if let Some(client) = app.gitlab_client.clone() {
+            crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
+            app.status_message = Some(format!("Loading the stack of PR #{}…", pr.1));
+            app.pending_stack_action = Some((pr, action));
+            return;
+        }
+    }
+    run_stack_action(app, &pr.0, pr.1, action);
+}
+
+/// Run a PR action whose stack the session already knows.
+pub(crate) fn run_stack_action(
+    app: &mut App,
+    project: &str,
+    pr_number: u64,
+    action: crate::app::StackAction,
+) {
+    match action {
+        crate::app::StackAction::Browse => open_stack_selector(app, project, pr_number),
+        crate::app::StackAction::Merge => open_merge_dialog(app, project, pr_number),
+    }
+}
+
+/// A stacked PR merges with every open PR below it through GitHub's stack
+/// merge; any other MR/PR gets the plain merge dialog.
+fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
+    let action = match app.pr_stack(project, pr_number) {
+        Some(crate::domain::mr::StackLookup::Full(_)) => {
+            crate::app::ConfirmAction::MergeStack(pr_number)
+        }
+        _ => crate::app::ConfirmAction::MergeMr(pr_number),
+    };
+    app.submit_dialog = Some(crate::app::SubmitDialog::build(action, app));
+}
+
+/// Open the selector over a PR's stack the session already knows, so the
+/// user can jump to another PR in it, or say why there is nothing to open.
+fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
+    use crate::domain::mr::StackLookup;
+    let Some(StackLookup::Full(stack)) = app.pr_stack(project, pr_number) else {
+        app.show_error("This PR is not part of a stack.".to_string());
+        return;
+    };
+    if stack.entries.is_empty() {
+        app.show_error("This PR has no stack entries to navigate.".to_string());
+        return;
+    }
+    let current_marker = format!(
+        " {} (current)",
+        crate::config::ICONS.read().unwrap().nav_prev
+    );
+    let selector = crate::app::Selector {
+        title: format!(
+            " Stack #{} — {} PRs ",
+            stack.info.number,
+            stack.entries.len(),
+        ),
+        all_items: stack
+            .entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "#{}. #{}: {} ({}){}{}",
+                    e.position,
+                    e.number,
+                    e.title,
+                    e.state.to_uppercase(),
+                    if e.is_draft { " [draft]" } else { "" },
+                    if e.number == pr_number {
+                        current_marker.as_str()
+                    } else {
+                        ""
+                    },
+                )
+            })
+            .collect(),
+        selected_items: std::collections::HashSet::new(),
+        cursor_idx: stack
+            .entries
+            .iter()
+            .position(|e| e.number == pr_number)
+            .unwrap_or(0),
+        search_query: String::new(),
+        is_filtering: false,
+        is_loading: false,
+        entity_iid: pr_number,
+        entity_type: "mr".to_string(),
+        field_type: "stack_entries".to_string(),
+        multi_select: false,
+        state: {
+            let mut s = ListState::default();
+            s.select(Some(0));
+            s
+        },
+    };
+    app.selector = Some(selector);
 }
 
 /// Scrolls the detail pane by a full or half page for the
@@ -795,10 +947,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                crate::app::ConfirmAction::MergeMr(mr_iid),
-                                app,
-                            ));
+                            with_pr_stack(app, &mr, crate::app::StackAction::Merge, &tx);
                         }
                         _ if (key_event.code == KeyCode::Char('D')
                             || keybinding_matches(
@@ -806,34 +955,13 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             )) =>
                         {
-                            app.diff_loading = true;
-                            let tx = tx.clone();
-                            let client = app.gitlab_client.clone();
-                            let sync_viewed = app.config.sync_viewed_files;
+
                             let project_context = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
                             } else {
                                 app.scope.as_str().to_string()
                             };
-                            tokio::spawn(async move {
-                                let Some(client) = client else {
-                                    let _ = tx.send(Event::DiffFetchFailed(
-                                        "No backend client available to fetch diff".to_string(),
-                                    ));
-                                    return;
-                                };
-                                let event = crate::fetch::fetch_diff(
-                                    &client,
-                                    project_context,
-                                    mr_iid,
-                                    sync_viewed,
-                                )
-                                .await
-                                .unwrap_or_else(|err| {
-                                    Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err))
-                                });
-                                let _ = tx.send(event);
-                            });
+                            spawn_open_diff(app, &tx, mr_iid, project_context);
                         }
                         _ if (key_event.code == KeyCode::Char('P')
                             || keybinding_matches(
@@ -864,75 +992,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            // Open a selector over the MR's stack entries so
-                            // the user can pick one to jump into. GitHub-only;
-                            // - GitLab backends always report `stack = None`.
-                            if let Some(ref entries) = mr.stack_entries {
-                                if entries.is_empty() {
-                                    app.show_error(
-                                        "This PR has no stack entries to navigate.".to_string(),
-                                    );
-                                } else {
-                                    app.selector = Some(crate::app::Selector {
-                                        title: format!(
-                                            " Stack #{} — {} PRs ",
-                                            mr.stack.as_ref().map(|s| s.number).unwrap_or(0),
-                                            entries.len(),
-                                        ),
-                                        all_items: entries
-                                            .iter()
-                                            .map(|e| {
-                                                let current_marker = if e.number == mr.iid {
-                                                    format!(
-                                                        " {} (current)",
-                                                        crate::config::ICONS
-                                                            .read()
-                                                            .unwrap()
-                                                            .nav_prev
-                                                    )
-                                                } else {
-                                                    String::new()
-                                                };
-                                                let draft_str =
-                                                    if e.is_draft { " [draft]" } else { "" };
-                                                format!(
-                                                    "#{}. #{}: {} ({}){}{}",
-                                                    e.position,
-                                                    e.number,
-                                                    e.title,
-                                                    e.state.to_uppercase(),
-                                                    draft_str,
-                                                    current_marker,
-                                                )
-                                            })
-                                            .collect(),
-                                        selected_items: std::collections::HashSet::new(),
-                                        cursor_idx: entries
-                                            .iter()
-                                            .position(|e| e.number == mr.iid)
-                                            .unwrap_or(0),
-                                        search_query: String::new(),
-                                        is_filtering: false,
-                                        is_loading: false,
-                                        entity_iid: mr_iid,
-                                        entity_type: "mr".to_string(),
-                                        field_type: "stack_entries".to_string(),
-                                        multi_select: false,
-                                        state: {
-                                            let mut s = ListState::default();
-                                            s.select(Some(0));
-                                            s
-                                        },
-                                    });
-                                }
-                            } else if mr.stack.is_some() {
-                                app.show_error(
-                                    "Stack entries still loading — try again in a moment."
-                                        .to_string(),
-                                );
-                            } else {
-                                app.show_error("This PR is not part of a stack.".to_string());
-                            }
+                            with_pr_stack(app, &mr, crate::app::StackAction::Browse, &tx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,

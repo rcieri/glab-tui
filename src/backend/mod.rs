@@ -10,6 +10,7 @@ use crate::domain::mr::{DiscussionNote, MergeRequest};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
 use crate::event::Event;
 use crate::scope::Scope;
@@ -351,14 +352,31 @@ pub trait Backend: Send + Sync {
         milestone: &str,
         issue_iid: Option<u64>,
     ) -> Result<()>;
-    async fn add_mr_comment(
+    /// Posts `comments` and `body` as one review carrying `event`.
+    async fn submit_review(
         &self,
         project: &str,
         iid: u64,
+        event: ReviewEvent,
         body: &str,
-        file_path: Option<&str>,
-        line: Option<u64>,
-        old_line: Option<u64>,
+        comments: &[DraftComment],
+    ) -> Result<()>;
+    /// `thread_id` is a GitLab discussion id, or the id of a GitHub thread's
+    /// first review comment.
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()>;
+    /// Resolve or reopen a discussion. GitLab only — see the GhBackend impl.
+    async fn set_thread_resolved(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        resolved: bool,
     ) -> Result<()>;
     async fn update_mr(&self, project: &str, iid: u64, update: &MrUpdate) -> Result<()>;
     async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
@@ -505,14 +523,37 @@ pub trait Backend: Send + Sync {
     }
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String>;
 
-    /// For GitHub stacked PRs (`gh stack`), fetch all entries in the PR's stack.
-    /// Backends without stacked PR support (GitLab) return `Ok(None)`.
-    async fn get_pr_stack_entries(
+    /// For GitHub stacked PRs (`gh stack`), fetch one PR's stack: its own
+    /// position plus every entry. `Ok(None)` means the PR is not in a stack;
+    /// backends without stacked PR support (GitLab) always return it.
+    async fn get_pr_stack(
         &self,
         _project: &str,
         _pr_number: u64,
-    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
         Ok(None)
+    }
+
+    /// Stack position of each listed PR, in one query. A PR absent from the
+    /// map is not in a stack. Backends without stacked PRs return an empty map.
+    async fn list_pr_stack_summaries(
+        &self,
+        _project: &str,
+        _pr_numbers: &[u64],
+    ) -> Result<HashMap<u64, crate::domain::mr::StackInfo>> {
+        Ok(HashMap::new())
+    }
+
+    /// Merge a stacked PR together with every open PR below it in its stack,
+    /// all or nothing. On a base branch with a merge queue the PRs are queued
+    /// instead, and the queue picks the merge method.
+    async fn merge_pr_stack(
+        &self,
+        _project: &str,
+        _pr_number: u64,
+        _method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        anyhow::bail!("stacked merge requests are GitHub-only")
     }
 
     // ── Pipeline / Job actions ──

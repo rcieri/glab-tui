@@ -3,6 +3,7 @@
 use crate::backend::BackendKind;
 use crate::config::{Config, KeybindingConfig, THEME, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
+use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::viewed_files::{FileViewedState, Fingerprint, PrViewedFiles, ViewedSync};
 use crate::domain::workflow_inputs::WorkflowInput;
@@ -1557,28 +1558,58 @@ impl DiffView {
             is_deleted_file: bool,
         }
         let mut chunk_meta: Option<DiffChunkMeta> = None;
+        // Lines still owed by the current hunk. While any are owed, a line is
+        // hunk content whatever it looks like: a removed `-- comment` reads
+        // `--- comment` and must not be taken for a file header. A hunk ends
+        // early at `diff --git`, or at a `---`/`+++`/`@@` run, which content
+        // cannot produce (no content line starts with `@@`) but a diff with
+        // short hunks and no `diff --git` lines (`glab mr diff`) can.
+        let mut hunk_old_left: u32 = 0;
+        let mut hunk_new_left: u32 = 0;
 
-        for line in cleaned_diff.lines() {
+        enum Row {
+            FileStart,
+            Meta,
+            HunkHeader,
+            Addition,
+            Deletion,
+            Context,
+        }
+
+        let diff_lines: Vec<&str> = cleaned_diff.lines().collect();
+        for (index, &line) in diff_lines.iter().enumerate() {
+            let starts_file = line.starts_with("diff --git ")
+                || (line.starts_with("--- ")
+                    && diff_lines
+                        .get(index + 1)
+                        .is_some_and(|l| l.starts_with("+++ "))
+                    && diff_lines
+                        .get(index + 2)
+                        .is_some_and(|l| l.starts_with("@@ ")));
+            if starts_file {
+                hunk_old_left = 0;
+                hunk_new_left = 0;
+            }
+            let in_hunk_body = hunk_old_left > 0 || hunk_new_left > 0;
+
             // --- File header detection ---
             let mut detected_file: Option<String> = None;
 
-            if line.starts_with("diff --git") {
-                // Finish any previous chunk meta
+            if in_hunk_body {
+                // Hunk content never names a file.
+            } else if let Some(rest) = line.strip_prefix("diff --git ") {
                 chunk_meta = None;
                 rename_from = None;
                 rename_to = None;
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 4 {
-                    let a_path = parts[2].strip_prefix("a/").unwrap_or(parts[2]);
-                    let b_path = parts[3].strip_prefix("b/").unwrap_or(parts[3]);
+                if let Some((a_path, b_path)) = parse_diff_git_paths(rest) {
                     if a_path != b_path {
-                        rename_from = Some(a_path.to_string());
-                        rename_to = Some(b_path.to_string());
+                        rename_from = Some(a_path);
+                        rename_to = Some(b_path.clone());
                     }
-                    detected_file = Some(b_path.to_string());
+                    detected_file = Some(b_path);
                 }
-            } else if line.starts_with("rename from ") {
-                rename_from = Some(line[12..].trim().to_string());
+            } else if let Some(rest) = line.strip_prefix("rename from ") {
+                rename_from = Some(unquote_git_path(rest));
                 chunk_meta = Some(DiffChunkMeta {
                     new_path: chunk_meta
                         .as_ref()
@@ -1588,11 +1619,11 @@ impl DiffView {
                     is_new_file: false,
                     is_deleted_file: false,
                 });
-            } else if line.starts_with("rename to ") {
-                rename_to = Some(line[10..].trim().to_string());
+            } else if let Some(rest) = line.strip_prefix("rename to ") {
+                rename_to = Some(unquote_git_path(rest));
                 let new_path = rename_to.clone();
                 let old_path = rename_from.clone();
-                if let Some(ref new) = new_path {
+                if let Some(new) = &new_path {
                     current_file = new.clone();
                     let already_exists = files.iter().any(|(f, _, _, _, _)| f == new);
                     if !already_exists {
@@ -1619,49 +1650,33 @@ impl DiffView {
                     is_new_file: false,
                     is_deleted_file: true,
                 });
-            } else if line.starts_with("--- ") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let path = parts[1];
-                    if path != "/dev/null" && !path.is_empty() {
-                        let cleaned_path = path.strip_prefix("a/").unwrap_or(path).to_string();
-                        // Don't override current_file with old path during renames
-                        if rename_from.is_none() || rename_from.as_deref() != Some(&cleaned_path) {
-                            detected_file = Some(cleaned_path);
-                        }
+            } else if let Some(rest) = line.strip_prefix("--- ") {
+                if let Some(cleaned_path) = parse_patch_header_path(rest, "a/") {
+                    // Don't override current_file with old path during renames
+                    if rename_from.as_deref() != Some(cleaned_path.as_str()) {
+                        detected_file = Some(cleaned_path);
                     }
                 }
-            } else if line.starts_with("+++ ") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let path = parts[1];
-                    if path != "/dev/null" && !path.is_empty() {
-                        let cleaned_path = path.strip_prefix("b/").unwrap_or(path).to_string();
-                        detected_file = Some(cleaned_path.clone());
-                        // Grow chunk_meta new_path if we don't have it yet
-                        if chunk_meta.as_ref().map_or(true, |m| m.new_path.is_none()) {
-                            chunk_meta = Some(DiffChunkMeta {
-                                new_path: Some(cleaned_path.clone()),
-                                old_path: rename_from.clone(),
-                                is_new_file: chunk_meta.as_ref().map_or(false, |m| m.is_new_file),
-                                is_deleted_file: chunk_meta
-                                    .as_ref()
-                                    .map_or(false, |m| m.is_deleted_file),
-                            });
-                        }
+            } else if let Some(rest) = line.strip_prefix("+++ ") {
+                if let Some(cleaned_path) = parse_patch_header_path(rest, "b/") {
+                    detected_file = Some(cleaned_path.clone());
+                    // Grow chunk_meta new_path if we don't have it yet
+                    if chunk_meta.as_ref().is_none_or(|m| m.new_path.is_none()) {
+                        chunk_meta = Some(DiffChunkMeta {
+                            new_path: Some(cleaned_path),
+                            old_path: rename_from.clone(),
+                            is_new_file: chunk_meta.as_ref().is_some_and(|m| m.is_new_file),
+                            is_deleted_file: chunk_meta.as_ref().is_some_and(|m| m.is_deleted_file),
+                        });
                     }
                 }
             }
 
-            if let Some(ref fp) = detected_file {
+            if let Some(fp) = &detected_file {
                 current_file = fp.clone();
-                let is_new = chunk_meta.as_ref().map_or(false, |m| m.is_new_file);
-                let is_del = chunk_meta.as_ref().map_or(false, |m| m.is_deleted_file);
-                let old_path = if rename_from.is_some() {
-                    rename_from.clone()
-                } else {
-                    None
-                };
+                let is_new = chunk_meta.as_ref().is_some_and(|m| m.is_new_file);
+                let is_del = chunk_meta.as_ref().is_some_and(|m| m.is_deleted_file);
+                let old_path = rename_from.clone();
                 if let Some(existing) = files.iter_mut().find(|(f, _, _, _, _)| f == fp) {
                     if old_path.is_some() {
                         existing.1 = old_path;
@@ -1678,113 +1693,76 @@ impl DiffView {
             }
 
             // --- Line classification ---
-            if line.starts_with("diff --git") {
-                all_lines.push(DiffLine {
-                    content: line.to_string(),
-                    line_type: DiffLineType::Meta,
-                    file_path: current_file.clone(),
-                    old_line_num: None,
-                    new_line_num: None,
-                    syntax_highlighted: None,
-                    fuzzy_indices: None,
-                });
-                old_line_num = None;
-                new_line_num = None;
-            } else if line.starts_with("--- ")
-                || line.starts_with("+++ ")
-                || line.starts_with("index ")
-                || line.starts_with("similarity index ")
-                || line.starts_with("rename from ")
-                || line.starts_with("rename to ")
-                || line.starts_with("new file mode ")
-                || line.starts_with("deleted file mode ")
-                || line.starts_with("Binary files ")
-                || line.starts_with("old mode ")
-                || line.starts_with("new mode ")
-                || line.starts_with("copy from ")
-                || line.starts_with("copy to ")
-                || line.starts_with("Subproject commit ")
-            {
-                all_lines.push(DiffLine {
-                    content: line.to_string(),
-                    line_type: DiffLineType::Meta,
-                    file_path: current_file.clone(),
-                    old_line_num: None,
-                    new_line_num: None,
-                    syntax_highlighted: None,
-                    fuzzy_indices: None,
-                });
-            } else if line.starts_with("@@ ") {
-                if let Some(caps) = parse_hunk_header(line) {
-                    old_line_num = Some(caps.0);
-                    new_line_num = Some(caps.1);
-                } else {
+            let row = match line.as_bytes().first() {
+                Some(b'+') if in_hunk_body => Row::Addition,
+                Some(b'-') if in_hunk_body => Row::Deletion,
+                Some(b' ') | None if in_hunk_body => Row::Context,
+                // `\ No newline at end of file` annotates the previous line;
+                // it is not a line of either file.
+                Some(b'\\') => Row::Meta,
+                _ if line.starts_with("diff --git ") => Row::FileStart,
+                _ if DIFF_HEADER_PREFIXES.iter().any(|p| line.starts_with(p)) => Row::Meta,
+                _ if line.starts_with("@@ ") => Row::HunkHeader,
+                Some(b'+') => Row::Addition,
+                Some(b'-') => Row::Deletion,
+                _ => Row::Context,
+            };
+            let (line_type, line_old, line_new, highlighted) = match row {
+                Row::FileStart => {
                     old_line_num = None;
                     new_line_num = None;
+                    (DiffLineType::Meta, None, None, None)
                 }
-                all_lines.push(DiffLine {
-                    content: line.to_string(),
-                    line_type: DiffLineType::HunkHeader,
-                    file_path: current_file.clone(),
-                    old_line_num: None,
-                    new_line_num: None,
-                    syntax_highlighted: None,
-                    fuzzy_indices: None,
-                });
-            } else if line.starts_with('+') {
-                let highlighted = highlight_line_syntax(&current_file, line, None);
-                all_lines.push(DiffLine {
-                    content: line.to_string(),
-                    line_type: DiffLineType::Addition,
-                    file_path: current_file.clone(),
-                    old_line_num: None,
-                    new_line_num,
-                    syntax_highlighted: highlighted,
-                    fuzzy_indices: None,
-                });
-                if let Some(ref mut n) = new_line_num {
-                    *n += 1;
+                Row::Meta => (DiffLineType::Meta, None, None, None),
+                Row::HunkHeader => {
+                    let range = parse_hunk_header(line);
+                    old_line_num = range.map(|r| r.old_start);
+                    new_line_num = range.map(|r| r.new_start);
+                    hunk_old_left = range.map_or(0, |r| r.old_count);
+                    hunk_new_left = range.map_or(0, |r| r.new_count);
+                    (DiffLineType::HunkHeader, None, None, None)
                 }
-                change_counts
-                    .entry(current_file.clone())
-                    .or_insert((0, 0))
-                    .1 += 1;
-            } else if line.starts_with('-') {
-                let highlighted = highlight_line_syntax(&current_file, line, None);
-                all_lines.push(DiffLine {
-                    content: line.to_string(),
-                    line_type: DiffLineType::Deletion,
-                    file_path: current_file.clone(),
-                    old_line_num,
-                    new_line_num: None,
-                    syntax_highlighted: highlighted,
-                    fuzzy_indices: None,
-                });
-                if let Some(ref mut n) = old_line_num {
-                    *n += 1;
+                Row::Addition => {
+                    let line_new = new_line_num;
+                    new_line_num = new_line_num.map(|n| n + 1);
+                    hunk_new_left = hunk_new_left.saturating_sub(1);
+                    change_counts
+                        .entry(current_file.clone())
+                        .or_insert((0, 0))
+                        .1 += 1;
+                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    (DiffLineType::Addition, None, line_new, highlighted)
                 }
-                change_counts
-                    .entry(current_file.clone())
-                    .or_insert((0, 0))
-                    .0 += 1;
-            } else {
-                let highlighted = highlight_line_syntax(&current_file, line, None);
-                all_lines.push(DiffLine {
-                    content: line.to_string(),
-                    line_type: DiffLineType::Normal,
-                    file_path: current_file.clone(),
-                    old_line_num,
-                    new_line_num,
-                    syntax_highlighted: highlighted,
-                    fuzzy_indices: None,
-                });
-                if let Some(ref mut o) = old_line_num {
-                    *o += 1;
+                Row::Deletion => {
+                    let line_old = old_line_num;
+                    old_line_num = old_line_num.map(|n| n + 1);
+                    hunk_old_left = hunk_old_left.saturating_sub(1);
+                    change_counts
+                        .entry(current_file.clone())
+                        .or_insert((0, 0))
+                        .0 += 1;
+                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    (DiffLineType::Deletion, line_old, None, highlighted)
                 }
-                if let Some(ref mut n) = new_line_num {
-                    *n += 1;
+                Row::Context => {
+                    let (line_old, line_new) = (old_line_num, new_line_num);
+                    old_line_num = old_line_num.map(|n| n + 1);
+                    new_line_num = new_line_num.map(|n| n + 1);
+                    hunk_old_left = hunk_old_left.saturating_sub(1);
+                    hunk_new_left = hunk_new_left.saturating_sub(1);
+                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    (DiffLineType::Normal, line_old, line_new, highlighted)
                 }
-            }
+            };
+            all_lines.push(DiffLine {
+                content: line.to_string(),
+                line_type,
+                file_path: current_file.clone(),
+                old_line_num: line_old,
+                new_line_num: line_new,
+                syntax_highlighted: highlighted,
+                fuzzy_indices: None,
+            });
         }
 
         let mut root_node = DiffTreeNode::Directory {
@@ -2625,7 +2603,7 @@ impl DiffView {
             self.lines.get(self.cursor_idx).cloned()
         };
 
-        let line = sline_opt?;
+        let line = sline_opt.filter(|l| l.new_line_num.is_some() || l.old_line_num.is_some())?;
         if line.line_type == DiffLineType::Deletion {
             Some(CommentRange {
                 file_path: line.file_path.clone(),
@@ -2759,18 +2737,163 @@ pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
     side_lines
 }
 
-fn parse_hunk_header(header: &str) -> Option<(u32, u32)> {
-    let parts: Vec<&str> = header.split_whitespace().collect();
-    if parts.len() >= 3 {
-        let old_part = parts[1].strip_prefix('-')?;
-        let new_part = parts[2].strip_prefix('+')?;
+/// `@@ -old_start[,old_count] +new_start[,new_count] @@`; an omitted count
+/// is 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HunkRange {
+    old_start: u32,
+    old_count: u32,
+    new_start: u32,
+    new_count: u32,
+}
 
-        let old_start = old_part.split(',').next()?.parse::<u32>().ok()?;
-        let new_start = new_part.split(',').next()?.parse::<u32>().ok()?;
-        Some((old_start, new_start))
-    } else {
-        None
+fn parse_hunk_header(header: &str) -> Option<HunkRange> {
+    fn side(part: &str) -> Option<(u32, u32)> {
+        let (start, count) = match part.split_once(',') {
+            Some((start, count)) => (start, count.parse().ok()?),
+            None => (part, 1),
+        };
+        Some((start.parse().ok()?, count))
     }
+    let mut parts = header.split_whitespace().skip(1);
+    let (old_start, old_count) = side(parts.next()?.strip_prefix('-')?)?;
+    let (new_start, new_count) = side(parts.next()?.strip_prefix('+')?)?;
+    Some(HunkRange {
+        old_start,
+        old_count,
+        new_start,
+        new_count,
+    })
+}
+
+/// Header lines between `diff --git` and the first hunk.
+const DIFF_HEADER_PREFIXES: &[&str] = &[
+    "--- ",
+    "+++ ",
+    "index ",
+    "similarity index ",
+    "dissimilarity index ",
+    "rename from ",
+    "rename to ",
+    "new file mode ",
+    "deleted file mode ",
+    "Binary files ",
+    "old mode ",
+    "new mode ",
+    "copy from ",
+    "copy to ",
+    "Subproject commit ",
+];
+
+/// Reads a C-style quoted git path (`"docs/caf\303\251 \"x\".md"`) from the
+/// start of `s`, returning it and the text after the closing quote.
+fn take_quoted_git_path(s: &str) -> Option<(String, &str)> {
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'"') {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i = 1;
+    while let Some(&byte) = bytes.get(i) {
+        i += 1;
+        match byte {
+            b'"' => return Some((String::from_utf8_lossy(&out).into_owned(), &s[i..])),
+            b'\\' => {
+                let escaped = *bytes.get(i)?;
+                i += 1;
+                out.push(match escaped {
+                    b'0'..=b'7' => {
+                        let mut value = u32::from(escaped - b'0');
+                        for _ in 0..2 {
+                            match bytes.get(i) {
+                                Some(&d @ b'0'..=b'7') => {
+                                    value = value * 8 + u32::from(d - b'0');
+                                    i += 1;
+                                }
+                                _ => break,
+                            }
+                        }
+                        u8::try_from(value).ok()?
+                    }
+                    b'a' => 0x07,
+                    b'b' => 0x08,
+                    b't' => b'\t',
+                    b'n' => b'\n',
+                    b'v' => 0x0b,
+                    b'f' => 0x0c,
+                    b'r' => b'\r',
+                    other => other,
+                });
+            }
+            other => out.push(other),
+        }
+    }
+    None
+}
+
+/// A path as git prints it: verbatim, or C-style quoted when it holds
+/// characters git escapes.
+fn unquote_git_path(s: &str) -> String {
+    match take_quoted_git_path(s) {
+        Some((path, "")) => path,
+        _ => s.to_string(),
+    }
+}
+
+fn strip_diff_prefix(path: String, prefix: &str) -> String {
+    match path.strip_prefix(prefix) {
+        Some(stripped) => stripped.to_string(),
+        None => path,
+    }
+}
+
+/// Old and new path of a `diff --git <a> <b>` line (`rest` is what follows
+/// `diff --git `). Unquoted paths may contain spaces, so the split is the
+/// ` b/` whose two sides name the same file; for a rename the sides differ
+/// and the `rename from`/`rename to` lines that follow are authoritative.
+fn parse_diff_git_paths(rest: &str) -> Option<(String, String)> {
+    if let Some((old, after)) = take_quoted_git_path(rest) {
+        let new = unquote_git_path(after.strip_prefix(' ')?);
+        return Some((strip_diff_prefix(old, "a/"), strip_diff_prefix(new, "b/")));
+    }
+    if rest.ends_with('"') {
+        let split = rest.rfind(" \"")?;
+        let new = unquote_git_path(&rest[split + 1..]);
+        return Some((
+            strip_diff_prefix(rest[..split].to_string(), "a/"),
+            strip_diff_prefix(new, "b/"),
+        ));
+    }
+    let split = rest
+        .match_indices(" b/")
+        .map(|(i, _)| i)
+        .find(|&i| rest[..i].strip_prefix("a/") == Some(&rest[i + 3..]))
+        .or_else(|| rest.find(" b/"))
+        .or_else(|| {
+            // No `a/`/`b/` prefixes: both halves are the same path.
+            let half = rest.len().checked_sub(1)? / 2;
+            (rest.is_char_boundary(half)
+                && rest.as_bytes().get(half) == Some(&b' ')
+                && rest[..half] == rest[half + 1..])
+                .then_some(half)
+        })
+        .or_else(|| rest.find(' '))?;
+    Some((
+        strip_diff_prefix(rest[..split].to_string(), "a/"),
+        strip_diff_prefix(rest[split + 1..].to_string(), "b/"),
+    ))
+}
+
+/// Path on a `--- ` / `+++ ` line, `None` for `/dev/null`. Git appends a tab
+/// to names containing spaces (and classic diffs a timestamp after it); by
+/// the time this runs tab expansion may have turned that tab into spaces.
+fn parse_patch_header_path(rest: &str, prefix: &str) -> Option<String> {
+    let name = rest.split('\t').next().unwrap_or(rest).trim_end();
+    let path = unquote_git_path(name);
+    if path.is_empty() || path == "/dev/null" {
+        return None;
+    }
+    Some(strip_diff_prefix(path, prefix))
 }
 
 #[derive(Clone, Debug)]
@@ -2781,16 +2904,6 @@ pub struct CommentRange {
     pub end_line_num: Option<u32>,
     pub end_old_line_num: Option<u32>,
     pub lines: Vec<DiffLine>,
-}
-
-#[derive(Clone, Debug)]
-pub struct DraftComment {
-    pub file_path: String,
-    pub line_num: Option<u32>,
-    pub old_line_num: Option<u32>,
-    pub end_line_num: Option<u32>,
-    pub end_old_line_num: Option<u32>,
-    pub body: String,
 }
 
 impl DraftComment {
@@ -3032,6 +3145,16 @@ pub enum OverlayKind {
     ReviewThreads,
 }
 
+/// A PR action that needs the PR's stack, so it waits for an on-demand stack
+/// fetch when the session does not know the stack yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackAction {
+    /// Open the selector over the stack (`view_stack`).
+    Browse,
+    /// Open the merge dialog, which merges a stacked PR with its downstack.
+    Merge,
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
@@ -3046,6 +3169,7 @@ pub enum ConfirmAction {
     ReopenMr(u64),                    // mr iid
     ReopenMilestone(u64),             // milestone iid
     MergeMr(u64),                     // mr iid
+    MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
@@ -3282,6 +3406,7 @@ impl SubmitDialog {
             | ConfirmAction::ReopenMr(iid)
             | ConfirmAction::DeleteMr(iid)
             | ConfirmAction::MergeMr(iid)
+            | ConfirmAction::MergeStack(iid)
             | ConfirmAction::RevokeMr(iid)
             | ConfirmAction::RebaseMr(iid)
             | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
@@ -3404,6 +3529,42 @@ impl SubmitDialog {
                     options,
                     false,
                 )
+            }
+            ConfirmAction::MergeStack(iid) => {
+                let stack = match app.pr_stack(&project_path, *iid) {
+                    Some(crate::domain::mr::StackLookup::Full(stack)) => Some(stack),
+                    _ => None,
+                };
+                let title = match stack {
+                    Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
+                    None => format!("Merge Stack through #{iid}"),
+                };
+                let body = stack
+                    .map(|stack| {
+                        let merged: Vec<String> = stack
+                            .downstack_open_entries()
+                            .map(|e| {
+                                format!(
+                                    "#{}: {}{}",
+                                    e.number,
+                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    if e.is_draft { " [draft]" } else { "" }
+                                )
+                            })
+                            .collect();
+                        format!(
+                            "Merges {} PRs together, all or nothing:\n{}",
+                            merged.len(),
+                            merged.join("\n")
+                        )
+                    })
+                    .unwrap_or_default();
+                let options = vec![
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
+                ];
+                (title, body, "Merge".to_string(), options, false)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
@@ -3611,6 +3772,21 @@ pub struct App {
     pub pending_mr_related_issues_iid: Option<u64>,
     /// Wall-clock timestamp of the most recent request in `pending_mr_related_issues_iid`.
     pub pending_mr_related_issues_since: Option<std::time::Instant>,
+    /// Stack knowledge gathered this session, by project path then PR number.
+    /// List fetches return PRs without stack data, so this is what survives a
+    /// refresh; `apply_pr_stacks` copies it onto `mrs.items`.
+    pub pr_stacks: std::collections::HashMap<
+        String,
+        std::collections::HashMap<u64, crate::domain::mr::StackLookup>,
+    >,
+    /// PRs (project path, number) whose on-demand stack fetch is in flight.
+    pub fetching_pr_stacks: std::collections::HashSet<(String, u64)>,
+    /// PR whose stack fetch a key press is waiting on, and what to do once it
+    /// lands: the key was pressed before the session knew the stack.
+    pub pending_stack_action: Option<((String, u64), StackAction)>,
+    /// PR open in the inspector and when it got there. Its stack is fetched
+    /// only once it has stayed selected for the debounce window.
+    pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
@@ -3770,6 +3946,10 @@ impl Default for App {
             fetching_mr_related_issues: std::collections::HashSet::new(),
             pending_mr_related_issues_iid: None,
             pending_mr_related_issues_since: None,
+            pr_stacks: std::collections::HashMap::new(),
+            fetching_pr_stacks: std::collections::HashSet::new(),
+            pending_stack_action: None,
+            pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,
@@ -4070,6 +4250,125 @@ impl App {
             .map(|m| m.project_path.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    /// The project a listed MR/PR belongs to: its own path, or the repository
+    /// in scope when the list left it empty.
+    fn mr_project<'a>(
+        scope: &'a crate::scope::Scope,
+        mr: &'a crate::domain::mr::MergeRequest,
+    ) -> &'a str {
+        if mr.project_path.is_empty() {
+            scope.as_str()
+        } else {
+            &mr.project_path
+        }
+    }
+
+    /// An MR/PR as (project path, number), the key of the session's stack
+    /// knowledge.
+    pub fn mr_ref(&self, mr: &crate::domain::mr::MergeRequest) -> (String, u64) {
+        (Self::mr_project(&self.scope, mr).to_string(), mr.iid)
+    }
+
+    /// The highlighted MR/PR as (project path, number).
+    pub fn selected_mr_ref(&self) -> Option<(String, u64)> {
+        let idx = self.mrs.state.selected()?;
+        Some(self.mr_ref(self.filtered_mrs().get(idx)?))
+    }
+
+    pub fn pr_stack(
+        &self,
+        project: &str,
+        pr_number: u64,
+    ) -> Option<&crate::domain::mr::StackLookup> {
+        self.pr_stacks.get(project)?.get(&pr_number)
+    }
+
+    /// Whether the batch stack positions are on screen: the Stack column is
+    /// shown, or the PR list is grouped by it. Stacks exist only for GitHub
+    /// repositories.
+    pub fn is_stack_column_needed(&self) -> bool {
+        self.is_github()
+            && self.scope.is_repository()
+            && (self.is_column_visible(Tab::MergeRequests, "Stack")
+                || self
+                    .group_by_column
+                    .get(&Tab::MergeRequests)
+                    .and_then(Option::as_deref)
+                    == Some("Stack"))
+    }
+
+    /// Record the result of an on-demand stack fetch; `None` means the PR is
+    /// not in a stack.
+    pub fn record_pr_stack(
+        &mut self,
+        project: &str,
+        pr_number: u64,
+        stack: Option<crate::domain::mr::PrStack>,
+    ) {
+        let lookup = match stack {
+            Some(stack) => crate::domain::mr::StackLookup::Full(stack),
+            None => crate::domain::mr::StackLookup::NotStacked,
+        };
+        self.pr_stacks
+            .entry(project.to_string())
+            .or_default()
+            .insert(pr_number, lookup);
+        self.apply_pr_stacks();
+    }
+
+    /// Fold a batch of stack positions for `pr_numbers` into the session. A
+    /// queried PR missing from `stacks` is not stacked. Fetched entries are
+    /// kept while the PR's position is unchanged and dropped once it moves.
+    pub fn record_pr_stack_summaries(
+        &mut self,
+        project: &str,
+        pr_numbers: &[u64],
+        mut stacks: std::collections::HashMap<u64, crate::domain::mr::StackInfo>,
+    ) {
+        use crate::domain::mr::StackLookup;
+        let known = self.pr_stacks.entry(project.to_string()).or_default();
+        for &pr_number in pr_numbers {
+            let lookup = match stacks.remove(&pr_number) {
+                None => StackLookup::NotStacked,
+                Some(info) => match known.get(&pr_number) {
+                    Some(StackLookup::Full(stack)) if stack.info == info => continue,
+                    _ => StackLookup::Summary(info),
+                },
+            };
+            known.insert(pr_number, lookup);
+        }
+        self.apply_pr_stacks();
+    }
+
+    /// Copy the session's stack knowledge onto `mrs.items`. PRs the session
+    /// knows nothing about keep what the list or the cache gave them.
+    pub fn apply_pr_stacks(&mut self) {
+        use crate::domain::mr::StackLookup;
+        for mr in self.mrs.items.iter_mut() {
+            let Some(lookup) = self
+                .pr_stacks
+                .get(Self::mr_project(&self.scope, mr))
+                .and_then(|prs| prs.get(&mr.iid))
+            else {
+                continue;
+            };
+            match lookup {
+                StackLookup::NotStacked => {
+                    mr.stack = None;
+                    mr.stack_entries = None;
+                }
+                StackLookup::Summary(info) => {
+                    mr.stack = Some(info.clone());
+                    mr.stack_entries = None;
+                }
+                StackLookup::Full(stack) => {
+                    mr.stack = Some(stack.info.clone());
+                    mr.stack_entries = Some(stack.entries.clone());
+                }
+            }
+        }
     }
 
     pub fn project_path_for_pipeline(&self, id: u64) -> String {
@@ -8814,6 +9113,19 @@ diff --git a/foo.txt b/foo.txt
     }
 
     #[test]
+    fn comment_range_skips_rows_without_a_line_number() {
+        let mut view = DiffView::new(
+            1,
+            "g/p".to_string(),
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-x\n+y\n".to_string(),
+        );
+        view.cursor_idx = 0;
+        assert!(view.get_comment_range().is_none(), "file header row");
+        view.cursor_idx = view.lines.iter().position(|l| l.content == "+y").unwrap();
+        assert_eq!(view.get_comment_range().unwrap().line_num, Some(1));
+    }
+
+    #[test]
     fn draft_matches_side_yes_when_path_and_new_line_align() {
         let draft = DraftComment {
             file_path: "src/lib.rs".to_string(),
@@ -9247,6 +9559,108 @@ rename to src/new_name.rs
         assert_eq!(file_node.old_file_path.as_deref(), Some("src/old_name.rs"));
         assert!(!file_node.is_new_file);
         assert!(!file_node.is_deleted_file);
+    }
+
+    fn changed_files(view: &DiffView) -> Vec<(String, u32, u32)> {
+        let mut files: Vec<(String, u32, u32)> = view
+            .visible_nodes
+            .iter()
+            .filter_map(|n| Some((n.file_path.clone()?, n.additions, n.deletions)))
+            .collect();
+        files.sort();
+        files
+    }
+
+    fn diff_line<'a>(view: &'a DiffView, content: &str) -> &'a DiffLine {
+        view.all_lines
+            .iter()
+            .find(|l| l.content == content)
+            .unwrap_or_else(|| panic!("no diff line {content:?}"))
+    }
+
+    #[test]
+    fn diff_paths_with_spaces_or_quoting_stay_one_file() {
+        let diff = "\
+diff --git a/docs/file with spaces.md b/docs/file with spaces.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/docs/file with spaces.md\t
+@@ -0,0 +1 @@
++spaces
+diff --git \"a/docs/caf\\303\\251 \\\"x\\\".md\" \"b/docs/caf\\303\\251 \\\"x\\\".md\"
+new file mode 100644
+--- /dev/null
++++ \"b/docs/caf\\303\\251 \\\"x\\\".md\"
+@@ -0,0 +1 @@
++accent
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        assert_eq!(
+            changed_files(&view),
+            [
+                ("docs/café \"x\".md".to_string(), 1, 0),
+                ("docs/file with spaces.md".to_string(), 1, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn changed_lines_that_look_like_file_headers_stay_in_their_hunk() {
+        let diff = "\
+diff --git a/q.sql b/q.sql
+index 1111111..2222222 100644
+--- a/q.sql
++++ b/q.sql
+@@ -1,3 +1,3 @@
+ SELECT 1;
+--- drop me later
++++ added note
+ SELECT 2;
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        assert_eq!(changed_files(&view), [("q.sql".to_string(), 1, 1)]);
+        let removed = diff_line(&view, "--- drop me later");
+        assert_eq!(
+            (
+                &removed.line_type,
+                removed.old_line_num,
+                removed.file_path.as_str()
+            ),
+            (&DiffLineType::Deletion, Some(2), "q.sql")
+        );
+        let added = diff_line(&view, "+++ added note");
+        assert_eq!(
+            (
+                &added.line_type,
+                added.new_line_num,
+                added.file_path.as_str()
+            ),
+            (&DiffLineType::Addition, Some(2), "q.sql")
+        );
+        assert_eq!(diff_line(&view, " SELECT 2;").new_line_num, Some(3));
+    }
+
+    #[test]
+    fn no_newline_marker_is_not_a_line_of_the_file() {
+        let diff = "\
+diff --git a/n.txt b/n.txt
+index 1111111..2222222 100644
+--- a/n.txt
++++ b/n.txt
+@@ -1 +1 @@
+-old
+\\ No newline at end of file
++new
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let marker = diff_line(&view, "\\ No newline at end of file");
+        assert_eq!(
+            (&marker.line_type, marker.old_line_num, marker.new_line_num),
+            (&DiffLineType::Meta, None, None)
+        );
+        assert_eq!(diff_line(&view, "+new").new_line_num, Some(1));
+        assert_eq!(changed_files(&view), [("n.txt".to_string(), 1, 1)]);
     }
 
     #[test]
@@ -11156,6 +11570,121 @@ index 123456..789012 100644
         let filtered = app.filtered_mrs();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].iid, 101);
+    }
+
+    fn stack_info(size: usize, position: usize) -> crate::domain::mr::StackInfo {
+        crate::domain::mr::StackInfo {
+            number: 7,
+            size,
+            position,
+        }
+    }
+
+    fn full_stack(position: usize) -> crate::domain::mr::PrStack {
+        crate::domain::mr::PrStack {
+            info: stack_info(2, position),
+            entries: vec![crate::domain::mr::StackEntry {
+                position,
+                number: 11,
+                title: "Stack top".to_string(),
+                state: "open".to_string(),
+                is_draft: false,
+            }],
+        }
+    }
+
+    fn app_listing_prs(iids: &[u64]) -> App {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        app.mrs.items = iids
+            .iter()
+            .map(|&iid| mr_fixture(iid, "opened", "user1", false, "PR"))
+            .collect();
+        app
+    }
+
+    #[test]
+    fn refreshed_pr_list_gets_back_the_stack_fetched_earlier_in_the_session() {
+        let mut app = app_listing_prs(&[11, 12]);
+        app.record_pr_stack("owner/repo", 11, Some(full_stack(2)));
+        app.record_pr_stack("owner/repo", 12, None);
+
+        app.mrs.items = vec![
+            mr_fixture(11, "opened", "user1", false, "PR"),
+            mr_fixture(12, "opened", "user1", false, "PR"),
+        ];
+        app.apply_pr_stacks();
+
+        assert_eq!(app.mrs.items[0].stack, Some(stack_info(2, 2)));
+        assert_eq!(app.mrs.items[0].stack_entries, Some(full_stack(2).entries));
+        assert_eq!(app.mrs.items[1].stack, None);
+        assert_eq!(app.mrs.items[1].stack_entries, None);
+    }
+
+    #[test]
+    fn stack_summaries_keep_fetched_entries_while_the_position_is_unchanged() {
+        let mut app = app_listing_prs(&[11]);
+        app.record_pr_stack("owner/repo", 11, Some(full_stack(2)));
+
+        app.record_pr_stack_summaries(
+            "owner/repo",
+            &[11],
+            [(11, stack_info(2, 2))].into_iter().collect(),
+        );
+
+        assert_eq!(
+            app.pr_stack("owner/repo", 11),
+            Some(&crate::domain::mr::StackLookup::Full(full_stack(2)))
+        );
+        assert_eq!(app.mrs.items[0].stack_entries, Some(full_stack(2).entries));
+    }
+
+    #[test]
+    fn stack_summaries_drop_fetched_entries_once_the_position_moves() {
+        let mut app = app_listing_prs(&[11]);
+        app.record_pr_stack("owner/repo", 11, Some(full_stack(2)));
+
+        app.record_pr_stack_summaries(
+            "owner/repo",
+            &[11],
+            [(11, stack_info(3, 2))].into_iter().collect(),
+        );
+
+        assert_eq!(
+            app.pr_stack("owner/repo", 11),
+            Some(&crate::domain::mr::StackLookup::Summary(stack_info(3, 2)))
+        );
+        assert_eq!(app.mrs.items[0].stack, Some(stack_info(3, 2)));
+        assert_eq!(app.mrs.items[0].stack_entries, None);
+    }
+
+    #[test]
+    fn stack_summaries_mark_queried_prs_missing_from_the_batch_as_not_stacked() {
+        let mut app = app_listing_prs(&[11, 12]);
+        app.record_pr_stack("owner/repo", 12, Some(full_stack(1)));
+
+        app.record_pr_stack_summaries(
+            "owner/repo",
+            &[11, 12],
+            [(11, stack_info(2, 2))].into_iter().collect(),
+        );
+
+        assert_eq!(
+            app.pr_stack("owner/repo", 12),
+            Some(&crate::domain::mr::StackLookup::NotStacked)
+        );
+        assert_eq!(app.mrs.items[1].stack, None);
+        assert_eq!(app.mrs.items[1].stack_entries, None);
+    }
+
+    #[test]
+    fn stack_knowledge_of_one_repository_leaves_another_repositorys_prs_alone() {
+        let mut app = app_listing_prs(&[11]);
+        app.mrs.items[0].stack = Some(stack_info(2, 2));
+
+        app.record_pr_stack("other/repo", 11, None);
+
+        assert_eq!(app.mrs.items[0].stack, Some(stack_info(2, 2)));
     }
 
     #[test]

@@ -18,10 +18,11 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Clipboard:** `arboard` (v3.6)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.2`)
+* **Process & Session Handling:** `libc` (v0.2) — Unix setsid for background commands & signal masking during terminal handoff
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.3`)
 
 ### Dual-Engine Architecture
-The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes (with or without `www.` prefix) resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
+The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes (with or without `www.` prefix) resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. Without an `origin` remote (e.g. `-r owner/repo` outside a checkout), `git_helpers::detect_backend_without_remote` applies the same rule to `gh auth status --active` / `glab auth status` with no hostname. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
 
 The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call is extracted from the remote URL by `git_helpers::parse_project_path` ([src/git_helpers.rs](src/git_helpers.rs)), which keeps every path segment after the host so nested GitLab subgroup namespaces (`group/subgroup/project`) resolve correctly. Always use this helper — do not reimplement remote-URL parsing inline.
 
@@ -72,7 +73,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [update.rs](src/utils/update.rs): GitHub releases self-updater with multi-target Linux asset selection.
-* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`), flags (`--config` sets `config::use_config_file`, which `Config::config_path()` honours before `GLAB_TUI_CONFIG`/XDG) and ANSI-styled diagnostic output.
+* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`, `cache`, `open`, `repos`, `review`), flags (`--config` sets `config::use_config_file`, which `Config::config_path()` honours before `GLAB_TUI_CONFIG`/XDG; `-r/--repo` and `-d/--dir` are global, and `--dir` is applied before any subcommand runs) and ANSI-styled diagnostic output.
+    * [cli/review.rs](src/cli/review.rs): `glab-tui review threads|comment|submit|reply|resolve` — non-interactive review for scripts and agents. JSON on stdout, errors on stderr with a non-zero exit. `--input` is a JSON array of `{ file, line, end_line?, side?: "old"|"new", body }`; anchors are checked against the diff (`DiffView::new` + `DiffView::contains_anchor`, same classification as the review threads overlay) before anything is posted. E2E coverage in `tests/e2e/review_cli.rs`; the `gh`/`glab` mocks append `--input -` request bodies to `<TEST_LOG_PATH>.stdin` and fail any call matching `TEST_GH_FAIL_MATCH` / `TEST_GLAB_FAIL_MATCH`.
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
 * [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`) and `suspend_and_run` / `suspend_while`, the shared terminal handoff for any foreground child process (or several in one handoff).
 * [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic and creation form helpers.
@@ -142,11 +144,14 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * **Diff view** supports inline comments, code suggestions, draft reviews, dynamic gutter sizing, and tab expansion:
   - `DiscussionNote` / `NotePosition` structs in [src/domain/mr.rs](src/domain/mr.rs).
   - `list_mr_notes()` fetches notes for an MR via the API.
-  - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
+  - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` (`DraftComment` / `ReviewEvent` live in [src/domain/review.rs](src/domain/review.rs)) and submitted atomically.
+  - Every review mutation goes through `Backend::submit_review` / `reply_to_thread` / `set_thread_resolved`; the diff view and the `glab-tui review` subcommand share them. A comment posted outside review mode is a one-comment `submit_review`. Do not shell out to `gh api` / `glab api` for reviews from the event loop.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
-  - `DiffFetched` event uses named fields: `{ mr_iid, project_path, raw_diff, comments }`.
+  - Diffs load through `fetch::fetch_diff_view`, which builds the `DiffView` on a blocking thread (parsing and highlighting a large diff takes seconds) and sends `DiffFetched { diff_view, comments }`; the "Fetching Diff" overlay stays up until it arrives. `D` is ignored while `app.diff_loading` is set, so a second press cannot start a second fetch.
+  - The parser in `DiffView::new` follows each hunk's `@@` line counts: while a hunk still owes lines, every line is content, so a removed `-- comment` (`--- comment`) or added `++ x` is never read as a file header. `\ No newline at end of file` is a `Meta` row with no line numbers. Paths are read with `parse_diff_git_paths` / `parse_patch_header_path`, which keep spaces and decode git's C-style quoting.
   - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`).
   - Open diff key is `D` (remappable via `keybindings.mrs.view_diff`).
+* **GitHub diffs over 20,000 lines:** GitHub refuses to serve them (`gh pr diff` fails with HTTP 406 `PullRequest.diff too_large`). `GhBackend::get_mr_diff` then builds the diff with git in the clone `cache::find_local_checkout` finds for the PR's repository (`diff_pr_locally` / `diff_pr_in_checkout` in [src/backend/gh.rs](src/backend/gh.rs)). It only fetches (skipped when both commits are already local) and diffs — no checkout, no branch, no index or working-tree change. Without a known clone the error says a local clone is needed; every other `gh pr diff` error is returned unchanged. Review comments and review submission are unaffected: they go through the API with the same path/line anchors. E2E coverage: `tests/e2e/pr_diff_fallback.rs`.
 * **Dynamic line numbers & tab expansion:** Gutter width is dynamically calculated in `DiffView::new` from the widest line number in the diff (floored at 4). Tabs are expanded to spaces at tab stops at diff parse time (`expand_tabs`) so Go/Makefiles maintain indentation without breaking syntax highlighting or search indices.
 * **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui/helpers.rs](src/ui/helpers.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
 * **Reviewed-file marks:** `m` toggles `DiffView::reviewed_files` (a `HashSet` of diff-relative file paths) for the selected file, or for every file below the selected directory; `M` toggles `DiffView::hide_reviewed`. On GitHub they sync with the per-user "Viewed" checkboxes (`sync_viewed_files`, default on); GitLab has no API for its viewed state, so marks there are local only.
@@ -181,7 +186,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` via the Configure View submit button), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
 * Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth. Invalid user theme overrides automatically fall back to bundled presets.
 * Icons: The global `ICONS` `RwLock` is built from `Config::icons` (`IconSet::Nerd` default, or `IconSet::Ascii` via `icons = "ascii"`) through `IconSet::icons()`, and rebuilt by `reload_icons()` after a repo switch. `Icons::ascii()` keeps every glyph a single ASCII character for terminals without a Nerd Font, whose Private Use Area fallbacks render double-width and break layout. **Rule:** never write a glyph literal in render code; add a field to `Icons` and fill it in both `Icons::nerd()` and `Icons::ascii()`.
-* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (18 presets including `oled`, `github-dark-hc`, and the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
+* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (38 presets including `oled`, `github-dark-hc`, and the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Semantic tokens & transparent backgrounds:** `group_by` banner styling uses the `badge_group_bg` token, and an empty color string in theme TOMLs maps to `Color::Reset`, letting the terminal's own (possibly transparent) background show through instead of painting a solid fill.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens (`diff_gutter_bg`, `diff_sep`, etc.) to `Theme` if needed.
 
@@ -293,6 +298,10 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Mark todo done | `glab todo done <id>` |
 | Revoke MR approval | `glab mr revoke <iid> -R <repo>` |
 | Rebase MR | `glab mr rebase <iid> -R <repo>` |
+| MR diff refs (review anchors) | `glab mr view <iid> --output json -R <repo>` (`diff_refs`) |
+| Review summary note | `glab mr note create <iid> -R <repo> -m <body>` |
+| Reply to review thread | `glab mr note create <iid> -R <repo> --reply <discussion-id> -m <body>` |
+| Resolve/reopen review thread | `glab mr note resolve\|reopen <discussion-id> <iid> -R <repo>` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
 
@@ -316,6 +325,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List group labels | `GET /groups/{}/labels?per_page=<N>` | `glab label list -g` has no pagination control |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
+| Review draft notes | `POST /projects/{}/merge_requests/{}/draft_notes` per comment, then one `POST .../draft_notes/bulk_publish` | `glab mr note create` posts one note at a time and cannot batch them into a review |
 
 ### GhBackend (`src/backend/gh.rs`)
 
@@ -328,6 +338,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call; the JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
+| Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
 | List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
@@ -346,6 +357,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Delete release | `gh release delete <tag> -R <repo> -y` |
 | Update milestone state | `gh api -X PATCH repos/{}/milestones/{} -f state=...` |
 | Rebase PR | `gh pr update-branch <iid> -R <repo> --rebase` |
+| Resolve review thread | not supported — `Backend::set_thread_resolved` errors on GitHub |
 
 #### Data Fetching — Raw API (no native subcommand exists)
 
@@ -355,6 +367,9 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
 | List viewed files | `gh api graphql` over `pullRequest.files { path viewerViewedState }` (100 per page, cursor-paged) | REST and `gh pr` expose no per-user "Viewed" state |
 | Mark / unmark files viewed | `gh api graphql` aliased `markFileAsViewed` / `unmarkFileAsViewed` mutations (≤ 50 per request) | No REST or native equivalent |
+| PR stack positions (Stack column) | `gh api graphql` with one aliased `pullRequest(number: N) { stack stackEntry }` per listed PR | `gh pr list --json` has no stack fields. Runs once per PR-list fetch, only while `App::is_stack_column_needed()` (Stack column shown or grouped by), via `spawn_fetch_pr_stack_summaries` after `MrsFetched` |
+| One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
+| Merge a stacked PR (`Backend::merge_pr_stack`) | `PUT /repos/{}/pulls/{}/merge-async` with `merge_method`, then `GET .../merge-async/{uuid}` every 2 s while `pending` | `gh pr merge` calls the GraphQL `mergePullRequest` mutation, which refuses stacked PRs. Merges the PR with every open PR below it, all or nothing (a merge-queue base enqueues them). Single merges of a stacked PR open `ConfirmAction::MergeStack`. Bulk merges look the selection up with `list_pr_stack_summaries` and route stacked PRs here |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
 | List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
@@ -371,6 +386,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List environments | `GET /repos/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /repos/{}/deployments?per_page=<N>` | No native command |
 | List members | `GET /repos/{}/assignees?per_page=100` | No native command |
+| Submit review | `POST /repos/{}/pulls/{}/reviews` (`body`, `event`, `comments[]` with `side`/`start_line`) | `gh pr review` has no inline comments; one call carries the whole review |
+| Reply to review thread | `POST /repos/{}/pulls/{}/comments` with `in_reply_to` | `gh pr comment` cannot reply to a review comment |
 
 ### Direct CLI Commands (`src/main.rs` — `run_cli()`)
 
@@ -395,8 +412,6 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Delete branch | `glab api DELETE ...repository/branches/{}` / `gh api DELETE ...git/refs/heads/{}` |
 | Run pipeline | `gh workflow run` / `glab ci run --mr` |
 | Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr\|ci view -w` |
-| Reply to comment | `gh api POST repos/{}/pulls/{}/comments` / `glab api POST projects/{}/merge_requests/{}/discussions/{}/notes` |
-| Submit review | `gh api POST repos/{}/pulls/{}/reviews` / `glab api POST projects/{}/merge_requests/{}/...` |
 
 > `glab ci run` notes: variables/inputs are passed via the plural `--variables k:v` / `--input k:v` flags (not `--variable`), and `--mr` is only passed when no variables or `workflow_dispatch` inputs are set.
 
@@ -6343,12 +6358,12 @@ Run `scripts/release.sh [patch|minor|major|nightly]` (default `patch`) and the s
 > **Nightly Pre-Releases:** `scripts/release.sh nightly` (or tags matching `vX.Y.Z-nightly[-suffix]`) runs a stripped-down flow that skips `Cargo.toml` bumping, docs regeneration, prepare PRs, demo GIFs, review gates, Homebrew/Scoop manifest syncs, and crates.io publishing, while still building matrix binaries and updating GitHub release notes.
 
 1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing. Long-running steps run under the script's `spinner`/`progress_bar` helpers (animated spinner with captured logs, auto-disabled when not a TTY), and phases are numbered `1/7` … for progress reporting.
-2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
+2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the AI tool (`agy` or `opencode`) and model unless configured via `AI_TOOL`, `AGY_MODEL`, or `OPENCODE_MODEL`, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via the selected AI tool, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
 3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
 4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 11-target binary matrix (8 Linux + 3 non-Linux) and uploads them to the GitHub release.
 5. **Wait for build** — polls the release until every required asset exists (timeout: `RELEASE_WAIT_MIN`, default 45 min). The required-asset list in `REQUIRED_ASSETS_STATIC` covers the fixed name patterns; the dynamic Ubuntu-latest build is required to produce at least two `ubuntu-<VERSION_ID>` assets whose VERSION_ID differs from the 22.04 / 24.04 baselines. The script protects against unbound variables and off-by-one asset-count math under `set -u`, and it can resume from a chosen phase (`--phase`) if an earlier step failed or was interrupted.
-6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
-7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
+6. **Post-release** — generates `RELEASE_NOTES.md` via the selected AI tool (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), and updates the release body on GitHub.
+7. **Publish** — pushes the Homebrew formula (`rcieri/homebrew-glab-tui`), Scoop manifest (`rcieri/scoop-glab-tui`), Docker image to GHCR, and publishes the crate to crates.io (skipped for nightly).
 
 ### Release Assets
 
@@ -6378,4 +6393,4 @@ Three places pick the right asset for the running host:
 
 Scoop's manifest (`rcieri/scoop-glab-tui`) is unaffected — Windows keeps the fixed `glab-tui-windows-amd64.zip` name.
 
-During `Prepare`, `release.sh` interactively walks through the opencode models available to the local `opencode` install (`provider -> model -> variant`) to pick the model used for the regenerated docs and release notes; set `OPENCODE_MODEL` to skip the prompt.
+During `Prepare` and `Post-release`, `release.sh` prompts to select the AI tool (`agy` or `opencode`) and model for regenerated docs and release notes; set `AI_TOOL` and `AGY_MODEL` / `OPENCODE_MODEL` to skip prompts.

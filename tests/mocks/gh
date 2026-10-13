@@ -4,14 +4,102 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "gh $*" >> "$LOG_FILE"
 
+# Generic failure injection: fail any call whose arguments contain the value.
+if [[ -n "$TEST_GH_FAIL_MATCH" && "$*" == *"$TEST_GH_FAIL_MATCH"* ]]; then
+    echo "mock: HTTP 404: Not Found" >&2
+    exit 1
+fi
+
+# Request bodies piped with `--input -`, one per line, for payload assertions.
+if [[ " $* " == *" --input - "* ]]; then
+    { cat; echo; } >> "$LOG_FILE.stdin"
+fi
+
 # Match arguments to determine response
 if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     echo "mock github job trace output"
     exit 0
 fi
 
+# Stacked PRs merge through the asynchronous merge endpoint: the request is
+# accepted as pending, and polling its uuid reports the merge done.
+if [[ "$*" == *"/merge-async"* ]]; then
+    if [[ " $* " == *" -X PUT "* ]]; then
+        echo '{"status":"pending","details":{"message":"Merge request accepted","uuid":"mock-merge-uuid","merge_method":"squash","merge_action":"default","expected_head_sha":"0000000000000000000000000000000000000000"}}'
+    else
+        echo '{"status":"merged","details":{"message":"Pull request merged","sha":"1111111111111111111111111111111111111111"}}'
+    fi
+    exit 0
+fi
+
+# Stacked PRs: #10 and #11 form stack #7 (positions 1 and 2), #12 is in no
+# stack. The per-PR query is matched first: it also asks for `stackEntry`.
+if [[ "$*" == "pr list"* ]]; then
+    cat "$FIXTURES_DIR/gh_prs.json"
+    exit 0
+fi
+
+if [[ "$*" == "api graphql"*"entries(first"* ]]; then
+    STACK_ENTRIES='"entries":{"nodes":[
+        {"position":1,"pullRequest":{"number":10,"title":"Stack bottom","state":"OPEN","isDraft":false}},
+        {"position":2,"pullRequest":{"number":11,"title":"Stack top","state":"OPEN","isDraft":false}}]}'
+    case "$*" in
+        *"pullRequest(number:10)"*)
+            echo "{\"data\":{\"repository\":{\"pullRequest\":{\"stackEntry\":{\"position\":1},\"stack\":{\"number\":7,\"size\":2,$STACK_ENTRIES}}}}}"
+            ;;
+        *"pullRequest(number:11)"*)
+            echo "{\"data\":{\"repository\":{\"pullRequest\":{\"stackEntry\":{\"position\":2},\"stack\":{\"number\":7,\"size\":2,$STACK_ENTRIES}}}}}"
+            ;;
+        *)
+            echo '{"data":{"repository":{"pullRequest":{"stackEntry":null,"stack":null}}}}'
+            ;;
+    esac
+    exit 0
+fi
+
+if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
+    echo '{"data":{"repository":{
+        "pr_10":{"number":10,"stack":{"number":7,"size":2},"stackEntry":{"position":1}},
+        "pr_11":{"number":11,"stack":{"number":7,"size":2},"stackEntry":{"position":2}},
+        "pr_12":{"number":12,"stack":null,"stackEntry":null}}}}'
+    exit 0
+fi
+
+# Pull requests. MOCK_GH_PR_DIFF_ERROR makes `pr diff` fail the way GitHub
+# does: `too_large` for a diff over 20,000 lines, `not_found` otherwise.
+# MOCK_GH_BASE_OID / MOCK_GH_HEAD_OID answer the commit-id lookup.
+if [[ "$1" == "pr" && "$2" == "diff" ]]; then
+    case "$MOCK_GH_PR_DIFF_ERROR" in
+        too_large)
+            echo "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000) (https://api.github.com/repos/test-owner/test-repo/pulls/$3)" >&2
+            echo "PullRequest.diff too_large" >&2
+            exit 1
+            ;;
+        not_found)
+            echo "GraphQL: Could not resolve to a PullRequest with the number of $3. (repository.pullRequest)" >&2
+            exit 1
+            ;;
+    esac
+    cat "$FIXTURES_DIR/mr_diff.txt"
+    exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"baseRefOid,headRefOid"* ]]; then
+    printf '{"baseRefOid":"%s","headRefOid":"%s"}\n' "$MOCK_GH_BASE_OID" "$MOCK_GH_HEAD_OID"
+    exit 0
+fi
+
 if [[ "$*" == *"api"* ]]; then
-    if [[ "$*" == *"/issues"* ]]; then
+    if [[ "$*" == *"reviewThreads"* ]]; then
+        cat "$FIXTURES_DIR/gh_review_threads.json"
+    elif [[ "$*" == *"/pulls/"*"/reviews"* ]]; then
+        echo '{"id": 1}'
+    elif [[ "$*" == *"/pulls/"*"/comments"* ]]; then
+        if [[ " $* " == *" -X POST "* ]]; then
+            echo '{"id": 1}'
+        else
+            cat "$FIXTURES_DIR/gh_pr_comments.json"
+        fi
+    elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"

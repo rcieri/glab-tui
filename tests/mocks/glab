@@ -10,9 +10,24 @@ if [[ -n "$TEST_GLAB_FAIL_BRIDGES" && "$*" == *"/bridges"* ]]; then
     exit 1
 fi
 
+# Generic failure injection: fail any call whose arguments contain the value.
+if [[ -n "$TEST_GLAB_FAIL_MATCH" && "$*" == *"$TEST_GLAB_FAIL_MATCH"* ]]; then
+    echo "mock: 404 Not Found" >&2
+    exit 1
+fi
+
+# Request bodies piped with `--input -`, one per line, for payload assertions.
+if [[ " $* " == *" --input - "* ]]; then
+    { cat; echo; } >> "$LOG_FILE.stdin"
+fi
+
 # Match arguments to determine response
 if [[ "$*" == *"api"* ]]; then
-    if [[ "$*" == *"/issues"* ]]; then
+    if [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
+        echo ""
+    elif [[ "$*" == *"/draft_notes"* ]]; then
+        echo '{"id": 1}'
+    elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
@@ -62,6 +77,8 @@ elif [[ "$*" == *"issue list"* ]]; then
     fi
 elif [[ "$*" == *"mr diff"* ]]; then
     cat "$FIXTURES_DIR/mr_diff.txt"
+elif [[ "$*" == *"mr view"* ]]; then
+    cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then
     cat "$FIXTURES_DIR/mr_notes.json"
 else

@@ -10,6 +10,8 @@
 //! them is visible on screen. `deployments.json` holds one: the test only
 //! checks that its endpoint is called.
 
+use std::time::{Duration, Instant};
+
 use crate::TestSession;
 
 const ASCII_ICONS: &str = "icons = \"ascii\"\n";
@@ -51,11 +53,24 @@ fn list_pane(session: &TestSession) -> String {
         .join("\n")
 }
 
-fn assert_lists(session: &TestSession, rows: &[&str]) {
-    let pane = list_pane(session);
-    for row in rows {
-        assert!(pane.contains(row), "{row:?} should be listed:\n{pane}");
+/// Polls the list pane until `ready` holds: one row reaching the screen does
+/// not mean the rest of the frame has, since a redraw can span several reads.
+fn wait_for_list_pane(session: &mut TestSession, what: &str, ready: impl Fn(&str) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let pane = list_pane(session);
+        if ready(&pane) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "{what}:\n{pane}");
+        session.settle(100);
     }
+}
+
+fn assert_lists(session: &mut TestSession, rows: &[&str]) {
+    wait_for_list_pane(session, &format!("{rows:?} should be listed"), |pane| {
+        rows.iter().all(|row| pane.contains(row))
+    });
 }
 
 fn assert_hides(session: &TestSession, row: &str) {
@@ -78,7 +93,7 @@ fn confirm_dialog(session: &mut TestSession, title: &str) {
 fn runners_tab_lists_filters_and_pauses_the_matching_runner() {
     let mut session = session_on_tab(4, "Shared Runner 1");
     assert_lists(
-        &session,
+        &mut session,
         &["#9876", "Shared Runner 1", "#9877", "Docker Runner 2"],
     );
 
@@ -98,7 +113,7 @@ fn runners_tab_lists_filters_and_pauses_the_matching_runner() {
 fn releases_tab_lists_filters_and_deletes_the_matching_release() {
     let mut session = session_on_tab(5, "Second release");
     assert_lists(
-        &session,
+        &mut session,
         &["v1.1.0", "Second release", "v1.0.0", "First release"],
     );
 
@@ -118,7 +133,7 @@ fn releases_tab_lists_filters_and_deletes_the_matching_release() {
 #[test]
 fn todos_tab_lists_filters_and_marks_the_matching_todo_done() {
     let mut session = session_on_tab(6, "Todo Item 1");
-    assert_lists(&session, &["Todo Item 1", "Review pagination"]);
+    assert_lists(&mut session, &["Todo Item 1", "Review pagination"]);
 
     search(&mut session, "Review");
     assert_hides(&session, "Todo Item 1");
@@ -135,7 +150,7 @@ fn todos_tab_lists_filters_and_marks_the_matching_todo_done() {
 #[test]
 fn milestones_tab_lists_filters_and_closes_the_matching_milestone() {
     let mut session = session_on_tab(7, "v1.0 Milestone");
-    assert_lists(&session, &["v1.0 Milestone", "v2.0 Roadmap"]);
+    assert_lists(&mut session, &["v1.0 Milestone", "v2.0 Roadmap"]);
 
     search(&mut session, "Roadmap");
     assert_hides(&session, "v1.0 Milestone");
@@ -150,11 +165,13 @@ fn milestones_tab_lists_filters_and_closes_the_matching_milestone() {
 #[test]
 fn branches_tab_lists_filters_and_deletes_the_matching_branch() {
     let mut session = session_on_tab(8, "feature/pagination");
-    let pane = list_pane(&session);
-    assert!(
-        pane.lines()
-            .any(|row| row.contains("main") && row.contains("YES")),
-        "the default branch should be listed as default and protected:\n{pane}"
+    wait_for_list_pane(
+        &mut session,
+        "the default branch should be listed as default and protected",
+        |pane| {
+            pane.lines()
+                .any(|row| row.contains("main") && row.contains("YES"))
+        },
     );
 
     search(&mut session, "feature");
@@ -177,7 +194,10 @@ fn branches_tab_lists_filters_and_deletes_the_matching_branch() {
 #[test]
 fn environments_tab_lists_filters_and_fetches_the_matching_deployments() {
     let mut session = session_on_tab(9, "production");
-    assert_lists(&session, &["production", "available", "staging", "stopped"]);
+    assert_lists(
+        &mut session,
+        &["production", "available", "staging", "stopped"],
+    );
 
     search(&mut session, "prod");
     assert_hides(&session, "staging");

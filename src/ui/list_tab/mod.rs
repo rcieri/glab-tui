@@ -159,7 +159,8 @@ pub(crate) struct ListTab<C: ColumnDef> {
     /// The cursor's position in `view`, kept so a cursor whose row leaves
     /// the view lands on the row now at the same position.
     cursor_pos: Option<usize>,
-    /// `None` until built, and again whenever `items` changes.
+    /// `None` until built, and again whenever `items` changes or the cursor
+    /// is reset.
     spec: Option<ViewSpec>,
     table_state: TableState,
 }
@@ -246,6 +247,7 @@ impl<C: ColumnDef> ListTab<C> {
     pub(crate) fn reset_cursor(&mut self) {
         self.cursor = None;
         self.cursor_pos = None;
+        self.spec = None;
         self.table_state = TableState::default();
     }
 
@@ -572,6 +574,19 @@ mod tests {
         assert_eq!(cursor_tag(&list), None);
 
         list.refresh(inputs("", None, None));
+        assert_eq!(cursor_tag(&list), Some("v2.0.0"));
+    }
+
+    #[test]
+    fn reset_cursor_selects_the_first_row_on_a_refresh_with_unchanged_inputs() {
+        let mut list = releases(release_fixture());
+        list.refresh(inputs("", None, None));
+        list.last();
+        assert_eq!(cursor_tag(&list), Some("v3.0.0"));
+
+        list.reset_cursor();
+        list.refresh(inputs("", None, None));
+
         assert_eq!(cursor_tag(&list), Some("v2.0.0"));
     }
 

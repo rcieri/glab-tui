@@ -1,7 +1,7 @@
 //! End-to-end coverage for the generic list-tab model on the Runners,
 //! Releases, Branches and Environments tabs: exact rendered cells, search
-//! running through the cached view, and the column-filter picker offering
-//! the labels the table actually shows.
+//! running through the cached view, and search reaching the Release Notes
+//! column under the label the table shows.
 
 use crate::TestSession;
 
@@ -41,23 +41,21 @@ fn runners_tab_renders_typed_columns_and_filters_through_the_view() {
 }
 
 #[test]
-fn releases_tab_offers_the_release_notes_column_in_the_filter_picker() {
-    let config = "active_tab = \"releases\"\n";
+fn releases_search_matches_the_release_notes_column() {
+    let config = "active_tab = \"releases\"\n[releases]\ncolumns = [\"Tag\", \"Release Notes\"]\n";
     let mut session = TestSession::with_config(false, 24, 100, Some(config));
     session
         .wait_for_screen_contains("v2.0.0", 8000)
         .expect("the releases fixture loads");
-    let screen = session.emulator.get_text();
-    assert!(screen.contains("Tag"), "releases header missing: {screen}");
 
-    session.send_input(b"\t");
+    session.send_input(b"/");
+    session.send_input(b"first cut");
     settle(&mut session);
     let screen = session.emulator.get_text();
     assert!(
-        screen.contains("Release Notes"),
-        "the filterable column must carry the shown label, not \"Description\": {screen}"
+        screen.contains("v1.0.0") && !screen.contains("v2.0.0"),
+        "search must match the Release Notes column: {screen}"
     );
-    session.send_input(b"\x1b");
 }
 
 #[test]

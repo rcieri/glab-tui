@@ -119,15 +119,18 @@ pub fn syntax_for_token(token: &str) -> Option<Syntax> {
 /// afterwards.
 #[derive(Default)]
 pub struct ScopeKinds {
-    kinds: HashMap<Scope, TokenKind>,
+    kinds: HashMap<Scope, Option<TokenKind>>,
 }
 
 impl ScopeKinds {
-    fn kind_of(&mut self, scope: Scope) -> TokenKind {
-        *self
-            .kinds
-            .entry(scope)
-            .or_insert_with(|| TokenKind::from_scope_name(&scope.build_string()))
+    /// `None` for a `meta.*` scope: it marks the extent of a construct (a
+    /// method body, a call's arguments) and says nothing about what the text
+    /// in it is.
+    fn kind_of(&mut self, scope: Scope) -> Option<TokenKind> {
+        *self.kinds.entry(scope).or_insert_with(|| {
+            let name = scope.build_string();
+            (!name.starts_with("meta.")).then(|| TokenKind::from_scope_name(&name))
+        })
     }
 }
 
@@ -177,8 +180,10 @@ impl LineHighlighter {
     fn top_kind(&self, scope_kinds: &mut ScopeKinds) -> TokenKind {
         self.scope_stack
             .as_slice()
-            .last()
-            .map_or(TokenKind::Plain, |&scope| scope_kinds.kind_of(scope))
+            .iter()
+            .rev()
+            .find_map(|&scope| scope_kinds.kind_of(scope))
+            .unwrap_or(TokenKind::Plain)
     }
 }
 
@@ -328,6 +333,21 @@ mod tests {
                 .iter()
                 .any(|t| t.kind == TokenKind::Keyword && &"*/ let x = 1;"[t.range.clone()] == "let"),
             "code after the comment closes is highlighted as code: {closing:?}"
+        );
+    }
+
+    #[test]
+    fn an_identifier_inside_a_java_method_body_stays_plain() {
+        let code = "class A {\n  void m() {\n    foo = bar;\n  }\n}";
+        let lines = highlight_code(syntax("Java"), code);
+        let body = lines[2].as_ref().expect("method body line highlighted");
+        assert_eq!(
+            kinds_of(body, "    foo = bar;"),
+            [
+                (TokenKind::Plain, "    foo ".to_string()),
+                (TokenKind::Keyword, "=".to_string()),
+                (TokenKind::Plain, " bar;".to_string()),
+            ]
         );
     }
 

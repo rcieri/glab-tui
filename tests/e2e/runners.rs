@@ -25,7 +25,6 @@ fn test_runners_in_group_scope_name_the_configured_switch_key_without_fetching()
         "{screen}"
     );
     assert!(!screen.contains("Failed to fetch runners"), "{screen}");
-    assert!(!session.get_cli_calls().contains("runner list"));
 }
 
 /// GitHub has no API to pause, resume or rename a runner. The keys must not

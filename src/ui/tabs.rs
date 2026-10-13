@@ -3449,7 +3449,11 @@ pub(crate) fn render_tab_terminal(
         num_cmds
     };
 
-    let max_scroll = total_lines.saturating_sub(log_height);
+    let max_scroll = if app.terminal_wrap {
+        total_lines.saturating_sub(log_height)
+    } else {
+        num_cmds.saturating_sub(1)
+    };
     let scroll = app.terminal_scroll.min(max_scroll);
 
     let filter_count = if app.search_query.trim().is_empty() {
@@ -3878,5 +3882,39 @@ mod tests {
             app.detail_scroll, 192,
             "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
         );
+    }
+
+    #[test]
+    fn unwrapped_terminal_scrolls_until_the_oldest_entry_is_the_copied_row() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        for command in ["Fetch issues: glab issue list", "Fetch MRs: glab mr list"] {
+            app.terminal_commands
+                .push(crate::command_log::TerminalCommand {
+                    timestamp: String::new(),
+                    command: command.to_string(),
+                    status: "Success".to_string(),
+                });
+        }
+        app.terminal_scroll = usize::MAX;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_terminal(
+                    f,
+                    &mut app,
+                    area,
+                    area,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        assert_eq!(app.terminal_scroll, 1);
+        assert_eq!(app.terminal_cursor(app.terminal_commands.len()), Some(0));
     }
 }

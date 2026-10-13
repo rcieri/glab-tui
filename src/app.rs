@@ -3008,6 +3008,16 @@ pub enum OverlayKind {
     ReviewThreads,
 }
 
+/// A PR action that needs the PR's stack, so it waits for an on-demand stack
+/// fetch when the session does not know the stack yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackAction {
+    /// Open the selector over the stack (`view_stack`).
+    Browse,
+    /// Open the merge dialog, which merges a stacked PR with its downstack.
+    Merge,
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
@@ -3022,6 +3032,7 @@ pub enum ConfirmAction {
     ReopenMr(u64),                    // mr iid
     ReopenMilestone(u64),             // milestone iid
     MergeMr(u64),                     // mr iid
+    MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
@@ -3312,6 +3323,7 @@ impl SubmitDialog {
     ///
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
+
     pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
@@ -3426,6 +3438,42 @@ impl SubmitDialog {
                     options,
                     false,
                 )
+            }
+            ConfirmAction::MergeStack(iid) => {
+                let stack = match app.pr_stack(&project_path, *iid) {
+                    Some(crate::domain::mr::StackLookup::Full(stack)) => Some(stack),
+                    _ => None,
+                };
+                let title = match stack {
+                    Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
+                    None => format!("Merge Stack through #{iid}"),
+                };
+                let body = stack
+                    .map(|stack| {
+                        let merged: Vec<String> = stack
+                            .downstack_open_entries()
+                            .map(|e| {
+                                format!(
+                                    "#{}: {}{}",
+                                    e.number,
+                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    if e.is_draft { " [draft]" } else { "" }
+                                )
+                            })
+                            .collect();
+                        format!(
+                            "Merges {} PRs together, all or nothing:\n{}",
+                            merged.len(),
+                            merged.join("\n")
+                        )
+                    })
+                    .unwrap_or_default();
+                let options = vec![
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
+                ];
+                (title, body, "Merge".to_string(), options, false)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
@@ -3654,9 +3702,9 @@ pub struct App {
     >,
     /// PRs (project path, number) whose on-demand stack fetch is in flight.
     pub fetching_pr_stacks: std::collections::HashSet<(String, u64)>,
-    /// PR whose stack selector opens once its stack fetch lands: `view_stack`
-    /// was pressed before the session knew the stack.
-    pub pending_stack_selector: Option<(String, u64)>,
+    /// PR whose stack fetch a key press is waiting on, and what to do once it
+    /// lands: the key was pressed before the session knew the stack.
+    pub pending_stack_action: Option<((String, u64), StackAction)>,
     /// PR open in the inspector and when it got there. Its stack is fetched
     /// only once it has stayed selected for the debounce window.
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
@@ -3828,7 +3876,7 @@ impl Default for App {
             pending_mr_related_issues_since: None,
             pr_stacks: std::collections::HashMap::new(),
             fetching_pr_stacks: std::collections::HashSet::new(),
-            pending_stack_selector: None,
+            pending_stack_action: None,
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
@@ -4068,6 +4116,9 @@ impl App {
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.pending_issue_select = None;
+        self.pending_mr_select = None;
+        self.pending_pipeline_select = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;

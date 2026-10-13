@@ -4763,7 +4763,8 @@ impl App {
         }
     }
 
-    /// The `ListTab` behind `tab`, with its view brought up to date.
+    /// The `ListTab` behind `tab`. Only the active tab's view is brought up
+    /// to date, so pass `self.active_tab`.
     pub(crate) fn list_navigation_mut(&mut self, tab: Tab) -> Option<&mut dyn ListNavigation> {
         self.sync_list_views();
         match tab {
@@ -4785,9 +4786,13 @@ impl App {
         }
     }
 
-    /// Rebuild the view of every `ListTab` whose rows or view inputs changed.
+    /// Rebuild the active tab's `ListTab` view if its rows or view inputs
+    /// changed. Hidden tabs are left alone: the search query is shared by
+    /// every tab, and rebuilding a hidden view with it would move that tab's
+    /// cursor off a row the search hides.
     pub fn sync_list_views(&mut self) {
         let Self {
+            active_tab,
             ref mut runners,
             ref mut releases,
             ref mut branches,
@@ -4808,10 +4813,13 @@ impl App {
                 .and_then(Option::as_deref)
                 .map(|col| (col, group_ascending.get(&tab).copied().unwrap_or(true))),
         };
-        runners.refresh(inputs(Tab::Runners));
-        releases.refresh(inputs(Tab::Releases));
-        branches.refresh(inputs(Tab::Branches));
-        environments.refresh(inputs(Tab::Environments));
+        match active_tab {
+            Tab::Runners => runners.refresh(inputs(Tab::Runners)),
+            Tab::Releases => releases.refresh(inputs(Tab::Releases)),
+            Tab::Branches => branches.refresh(inputs(Tab::Branches)),
+            Tab::Environments => environments.refresh(inputs(Tab::Environments)),
+            _ => {}
+        }
     }
 
     /// Mouse wheel over the active table: move the selection one row.
@@ -7441,6 +7449,7 @@ mod tests {
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
         let mut app = App::default();
         app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        app.active_tab = Tab::Branches;
 
         app.branches
             .set_items(vec![crate::domain::branches::Branch {
@@ -7459,6 +7468,36 @@ mod tests {
         );
         app.copy_selected_branch_name().unwrap();
         assert_eq!(copied.borrow().as_deref(), Some("feature/new-api"));
+    }
+
+    #[test]
+    fn search_typed_on_another_tab_keeps_the_hidden_branch_selected() {
+        let branch = |name: &str| crate::domain::branches::Branch {
+            name: name.to_string(),
+            default: false,
+            protected: false,
+            can_push: true,
+            commit_sha: "abc1234".to_string(),
+            web_url: String::new(),
+        };
+        let mut app = App::default();
+        app.active_tab = Tab::Branches;
+        app.branches
+            .set_items(vec![branch("main"), branch("release/2.0"), branch("fix/b")]);
+        if let Some(list) = app.list_navigation_mut(Tab::Branches) {
+            list.next();
+        }
+        assert_eq!(app.selected_branch_name().as_deref(), Some("release/2.0"));
+
+        app.active_tab = Tab::Issues;
+        app.search_query = "fix".to_string();
+        app.sync_list_views();
+        app.search_query.clear();
+        app.sync_list_views();
+        app.active_tab = Tab::Branches;
+        app.sync_list_views();
+
+        assert_eq!(app.selected_branch_name().as_deref(), Some("release/2.0"));
     }
 
     #[test]

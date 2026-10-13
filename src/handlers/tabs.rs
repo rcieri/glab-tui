@@ -1572,6 +1572,7 @@ pub async fn handle_active_tab_key(
                                         }
                                     }
                                     app.selected_jobs.clear();
+                                    app.status_message = None;
                                     tokio::spawn(async move {
                                         for (i, j_id) in job_ids.iter().enumerate() {
                                             if i > 0 {
@@ -1685,6 +1686,7 @@ pub async fn handle_active_tab_key(
                                         }
                                     }
                                     app.selected_jobs.clear();
+                                    app.status_message = None;
                                     tokio::spawn(async move {
                                         for j_id in &job_ids {
                                             let _ = client_clone
@@ -2607,7 +2609,7 @@ pub async fn handle_active_tab_key(
             }
             KeyCode::Esc | KeyCode::Backspace => {
                 if app.clear_selections() {
-                    // Selections cleared; fall through to other Esc semantics below.
+                    app.status_message = None;
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {

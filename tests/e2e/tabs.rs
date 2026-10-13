@@ -287,9 +287,10 @@ fn test_jobs_tab_loads_the_newer_merge_request_pipeline() {
 }
 
 /// Selecting a stage confirms on screen how many jobs it took. The message
-/// used to be written to a field nothing rendered.
+/// used to be written to a field nothing rendered. Clearing the selection
+/// clears it too, so the header never claims a selection the table lacks.
 #[test]
-fn test_select_stage_shows_confirmation() {
+fn test_select_stage_shows_confirmation_until_the_selection_is_cleared() {
     let mut session = TestSession::new(false, 24, 100);
     open_jobs_tab(&mut session);
     session
@@ -300,6 +301,17 @@ fn test_select_stage_shows_confirmation() {
     session
         .wait_for_screen_contains("Selected all jobs in stage 'test'", 3000)
         .expect("select-stage feedback is visible");
+
+    session.send_input(b"\x1b");
+    session.settle(1000);
+    assert!(
+        !session
+            .emulator
+            .get_text()
+            .contains("Selected all jobs in stage"),
+        "Esc clears the selection and its message:\n{}",
+        session.emulator.get_text()
+    );
 }
 
 /// GitHub has no way to start a manual job, so the help does not offer the

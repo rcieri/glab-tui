@@ -131,7 +131,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.
 * Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
 * Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
-* Non-error feedback (`App::status_message`) renders as muted text in the top header bar, passed through `sanitize_untrusted()` because it can carry job, stage or branch names. It stays until a writer clears it (most fetch-success events do).
+* Non-error feedback (`App::status_message`) renders as muted text in the top header bar, passed through `sanitize_untrusted()` because it can carry job, stage or branch names. It stays until a writer clears it: most fetch-success events do, and so do Esc and the bulk job retry/cancel when they clear a selection, so a "Selected all …" message does not outlive its selection.
 
 ### Jobs Tab (current branch)
 * `fetch::fetch_current_branch_jobs` reads the branch with `git_helpers::get_current_branch` on `tokio::task::spawn_blocking` (it runs a synchronous `git`), then asks `Backend::find_branch_pipeline_id` for the newest pipeline of that branch (on GitLab also its open MR's `refs/merge-requests/<iid>/head` pipeline). Never list every MR or pipeline to find it.

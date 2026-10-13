@@ -101,10 +101,15 @@ pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender
     app.pending_mr_related_issues_since = Some(std::time::Instant::now());
 }
 
-/// `view_stack`: open the selector over the PR's stack. When the session does
-/// not know the stack yet it is fetched first and the selector opens once it
-/// lands (see `Event::PrStackFetched`).
-fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &UnboundedSender<Event>) {
+/// Run `action` on the PR once the session knows its stack. When it does not
+/// yet, the stack is fetched first and the action runs once it lands (see
+/// `Event::PrStackFetched`).
+fn with_pr_stack(
+    app: &mut App,
+    mr: &crate::domain::mr::MergeRequest,
+    action: crate::app::StackAction,
+    tx: &UnboundedSender<Event>,
+) {
     use crate::domain::mr::StackLookup;
     let pr = app.mr_ref(mr);
     let is_known = matches!(
@@ -118,16 +123,41 @@ fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &Unbounde
         if let Some(client) = app.gitlab_client.clone() {
             crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
             app.status_message = Some(format!("Loading the stack of PR #{}…", pr.1));
-            app.pending_stack_selector = Some(pr);
+            app.pending_stack_action = Some((pr, action));
             return;
         }
     }
-    open_stack_selector(app, &pr.0, pr.1);
+    run_stack_action(app, &pr.0, pr.1, action);
+}
+
+/// Run a PR action whose stack the session already knows.
+pub(crate) fn run_stack_action(
+    app: &mut App,
+    project: &str,
+    pr_number: u64,
+    action: crate::app::StackAction,
+) {
+    match action {
+        crate::app::StackAction::Browse => open_stack_selector(app, project, pr_number),
+        crate::app::StackAction::Merge => open_merge_dialog(app, project, pr_number),
+    }
+}
+
+/// A stacked PR merges with every open PR below it through GitHub's stack
+/// merge; any other MR/PR gets the plain merge dialog.
+fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
+    let action = match app.pr_stack(project, pr_number) {
+        Some(crate::domain::mr::StackLookup::Full(_)) => {
+            crate::app::ConfirmAction::MergeStack(pr_number)
+        }
+        _ => crate::app::ConfirmAction::MergeMr(pr_number),
+    };
+    app.submit_dialog = Some(crate::app::SubmitDialog::build(action, app));
 }
 
 /// Open the selector over a PR's stack the session already knows, so the
 /// user can jump to another PR in it, or say why there is nothing to open.
-pub(crate) fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
+fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
     use crate::domain::mr::StackLookup;
     let Some(StackLookup::Full(stack)) = app.pr_stack(project, pr_number) else {
         app.show_error("This PR is not part of a stack.".to_string());
@@ -911,10 +941,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                crate::app::ConfirmAction::MergeMr(mr_iid),
-                                app,
-                            ));
+                            with_pr_stack(app, &mr, crate::app::StackAction::Merge, &tx);
                         }
                         _ if (key_event.code == KeyCode::Char('D')
                             || keybinding_matches(
@@ -958,7 +985,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            view_stack(app, &mr, &tx);
+                            with_pr_stack(app, &mr, crate::app::StackAction::Browse, &tx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,
@@ -1544,6 +1571,7 @@ pub async fn handle_active_tab_key(
                                         }
                                     }
                                     app.selected_jobs.clear();
+                                    app.status_message = None;
                                     tokio::spawn(async move {
                                         for (i, j_id) in job_ids.iter().enumerate() {
                                             if i > 0 {
@@ -1657,6 +1685,7 @@ pub async fn handle_active_tab_key(
                                         }
                                     }
                                     app.selected_jobs.clear();
+                                    app.status_message = None;
                                     tokio::spawn(async move {
                                         for j_id in &job_ids {
                                             let _ = client_clone
@@ -1878,11 +1907,20 @@ pub async fn handle_active_tab_key(
                 if let Some(item) = app.filtered_runners().get(selected_idx) {
                     let runner_id = item.id;
                     match key_event.code {
-                        _ if can_manage_runners
-                            && keybinding_matches(
+                        // GitHub cannot pause, resume or rename a runner. The keys are still
+                        // taken there, so a rebinding never reaches a list-view or custom binding.
+                        _ if !can_manage_runners
+                            && [
                                 &app.config.keybindings.runners.pause,
-                                key_event,
-                            ) =>
+                                &app.config.keybindings.runners.resume,
+                                &app.config.keybindings.runners.edit_description,
+                            ]
+                            .into_iter()
+                            .any(|binding| keybinding_matches(binding, key_event)) => {}
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.pause,
+                            key_event,
+                        ) =>
                         {
                             let prev = item.status.clone();
                             let prev_active = item.active;
@@ -1911,11 +1949,10 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if can_manage_runners
-                            && keybinding_matches(
-                                &app.config.keybindings.runners.resume,
-                                key_event,
-                            ) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.resume,
+                            key_event,
+                        ) =>
                         {
                             let prev = item.status.clone();
                             let prev_active = item.active;
@@ -1944,11 +1981,10 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if can_manage_runners
-                            && keybinding_matches(
-                                &app.config.keybindings.runners.edit_description,
-                                key_event,
-                            ) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.edit_description,
+                            key_event,
+                        ) =>
                         {
                             let current_desc = item.description.clone().unwrap_or_default();
                             app.text_input = Some(crate::app::TextInput {
@@ -2029,12 +2065,12 @@ pub async fn handle_active_tab_key(
             }
             _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
                 if let Some(selected_idx) = app.releases.state.selected() {
-                    let release_tag = {
-                        let filtered = app.filtered_releases();
-                        filtered.get(selected_idx).map(|r| r.tag_name.clone())
-                    };
-                    if let Some(tag_name) = release_tag {
-                        crate::entity_editor::open_release_edit_menu(app, &tag_name);
+                    let release = app
+                        .filtered_releases()
+                        .get(selected_idx)
+                        .map(|r| (*r).clone());
+                    if let Some(release) = release {
+                        crate::entity_editor::open_release_edit_menu(app, &release);
                     }
                 }
             }
@@ -2043,7 +2079,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
+                            crate::app::ConfirmAction::DeleteRelease(
+                                release.project_or(&app.scope).to_string(),
+                                release.tag_name.clone(),
+                            ),
                             app,
                         ));
                     }
@@ -2061,7 +2100,7 @@ pub async fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
-                        let project_path = app.project_path_for_release(&release.tag_name);
+                        let project_path = release.project_or(&app.scope).to_string();
                         let tag_name = release.tag_name.clone();
                         let tx2 = tx.clone();
 
@@ -2520,7 +2559,7 @@ pub async fn handle_active_tab_key(
             }
             KeyCode::Esc | KeyCode::Backspace => {
                 if app.clear_selections() {
-                    // Selections cleared; fall through to other Esc semantics below.
+                    app.status_message = None;
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {
@@ -2779,14 +2818,12 @@ pub async fn handle_active_tab_key(
                             }
                             crate::app::Tab::Releases => {
                                 if let Some(selected_idx) = app.releases.state.selected() {
-                                    let release_tag = app
+                                    let release = app
                                         .filtered_releases()
                                         .get(selected_idx)
-                                        .map(|r| r.tag_name.clone());
-                                    if let Some(tag_name) = release_tag {
-                                        crate::entity_editor::open_release_edit_menu(
-                                            app, &tag_name,
-                                        );
+                                        .map(|r| (*r).clone());
+                                    if let Some(release) = release {
+                                        crate::entity_editor::open_release_edit_menu(app, &release);
                                     }
                                 }
                             }

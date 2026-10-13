@@ -46,6 +46,8 @@ pub enum Event {
         milestones: Vec<String>,
         branches: Vec<String>,
     },
+    /// A tab's list refresh failed. Only list refreshes send it: over cached
+    /// rows the handler shows the offline badge and drops the message.
     FetchFailed(crate::app::Tab, String),
     /// The view is built off the event loop: parsing and highlighting a large
     /// diff takes seconds.
@@ -58,6 +60,8 @@ pub enum Event {
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),
     CommandCompleted(crate::app::Tab, Result<(), String>),
+    /// Non-error feedback from a background task, shown in the header bar.
+    Notice(String),
     /// A background custom command finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
     TerminalCommandLogged {
@@ -267,13 +271,15 @@ mod tests {
 
     #[test]
     fn result_sent_before_a_scope_switch_is_dropped() {
+        let mut app = crate::app::App::default();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let requested_in = ScopeGeneration::default();
-        ScopedSender::new(tx, requested_in)
+        app.scoped_sender(tx)
             .send(Event::IssuesFetched(Vec::new()))
             .expect("receiver is open");
 
-        assert!(received(&mut rx, requested_in.next()).is_none());
+        app.reset_on_scope_change();
+
+        assert!(received(&mut rx, app.scope_generation).is_none());
     }
 
     #[test]

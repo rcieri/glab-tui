@@ -763,12 +763,15 @@ fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &Eve
 /// Builds the client for `app.scope` off the event loop: backend detection
 /// shells out to `git remote` and `gh`/`glab auth status`, which can take
 /// seconds on a slow network. Until `Event::ClientReady` arrives the app has
-/// no client, so nothing runs against the previous scope's backend.
+/// no client, so nothing runs against the previous scope's backend. The
+/// result travels on the scoped sender, so a build that a later switch
+/// superseded is dropped by generation, even when both builds are for the
+/// same scope.
 fn spawn_client_for_scope(app: &mut App, events: &EventHandler) {
     app.gitlab_client = None;
     let config = app.config.clone();
     let scope = app.scope.clone();
-    let tx = events.sender();
+    let tx = app.scoped_sender(events.sender());
     tokio::spawn(async move {
         let result = domain::client::GitlabClient::new(&config)
             .await
@@ -783,23 +786,27 @@ fn apply_client_ready(
     app: &mut App,
     scope: scope::Scope,
     result: Result<domain::client::GitlabClient, String>,
-    events: &EventHandler,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     if app.scope != scope {
         return;
     }
+    // Without a client nothing could fetch the tabs the user left while it
+    // was being built, so their loading marks would never clear.
+    let active_tab = app.active_tab;
+    app.loading_tabs.retain(|tab| *tab == active_tab);
     let mut client = match result {
         Ok(client) => client,
         Err(message) => {
-            app.loading_tabs.remove(&app.active_tab);
+            app.loading_tabs.remove(&active_tab);
             app.show_error(message);
             return;
         }
     };
     client.page_size = app.config.page_size;
     client.api_per_page = app.config.api_per_page_clamped();
-    client.tx = Some(events.sender());
-    client.backend.set_tx(events.sender());
+    client.tx = Some(tx.clone());
+    client.backend.set_tx(tx.clone());
     app.gitlab_client = Some(client.clone());
     // Remember the group implied by a repository scope so the Switch view
     // accumulates every group worked in (see startup).
@@ -809,7 +816,7 @@ fn apply_client_ready(
         }
     }
 
-    let tx = app.scoped_sender(events.sender());
+    let tx = app.scoped_sender(tx);
     spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
     if app.config.prefetch_tabs {
         spawn_refresh_all_tabs(
@@ -973,16 +980,7 @@ async fn main() -> Result<()> {
     }
     app.cached_members = cache.members;
 
-    let has_any_cached = !app.issues.items.is_empty()
-        || !app.mrs.items.is_empty()
-        || !app.pipelines.items.is_empty()
-        || !app.runners.items.is_empty()
-        || !app.releases.items.is_empty()
-        || !app.todos.items.is_empty()
-        || !app.milestones.items.is_empty();
-    if has_any_cached {
-        app.status_message = Some(app::StatusMessage::offline("Loaded from offline cache"));
-    }
+    app.mark_cached_tabs_stale();
 
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
@@ -1242,11 +1240,11 @@ async fn main() -> Result<()> {
                                             Err(e) => {
                                                 // Don't silently substitute an empty list: that
                                                 // renders as 0% progress with no explanation.
-                                                let _ = tx.send(Event::FetchFailed(
+                                                let _ = tx.send(Event::CommandCompleted(
                                                     app::Tab::Milestones,
-                                                    format!(
+                                                    Err(format!(
                                                         "Failed to fetch milestone issues: {e}"
-                                                    ),
+                                                    )),
                                                 ));
                                             }
                                         }
@@ -1393,7 +1391,7 @@ async fn main() -> Result<()> {
                     handlers::tabs::apply_opened_pipeline(&mut app, pipeline_id, opening, result);
                 }
                 Event::ClientReady { scope, result } => {
-                    apply_client_ready(&mut app, scope, result, &events);
+                    apply_client_ready(&mut app, scope, result, events.sender());
                 }
                 Event::ChildLevelFetched(parent_id, level) => {
                     // Drop a reply that arrives after the user has already
@@ -1481,7 +1479,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
                     app.loaded_tabs.insert(app::Tab::Issues);
                     app.refreshed_tabs.insert(app::Tab::Issues);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Issues);
                     app.issues.items = issues;
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_issue_select.take() {
@@ -1497,7 +1495,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::MergeRequests, "Success");
                     app.loaded_tabs.insert(app::Tab::MergeRequests);
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::MergeRequests);
                     app.mrs.items = mrs;
                     app.apply_pr_stacks();
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
@@ -1559,25 +1557,31 @@ async fn main() -> Result<()> {
                 } => {
                     let pr = (project_path, pr_number);
                     app.fetching_pr_stacks.remove(&pr);
-                    let is_awaited = app.pending_stack_selector.as_ref() == Some(&pr);
-                    if is_awaited {
-                        app.pending_stack_selector = None;
+                    let awaited = app
+                        .pending_stack_action
+                        .take_if(|(pending, _)| *pending == pr)
+                        .map(|(_, action)| action);
+                    if awaited.is_some() {
                         app.status_message = None;
                     }
                     match result {
                         Ok(stack) => {
                             app.record_pr_stack(&pr.0, pr.1, stack);
                             app.update_filter_selection();
-                            if is_awaited
-                                && app.selector.is_none()
-                                && app.selected_mr_ref().as_ref() == Some(&pr)
-                            {
-                                crate::handlers::tabs::open_stack_selector(&mut app, &pr.0, pr.1);
+                            if let Some(action) = awaited {
+                                if app.selector.is_none()
+                                    && app.submit_dialog.is_none()
+                                    && app.selected_mr_ref().as_ref() == Some(&pr)
+                                {
+                                    crate::handlers::tabs::run_stack_action(
+                                        &mut app, &pr.0, pr.1, action,
+                                    );
+                                }
                             }
                         }
                         // The inspector simply keeps showing no stack; only an
-                        // explicit `view_stack` press is owed an answer.
-                        Err(e) if is_awaited => {
+                        // explicit key press is owed an answer.
+                        Err(e) if awaited.is_some() => {
                             app.show_error(format!(
                                 "Failed to fetch the stack of PR #{}: {e}",
                                 pr.1
@@ -1598,7 +1602,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");
                     app.loaded_tabs.insert(app::Tab::Pipelines);
                     app.refreshed_tabs.insert(app::Tab::Pipelines);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Pipelines);
                     if app.nav_depth() > 0 {
                         // Inside a descent the visible list belongs to a child
                         // level. A freshly fetched top-level list belongs to
@@ -1628,7 +1632,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
                     app.loaded_tabs.insert(app::Tab::Todos);
                     app.refreshed_tabs.insert(app::Tab::Todos);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Todos);
                     app.todos.items = notifs;
                     app.update_filter_selection();
                     app.project_cache.todos = app.todos.items.clone();
@@ -1638,7 +1642,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Runners, "Success");
                     app.loaded_tabs.insert(app::Tab::Runners);
                     app.refreshed_tabs.insert(app::Tab::Runners);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Runners);
                     app.runners.items = runners;
                     app.update_filter_selection();
                     app.project_cache.runners = app.runners.items.clone();
@@ -1648,7 +1652,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.loaded_tabs.insert(app::Tab::Releases);
                     app.refreshed_tabs.insert(app::Tab::Releases);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Releases);
                     app.releases.items = releases;
                     app.update_filter_selection();
                     app.project_cache.releases = app.releases.items.clone();
@@ -1658,7 +1662,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
                     app.loaded_tabs.insert(app::Tab::Milestones);
                     app.refreshed_tabs.insert(app::Tab::Milestones);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Milestones);
                     app.milestones.items = milestones;
                     app.update_filter_selection();
                     app.project_cache.milestones = app.milestones.items.clone();
@@ -1683,9 +1687,9 @@ async fn main() -> Result<()> {
                             app.milestone_issues_cache.insert(iid, cached.clone());
                             if app.selected_milestone_iid == Some(iid) {
                                 app.selected_milestone_issues = Some(cached.clone());
-                                app.status_message = Some(app::StatusMessage::offline(
+                                app.show_notice(
                                     "Offline fallback: loaded cached milestone issues.",
-                                ));
+                                );
                             }
                             fallback_success = true;
                         }
@@ -1777,7 +1781,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Branches, "Success");
                     app.loaded_tabs.insert(app::Tab::Branches);
                     app.refreshed_tabs.insert(app::Tab::Branches);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Branches);
                     app.branches.items = branches;
                     app.update_filter_selection();
                     app.project_cache.branches = app.branches.items.clone();
@@ -1787,7 +1791,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Environments, "Success");
                     app.loaded_tabs.insert(app::Tab::Environments);
                     app.refreshed_tabs.insert(app::Tab::Environments);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Environments);
                     app.environments.items = envs;
                     app.update_filter_selection();
                     app.project_cache.environments = app.environments.items.clone();
@@ -1854,9 +1858,7 @@ async fn main() -> Result<()> {
                             };
                             if let Some(cached) = fallback {
                                 if !cached.is_empty() {
-                                    app.status_message = Some(app::StatusMessage::offline(
-                                        "Offline fallback: cached selector items.",
-                                    ));
+                                    app.show_notice("Offline fallback: cached selector items.");
                                     if let Some(mut selector) = app.selector.take() {
                                         selector.all_items = cached;
                                         selector.is_loading = false;
@@ -2021,10 +2023,12 @@ async fn main() -> Result<()> {
                     environment,
                     deployments,
                 } => {
-                    let mut table = crate::utils::ui::StatefulTable::with_items(deployments);
-                    table.state.select(Some(0));
-                    app.environment_deployments =
-                        Some(app::EnvironmentDeployments { environment, table });
+                    if app.is_highlighted_environment(&environment) {
+                        let mut table = crate::utils::ui::StatefulTable::with_items(deployments);
+                        table.state.select(Some(0));
+                        app.environment_deployments =
+                            Some(app::EnvironmentDeployments { environment, table });
+                    }
                     app.status_message = None;
                     app.update_filter_selection();
                 }
@@ -2074,22 +2078,8 @@ async fn main() -> Result<()> {
                 }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {}", err_msg));
-                    let has_cached_items = match tab {
-                        app::Tab::Issues => !app.issues.items.is_empty(),
-                        app::Tab::MergeRequests => !app.mrs.items.is_empty(),
-                        app::Tab::Pipelines => !app.pipelines.items.is_empty(),
-                        app::Tab::Runners => !app.runners.items.is_empty(),
-                        app::Tab::Releases => !app.releases.items.is_empty(),
-                        app::Tab::Todos => !app.todos.items.is_empty(),
-                        app::Tab::Milestones => !app.milestones.items.is_empty(),
-                        app::Tab::Branches => !app.branches.items.is_empty(),
-                        app::Tab::Environments => !app.environments.items.is_empty(),
-                        _ => false,
-                    };
-                    if has_cached_items {
-                        app.status_message = Some(app::StatusMessage::offline(
-                            "Offline: refresh failed, showing cached data",
-                        ));
+                    if app.has_rows(tab) {
+                        app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
                     } else {
                         app.show_error(err_msg);
                         app.error_has_cli_detail = true;
@@ -2102,13 +2092,24 @@ async fn main() -> Result<()> {
                     app.diff_loading = false;
                     let mut diff_view = *diff_view;
                     let mr_iid = diff_view.mr_iid;
+                    let held_back = app.restore_draft_comments(&diff_view);
                     // Restore the files marked as reviewed on an earlier pass.
                     diff_view.restore_review_state(
                         app.reviewed_files_for_mr(mr_iid),
                         app.hide_reviewed_files,
                     );
                     app.diff_view = Some(diff_view);
-                    app.draft_comments = app.draft_comments_for_mr(mr_iid);
+                    if held_back > 0 {
+                        app.raise_error_toast(if held_back == 1 {
+                            "1 draft comment no longer matches the diff and was set aside"
+                                .to_string()
+                        } else {
+                            format!(
+                                "{held_back} draft comments no longer match the diff and were set aside"
+                            )
+                        });
+                        app.error_has_cli_detail = false;
+                    }
                     app.current_comments = comments;
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())
@@ -2163,9 +2164,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::CommandStarted(msg) => {
-                    if !matches!(app.status_message, Some(app::StatusMessage::Offline(_))) {
-                        app.status_message = Some(app::StatusMessage::notice(msg.clone()));
-                    }
+                    app.show_notice(msg.clone());
                     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
                     app.terminal_commands.push(crate::app::TerminalCommand {
                         timestamp,
@@ -2229,6 +2228,9 @@ async fn main() -> Result<()> {
                             app.error_has_cli_detail = true;
                         }
                     }
+                }
+                Event::Notice(msg) => {
+                    app.show_notice(msg);
                 }
                 Event::RunnerStateRevert {
                     runner_id,
@@ -2431,12 +2433,17 @@ async fn main() -> Result<()> {
                                             };
                                             if app.in_review_mode {
                                                 app.draft_comments.push(comment);
-                                                app.persist_draft_comments(mr_iid);
-                                                app.status_message =
-                                                    Some(app::StatusMessage::notice(format!(
-                                                        "Added draft comment. ({} pending)",
-                                                        app.draft_comments.len()
-                                                    )));
+                                                if let Some(project) = app
+                                                    .diff_view
+                                                    .as_ref()
+                                                    .map(|diff| diff.project_path.clone())
+                                                {
+                                                    app.persist_draft_comments(&project, mr_iid);
+                                                }
+                                                app.show_notice(format!(
+                                                    "Added draft comment. ({} pending)",
+                                                    app.draft_comments.len()
+                                                ));
                                             } else {
                                                 post_review_comment(
                                                     &app,
@@ -2732,15 +2739,26 @@ async fn main() -> Result<()> {
                                         status,
                                     } => {
                                         let comments = std::mem::take(&mut app.draft_comments);
-                                        app.persist_draft_comments(mr_iid);
+                                        let project = app
+                                            .diff_view
+                                            .as_ref()
+                                            .filter(|diff| diff.mr_iid == mr_iid)
+                                            .map(|diff| diff.project_path.clone())
+                                            .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
+                                        app.persist_draft_comments(&project, mr_iid);
                                         app.in_review_mode = false;
                                         if let Some(client) = app.gitlab_client.clone() {
-                                            let project = app
+                                            let Some(project) = app
                                                 .diff_view
                                                 .as_ref()
                                                 .filter(|diff| diff.mr_iid == mr_iid)
                                                 .map(|diff| diff.project_path.clone())
-                                                .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
+                                            else {
+                                                app.show_error(format!(
+                                                    "diff for MR #{mr_iid} closed before the review was submitted"
+                                                ));
+                                                continue;
+                                            };
                                             let event = ReviewEvent::from_label(&status);
                                             let body = value.clone();
                                             let tx = events.sender();
@@ -3112,20 +3130,7 @@ async fn main() -> Result<()> {
                                                     app.cached_labels = cache.labels;
                                                     app.cached_members = cache.members;
 
-                                                    let has_any_cached =
-                                                        !app.issues.items.is_empty()
-                                                            || !app.mrs.items.is_empty()
-                                                            || !app.pipelines.items.is_empty()
-                                                            || !app.runners.items.is_empty()
-                                                            || !app.releases.items.is_empty()
-                                                            || !app.todos.items.is_empty()
-                                                            || !app.milestones.items.is_empty();
-                                                    if has_any_cached {
-                                                        app.status_message =
-                                                            Some(app::StatusMessage::offline(
-                                                                "Loaded from offline cache",
-                                                            ));
-                                                    }
+                                                    app.mark_cached_tabs_stale();
 
                                                     if !app.issues.items.is_empty() {
                                                         app.loaded_tabs.insert(app::Tab::Issues);
@@ -3947,10 +3952,14 @@ async fn main() -> Result<()> {
                                                         }
                                                         _ => {}
                                                     }
-                                                    if let Some(mr_iid) =
-                                                        app.diff_view.as_ref().map(|d| d.mr_iid)
+                                                    if let Some((project, mr_iid)) = app
+                                                        .diff_view
+                                                        .as_ref()
+                                                        .map(|d| (d.project_path.clone(), d.mr_iid))
                                                     {
-                                                        app.persist_draft_comments(mr_iid);
+                                                        app.persist_draft_comments(
+                                                            &project, mr_iid,
+                                                        );
                                                     }
                                                 }
                                                 continue;
@@ -4025,10 +4034,9 @@ async fn main() -> Result<()> {
                                                             app.scope.as_str().to_string();
                                                         let tx = events.sender();
 
-                                                        app.status_message =
-                                                            Some(app::StatusMessage::notice(
-                                                                "Opening editor to edit comment...",
-                                                            ));
+                                                        app.show_notice(
+                                                            "Opening editor to edit comment...",
+                                                        );
 
                                                         let is_github = client
                                                             .as_ref()
@@ -7437,13 +7445,13 @@ async fn main() -> Result<()> {
                                         &app.project_cache,
                                     );
                                     let (reviewed, total) = diff_view.review_progress();
-                                    app.status_message = Some(app::StatusMessage::notice(format!(
+                                    app.show_notice(format!(
                                         "{} {} ({}/{} reviewed)",
                                         if marked { "Reviewed" } else { "Unmarked" },
                                         target,
                                         reviewed,
                                         total
-                                    )));
+                                    ));
                                 }
                                 app.diff_view = Some(diff_view);
                             }
@@ -7451,11 +7459,11 @@ async fn main() -> Result<()> {
                                 let hidden = diff_view.toggle_hide_reviewed();
                                 app.hide_reviewed_files = hidden;
                                 let (reviewed, total) = diff_view.review_progress();
-                                app.status_message = Some(app::StatusMessage::notice(if hidden {
+                                app.show_notice(if hidden {
                                     format!("Hiding {} reviewed file(s)", reviewed)
                                 } else {
                                     format!("Showing all {} file(s)", total)
-                                }));
+                                });
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('[') => {
@@ -7681,15 +7689,11 @@ async fn main() -> Result<()> {
                                     if in_selection {
                                         diff_view.selection_start = None;
                                         diff_view.selection_end = None;
-                                        app.status_message = Some(app::StatusMessage::notice(
-                                            "Selection cancelled.",
-                                        ));
+                                        app.show_notice("Selection cancelled.");
                                     } else {
                                         diff_view.selection_start = Some(diff_view.cursor_idx);
                                         diff_view.selection_end = Some(diff_view.cursor_idx);
-                                        app.status_message = Some(app::StatusMessage::notice(
-                                            "Selection started. Use j/k to extend, Esc to cancel, c to comment.",
-                                        ));
+                                        app.show_notice("Selection started. Use j/k to extend, Esc to cancel, c to comment.");
                                     }
                                 }
                                 app.diff_view = Some(diff_view);
@@ -7828,9 +7832,7 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Char('C') => {
                                 if let Some(range) = diff_view.get_comment_range() {
-                                    app.status_message = Some(app::StatusMessage::notice(
-                                        "Opening editor for comment...",
-                                    ));
+                                    app.show_notice("Opening editor for comment...");
                                     let comment_content = edit_in_editor("", &mut terminal);
                                     if let Some(body) = comment_content {
                                         if !body.trim().is_empty() {
@@ -7844,12 +7846,14 @@ async fn main() -> Result<()> {
                                             };
                                             if app.in_review_mode {
                                                 app.draft_comments.push(comment);
-                                                app.persist_draft_comments(diff_view.mr_iid);
-                                                app.status_message =
-                                                    Some(app::StatusMessage::notice(format!(
-                                                        "Added draft comment. ({} pending)",
-                                                        app.draft_comments.len()
-                                                    )));
+                                                app.persist_draft_comments(
+                                                    &diff_view.project_path,
+                                                    diff_view.mr_iid,
+                                                );
+                                                app.show_notice(format!(
+                                                    "Added draft comment. ({} pending)",
+                                                    app.draft_comments.len()
+                                                ));
                                             } else {
                                                 post_review_comment(
                                                     &app,
@@ -7900,23 +7904,11 @@ async fn main() -> Result<()> {
                                     let content = range
                                         .lines
                                         .iter()
-                                        .map(|l| {
-                                            let c = l.content.as_str();
-                                            if c.starts_with('+')
-                                                || c.starts_with('-')
-                                                || c.starts_with(' ')
-                                            {
-                                                if c.len() > 1 { &c[1..] } else { "" }
-                                            } else {
-                                                c
-                                            }
-                                        })
+                                        .map(|l| crate::app::strip_diff_marker(&l.content))
                                         .collect::<Vec<_>>()
                                         .join("\n");
 
-                                    app.status_message = Some(app::StatusMessage::notice(
-                                        "Opening editor for code suggestion...",
-                                    ));
+                                    app.show_notice("Opening editor for code suggestion...");
                                     let ext = std::path::Path::new(&range.file_path)
                                         .extension()
                                         .and_then(|s| s.to_str())
@@ -7940,12 +7932,14 @@ async fn main() -> Result<()> {
                                         };
                                         if app.in_review_mode {
                                             app.draft_comments.push(comment);
-                                            app.persist_draft_comments(diff_view.mr_iid);
-                                            app.status_message =
-                                                Some(app::StatusMessage::notice(format!(
-                                                    "Added suggestion draft. ({} pending)",
-                                                    app.draft_comments.len()
-                                                )));
+                                            app.persist_draft_comments(
+                                                &diff_view.project_path,
+                                                diff_view.mr_iid,
+                                            );
+                                            app.show_notice(format!(
+                                                "Added suggestion draft. ({} pending)",
+                                                app.draft_comments.len()
+                                            ));
                                         } else {
                                             post_review_comment(
                                                 &app,
@@ -8503,6 +8497,20 @@ mod tests {
     fn test_jump_to_id_keybinding_defaults() {
         let config = crate::config::Config::default();
         assert_eq!(config.keybindings.global.jump_to_id, "g");
+    }
+
+    #[test]
+    fn failed_client_build_clears_loading_marks_of_tabs_left_while_it_ran() {
+        let mut app = App::default();
+        app.scope = scope::Scope::Group("grp".to_string());
+        app.loading_tabs.insert(app::Tab::Issues);
+        app.active_tab = app::Tab::MergeRequests;
+        let scope = app.scope.clone();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        apply_client_ready(&mut app, scope, Err("auth probe failed".to_string()), tx);
+
+        assert!(app.loading_tabs.is_empty());
     }
 
     #[test]

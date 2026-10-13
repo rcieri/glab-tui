@@ -1,5 +1,5 @@
 use crate::AppTerminal;
-use crate::app::{App, ConfirmAction, DialogChoice, StatusMessage};
+use crate::app::{App, ConfirmAction, DialogChoice};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
@@ -91,7 +91,7 @@ pub fn handle_submit_dialog(
         let options = std::mem::take(&mut dialog.options);
         run_submit_action(app, action, project_path, options, tx);
     } else if let Some(choice) = choice {
-        run_dialog_choice(app, &dialog.action, choice);
+        run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
     } else if !cancel {
         // Either the user navigated or toggled an option — keep the
         // dialog open.
@@ -101,28 +101,31 @@ pub fn handle_submit_dialog(
     true
 }
 
-fn run_dialog_choice(app: &mut App, action: &ConfirmAction, choice: DialogChoice) {
+fn run_dialog_choice(
+    app: &mut App,
+    action: &ConfirmAction,
+    project_path: &str,
+    choice: DialogChoice,
+) {
     let ConfirmAction::SubmitReview(mr_iid) = *action else {
         return;
     };
-    let count = app.draft_comments.len();
+    let count = app.draft_comments.len() + app.stale_draft_comments.len();
     let noun = if count == 1 { "comment" } else { "comments" };
     match choice {
         DialogChoice::KeepDrafts => {
             // The project cache already holds them, and opening this diff
             // again restores them from there.
             app.draft_comments.clear();
-            app.status_message = Some(StatusMessage::notice(format!(
-                "Kept {count} draft {noun} for later"
-            )));
+            app.stale_draft_comments.clear();
+            app.show_notice(format!("Kept {count} draft {noun} for later"));
         }
         DialogChoice::DiscardDrafts => {
             app.draft_comments.clear();
-            app.persist_draft_comments(mr_iid);
+            app.stale_draft_comments.clear();
+            app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
-            app.status_message = Some(StatusMessage::notice(format!(
-                "Discarded {count} draft {noun}"
-            )));
+            app.show_notice(format!("Discarded {count} draft {noun}"));
         }
     }
     app.diff_view = None;
@@ -148,6 +151,37 @@ fn merge_options_from(
     (squash, delete_branch, strategy, auto_merge)
 }
 
+/// The merge method the dialog's strategy options pick, with the precedence
+/// `GhBackend::merge_args` gives them.
+fn merge_method_from(options: &[crate::app::SubmitOption]) -> crate::domain::mr::MergeMethod {
+    use crate::domain::mr::MergeMethod;
+    match merge_options_from(options) {
+        (true, ..) => MergeMethod::Squash,
+        (false, _, Some("rebase"), _) => MergeMethod::Rebase,
+        _ => MergeMethod::Merge,
+    }
+}
+
+/// The PRs among `items` (project path, number) that sit in a stack, which
+/// only the stack merge can merge. A failed lookup leaves a project's PRs to
+/// the plain merge, whose error then names the problem.
+async fn stacked_prs(
+    client: &crate::domain::client::GitlabClient,
+    items: &[(String, u64, Option<String>)],
+) -> std::collections::HashSet<(String, u64)> {
+    let mut by_project: std::collections::HashMap<&str, Vec<u64>> =
+        std::collections::HashMap::new();
+    for (project, iid, _) in items {
+        by_project.entry(project).or_default().push(*iid);
+    }
+    let mut stacked = std::collections::HashSet::new();
+    for (project, iids) in by_project {
+        if let Ok(stacks) = client.list_pr_stack_summaries(project, &iids).await {
+            stacked.extend(stacks.into_keys().map(|iid| (project.to_string(), iid)));
+        }
+    }
+    stacked
+}
 /// Runs `confirm_action` against `project_path`, the project the dialog was
 /// opened for, never one re-resolved from the iid.
 fn run_submit_action(
@@ -420,8 +454,32 @@ fn run_submit_action(
                 ));
             });
         }
+        crate::app::ConfirmAction::MergeStack(pr_number) => {
+            let method = merge_method_from(&options);
+            let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
+                Some(crate::domain::mr::StackLookup::Full(stack)) => {
+                    stack.downstack_open_entries().map(|e| e.number).collect()
+                }
+                _ => vec![pr_number],
+            };
+            app.mrs.items.retain(|m| !merged.contains(&m.iid));
+            app.update_filter_selection();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            tokio::spawn(async move {
+                let result = client
+                    .merge_pr_stack(&project_path, pr_number, method)
+                    .await;
+                let _ = tx.send(Event::CommandCompleted(
+                    crate::app::Tab::MergeRequests,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
+        }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
+            let method = merge_method_from(&options);
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
             let mut items_with_sha: Vec<(String, u64, Option<String>)> =
@@ -436,7 +494,12 @@ fn run_submit_action(
                             && (project_path.is_empty() || m.project_path == *project_path)
                     })
                     .and_then(|m| m.sha.clone());
-                items_with_sha.push((project_path.clone(), *mr_iid, sha));
+                let project = if project_path.is_empty() {
+                    app.scope.as_str().to_string()
+                } else {
+                    project_path.clone()
+                };
+                items_with_sha.push((project, *mr_iid, sha));
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
                 }) {
@@ -448,33 +511,31 @@ fn run_submit_action(
                 return;
             };
             let tx2 = tx.clone();
-            let scope = app.scope.as_str().to_string();
             let total = items.len();
             tokio::spawn(async move {
+                let stacked = stacked_prs(&client, &items_with_sha).await;
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (project_path, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
+                for (i, (proj, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
-                    let proj = if !project_path.is_empty() {
-                        project_path
+                    let result = if stacked.contains(&(proj.clone(), mr_iid)) {
+                        client.merge_pr_stack(&proj, mr_iid, method).await
                     } else {
-                        scope.clone()
+                        client
+                            .merge_mr(
+                                &proj,
+                                mr_iid,
+                                squash,
+                                delete_branch,
+                                merge_strategy,
+                                auto_merge,
+                                sha.as_deref(),
+                            )
+                            .await
                     };
-                    match client
-                        .merge_mr(
-                            &proj,
-                            mr_iid,
-                            squash,
-                            delete_branch,
-                            merge_strategy,
-                            auto_merge,
-                            sha.as_deref(),
-                        )
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => failures.push((mr_iid, e.to_string())),
+                    if let Err(e) = result {
+                        failures.push((mr_iid, e.to_string()));
                     }
                 }
                 let _ = tx2.send(Event::CommandCompleted(
@@ -921,9 +982,7 @@ fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOver
     if diff_view.jump_to_anchor(position) {
         if was_hiding_reviewed && !diff_view.hide_reviewed {
             app.hide_reviewed_files = false;
-            app.status_message = Some(crate::app::StatusMessage::notice(
-                "Showing reviewed files to reach the thread",
-            ));
+            app.show_notice("Showing reviewed files to reach the thread");
         }
         return true;
     }
@@ -1353,19 +1412,25 @@ diff --git a/src/lib.rs b/src/lib.rs
         drafts.iter().map(|d| d.body.as_str()).collect()
     }
 
+    const PROJECT: &str = "acme/widget";
+
     /// Diff view of MR 7 in review mode with two saved drafts, and the
     /// submit-review dialog that leaving it raises.
     fn app_leaving_the_diff_with_drafts() -> App {
         let mut app = App::default();
         app.diff_view = Some(DiffView::new(
             7,
-            "acme/widget".to_string(),
+            PROJECT.to_string(),
             REVIEW_DIFF.to_string(),
         ));
         app.in_review_mode = true;
         app.draft_comments = vec![draft("nit"), draft("typo")];
-        app.persist_draft_comments(7);
-        app.submit_dialog = Some(SubmitDialog::build(ConfirmAction::SubmitReview(7), &app));
+        app.persist_draft_comments(PROJECT, 7);
+        app.submit_dialog = Some(SubmitDialog::build_with_project(
+            ConfirmAction::SubmitReview(7),
+            PROJECT.to_string(),
+            &app,
+        ));
         app
     }
 
@@ -1380,10 +1445,11 @@ diff --git a/src/lib.rs b/src/lib.rs
         }
     }
 
-    fn saved_drafts(app: &App, mr_iid: u64) -> Vec<String> {
+    fn saved_drafts(app: &App, project_path: &str, mr_iid: u64) -> Vec<String> {
         crate::utils::cache::load_cache(app.scope.as_str())
             .draft_comments
-            .get(&mr_iid)
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
             .map(|drafts| drafts.iter().map(|d| d.body.clone()).collect())
             .unwrap_or_default()
     }
@@ -1399,7 +1465,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
         assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
         assert!(app.in_review_mode);
-        assert_eq!(saved_drafts(&app, 7), ["nit", "typo"]);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
     }
 
     #[test]
@@ -1430,8 +1496,11 @@ diff --git a/src/lib.rs b/src/lib.rs
             app.status_message.as_ref().map(StatusMessage::text),
             Some("Kept 2 draft comments for later")
         );
-        assert_eq!(bodies(&app.draft_comments_for_mr(7)), ["nit", "typo"]);
-        assert_eq!(saved_drafts(&app, 7), ["nit", "typo"]);
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
     }
 
     #[test]
@@ -1444,11 +1513,70 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.diff_view.is_none());
         assert!(app.draft_comments.is_empty());
-        assert!(app.draft_comments_for_mr(7).is_empty());
-        assert!(saved_drafts(&app, 7).is_empty());
+        assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
             app.status_message.as_ref().map(StatusMessage::text),
             Some("Discarded 2 draft comments")
+        );
+    }
+
+    #[test]
+    fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        app.draft_comments = vec![draft("other project")];
+        app.persist_draft_comments("acme/gadget", 7);
+
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr("acme/gadget", 7)),
+            ["other project"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(saved_drafts(&app, "acme/gadget", 7), ["other project"]);
+    }
+
+    #[test]
+    fn drafts_whose_lines_left_the_diff_are_held_back_but_kept_until_discarded() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        let moved = crate::domain::review::DraftComment {
+            line_num: Some(9),
+            ..draft("moved")
+        };
+        let range_end_moved = crate::domain::review::DraftComment {
+            end_line_num: Some(9),
+            ..draft("range")
+        };
+        app.draft_comments = vec![draft("nit"), moved, range_end_moved];
+        app.persist_draft_comments(PROJECT, 7);
+
+        let diff_view = app.diff_view.take().expect("fixture opens a diff");
+        assert_eq!(app.restore_draft_comments(&diff_view), 2);
+        app.diff_view = Some(diff_view);
+        assert_eq!(bodies(&app.draft_comments), ["nit"]);
+
+        app.draft_comments.push(draft("new"));
+        app.persist_draft_comments(PROJECT, 7);
+        assert_eq!(
+            saved_drafts(&app, PROJECT, 7),
+            ["nit", "new", "moved", "range"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.stale_draft_comments.is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(
+            app.status_message.as_ref().map(StatusMessage::text),
+            Some("Discarded 4 draft comments")
         );
     }
 }

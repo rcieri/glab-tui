@@ -16,13 +16,22 @@ pub struct Notification {
 impl Notification {
     /// GitLab todos go from `pending` to `done`, GitHub notifications from
     /// `unread` to `read`. Anything else is already read.
+    fn read_state(&self) -> Option<&'static str> {
+        match self.state.as_str() {
+            "pending" => Some("done"),
+            "unread" => Some("read"),
+            _ => None,
+        }
+    }
+
+    pub fn is_unread(&self) -> bool {
+        self.read_state().is_some()
+    }
+
     pub fn mark_read(&mut self) {
-        let read = match self.state.as_str() {
-            "pending" => "done",
-            "unread" => "read",
-            _ => return,
-        };
-        self.state = read.to_string();
+        if let Some(read) = self.read_state() {
+            self.state = read.to_string();
+        }
     }
 }
 
@@ -55,10 +64,17 @@ mod tests {
 
     #[test]
     fn mark_read_moves_each_backend_to_its_read_state() {
-        for (before, after) in [("pending", "done"), ("unread", "read"), ("done", "done")] {
+        for (before, unread, after) in [
+            ("pending", true, "done"),
+            ("unread", true, "read"),
+            ("done", false, "done"),
+            ("read", false, "read"),
+        ] {
             let mut n = todo(before);
+            assert_eq!(n.is_unread(), unread, "is_unread for {before}");
             n.mark_read();
             assert_eq!(n.state, after, "from {before}");
+            assert!(!n.is_unread(), "still unread after mark_read from {before}");
         }
     }
 }

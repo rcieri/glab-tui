@@ -309,6 +309,7 @@ copy_reference = "y"
 # Persist default column visibility / grouping / filters per pane.
 # On a GitHub repository, a State filter with a single state also makes
 # `gh issue list` / `gh pr list` fetch only that state (`--state open`).
+# For PRs, `--state closed` also returns merged PRs, which the State filter hides.
 # [issues]
 # columns = ["ID", "State", "Title", "Labels"]
 # group_by_column = "State"

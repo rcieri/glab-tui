@@ -351,7 +351,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 |---|---|---|
 | List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10). `<s>` is `open` / `closed` when the State filter selects exactly that state, otherwise `all` |
 | Get single issue | `gh issue view <iid> --json ... -R <repo>` | N/A |
-| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call. `<s>` is `open` / `merged` / `closed` (closed without merging) when the State filter selects exactly that state, otherwise `all`. The JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
+| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call. `<s>` is `open` / `merged` / `closed` when the State filter selects exactly that state, otherwise `all`. `closed` also returns merged PRs, which the State filter hides. The JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
 | Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |

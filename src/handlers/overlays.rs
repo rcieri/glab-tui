@@ -1575,7 +1575,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.stale_draft_comments.is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_deref(),
+            app.status_message.as_ref().map(StatusMessage::text),
             Some("Discarded 4 draft comments")
         );
     }

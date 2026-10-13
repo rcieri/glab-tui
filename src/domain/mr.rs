@@ -117,6 +117,34 @@ pub struct PrStack {
     pub entries: Vec<StackEntry>,
 }
 
+impl PrStack {
+    /// The PRs a merge of this stack's own PR takes with it: every open entry
+    /// at or below its position, bottom first. GitHub merges them together.
+    pub fn downstack_open_entries(&self) -> impl Iterator<Item = &StackEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.position <= self.info.position && e.state == "open")
+    }
+}
+
+/// How a merge brings a PR's commits into its base branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+impl MergeMethod {
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Squash => "squash",
+            Self::Rebase => "rebase",
+        }
+    }
+}
+
 /// What the session has learned about one PR's stack membership.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackLookup {
@@ -352,5 +380,36 @@ mod tests {
 
         let round_trip: MergeRequest = serde_json::from_str(&serialized).unwrap();
         assert_eq!(round_trip.related_issues, mr.related_issues);
+    }
+
+    fn stack_entry(position: usize, number: u64, state: &str) -> StackEntry {
+        StackEntry {
+            position,
+            number,
+            title: format!("PR {number}"),
+            state: state.to_string(),
+            is_draft: false,
+        }
+    }
+
+    #[test]
+    fn a_stack_merge_takes_the_open_prs_at_and_below_its_own_position() {
+        let stack = PrStack {
+            info: StackInfo {
+                number: 7,
+                size: 4,
+                position: 3,
+            },
+            entries: vec![
+                stack_entry(1, 10, "merged"),
+                stack_entry(2, 11, "open"),
+                stack_entry(3, 12, "open"),
+                stack_entry(4, 13, "open"),
+            ],
+        };
+
+        let numbers: Vec<u64> = stack.downstack_open_entries().map(|e| e.number).collect();
+
+        assert_eq!(numbers, vec![11, 12]);
     }
 }

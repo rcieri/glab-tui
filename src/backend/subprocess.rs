@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::process::{Output, Stdio};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
@@ -30,12 +30,12 @@ async fn output_within(
         .kill_on_drop(true);
     let mut child = command
         .spawn()
-        .with_context(|| format!("Failed to execute: {invocation}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to execute: {invocation}: {e}"))?;
 
     match tokio::time::timeout(timeout, collect_output(&mut child, input)).await {
-        Ok(output) => output.with_context(|| format!("Failed to execute: {invocation}")),
+        Ok(output) => output.map_err(|e| anyhow::anyhow!("Failed to execute: {invocation}: {e}")),
         Err(_) => {
-            // `kill` also reaps the child, so nothing outlives the timeout.
+            // Awaiting `kill` reaps the direct child only. Processes it spawned are not signalled.
             let _ = child.kill().await;
             anyhow::bail!(
                 "{invocation} timed out after {timeout:?} and was killed \

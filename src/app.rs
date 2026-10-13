@@ -7478,6 +7478,7 @@ mod tests {
             runner(2, "b", "online", true),
             runner(3, "c", "offline", true),
             runner(4, "d", "online", true),
+            runner(5, "e", "never_contacted", false),
         ];
         let group_by = Some("Status".to_string());
         let enabled = std::collections::HashMap::new();
@@ -7485,8 +7486,8 @@ mod tests {
         let ascending = App::filtered_runners_list(&runners, "", &enabled, true, &group_by);
         let descending = App::filtered_runners_list(&runners, "", &enabled, false, &group_by);
 
-        assert_eq!(runner_ids(&ascending), vec![3, 2, 4, 1]);
-        assert_eq!(runner_ids(&descending), vec![1, 2, 4, 3]);
+        assert_eq!(runner_ids(&ascending), vec![3, 2, 4, 1, 5]);
+        assert_eq!(runner_ids(&descending), vec![5, 1, 2, 4, 3]);
     }
 
     #[test]

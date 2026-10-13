@@ -1411,11 +1411,12 @@ async fn main() -> Result<()> {
                     if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(update) => {
+                                let has_new_text = update.has_new_text();
                                 let is_applied = app
                                     .job_trace
                                     .as_mut()
                                     .is_some_and(|view| view.apply(update));
-                                if is_applied && app.job_trace_follow {
+                                if is_applied && has_new_text && app.job_trace_follow {
                                     app.detail_scroll_to_bottom = true;
                                 }
                             }
@@ -1513,25 +1514,31 @@ async fn main() -> Result<()> {
                 } => {
                     let pr = (project_path, pr_number);
                     app.fetching_pr_stacks.remove(&pr);
-                    let is_awaited = app.pending_stack_selector.as_ref() == Some(&pr);
-                    if is_awaited {
-                        app.pending_stack_selector = None;
+                    let awaited = app
+                        .pending_stack_action
+                        .take_if(|(pending, _)| *pending == pr)
+                        .map(|(_, action)| action);
+                    if awaited.is_some() {
                         app.status_message = None;
                     }
                     match result {
                         Ok(stack) => {
                             app.record_pr_stack(&pr.0, pr.1, stack);
                             app.update_filter_selection();
-                            if is_awaited
-                                && app.selector.is_none()
-                                && app.selected_mr_ref().as_ref() == Some(&pr)
-                            {
-                                crate::handlers::tabs::open_stack_selector(&mut app, &pr.0, pr.1);
+                            if let Some(action) = awaited {
+                                if app.selector.is_none()
+                                    && app.submit_dialog.is_none()
+                                    && app.selected_mr_ref().as_ref() == Some(&pr)
+                                {
+                                    crate::handlers::tabs::run_stack_action(
+                                        &mut app, &pr.0, pr.1, action,
+                                    );
+                                }
                             }
                         }
                         // The inspector simply keeps showing no stack; only an
-                        // explicit `view_stack` press is owed an answer.
-                        Err(e) if is_awaited => {
+                        // explicit key press is owed an answer.
+                        Err(e) if awaited.is_some() => {
                             app.show_error(format!(
                                 "Failed to fetch the stack of PR #{}: {e}",
                                 pr.1
@@ -8279,7 +8286,7 @@ async fn main() -> Result<()> {
                                     .lines()
                                     .position(|line| line.to_lowercase().contains(&query))
                                 {
-                                    app.detail_scroll = line as u16;
+                                    app.detail_scroll = u16::try_from(line).unwrap_or(u16::MAX);
                                 }
                             }
                         }

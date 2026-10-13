@@ -1859,7 +1859,7 @@ pub(crate) fn render_tab_jobs(
                 String::new()
             };
 
-            let max_scroll = total_lines.saturating_sub(height) as u16;
+            let max_scroll = u16::try_from(total_lines.saturating_sub(height)).unwrap_or(u16::MAX);
 
             settle_detail_scroll(app, max_scroll);
 
@@ -3943,5 +3943,18 @@ mod tests {
             format!("┌{title}{}┐", "─".repeat(98 - title.len()))
         );
         assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "first part"));
+    }
+
+    #[test]
+    fn render_tab_jobs_saturates_follow_scroll_past_u16_rows() {
+        let text: String = (0..70_000).map(|line| format!("{line}\n")).collect();
+        let trace = crate::domain::job_trace::JobTrace::from_read(text.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.detail_scroll_to_bottom = true;
+
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        assert_eq!(app.detail_scroll, u16::MAX);
+        assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "65535"));
     }
 }

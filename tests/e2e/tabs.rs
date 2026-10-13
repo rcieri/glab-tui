@@ -258,6 +258,34 @@ fn test_jobs_tab_queries_only_the_branch_pipeline() {
     );
 }
 
+/// A branch with an open MR whose CI only runs merge-request pipelines has
+/// its newest pipeline on `refs/merge-requests/<iid>/head`. The Jobs tab
+/// loads that one when it is newer than the branch pipeline.
+#[test]
+fn test_jobs_tab_loads_the_newer_merge_request_pipeline() {
+    let mut session = TestSession::new(false, 24, 100);
+    let calls_before = open_jobs_tab(&mut session);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the MR pipeline's jobs are listed");
+
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(
+            "glab ci list --output json -R test-owner/test-repo --ref refs/merge-requests/2/head --per-page 1"
+        ),
+        "the open MR's head pipeline is looked up:\n{calls}"
+    );
+    assert!(
+        calls.contains("/pipelines/99999/jobs"),
+        "the newer MR pipeline's jobs are fetched:\n{calls}"
+    );
+    assert!(
+        !calls.contains("/pipelines/12345/jobs"),
+        "the older branch pipeline is not loaded:\n{calls}"
+    );
+}
+
 /// Selecting a stage confirms on screen how many jobs it took. The message
 /// used to be written to a field nothing rendered.
 #[test]

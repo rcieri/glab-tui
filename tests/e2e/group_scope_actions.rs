@@ -28,7 +28,15 @@ fn confirm_on_second_row(tab_keys: &[u8], first_title: &str, close_key: &[u8]) -
     // Destructive dialogs open on Cancel; move to Submit and confirm.
     session.send_input(b"h");
     session.send_input(b"\r");
-    session.settle(1000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !session.get_cli_calls().contains(" close 5 -R ") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no close call; calls:\n{}",
+            session.get_cli_calls()
+        );
+        session.settle(20);
+    }
     session
 }
 

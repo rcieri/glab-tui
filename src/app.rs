@@ -1900,6 +1900,13 @@ impl DiffView {
             .any(|line| note_position_anchors(position, Some(line), Some(line)))
     }
 
+    /// Whether every line the draft is anchored to is still in the diff.
+    pub fn contains_draft_anchor(&self, draft: &DraftComment) -> bool {
+        draft
+            .anchor_positions()
+            .all(|position| self.contains_anchor(&position))
+    }
+
     /// Opens the anchor's file and puts the diff cursor on the anchor line, or
     /// on the file's first row when that line is no longer in the diff. A file
     /// out of reach in the tree is revealed first: its folded parent
@@ -3071,6 +3078,16 @@ pub enum OverlayKind {
     ReviewThreads,
 }
 
+/// A PR action that needs the PR's stack, so it waits for an on-demand stack
+/// fetch when the session does not know the stack yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackAction {
+    /// Open the selector over the stack (`view_stack`).
+    Browse,
+    /// Open the merge dialog, which merges a stacked PR with its downstack.
+    Merge,
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
@@ -3085,6 +3102,7 @@ pub enum ConfirmAction {
     ReopenMr(u64),                    // mr iid
     ReopenMilestone(u64),             // milestone iid
     MergeMr(u64),                     // mr iid
+    MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
@@ -3375,6 +3393,7 @@ impl SubmitDialog {
     ///
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
+
     pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
@@ -3489,6 +3508,42 @@ impl SubmitDialog {
                     options,
                     false,
                 )
+            }
+            ConfirmAction::MergeStack(iid) => {
+                let stack = match app.pr_stack(&project_path, *iid) {
+                    Some(crate::domain::mr::StackLookup::Full(stack)) => Some(stack),
+                    _ => None,
+                };
+                let title = match stack {
+                    Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
+                    None => format!("Merge Stack through #{iid}"),
+                };
+                let body = stack
+                    .map(|stack| {
+                        let merged: Vec<String> = stack
+                            .downstack_open_entries()
+                            .map(|e| {
+                                format!(
+                                    "#{}: {}{}",
+                                    e.number,
+                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    if e.is_draft { " [draft]" } else { "" }
+                                )
+                            })
+                            .collect();
+                        format!(
+                            "Merges {} PRs together, all or nothing:\n{}",
+                            merged.len(),
+                            merged.join("\n")
+                        )
+                    })
+                    .unwrap_or_default();
+                let options = vec![
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
+                ];
+                (title, body, "Merge".to_string(), options, false)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
@@ -3630,44 +3685,49 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
-/// How long a `StatusMessage::Notice` stays in the header bar.
+/// How long a `StatusMessage` stays in the header bar.
 pub const STATUS_NOTICE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Feedback shown in the header bar. Errors use the toast instead.
+/// A confirmation shown in the header bar until `STATUS_NOTICE_LIFETIME`
+/// passes. Errors use the toast instead.
 #[derive(Clone, Debug, PartialEq)]
-pub enum StatusMessage {
-    /// A confirmation that disappears after `STATUS_NOTICE_LIFETIME`.
-    Notice {
-        text: String,
-        shown_at: std::time::Instant,
-    },
-    /// The data on screen is stale: it came from the offline cache or its
-    /// refresh failed. Stays until a fetch succeeds.
-    Offline(String),
+pub struct StatusMessage {
+    text: String,
+    shown_at: std::time::Instant,
 }
 
 impl StatusMessage {
     pub fn notice(text: impl Into<String>) -> Self {
-        StatusMessage::Notice {
+        StatusMessage {
             text: text.into(),
             shown_at: std::time::Instant::now(),
         }
     }
 
-    pub fn offline(text: impl Into<String>) -> Self {
-        StatusMessage::Offline(text.into())
-    }
-
     pub fn text(&self) -> &str {
-        match self {
-            StatusMessage::Notice { text, .. } | StatusMessage::Offline(text) => text,
-        }
+        &self.text
     }
 
     pub fn is_expired(&self) -> bool {
+        self.shown_at.elapsed() >= STATUS_NOTICE_LIFETIME
+    }
+}
+
+/// Why a tab shows rows that may be out of date. Kept per tab in
+/// `App::stale_tabs` until that tab's own fetch succeeds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaleData {
+    /// Loaded from the offline cache; the tab's refresh has not landed yet.
+    FromCache,
+    /// The tab's refresh failed, so the cached rows are still on screen.
+    RefreshFailed,
+}
+
+impl StaleData {
+    pub fn label(self) -> &'static str {
         match self {
-            StatusMessage::Notice { shown_at, .. } => shown_at.elapsed() >= STATUS_NOTICE_LIFETIME,
-            StatusMessage::Offline(_) => false,
+            StaleData::FromCache => "Loaded from offline cache",
+            StaleData::RefreshFailed => "Offline: refresh failed, showing cached data",
         }
     }
 }
@@ -3766,9 +3826,9 @@ pub struct App {
     >,
     /// PRs (project path, number) whose on-demand stack fetch is in flight.
     pub fetching_pr_stacks: std::collections::HashSet<(String, u64)>,
-    /// PR whose stack selector opens once its stack fetch lands: `view_stack`
-    /// was pressed before the session knew the stack.
-    pub pending_stack_selector: Option<(String, u64)>,
+    /// PR whose stack fetch a key press is waiting on, and what to do once it
+    /// lands: the key was pressed before the session knew the stack.
+    pub pending_stack_action: Option<((String, u64), StackAction)>,
     /// PR open in the inspector and when it got there. Its stack is fetched
     /// only once it has stayed selected for the debounce window.
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
@@ -3838,6 +3898,7 @@ pub struct App {
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
     pub status_message: Option<StatusMessage>,
+    pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
@@ -3848,6 +3909,11 @@ pub struct App {
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
     pub draft_comments: Vec<DraftComment>,
+    /// Saved drafts of the open diff whose lines are no longer in it. They
+    /// are never shown or submitted, and are written back with
+    /// `draft_comments` so the cache keeps them until they match again or
+    /// the user discards.
+    pub stale_draft_comments: Vec<DraftComment>,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub page_size: usize,
@@ -3935,7 +4001,7 @@ impl Default for App {
             pending_mr_related_issues_since: None,
             pr_stacks: std::collections::HashMap::new(),
             fetching_pr_stacks: std::collections::HashSet::new(),
-            pending_stack_selector: None,
+            pending_stack_action: None,
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
@@ -3978,6 +4044,7 @@ impl Default for App {
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             status_message: None,
+            stale_tabs: std::collections::HashMap::new(),
             clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
             tx: None,
@@ -3998,6 +4065,7 @@ impl Default for App {
             in_review_mode: false,
             hide_reviewed_files: false,
             draft_comments: Vec::new(),
+            stale_draft_comments: Vec::new(),
             save_menu_open: false,
             save_menu_selection: None,
             page_size: config.page_size,
@@ -4172,6 +4240,7 @@ impl App {
         self.edit_menu = None;
         self.submit_dialog = None;
         self.status_message = None;
+        self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
         self.column_filter_context = None;
@@ -4191,10 +4260,13 @@ impl App {
         self.pending_mr_related_issues_iid = None;
         self.pending_mr_related_issues_since = None;
         self.fetching_pr_stacks.clear();
-        self.pending_stack_selector = None;
+        self.pending_stack_action = None;
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.pending_issue_select = None;
+        self.pending_mr_select = None;
+        self.pending_pipeline_select = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
@@ -4818,6 +4890,12 @@ impl App {
         rows
     }
 
+    /// Single entry point for non-error feedback in the header bar. Stale
+    /// data has its own badge (`stale_tabs`), so a notice never hides it.
+    pub fn show_notice(&mut self, text: impl Into<String>) {
+        self.status_message = Some(StatusMessage::notice(text));
+    }
+
     /// Single entry point for surfacing a runtime error. Sets the transient
     /// error toast (`error_message`) and marks the failed terminal command so
     /// both UI surfaces stay in sync.
@@ -4961,6 +5039,33 @@ impl App {
         self.loading_tabs.remove(&tab);
         self.loaded_tabs.insert(tab);
         self.refreshed_tabs.insert(tab);
+    }
+
+    /// Whether a list tab has rows on screen. Jobs, which belong to one
+    /// pipeline, and the Terminal tab never count.
+    pub fn has_rows(&self, tab: Tab) -> bool {
+        match tab {
+            Tab::Issues => !self.issues.items.is_empty(),
+            Tab::MergeRequests => !self.mrs.items.is_empty(),
+            Tab::Pipelines => !self.pipelines.items.is_empty(),
+            Tab::Runners => !self.runners.items.is_empty(),
+            Tab::Releases => !self.releases.items.is_empty(),
+            Tab::Todos => !self.todos.items.is_empty(),
+            Tab::Milestones => !self.milestones.items.is_empty(),
+            Tab::Branches => !self.branches.items.is_empty(),
+            Tab::Environments => !self.environments.items.is_empty(),
+            Tab::Jobs | Tab::Terminal => false,
+        }
+    }
+
+    /// Flags every tab just filled from the offline cache as stale until its
+    /// own fetch succeeds.
+    pub fn mark_cached_tabs_stale(&mut self) {
+        for tab in Tab::ALL {
+            if self.has_rows(tab) {
+                self.stale_tabs.insert(tab, StaleData::FromCache);
+            }
+        }
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
@@ -5219,23 +5324,51 @@ impl App {
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
-    pub fn draft_comments_for_mr(&self, mr_iid: u64) -> Vec<DraftComment> {
+    pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
         self.project_cache
             .draft_comments
-            .get(&mr_iid)
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
             .cloned()
             .unwrap_or_default()
     }
 
-    /// Saves `draft_comments` as the drafts of an MR/PR and writes the project
-    /// cache to disk, so drafts outlive the diff view and the process.
-    pub fn persist_draft_comments(&mut self, mr_iid: u64) {
-        if self.draft_comments.is_empty() {
-            self.project_cache.draft_comments.remove(&mr_iid);
+    /// Loads the saved drafts of `diff_view`'s MR/PR into `draft_comments`.
+    /// Drafts whose lines left the diff go to `stale_draft_comments` instead.
+    /// Returns how many were held back.
+    pub fn restore_draft_comments(&mut self, diff_view: &DiffView) -> usize {
+        let (anchored, stale) = self
+            .draft_comments_for_mr(&diff_view.project_path, diff_view.mr_iid)
+            .into_iter()
+            .partition(|draft| diff_view.contains_draft_anchor(draft));
+        self.draft_comments = anchored;
+        self.stale_draft_comments = stale;
+        self.stale_draft_comments.len()
+    }
+
+    /// Saves `draft_comments` plus the held-back `stale_draft_comments` as the
+    /// drafts of an MR/PR and writes the project cache to disk, so drafts
+    /// outlive the diff view and the process.
+    pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
+        let drafts = &mut self.project_cache.draft_comments;
+        if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
+            if let Some(project_drafts) = drafts.get_mut(project_path) {
+                project_drafts.remove(&mr_iid);
+                if project_drafts.is_empty() {
+                    drafts.remove(project_path);
+                }
+            }
         } else {
-            self.project_cache
+            let saved = self
                 .draft_comments
-                .insert(mr_iid, self.draft_comments.clone());
+                .iter()
+                .chain(&self.stale_draft_comments)
+                .cloned()
+                .collect();
+            drafts
+                .entry(project_path.to_string())
+                .or_default()
+                .insert(mr_iid, saved);
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
@@ -6400,11 +6533,7 @@ impl App {
                 };
                 if enabled_cols.contains("State") {
                     try_match(&item.state);
-                    try_match(if item.state == "unread" || item.state == "pending" {
-                        "NEW"
-                    } else {
-                        "READ"
-                    });
+                    try_match(if item.is_unread() { "NEW" } else { "READ" });
                 }
                 if enabled_cols.contains("Project") {
                     try_match(&item.project_path);
@@ -6478,7 +6607,7 @@ impl App {
         col: &str,
     ) -> Vec<String> {
         match col {
-            "State" => vec![if item.state == "unread" || item.state == "pending" {
+            "State" => vec![if item.is_unread() {
                 "NEW".to_string()
             } else {
                 "READ".to_string()
@@ -6849,19 +6978,23 @@ impl App {
     /// places (keys, mouse, search, column filters, refetches, tab switches),
     /// so the event loop reconciles here once per frame instead.
     pub fn discard_stale_deployments(&mut self) {
-        let Some(shown) = &self.environment_deployments else {
-            return;
-        };
-        let is_still_selected = self.active_tab == Tab::Environments
+        let is_stale = self
+            .environment_deployments
+            .as_ref()
+            .is_some_and(|shown| !self.is_highlighted_environment(&shown.environment));
+        if is_stale {
+            self.environment_deployments = None;
+        }
+    }
+
+    pub fn is_highlighted_environment(&self, name: &str) -> bool {
+        self.active_tab == Tab::Environments
             && self
                 .environments
                 .state
                 .selected()
                 .and_then(|idx| self.filtered_environments().get(idx).copied())
-                .is_some_and(|env| env.name == shown.environment);
-        if !is_still_selected {
-            self.environment_deployments = None;
-        }
+                .is_some_and(|env| env.name == name)
     }
 
     /// Canonicalise a saved filter value to the display string that
@@ -7031,9 +7164,10 @@ impl App {
         }
     }
 
-    /// Order `list` for group-by on `col`, keyed by the cell text
-    /// `get_values` reports (its first value), so rows group by what the
-    /// column shows.
+    /// Order `list` for group-by on `col`, keyed by the first value
+    /// `get_values` reports (the cell text). Rows with no value key on `""`
+    /// instead of the placeholder their cell shows, so ascending puts them
+    /// ahead of every other text value and descending puts them behind.
     fn sort_by_column_values<T>(
         list: &mut [&T],
         col: &str,
@@ -8206,7 +8340,8 @@ mod tests {
             .unwrap(),
         ];
         app.issues.state.select(Some(0));
-        app.status_message = Some(StatusMessage::offline("Loaded from offline cache"));
+        app.show_notice("Selected all 3 items");
+        let status = app.status_message.clone();
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -8214,10 +8349,7 @@ mod tests {
             copied.borrow().as_deref(),
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
-        assert_eq!(
-            app.status_message,
-            Some(StatusMessage::offline("Loaded from offline cache"))
-        );
+        assert_eq!(app.status_message, status);
     }
 
     #[test]
@@ -8271,7 +8403,8 @@ mod tests {
             .unwrap(),
         ];
         app.mrs.state.select(Some(0));
-        app.status_message = Some(StatusMessage::offline("Offline"));
+        app.show_notice("Selected all 3 items");
+        let status = app.status_message.clone();
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -8288,7 +8421,7 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message, Some(StatusMessage::offline("Offline")));
+        assert_eq!(app.status_message, status);
     }
 
     #[test]

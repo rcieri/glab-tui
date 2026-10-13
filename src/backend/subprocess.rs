@@ -35,7 +35,7 @@ async fn output_within(
     match tokio::time::timeout(timeout, collect_output(&mut child, input)).await {
         Ok(output) => output.map_err(|e| anyhow::anyhow!("Failed to execute: {invocation}: {e}")),
         Err(_) => {
-            // `kill` also reaps the child, so nothing outlives the timeout.
+            // Awaiting `kill` reaps the direct child only. Processes it spawned are not signalled.
             let _ = child.kill().await;
             anyhow::bail!(
                 "{invocation} timed out after {timeout:?} and was killed \

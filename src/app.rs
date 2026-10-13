@@ -3954,16 +3954,6 @@ impl App {
         self.scope.display()
     }
 
-    pub fn tab_supported_in_scope(&self, tab: &Tab) -> bool {
-        if self.scope.is_repository() {
-            return true;
-        }
-        matches!(
-            tab,
-            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Milestones
-        )
-    }
-
     pub fn reset_on_scope_change(&mut self) {
         if self.scope.is_group() {
             for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {

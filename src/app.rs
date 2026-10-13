@@ -3004,10 +3004,20 @@ pub enum OverlayKind {
     ReviewThreads,
 }
 
+/// A PR action that needs the PR's stack, so it waits for an on-demand stack
+/// fetch when the session does not know the stack yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackAction {
+    /// Open the selector over the stack (`view_stack`).
+    Browse,
+    /// Open the merge dialog, which merges a stacked PR with its downstack.
+    Merge,
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
-    DeleteRelease(String),            // release tag_name
+    DeleteRelease(String, String),    // (project_path, release tag_name)
     DeleteBranch(String),             // branch name
     DeleteIssue(u64),                 // issue iid
     DeleteMr(u64),                    // mr iid
@@ -3018,6 +3028,7 @@ pub enum ConfirmAction {
     ReopenMr(u64),                    // mr iid
     ReopenMilestone(u64),             // milestone iid
     MergeMr(u64),                     // mr iid
+    MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
@@ -3029,7 +3040,7 @@ impl ConfirmAction {
         matches!(
             self,
             Self::DeleteMilestone(_)
-                | Self::DeleteRelease(_)
+                | Self::DeleteRelease(..)
                 | Self::DeleteBranch(_)
                 | Self::DeleteIssue(_)
                 | Self::DeleteMr(_)
@@ -3245,7 +3256,7 @@ impl SubmitDialog {
             ConfirmAction::DeleteMilestone(iid)
             | ConfirmAction::CloseMilestone(iid)
             | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
-            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
+            ConfirmAction::DeleteRelease(project, _) => project.clone(),
             ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
             ConfirmAction::CloseIssue(iid)
             | ConfirmAction::DeleteIssue(iid)
@@ -3254,6 +3265,7 @@ impl SubmitDialog {
             | ConfirmAction::ReopenMr(iid)
             | ConfirmAction::DeleteMr(iid)
             | ConfirmAction::MergeMr(iid)
+            | ConfirmAction::MergeStack(iid)
             | ConfirmAction::RevokeMr(iid)
             | ConfirmAction::RebaseMr(iid)
             | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
@@ -3277,7 +3289,7 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::DeleteRelease(tag_name) => (
+            ConfirmAction::DeleteRelease(_, tag_name) => (
                 format!("Delete Release {tag_name}"),
                 format!("Are you sure you want to delete release {tag_name}?"),
                 "Delete".to_string(),
@@ -3376,6 +3388,42 @@ impl SubmitDialog {
                     options,
                     false,
                 )
+            }
+            ConfirmAction::MergeStack(iid) => {
+                let stack = match app.pr_stack(&project_path, *iid) {
+                    Some(crate::domain::mr::StackLookup::Full(stack)) => Some(stack),
+                    _ => None,
+                };
+                let title = match stack {
+                    Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
+                    None => format!("Merge Stack through #{iid}"),
+                };
+                let body = stack
+                    .map(|stack| {
+                        let merged: Vec<String> = stack
+                            .downstack_open_entries()
+                            .map(|e| {
+                                format!(
+                                    "#{}: {}{}",
+                                    e.number,
+                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    if e.is_draft { " [draft]" } else { "" }
+                                )
+                            })
+                            .collect();
+                        format!(
+                            "Merges {} PRs together, all or nothing:\n{}",
+                            merged.len(),
+                            merged.join("\n")
+                        )
+                    })
+                    .unwrap_or_default();
+                let options = vec![
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
+                ];
+                (title, body, "Merge".to_string(), options, false)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
@@ -3592,9 +3640,9 @@ pub struct App {
     >,
     /// PRs (project path, number) whose on-demand stack fetch is in flight.
     pub fetching_pr_stacks: std::collections::HashSet<(String, u64)>,
-    /// PR whose stack selector opens once its stack fetch lands: `view_stack`
-    /// was pressed before the session knew the stack.
-    pub pending_stack_selector: Option<(String, u64)>,
+    /// PR whose stack fetch a key press is waiting on, and what to do once it
+    /// lands: the key was pressed before the session knew the stack.
+    pub pending_stack_action: Option<((String, u64), StackAction)>,
     /// PR open in the inspector and when it got there. Its stack is fetched
     /// only once it has stayed selected for the debounce window.
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
@@ -3709,7 +3757,7 @@ pub struct App {
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
     pub pending_delete_milestone_iid: Option<u64>,
-    pub pending_delete_release_tag: Option<String>,
+    pub pending_delete_release: Option<(String, String)>,
 }
 
 impl Default for App {
@@ -3759,7 +3807,7 @@ impl Default for App {
             pending_mr_related_issues_since: None,
             pr_stacks: std::collections::HashMap::new(),
             fetching_pr_stacks: std::collections::HashSet::new(),
-            pending_stack_selector: None,
+            pending_stack_action: None,
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
@@ -3849,7 +3897,7 @@ impl Default for App {
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
             pending_delete_milestone_iid: None,
-            pending_delete_release_tag: None,
+            pending_delete_release: None,
         }
     }
 }
@@ -3946,16 +3994,6 @@ impl App {
 
     pub fn scope_label(&self) -> String {
         self.scope.display()
-    }
-
-    pub fn tab_supported_in_scope(&self, tab: &Tab) -> bool {
-        if self.scope.is_repository() {
-            return true;
-        }
-        matches!(
-            tab,
-            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Milestones
-        )
     }
 
     pub fn reset_on_scope_change(&mut self) {
@@ -4200,16 +4238,6 @@ impl App {
             .iter()
             .find(|p| p.id() == id)
             .map(|p| p.project_path.clone())
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| self.scope.as_str().to_string())
-    }
-
-    pub fn project_path_for_release(&self, tag_name: &str) -> String {
-        self.releases
-            .items
-            .iter()
-            .find(|r| r.tag_name == tag_name)
-            .map(|r| r.project_path.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
@@ -6690,6 +6718,9 @@ impl App {
                 // but normalize maps them too for saved-filter compat
                 if v == "unread" { "NEW" } else { "READ" }
             }
+            // Runners Active: bool strings saved before the YES/NO cell text
+            "true" => "YES",
+            "false" => "NO",
             other => other,
         }
     }
@@ -7512,6 +7543,7 @@ mod tests {
             runner(2, "b", "online", true),
             runner(3, "c", "offline", true),
             runner(4, "d", "online", true),
+            runner(5, "e", "never_contacted", false),
         ];
         let group_by = Some("Status".to_string());
         let enabled = std::collections::HashMap::new();
@@ -7519,8 +7551,8 @@ mod tests {
         let ascending = App::filtered_runners_list(&runners, "", &enabled, true, &group_by);
         let descending = App::filtered_runners_list(&runners, "", &enabled, false, &group_by);
 
-        assert_eq!(runner_ids(&ascending), vec![3, 2, 4, 1]);
-        assert_eq!(runner_ids(&descending), vec![1, 2, 4, 3]);
+        assert_eq!(runner_ids(&ascending), vec![3, 2, 4, 1, 5]);
+        assert_eq!(runner_ids(&descending), vec![5, 1, 2, 4, 3]);
     }
 
     #[test]
@@ -7647,17 +7679,13 @@ mod tests {
     }
 
     #[test]
-    fn release_project_resolves_to_the_release_own_project_in_group_scope() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
-        app.releases.items = vec![
-            release_fixture("v1.0.0", "", "group/repo-a"),
-            release_fixture("v2.0.0", "", ""),
-        ];
+    fn release_project_is_its_own_and_falls_back_to_scope_when_unknown() {
+        let scope = crate::scope::Scope::Group("group".to_string());
+        let listed = release_fixture("v1.0.0", "", "group/repo-a");
+        let cached_without_project = release_fixture("v1.0.0", "", "");
 
-        assert_eq!(app.project_path_for_release("v1.0.0"), "group/repo-a");
-        assert_eq!(app.project_path_for_release("v2.0.0"), "group");
-        assert_eq!(app.project_path_for_release("v9.9.9"), "group");
+        assert_eq!(listed.project_or(&scope), "group/repo-a");
+        assert_eq!(cached_without_project.project_or(&scope), "group");
     }
 
     #[test]

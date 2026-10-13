@@ -18,7 +18,8 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Clipboard:** `arboard` (v3.6)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.2`)
+* **Process & Session Handling:** `libc` (v0.2) — Unix setsid for background commands & signal masking during terminal handoff
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.3`)
 
 ### Dual-Engine Architecture
 The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes (with or without `www.` prefix) resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. Without an `origin` remote (e.g. `-r owner/repo` outside a checkout), `git_helpers::detect_backend_without_remote` applies the same rule to `gh auth status --active` / `glab auth status` with no hostname. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
@@ -131,7 +132,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.
 * Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
 * Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
-* Non-error feedback (`App::status_message`) renders as muted text in the top header bar, passed through `sanitize_untrusted()` because it can carry job, stage or branch names. It stays until a writer clears it (most fetch-success events do).
+* Non-error feedback (`App::status_message`) renders as muted text in the top header bar, passed through `sanitize_untrusted()` because it can carry job, stage or branch names. It stays until a writer clears it: most fetch-success events do, and so do Esc and the bulk job retry/cancel when they clear a selection, so a "Selected all …" message does not outlive its selection.
 
 ### Jobs Tab (current branch)
 * `fetch::fetch_current_branch_jobs` reads the branch with `git_helpers::get_current_branch` on `tokio::task::spawn_blocking` (it runs a synchronous `git`), then asks `Backend::find_branch_pipeline_id` for the newest pipeline of that branch (on GitLab also its open MR's `refs/merge-requests/<iid>/head` pipeline). Never list every MR or pipeline to find it.
@@ -189,7 +190,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` via the Configure View submit button), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
 * Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth. Invalid user theme overrides automatically fall back to bundled presets.
 * Icons: The global `ICONS` `RwLock` is built from `Config::icons` (`IconSet::Nerd` default, or `IconSet::Ascii` via `icons = "ascii"`) through `IconSet::icons()`, and rebuilt by `reload_icons()` after a repo switch. `Icons::ascii()` keeps every glyph a single ASCII character for terminals without a Nerd Font, whose Private Use Area fallbacks render double-width and break layout. **Rule:** never write a glyph literal in render code; add a field to `Icons` and fill it in both `Icons::nerd()` and `Icons::ascii()`.
-* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (18 presets including `oled`, `github-dark-hc`, and the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
+* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (38 presets including `oled`, `github-dark-hc`, and the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Semantic tokens & transparent backgrounds:** `group_by` banner styling uses the `badge_group_bg` token, and an empty color string in theme TOMLs maps to `Color::Reset`, letting the terminal's own (possibly transparent) background show through instead of painting a solid fill.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens (`diff_gutter_bg`, `diff_sep`, etc.) to `Theme` if needed.
 
@@ -290,7 +291,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Operation | Command |
 |---|---|
 | Create release | `glab release create <tag> -R <repo> -n <name> -N <notes>` |
-| Update release | `glab release update <tag> -R <repo> -n <name> -N <desc>` |
+| Update release | `glab release create <tag> -R <repo> -n <name> -N <desc>` (updates the existing release, since `glab release` has no `update` subcommand) |
 | Delete release | `glab release delete <tag> -R <repo> -y` |
 | Close/reopen milestone | `glab milestone close\|reopen <iid> -R <repo>` |
 | Update milestone | `glab milestone update <iid> -R <repo> --title ... --description ...` |
@@ -373,7 +374,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
 | Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
 | PR stack positions (Stack column) | `gh api graphql` with one aliased `pullRequest(number: N) { stack stackEntry }` per listed PR | `gh pr list --json` has no stack fields. Runs once per PR-list fetch, only while `App::is_stack_column_needed()` (Stack column shown or grouped by), via `spawn_fetch_pr_stack_summaries` after `MrsFetched` |
-| One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced) and `Y` (`view_stack`). Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
+| One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
+| Merge a stacked PR (`Backend::merge_pr_stack`) | `PUT /repos/{}/pulls/{}/merge-async` with `merge_method`, then `GET .../merge-async/{uuid}` every 2 s while `pending` | `gh pr merge` calls the GraphQL `mergePullRequest` mutation, which refuses stacked PRs. Merges the PR with every open PR below it, all or nothing (a merge-queue base enqueues them). Single merges of a stacked PR open `ConfirmAction::MergeStack`. Bulk merges look the selection up with `list_pr_stack_summaries` and route stacked PRs here |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
 | List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
@@ -6361,12 +6363,12 @@ Run `scripts/release.sh [patch|minor|major|nightly]` (default `patch`) and the s
 > **Nightly Pre-Releases:** `scripts/release.sh nightly` (or tags matching `vX.Y.Z-nightly[-suffix]`) runs a stripped-down flow that skips `Cargo.toml` bumping, docs regeneration, prepare PRs, demo GIFs, review gates, Homebrew/Scoop manifest syncs, and crates.io publishing, while still building matrix binaries and updating GitHub release notes.
 
 1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing. Long-running steps run under the script's `spinner`/`progress_bar` helpers (animated spinner with captured logs, auto-disabled when not a TTY), and phases are numbered `1/7` … for progress reporting.
-2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
+2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the AI tool (`agy` or `opencode`) and model unless configured via `AI_TOOL`, `AGY_MODEL`, or `OPENCODE_MODEL`, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via the selected AI tool, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
 3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
 4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 11-target binary matrix (8 Linux + 3 non-Linux) and uploads them to the GitHub release.
 5. **Wait for build** — polls the release until every required asset exists (timeout: `RELEASE_WAIT_MIN`, default 45 min). The required-asset list in `REQUIRED_ASSETS_STATIC` covers the fixed name patterns; the dynamic Ubuntu-latest build is required to produce at least two `ubuntu-<VERSION_ID>` assets whose VERSION_ID differs from the 22.04 / 24.04 baselines. The script protects against unbound variables and off-by-one asset-count math under `set -u`, and it can resume from a chosen phase (`--phase`) if an earlier step failed or was interrupted.
-6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
-7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
+6. **Post-release** — generates `RELEASE_NOTES.md` via the selected AI tool (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), and updates the release body on GitHub.
+7. **Publish** — pushes the Homebrew formula (`rcieri/homebrew-glab-tui`), Scoop manifest (`rcieri/scoop-glab-tui`), Docker image to GHCR, and publishes the crate to crates.io (skipped for nightly).
 
 ### Release Assets
 
@@ -6396,4 +6398,4 @@ Three places pick the right asset for the running host:
 
 Scoop's manifest (`rcieri/scoop-glab-tui`) is unaffected — Windows keeps the fixed `glab-tui-windows-amd64.zip` name.
 
-During `Prepare`, `release.sh` interactively walks through the opencode models available to the local `opencode` install (`provider -> model -> variant`) to pick the model used for the regenerated docs and release notes; set `OPENCODE_MODEL` to skip the prompt.
+During `Prepare` and `Post-release`, `release.sh` prompts to select the AI tool (`agy` or `opencode`) and model for regenerated docs and release notes; set `AI_TOOL` and `AGY_MODEL` / `OPENCODE_MODEL` to skip prompts.

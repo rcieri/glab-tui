@@ -8,6 +8,7 @@ use ratatui::widgets::Cell;
 use super::{CellContext, ColumnDef, Row};
 use crate::domain::deployments::Environment;
 use crate::ui::helpers::render_fuzzy_cell;
+use crate::utils::format::sanitize_untrusted;
 
 impl Row for Environment {
     type Key = u64;
@@ -67,7 +68,7 @@ impl ColumnDef for EnvironmentColumn {
     fn cell(self, row: &Environment, ctx: &CellContext) -> Cell<'static> {
         match self {
             Self::Url => Cell::from(Span::styled(
-                self.text(row).into_owned(),
+                sanitize_untrusted(&self.text(row)).into_owned(),
                 Style::default().fg(ctx.theme.blue),
             )),
             Self::Name | Self::State | Self::DeploymentStatus => render_fuzzy_cell(

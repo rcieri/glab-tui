@@ -201,6 +201,17 @@ impl GitlabClient {
             .await
     }
 
+    pub async fn merge_pr_stack(
+        &self,
+        project: &str,
+        pr_number: u64,
+        method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        self.backend
+            .merge_pr_stack(project, pr_number, method)
+            .await
+    }
+
     pub async fn list_mr_notes(
         &self,
         project: &str,

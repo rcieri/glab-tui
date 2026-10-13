@@ -2054,7 +2054,6 @@ pub async fn handle_active_tab_key(
             ) =>
             {
                 if let Some(release) = app.releases.cursor_row() {
-
                     let Some(client) = app.gitlab_client.clone() else {
                         return false;
                     };

@@ -6653,6 +6653,9 @@ impl App {
                 // but normalize maps them too for saved-filter compat
                 if v == "unread" { "NEW" } else { "READ" }
             }
+            // Runners Active: bool strings saved before the YES/NO cell text
+            "true" => "YES",
+            "false" => "NO",
             other => other,
         }
     }

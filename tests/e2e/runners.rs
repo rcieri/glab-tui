@@ -29,21 +29,38 @@ fn test_runners_in_group_scope_name_the_configured_switch_key_without_fetching()
 }
 
 /// GitHub has no API to pause, resume or rename a runner. The keys must not
-/// pretend otherwise: flipping the row to PAUSED and then reverting it with an
-/// error toast is the behaviour this guards against.
+/// pretend otherwise (flipping the row to PAUSED and reverting it with an
+/// error toast, or opening a description editor), and the help must not list
+/// them.
 #[test]
-fn test_github_runner_pause_key_is_not_offered() {
-    let mut session = TestSession::with_config_and_args(true, 30, 160, None, &["--tab", "runners"]);
+fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
+    let mut session = TestSession::with_config_and_args(true, 60, 160, None, &["--tab", "runners"]);
 
     session
         .wait_for_screen_contains("Shared Runner 1", 10_000)
         .unwrap();
     session.send_input(b"p");
+    session.settle(500);
+    session.send_input(b"r");
+    session.settle(500);
+    session.send_input(b"e");
     session.settle(1_500);
 
     let screen = session.emulator.get_text();
-    assert!(screen.contains("ONLINE"), "{screen}");
-    assert!(screen.contains("YES"), "{screen}");
-    assert!(!screen.contains("PAUSED"), "{screen}");
+    let row = screen
+        .lines()
+        .find(|line| line.contains("#9876"))
+        .unwrap_or_default();
+    assert!(row.contains("ONLINE") && row.contains("YES"), "{screen}");
+    assert!(!row.contains("PAUSED"), "{screen}");
     assert!(!screen.contains("not supported"), "{screen}");
+    assert!(!screen.contains("Edit Runner Description"), "{screen}");
+
+    session.send_input(b"?");
+    session
+        .wait_for_screen_contains("Open runner in browser", 3_000)
+        .unwrap();
+    let help = session.emulator.get_text();
+    assert!(!help.contains("Pause / Resume runner"), "{help}");
+    assert!(!help.contains("Edit runner description text"), "{help}");
 }

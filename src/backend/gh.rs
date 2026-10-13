@@ -1171,7 +1171,6 @@ mod viewed_files_types {
     }
 }
 
-
 fn github_review_event(event: ReviewEvent) -> &'static str {
     match event {
         ReviewEvent::Comment => "COMMENT",
@@ -4014,6 +4013,7 @@ mod tests {
         );
         assert!(check_graphql_errors(r#"{"data":{"f0":{"clientMutationId":null}}}"#).is_ok());
         assert!(check_graphql_errors(r#"{"data":null,"errors":[{"message":"x"}]}"#).is_err());
+    }
 
     #[test]
     fn github_error_details_reads_string_and_object_errors() {

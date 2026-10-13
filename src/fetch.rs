@@ -1085,7 +1085,6 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
     Some(pr)
 }
 
-
 /// Toggles inside this window reach GitHub as one request, and a file toggled
 /// back and forth sends only its final state.
 const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);

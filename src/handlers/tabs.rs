@@ -955,7 +955,6 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             )) =>
                         {
-
                             let project_context = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
                             } else {

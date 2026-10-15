@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Runners, Releases, Branches and Environments keep the selected row** — These tabs now run on a shared list-tab model: each column defines its header, cell, search text, filter values and sort key once, and the filtered and sorted view is rebuilt only when the rows, search, column filters or sort change. Selection follows the row's own key (runner/environment id, release tag, branch name) instead of its position, so a refresh, sort, search or group change no longer moves it to another row, and editing a release opens the release under the cursor. The Releases "Release Notes" column is now searchable and filterable under its own name (it was looked up as "Description"), Branches' Default/Protected filters offer the `YES`/`NO` the table shows (saved `true`/`false` filters still match), grouping sorts these tabs too, and a mouse click selects the clicked row when the table is scrolled (#586).
+
 ## [0.9.3] - 2026-10-08
 
 ### Features

@@ -8,6 +8,7 @@ mod config;
 mod custom_keybindings;
 mod keybindings;
 mod layout;
+mod list_tab;
 mod pagination;
 mod pr_diff_fallback;
 mod review_cli;

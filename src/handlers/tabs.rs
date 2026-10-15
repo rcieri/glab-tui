@@ -1,6 +1,6 @@
 use crate::AppTerminal;
 use crate::app::App;
-use crate::entity_editor::rebuild_edit_menu;
+use crate::entity_editor::release_edit_menu;
 use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
@@ -1900,116 +1900,100 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Runners => {
-            if let Some(selected_idx) = app.runners.state.selected() {
-                if let Some(item) = app.filtered_runners().get(selected_idx) {
-                    let runner_id = item.id;
-                    match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.pause,
-                            key_event,
-                        ) =>
-                        {
-                            let prev = item.status.clone();
-                            let prev_active = item.active;
-                            if let Some(runner) =
-                                app.runners.items.iter_mut().find(|r| r.id == runner_id)
-                            {
-                                runner.status = "paused".to_string();
-                                runner.active = false;
-                            }
-                            if let Some(client) = app.gitlab_client.clone() {
-                                let scope = app.scope.clone();
-                                let tx2 = tx.clone();
-                                tokio::spawn(async move {
-                                    let result = client.pause_runner(&scope, runner_id).await;
-                                    if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
-                                            runner_id,
-                                            status: prev,
-                                            active: prev_active,
-                                        });
-                                    }
-                                    let _ = tx2.send(Event::CommandCompleted(
-                                        crate::app::Tab::Runners,
-                                        result.map_err(|e| e.to_string()),
-                                    ));
-                                });
-                            }
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.resume,
-                            key_event,
-                        ) =>
-                        {
-                            let prev = item.status.clone();
-                            let prev_active = item.active;
-                            if let Some(runner) =
-                                app.runners.items.iter_mut().find(|r| r.id == runner_id)
-                            {
-                                runner.status = "online".to_string();
-                                runner.active = true;
-                            }
-                            if let Some(client) = app.gitlab_client.clone() {
-                                let scope = app.scope.clone();
-                                let tx2 = tx.clone();
-                                tokio::spawn(async move {
-                                    let result = client.resume_runner(&scope, runner_id).await;
-                                    if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
-                                            runner_id,
-                                            status: prev,
-                                            active: prev_active,
-                                        });
-                                    }
-                                    let _ = tx2.send(Event::CommandCompleted(
-                                        crate::app::Tab::Runners,
-                                        result.map_err(|e| e.to_string()),
-                                    ));
-                                });
-                            }
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.edit_description,
-                            key_event,
-                        ) =>
-                        {
-                            let current_desc = item.description.clone().unwrap_or_default();
-                            app.text_input = Some(crate::app::TextInput {
-                                title: " Edit Runner Description ".to_string(),
-                                cursor_idx: current_desc.len(),
-                                value: current_desc,
-                                action: crate::app::TextInputAction::EditField {
-                                    entity_iid: runner_id,
-                                    entity_type: "runner".to_string(),
-                                    field_type: "runner_description".to_string(),
-                                },
-                            });
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.open_in_browser,
-                            key_event,
-                        ) =>
-                        {
-                            let runner_id_local = runner_id;
-                            let client = app.gitlab_client.clone();
+            if let Some(item) = app.runners.cursor_row() {
+                let runner_id = item.id;
+                match key_event.code {
+                    _ if keybinding_matches(&app.config.keybindings.runners.pause, key_event) => {
+                        let prev = item.status.clone();
+                        let prev_active = item.active;
+                        app.runners.update(&runner_id, |runner| {
+                            runner.status = "paused".to_string();
+                            runner.active = false;
+                        });
+                        if let Some(client) = app.gitlab_client.clone() {
                             let scope = app.scope.clone();
                             let tx2 = tx.clone();
                             tokio::spawn(async move {
-                                let Some(client) = client else {
-                                    return;
-                                };
-                                let result =
-                                    client.open_runner_in_browser(&scope, runner_id_local).await;
+                                let result = client.pause_runner(&scope, runner_id).await;
+                                if result.is_err() {
+                                    let _ = tx2.send(Event::RunnerStateRevert {
+                                        runner_id,
+                                        status: prev,
+                                        active: prev_active,
+                                    });
+                                }
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
                                     result.map_err(|e| e.to_string()),
                                 ));
                             });
                         }
-                        _ => handled = false,
                     }
-                } else {
-                    handled = false;
+                    _ if keybinding_matches(&app.config.keybindings.runners.resume, key_event) => {
+                        let prev = item.status.clone();
+                        let prev_active = item.active;
+                        app.runners.update(&runner_id, |runner| {
+                            runner.status = "online".to_string();
+                            runner.active = true;
+                        });
+                        if let Some(client) = app.gitlab_client.clone() {
+                            let scope = app.scope.clone();
+                            let tx2 = tx.clone();
+                            tokio::spawn(async move {
+                                let result = client.resume_runner(&scope, runner_id).await;
+                                if result.is_err() {
+                                    let _ = tx2.send(Event::RunnerStateRevert {
+                                        runner_id,
+                                        status: prev,
+                                        active: prev_active,
+                                    });
+                                }
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Runners,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
+                        }
+                    }
+                    _ if keybinding_matches(
+                        &app.config.keybindings.runners.edit_description,
+                        key_event,
+                    ) =>
+                    {
+                        let current_desc = item.description.clone().unwrap_or_default();
+                        app.text_input = Some(crate::app::TextInput {
+                            title: " Edit Runner Description ".to_string(),
+                            cursor_idx: current_desc.len(),
+                            value: current_desc,
+                            action: crate::app::TextInputAction::EditField {
+                                entity_iid: runner_id,
+                                entity_type: "runner".to_string(),
+                                field_type: "runner_description".to_string(),
+                            },
+                        });
+                    }
+                    _ if keybinding_matches(
+                        &app.config.keybindings.runners.open_in_browser,
+                        key_event,
+                    ) =>
+                    {
+                        let runner_id_local = runner_id;
+                        let client = app.gitlab_client.clone();
+                        let scope = app.scope.clone();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let Some(client) = client else {
+                                return;
+                            };
+                            let result =
+                                client.open_runner_in_browser(&scope, runner_id_local).await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Runners,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                    _ => handled = false,
                 }
             } else {
                 handled = false;
@@ -2051,32 +2035,17 @@ pub async fn handle_active_tab_key(
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
-                if let Some(selected_idx) = app.releases.state.selected() {
-                    let release_tag = {
-                        let filtered = app.filtered_releases();
-                        filtered.get(selected_idx).map(|r| r.tag_name.clone())
-                    };
-                    if let Some(tag_name) = release_tag {
-                        if let Some(idx) = app
-                            .releases
-                            .items
-                            .iter()
-                            .position(|r| r.tag_name == tag_name)
-                        {
-                            rebuild_edit_menu(app, "release", idx as u64);
-                        }
-                    }
+                if let Some(release) = app.releases.cursor_row() {
+                    let menu = release_edit_menu(release, app.scope.as_str());
+                    app.open_edit_menu(menu);
                 }
             }
             _ if keybinding_matches(&app.config.keybindings.releases.delete_release, key_event) => {
-                if let Some(selected_idx) = app.releases.state.selected() {
-                    let filtered = app.filtered_releases();
-                    if let Some(release) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
-                            app,
-                        ));
-                    }
+                if let Some(release) = app.releases.cursor_row() {
+                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
+                        app,
+                    ));
                 }
             }
             _ if keybinding_matches(
@@ -2084,27 +2053,23 @@ pub async fn handle_active_tab_key(
                 key_event,
             ) =>
             {
-                if let Some(selected_idx) = app.releases.state.selected() {
-                    let filtered = app.filtered_releases();
-                    if let Some(release) = filtered.get(selected_idx) {
-                        let is_github = app.is_github();
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return false;
-                        };
-                        let project_path = app.scope.as_str().to_string();
-                        let tag_name = release.tag_name.clone();
-                        let tx2 = tx.clone();
+                if let Some(release) = app.releases.cursor_row() {
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return false;
+                    };
+                    let project_path = app.scope.as_str().to_string();
+                    let tag_name = release.tag_name.clone();
+                    let tx2 = tx.clone();
 
-                        tokio::spawn(async move {
-                            let result = client
-                                .open_in_browser(&project_path, "release", tag_name.as_str())
-                                .await;
-                            let _ = tx2.send(Event::CommandCompleted(
-                                crate::app::Tab::Releases,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
+                    tokio::spawn(async move {
+                        let result = client
+                            .open_in_browser(&project_path, "release", tag_name.as_str())
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Releases,
+                            result.map_err(|e| e.to_string()),
+                        ));
+                    });
                 }
             }
             _ => handled = false,
@@ -2365,81 +2330,75 @@ pub async fn handle_active_tab_key(
             _ => handled = false,
         },
         crate::app::Tab::Branches => {
-            if let Some(selected_idx) = app.branches.state.selected() {
-                let filtered = app.filtered_branches();
-                if let Some(branch) = filtered.get(selected_idx) {
-                    let branch_name = branch.name.clone();
-                    if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event)
-                    {
-                        let create_from = branch_name.clone();
-                        let fields = crate::entity_editor::branch_fields(
-                            String::new(),
-                            create_from,
-                            if app.scope.is_group() {
-                                Some(String::new())
-                            } else {
-                                None
-                            },
-                        );
-                        app.open_edit_menu(crate::app::EditMenu {
-                            title: "Create Branch".to_string(),
-                            entity_project: if app.scope.is_group() {
-                                String::new()
-                            } else {
-                                app.scope.as_str().to_string()
-                            },
-                            fields,
-                            initial_fields: std::collections::HashMap::new(),
-                            selected_idx: 0,
-                            entity_iid: 0,
-                            entity_kind: crate::app::EditEntityKind::CreateBranch,
-                            state: {
-                                let mut s = ListState::default();
-                                s.select(Some(0));
-                                s
-                            },
-                            workflow_inputs: vec![],
-                            cursor_pos: 0,
-                            editing: false,
-                            desc_scroll: 0,
-                        });
-                    } else if keybinding_matches(
-                        &app.config.keybindings.branches.delete_branch,
-                        key_event,
-                    ) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::DeleteBranch(branch_name.clone()),
-                            app,
+            if let Some(branch) = app.branches.cursor_row() {
+                let branch_name = branch.name.clone();
+                if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event) {
+                    let create_from = branch_name.clone();
+                    let fields = crate::entity_editor::branch_fields(
+                        String::new(),
+                        create_from,
+                        if app.scope.is_group() {
+                            Some(String::new())
+                        } else {
+                            None
+                        },
+                    );
+                    app.open_edit_menu(crate::app::EditMenu {
+                        title: "Create Branch".to_string(),
+                        entity_project: if app.scope.is_group() {
+                            String::new()
+                        } else {
+                            app.scope.as_str().to_string()
+                        },
+                        fields,
+                        initial_fields: std::collections::HashMap::new(),
+                        selected_idx: 0,
+                        entity_iid: 0,
+                        entity_kind: crate::app::EditEntityKind::CreateBranch,
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                        workflow_inputs: vec![],
+                        cursor_pos: 0,
+                        editing: false,
+                        desc_scroll: 0,
+                    });
+                } else if keybinding_matches(
+                    &app.config.keybindings.branches.delete_branch,
+                    key_event,
+                ) {
+                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        crate::app::ConfirmAction::DeleteBranch(branch_name.clone()),
+                        app,
+                    ));
+                } else if keybinding_matches(
+                    &app.config.keybindings.branches.open_in_browser,
+                    key_event,
+                ) {
+                    let branch_local = branch_name.clone();
+                    let client = app.gitlab_client.clone();
+                    let project_path = app.scope.as_str().to_string();
+                    let tx2 = tx.clone();
+                    tokio::spawn(async move {
+                        let Some(client) = client else {
+                            return;
+                        };
+                        let result = client
+                            .open_branch_in_browser(&project_path, &branch_local)
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Branches,
+                            result.map_err(|e| e.to_string()),
                         ));
-                    } else if keybinding_matches(
-                        &app.config.keybindings.branches.open_in_browser,
-                        key_event,
-                    ) {
-                        let branch_local = branch_name.clone();
-                        let client = app.gitlab_client.clone();
-                        let project_path = app.scope.as_str().to_string();
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let Some(client) = client else {
-                                return;
-                            };
-                            let result = client
-                                .open_branch_in_browser(&project_path, &branch_local)
-                                .await;
-                            let _ = tx2.send(Event::CommandCompleted(
-                                crate::app::Tab::Branches,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    } else if keybinding_matches(
-                        &app.config.keybindings.branches.copy_branch,
-                        key_event,
-                    ) {
-                        if let Err(error) = app.copy_selected_branch_name() {
-                            app.show_error(format!("Failed to copy branch name: {error}"));
-                        }
-                    } else {
-                        handled = false;
+                    });
+                } else if keybinding_matches(
+                    &app.config.keybindings.branches.copy_branch,
+                    key_event,
+                ) {
+                    if let Err(error) = app.copy_selected_branch_name() {
+                        app.show_error(format!("Failed to copy branch name: {error}"));
                     }
                 } else {
                     handled = false;
@@ -2450,72 +2409,64 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Environments => {
             let mut matched = false;
-            if let Some(selected_idx) = app.environments.state.selected() {
+            if let Some(env_name) = app.environments.cursor_row().map(|env| env.name.clone()) {
                 if keybinding_matches(
                     &app.config.keybindings.environments.open_in_browser,
                     key_event,
                 ) {
                     matched = true;
-                    let filtered = app.filtered_environments();
-                    if let Some(env) = filtered.get(selected_idx) {
-                        let env_name = env.name.clone();
-                        let project_path = app.scope.as_str().to_string();
-                        let client = app.gitlab_client.clone();
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let Some(client) = client else {
-                                return;
-                            };
-                            let result = client
-                                .open_environment_in_browser(&project_path, &env_name)
-                                .await;
-                            let _ = tx2.send(Event::CommandCompleted(
-                                crate::app::Tab::Environments,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
+                    let project_path = app.scope.as_str().to_string();
+                    let client = app.gitlab_client.clone();
+                    let tx2 = tx.clone();
+                    tokio::spawn(async move {
+                        let Some(client) = client else {
+                            return;
+                        };
+                        let result = client
+                            .open_environment_in_browser(&project_path, &env_name)
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Environments,
+                            result.map_err(|e| e.to_string()),
+                        ));
+                    });
                 } else if keybinding_matches(
                     &app.config.keybindings.environments.view_deployments,
                     key_event,
                 ) {
                     matched = true;
-                    let filtered = app.filtered_environments();
-                    if let Some(env) = filtered.get(selected_idx) {
-                        let env_name = env.name.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Fetching deployments for {}",
-                            env_name
-                        )));
-                        let client = app.gitlab_client.clone();
-                        let scope = app.scope.clone();
-                        let tx = tx.clone();
-                        tokio::spawn(async move {
-                            if let Some(client) = client {
-                                match crate::domain::deployments::list_deployments(
-                                    &client,
-                                    &scope,
-                                    Some(&env_name),
-                                )
-                                .await
-                                {
-                                    Ok(deployments) => {
-                                        let _ = tx.send(Event::DeploymentsFetched(deployments));
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(Event::CommandCompleted(
-                                            crate::app::Tab::Environments,
-                                            Err(format!("Failed to fetch deployments: {}", e)),
-                                        ));
-                                        let _ = tx.send(Event::FetchFailed(
-                                            crate::app::Tab::Environments,
-                                            format!("Failed to fetch deployments: {}", e),
-                                        ));
-                                    }
+                    let _ = tx.send(Event::CommandStarted(format!(
+                        "Fetching deployments for {}",
+                        env_name
+                    )));
+                    let client = app.gitlab_client.clone();
+                    let scope = app.scope.clone();
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if let Some(client) = client {
+                            match crate::domain::deployments::list_deployments(
+                                &client,
+                                &scope,
+                                Some(&env_name),
+                            )
+                            .await
+                            {
+                                Ok(deployments) => {
+                                    let _ = tx.send(Event::DeploymentsFetched(deployments));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Environments,
+                                        Err(format!("Failed to fetch deployments: {}", e)),
+                                    ));
+                                    let _ = tx.send(Event::FetchFailed(
+                                        crate::app::Tab::Environments,
+                                        format!("Failed to fetch deployments: {}", e),
+                                    ));
                                 }
                             }
-                        });
-                    }
+                        }
+                    });
                 }
             }
             if !matched {
@@ -2904,34 +2855,9 @@ pub async fn handle_active_tab_key(
                                 }
                             }
                             crate::app::Tab::Releases => {
-                                if let Some(selected_idx) = app.releases.state.selected() {
-                                    let filtered = app.filtered_releases();
-                                    if let Some(release) = filtered.get(selected_idx) {
-                                        let mut doc =
-                                            crate::entity_editor::build_release_document(release);
-                                        doc.fields.push(crate::app::Field::text(
-                                            "Description",
-                                            release.description.clone().unwrap_or_default(),
-                                        ));
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Edit Release {}", release.tag_name),
-                                            entity_project: app.scope.as_str().to_string(),
-                                            fields: doc.fields,
-                                            initial_fields: std::collections::HashMap::new(),
-                                            selected_idx: 0,
-                                            entity_iid: 0,
-                                            entity_kind: crate::app::EditEntityKind::EditRelease,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                        });
-                                    }
+                                if let Some(release) = app.releases.cursor_row() {
+                                    let menu = release_edit_menu(release, app.scope.as_str());
+                                    app.open_edit_menu(menu);
                                 }
                             }
                             _ => {
@@ -3006,23 +2932,19 @@ pub async fn handle_active_tab_key(
                             app.job_trace = None;
                             app.job_trace_follow = false;
                         }
-                        crate::app::Tab::Runners => {
-                            app.runners.next(app.filtered_runners().len());
-                        }
-                        crate::app::Tab::Releases => {
-                            app.releases.next(app.filtered_releases().len());
+                        crate::app::Tab::Runners
+                        | crate::app::Tab::Releases
+                        | crate::app::Tab::Branches
+                        | crate::app::Tab::Environments => {
+                            if let Some(list) = app.list_navigation_mut(app.active_tab) {
+                                list.next();
+                            }
                         }
                         crate::app::Tab::Todos => {
                             app.todos.next(app.filtered_todos().len());
                         }
                         crate::app::Tab::Milestones => {
                             app.milestones.next(app.filtered_milestones().len());
-                        }
-                        crate::app::Tab::Branches => {
-                            app.branches.next(app.filtered_branches().len());
-                        }
-                        crate::app::Tab::Environments => {
-                            app.environments.next(app.filtered_environments().len());
                         }
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
@@ -3060,23 +2982,19 @@ pub async fn handle_active_tab_key(
                             app.job_trace = None;
                             app.job_trace_follow = false;
                         }
-                        crate::app::Tab::Runners => {
-                            app.runners.previous(app.filtered_runners().len());
-                        }
-                        crate::app::Tab::Releases => {
-                            app.releases.previous(app.filtered_releases().len());
+                        crate::app::Tab::Runners
+                        | crate::app::Tab::Releases
+                        | crate::app::Tab::Branches
+                        | crate::app::Tab::Environments => {
+                            if let Some(list) = app.list_navigation_mut(app.active_tab) {
+                                list.previous();
+                            }
                         }
                         crate::app::Tab::Todos => {
                             app.todos.previous(app.filtered_todos().len());
                         }
                         crate::app::Tab::Milestones => {
                             app.milestones.previous(app.filtered_milestones().len());
-                        }
-                        crate::app::Tab::Branches => {
-                            app.branches.previous(app.filtered_branches().len());
-                        }
-                        crate::app::Tab::Environments => {
-                            app.environments.previous(app.filtered_environments().len());
                         }
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_add(1);
@@ -3114,23 +3032,19 @@ pub async fn handle_active_tab_key(
                             app.job_trace = None;
                             app.job_trace_follow = false;
                         }
-                        crate::app::Tab::Runners => {
-                            app.runners.first(app.filtered_runners().len());
-                        }
-                        crate::app::Tab::Releases => {
-                            app.releases.first(app.filtered_releases().len());
+                        crate::app::Tab::Runners
+                        | crate::app::Tab::Releases
+                        | crate::app::Tab::Branches
+                        | crate::app::Tab::Environments => {
+                            if let Some(list) = app.list_navigation_mut(app.active_tab) {
+                                list.first();
+                            }
                         }
                         crate::app::Tab::Todos => {
                             app.todos.first(app.filtered_todos().len());
                         }
                         crate::app::Tab::Milestones => {
                             app.milestones.first(app.filtered_milestones().len());
-                        }
-                        crate::app::Tab::Branches => {
-                            app.branches.first(app.filtered_branches().len());
-                        }
-                        crate::app::Tab::Environments => {
-                            app.environments.first(app.filtered_environments().len());
                         }
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = usize::MAX;
@@ -3171,23 +3085,19 @@ pub async fn handle_active_tab_key(
                             app.job_trace = None;
                             app.job_trace_follow = false;
                         }
-                        crate::app::Tab::Runners => {
-                            app.runners.last(app.filtered_runners().len());
-                        }
-                        crate::app::Tab::Releases => {
-                            app.releases.last(app.filtered_releases().len());
+                        crate::app::Tab::Runners
+                        | crate::app::Tab::Releases
+                        | crate::app::Tab::Branches
+                        | crate::app::Tab::Environments => {
+                            if let Some(list) = app.list_navigation_mut(app.active_tab) {
+                                list.last();
+                            }
                         }
                         crate::app::Tab::Todos => {
                             app.todos.last(app.filtered_todos().len());
                         }
                         crate::app::Tab::Milestones => {
                             app.milestones.last(app.filtered_milestones().len());
-                        }
-                        crate::app::Tab::Branches => {
-                            app.branches.last(app.filtered_branches().len());
-                        }
-                        crate::app::Tab::Environments => {
-                            app.environments.last(app.filtered_environments().len());
                         }
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = 0;

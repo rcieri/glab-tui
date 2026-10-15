@@ -1,5 +1,6 @@
 use crate::app::{App, Tab};
 use crate::config::THEME;
+use crate::ui::list_tab::TableContext;
 use crate::utils::format::{format_ref, time_ago, truncate};
 use ratatui::{
     Frame,
@@ -23,6 +24,48 @@ fn settle_detail_scroll(app: &mut App, max: u16) {
     } else {
         app.detail_scroll = app.detail_scroll.min(max);
     }
+}
+
+/// Draw `doc` read-only in a list tab's preview pane, or a placeholder when
+/// no row is selected.
+fn render_list_preview(
+    f: &mut Frame,
+    app: &mut App,
+    detail_rect: Rect,
+    doc: Option<crate::app::EntityDocument>,
+    theme: &crate::config::Theme,
+    title_icon: &str,
+) {
+    let Some(doc) = doc else {
+        f.render_widget(
+            Paragraph::new("Select an item to view preview...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {title_icon} Preview "))
+                        .title_style(
+                            Style::default()
+                                .fg(theme.text_muted)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    };
+    let max_detail_scroll = super::inspector::render_entity_inspector(
+        f,
+        &doc,
+        detail_rect,
+        super::inspector::InspectorMode::ReadOnly {
+            scroll: app.detail_scroll,
+            title_suffix: "",
+        },
+        &app.label_colors,
+    );
+    settle_detail_scroll(app, max_detail_scroll);
 }
 
 /// Return a responsive column width: uses `base` normally but shrinks on narrow terminals.
@@ -2065,7 +2108,7 @@ pub(crate) fn render_tab_runners(
         );
         return;
     }
-    if app.runners.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
+    if app.runners.items().is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading runners...", icons.label_loading))
                 .alignment(Alignment::Center)
@@ -2085,172 +2128,23 @@ pub(crate) fn render_tab_runners(
             detail_rect,
         );
     } else {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = app
-            .enabled_columns
-            .get(&Tab::Runners)
-            .unwrap_or(&default_set);
-        let mut filtered_runners =
-            App::filter_runners_list(&app.runners.items, &app.search_query, enabled_cols);
-        App::apply_column_filters(
-            &mut filtered_runners,
-            &app.column_filters,
-            Tab::Runners,
-            App::runner_filter_values,
+        app.runners.render(
+            f,
+            content_area,
+            TableContext {
+                block: main_block,
+                header_style,
+                highlight_style,
+                theme: &theme,
+                icons: &icons,
+                query: &app.search_query,
+            },
         );
-
-        let rows = filtered_runners.iter().enumerate().map(|(idx, r)| {
-            let is_row_highlighted = app.runners.state.selected() == Some(idx);
-            let (status_text, status_color, bg_color) =
-                match crate::app::runner_status_display(&r.status) {
-                    "ONLINE" => (
-                        format!("{} ONLINE", icons.runner_online),
-                        theme.green,
-                        theme.green_bg,
-                    ),
-                    "PAUSED" => (
-                        format!("{} PAUSED", icons.runner_paused),
-                        theme.yellow,
-                        theme.yellow_bg,
-                    ),
-                    "OFFLINE" => (
-                        format!("{} OFFLINE", icons.runner_offline),
-                        theme.red,
-                        theme.red_bg,
-                    ),
-                    _ => (
-                        format!("{} UNKNOWN", icons.status_unknown),
-                        theme.text_muted,
-                        theme.inactive_bg,
-                    ),
-                };
-            let desc = r.description.as_deref().unwrap_or("No description");
-            let mut row_cells = Vec::new();
-            if app.is_column_visible(Tab::Runners, "ID") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &format!("#{}", r.id),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.text_normal),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Runners, "Description") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(desc, 100),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.text_normal),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Runners, "Status") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &status_text,
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default()
-                        .fg(status_color)
-                        .bg(if is_row_highlighted {
-                            theme.highlight_bg
-                        } else {
-                            bg_color
-                        })
-                        .add_modifier(Modifier::BOLD),
-                    Alignment::Center,
-                ));
-            }
-            if app.is_column_visible(Tab::Runners, "Active") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &r.active.to_string(),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(if r.active { theme.green } else { theme.red }),
-                    Alignment::Left,
-                ));
-            }
-            let row_style = if is_row_highlighted {
-                Style::default().bg(theme.highlight_bg)
-            } else {
-                Style::default()
-            };
-            Row::new(row_cells).style(row_style).height(1)
-        });
-
-        let mut header_cells = Vec::new();
-        let mut widths = Vec::new();
-
-        if app.is_column_visible(Tab::Runners, "ID") {
-            header_cells.push(Cell::from("ID"));
-            widths.push(Constraint::Length(8));
-        }
-        if app.is_column_visible(Tab::Runners, "Description") {
-            header_cells.push(Cell::from("Description"));
-            widths.push(Constraint::Fill(1));
-        }
-        if app.is_column_visible(Tab::Runners, "Status") {
-            header_cells.push(Cell::from(
-                Line::from("Status").alignment(Alignment::Center),
-            ));
-            widths.push(Constraint::Length(12));
-        }
-        if app.is_column_visible(Tab::Runners, "Active") {
-            header_cells.push(Cell::from(
-                Line::from("Active").alignment(Alignment::Center),
-            ));
-            widths.push(Constraint::Length(10));
-        }
-
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
-        }
-
-        let table = Table::new(rows, widths)
-            .header(Row::new(header_cells).style(header_style).height(1))
-            .block(main_block)
-            .row_highlight_style(Style::default())
-            .highlight_symbol(format!(" {} ", icons.highlight_arrow));
-
-        f.render_stateful_widget(table, content_area, &mut app.runners.state);
-
-        let preview_block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} Preview ", icons.label_details))
-            .title_style(
-                Style::default()
-                    .fg(theme.text_muted)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .border_style(Style::default().fg(theme.border));
-        if let Some(selected) = app.runners.state.selected() {
-            if let Some(r) = filtered_runners.get(selected) {
-                let doc = crate::entity_editor::build_runner_document(r);
-                let max_detail_scroll = super::inspector::render_entity_inspector(
-                    f,
-                    &doc,
-                    detail_rect,
-                    super::inspector::InspectorMode::ReadOnly {
-                        scroll: app.detail_scroll,
-                        title_suffix: "",
-                    },
-                    &app.label_colors,
-                );
-                settle_detail_scroll(app, max_detail_scroll);
-            } else {
-                f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
-            }
-        } else {
-            f.render_widget(
-                Paragraph::new("Select an item to view preview...")
-                    .block(preview_block)
-                    .style(Style::default().fg(theme.text_muted)),
-                detail_rect,
-            );
-        }
+        let doc = app
+            .runners
+            .cursor_row()
+            .map(crate::entity_editor::build_runner_document);
+        render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_details);
     }
 }
 pub(crate) fn render_tab_releases(
@@ -2292,7 +2186,7 @@ pub(crate) fn render_tab_releases(
         );
         return;
     }
-    if app.releases.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
+    if app.releases.items().is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading releases...", icons.label_loading))
                 .alignment(Alignment::Center)
@@ -2312,173 +2206,23 @@ pub(crate) fn render_tab_releases(
             detail_rect,
         );
     } else {
-        let mut filtered_releases = App::filtered_releases_list(
-            &app.releases.items,
-            &app.search_query,
-            &app.enabled_columns,
-            app.group_ascending
-                .get(&Tab::Releases)
-                .copied()
-                .unwrap_or(true),
-            app.group_by_column.get(&Tab::Releases).unwrap_or(&None),
+        app.releases.render(
+            f,
+            content_area,
+            TableContext {
+                block: main_block,
+                header_style,
+                highlight_style,
+                theme: &theme,
+                icons: &icons,
+                query: &app.search_query,
+            },
         );
-        App::apply_column_filters(
-            &mut filtered_releases,
-            &app.column_filters,
-            Tab::Releases,
-            App::release_filter_values,
-        );
-
-        let rows = filtered_releases.iter().enumerate().map(|(idx, r)| {
-            let is_row_highlighted = app.releases.state.selected() == Some(idx);
-            let mut row_cells = Vec::new();
-            if app.is_column_visible(Tab::Releases, "Tag") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &r.tag_name,
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default()
-                        .fg(theme.green)
-                        .add_modifier(Modifier::BOLD),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Releases, "Release Name") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(&r.name, 100),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.text_normal),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Releases, "Date") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(&r.released_at, 15),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.yellow),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Releases, "Author") {
-                let author = r.author_name.as_deref().unwrap_or("");
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &author.to_string(),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.blue),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Releases, "Assets") {
-                let assets = r.assets_link.as_deref().unwrap_or("");
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(assets, 50),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.blue),
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Releases, "Release Notes") {
-                let desc = r.description.as_deref().unwrap_or("");
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(desc, 80),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    Style::default().fg(theme.text_muted),
-                    Alignment::Left,
-                ));
-            }
-            let row_style = if is_row_highlighted {
-                Style::default().bg(theme.highlight_bg)
-            } else {
-                Style::default()
-            };
-            Row::new(row_cells).style(row_style).height(1)
-        });
-
-        let mut header_cells = Vec::new();
-        let mut widths = Vec::new();
-
-        if app.is_column_visible(Tab::Releases, "Tag") {
-            header_cells.push(Cell::from("Tag"));
-            widths.push(Constraint::Length(16));
-        }
-        if app.is_column_visible(Tab::Releases, "Release Name") {
-            header_cells.push(Cell::from("Release Name"));
-            widths.push(Constraint::Length(30));
-        }
-        if app.is_column_visible(Tab::Releases, "Date") {
-            header_cells.push(Cell::from("Date"));
-            widths.push(Constraint::Length(15));
-        }
-        if app.is_column_visible(Tab::Releases, "Author") {
-            header_cells.push(Cell::from("Author"));
-            widths.push(Constraint::Length(18));
-        }
-        if app.is_column_visible(Tab::Releases, "Assets") {
-            header_cells.push(Cell::from("Assets"));
-            widths.push(Constraint::Length(12));
-        }
-        if app.is_column_visible(Tab::Releases, "Release Notes") {
-            header_cells.push(Cell::from("Release Notes"));
-            widths.push(Constraint::Fill(1));
-        }
-
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
-        }
-
-        let table = Table::new(rows, widths)
-            .header(Row::new(header_cells).style(header_style).height(1))
-            .block(main_block)
-            .row_highlight_style(Style::default())
-            .highlight_symbol(format!(" {} ", icons.highlight_arrow));
-
-        f.render_stateful_widget(table, content_area, &mut app.releases.state);
-
-        let preview_block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} Preview ", icons.label_details))
-            .title_style(
-                Style::default()
-                    .fg(theme.text_muted)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .border_style(Style::default().fg(theme.border));
-        if let Some(selected) = app.releases.state.selected() {
-            if let Some(r) = filtered_releases.get(selected) {
-                let doc = crate::entity_editor::build_release_document(r);
-                let max_detail_scroll = super::inspector::render_entity_inspector(
-                    f,
-                    &doc,
-                    detail_rect,
-                    super::inspector::InspectorMode::ReadOnly {
-                        scroll: app.detail_scroll,
-                        title_suffix: "",
-                    },
-                    &app.label_colors,
-                );
-                settle_detail_scroll(app, max_detail_scroll);
-            } else {
-                f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
-            }
-        } else {
-            f.render_widget(
-                Paragraph::new("Select an item to view preview...")
-                    .block(preview_block)
-                    .style(Style::default().fg(theme.text_muted)),
-                detail_rect,
-            );
-        }
+        let doc = app
+            .releases
+            .cursor_row()
+            .map(crate::entity_editor::build_release_document);
+        render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_details);
     }
 }
 pub(crate) fn render_tab_todos(
@@ -3039,7 +2783,7 @@ pub(crate) fn render_tab_branches(
         );
         return;
     }
-    if app.branches.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
+    if app.branches.items().is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading branches...", icons.label_loading))
                 .alignment(Alignment::Center)
@@ -3048,154 +2792,23 @@ pub(crate) fn render_tab_branches(
             content_area,
         );
     } else {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = app
-            .enabled_columns
-            .get(&Tab::Branches)
-            .unwrap_or(&default_set);
-        let mut filtered =
-            App::filter_branches_list(&app.branches.items, &app.search_query, enabled_cols);
-        App::apply_column_filters(
-            &mut filtered,
-            &app.column_filters,
-            Tab::Branches,
-            App::branch_filter_values,
+        app.branches.render(
+            f,
+            content_area,
+            TableContext {
+                block: main_block,
+                header_style,
+                highlight_style,
+                theme: &theme,
+                icons: &icons,
+                query: &app.search_query,
+            },
         );
-        let rows = filtered.iter().enumerate().map(|(idx, b)| {
-            let is_selected = app.branches.state.selected() == Some(idx);
-            let row_style = if is_selected {
-                highlight_style
-            } else {
-                Style::default()
-            };
-            let mut cells = Vec::new();
-            if app.is_column_visible(Tab::Branches, "Name") {
-                cells.push(super::helpers::render_fuzzy_cell(
-                    &format!("{} {}", icons.label_branch, b.name),
-                    &app.search_query,
-                    is_selected,
-                    false,
-                    row_style,
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Branches, "Default") {
-                let cell = if b.default {
-                    Cell::from(Span::styled(
-                        format!(" {} YES ", icons.radio_on),
-                        Style::default()
-                            .fg(theme.green)
-                            .bg(if is_selected {
-                                theme.highlight_bg
-                            } else {
-                                theme.green_bg
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ))
-                } else {
-                    Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
-                };
-                cells.push(cell);
-            }
-            if app.is_column_visible(Tab::Branches, "Protected") {
-                let cell = if b.protected {
-                    Cell::from(Span::styled(
-                        format!(" {} YES ", icons.lock),
-                        Style::default()
-                            .fg(theme.yellow)
-                            .bg(if is_selected {
-                                theme.highlight_bg
-                            } else {
-                                theme.yellow_bg
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ))
-                } else {
-                    Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
-                };
-                cells.push(cell);
-            }
-            if app.is_column_visible(Tab::Branches, "SHA") {
-                let sha_text = if b.commit_sha.is_empty() {
-                    "--".to_string()
-                } else {
-                    crate::utils::format::truncate(&b.commit_sha, 8)
-                };
-                cells.push(super::helpers::render_fuzzy_cell(
-                    &sha_text,
-                    &app.search_query,
-                    is_selected,
-                    false,
-                    row_style,
-                    Alignment::Left,
-                ));
-            }
-            Row::new(cells).style(row_style).height(1)
-        });
-
-        let cols = Tab::Branches.columns(app.kind(), app.scope.is_group());
-        let widths: Vec<Constraint> = cols
-            .iter()
-            .filter(|c| app.is_column_visible(Tab::Branches, c))
-            .map(|c| match *c {
-                "Name" => Constraint::Fill(1),
-                "Default" => Constraint::Length(12),
-                "Protected" => Constraint::Length(14),
-                "SHA" => Constraint::Length(12),
-                _ => Constraint::Fill(1),
-            })
-            .collect();
-
-        let table = Table::new(rows, widths)
-            .header(
-                Row::new(
-                    cols.iter()
-                        .filter(|c| app.is_column_visible(Tab::Branches, c))
-                        .map(|c| Cell::from(*c).style(header_style)),
-                )
-                .height(1),
-            )
-            .block(main_block.clone())
-            .row_highlight_style(Style::default())
-            .highlight_symbol(format!(" {} ", icons.highlight_arrow));
-
-        f.render_stateful_widget(table, content_area, &mut app.branches.state);
-
-        // Detail pane
-        let preview_block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} Preview ", icons.label_branch))
-            .title_style(
-                Style::default()
-                    .fg(theme.text_muted)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .border_style(Style::default().fg(theme.border));
-        if let Some(idx) = app.branches.state.selected() {
-            if let Some(branch) = filtered.get(idx) {
-                let doc = crate::entity_editor::build_branch_document(branch);
-                let max_detail_scroll = super::inspector::render_entity_inspector(
-                    f,
-                    &doc,
-                    detail_rect,
-                    super::inspector::InspectorMode::ReadOnly {
-                        scroll: app.detail_scroll,
-                        title_suffix: "",
-                    },
-                    &app.label_colors,
-                );
-                settle_detail_scroll(app, max_detail_scroll);
-            } else {
-                f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
-            }
-        } else {
-            f.render_widget(
-                Paragraph::new("Select an item to view preview...")
-                    .block(preview_block)
-                    .style(Style::default().fg(theme.text_muted)),
-                detail_rect,
-            );
-        }
+        let doc = app
+            .branches
+            .cursor_row()
+            .map(crate::entity_editor::build_branch_document);
+        render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_branch);
     }
 }
 pub(crate) fn render_tab_environments(
@@ -3234,7 +2847,7 @@ pub(crate) fn render_tab_environments(
         );
         return;
     }
-    if app.environments.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
+    if app.environments.items().is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(
                 "\n\n {} Loading environments...",
@@ -3246,134 +2859,24 @@ pub(crate) fn render_tab_environments(
             content_area,
         );
     } else {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = app
-            .enabled_columns
-            .get(&Tab::Environments)
-            .unwrap_or(&default_set);
-        let mut filtered =
-            App::filter_environments_list(&app.environments.items, &app.search_query, enabled_cols);
-        App::apply_column_filters(
-            &mut filtered,
-            &app.column_filters,
-            Tab::Environments,
-            App::environment_filter_values,
+        app.environments.render(
+            f,
+            content_area,
+            TableContext {
+                block: main_block,
+                header_style,
+                highlight_style,
+                theme: &theme,
+                icons: &icons,
+                query: &app.search_query,
+            },
         );
-        let rows = filtered.iter().enumerate().map(|(idx, e)| {
-            let is_selected = app.environments.state.selected() == Some(idx);
-            let row_style = if is_selected {
-                highlight_style
-            } else {
-                Style::default()
-            };
-            let mut cells = Vec::new();
-            if app.is_column_visible(Tab::Environments, "Name") {
-                cells.push(super::helpers::render_fuzzy_cell(
-                    &e.name,
-                    &app.search_query,
-                    is_selected,
-                    false,
-                    row_style,
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Environments, "State") {
-                cells.push(super::helpers::render_fuzzy_cell(
-                    &e.state,
-                    &app.search_query,
-                    is_selected,
-                    false,
-                    row_style,
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Environments, "Deployment Status") {
-                let status = e
-                    .last_deployment
-                    .as_ref()
-                    .map(|d| d.status.as_str())
-                    .unwrap_or("N/A");
-                cells.push(super::helpers::render_fuzzy_cell(
-                    status,
-                    &app.search_query,
-                    is_selected,
-                    false,
-                    row_style,
-                    Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::Environments, "URL") {
-                let url = e.external_url.as_deref().unwrap_or("-");
-                cells.push(Cell::from(Span::styled(
-                    url,
-                    Style::default().fg(theme.blue),
-                )));
-            }
-            Row::new(cells).style(row_style).height(1)
-        });
-
-        let cols = Tab::Environments.columns(app.kind(), app.scope.is_group());
-        let widths: Vec<Constraint> = cols
-            .iter()
-            .filter(|c| app.is_column_visible(Tab::Environments, c))
-            .map(|c| match *c {
-                "Name" => Constraint::Length(24),
-                "State" => Constraint::Length(12),
-                "Deployment Status" => Constraint::Length(20),
-                "URL" => Constraint::Fill(1),
-                _ => Constraint::Fill(1),
-            })
-            .collect();
-
-        let table = Table::new(rows, widths)
-            .header(
-                Row::new(
-                    cols.iter()
-                        .filter(|c| app.is_column_visible(Tab::Environments, c))
-                        .map(|c| Cell::from(*c).style(header_style)),
-                )
-                .height(1),
-            )
-            .block(main_block.clone())
-            .row_highlight_style(Style::default())
-            .highlight_symbol(format!(" {} ", icons.highlight_arrow));
-
-        f.render_stateful_widget(table, content_area, &mut app.environments.state);
-
-        // Detail pane - show deployments if available
-        let preview_block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} Preview ", icons.label_environment))
-            .title_style(
-                Style::default()
-                    .fg(theme.text_muted)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .border_style(Style::default().fg(theme.border));
         if app.deployments.items.is_empty() {
-            if let Some(idx) = app.environments.state.selected() {
-                if let Some(env) = filtered.get(idx) {
-                    let doc = crate::entity_editor::build_environment_document(env);
-                    let max_detail_scroll = super::inspector::render_entity_inspector(
-                        f,
-                        &doc,
-                        detail_rect,
-                        super::inspector::InspectorMode::ReadOnly {
-                            scroll: app.detail_scroll,
-                            title_suffix: "",
-                        },
-                        &app.label_colors,
-                    );
-                    settle_detail_scroll(app, max_detail_scroll);
-                }
-            } else {
-                f.render_widget(
-                    Paragraph::new("Select an environment to view details...")
-                        .block(preview_block)
-                        .style(Style::default().fg(theme.text_muted)),
-                    detail_rect,
-                );
-            }
+            let doc = app
+                .environments
+                .cursor_row()
+                .map(crate::entity_editor::build_environment_document);
+            render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
         } else {
             // Show fetched deployments in the detail pane
             let deploy_rows: Vec<Row> = app

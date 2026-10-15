@@ -1,0 +1,22 @@
+[
+  {
+    "name": "One",
+    "tag_name": "v1.0.0",
+    "released_at": "2026-01-01T00:00:00Z",
+    "description": "first cut",
+    "author_name": "alice",
+    "commit_id": null,
+    "commit_title": null,
+    "assets_link": null
+  },
+  {
+    "name": "Two",
+    "tag_name": "v2.0.0",
+    "released_at": "2026-02-01T00:00:00Z",
+    "description": "adds widgets",
+    "author_name": "bob",
+    "commit_id": null,
+    "commit_title": null,
+    "assets_link": null
+  }
+]

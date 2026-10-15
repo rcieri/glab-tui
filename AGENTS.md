@@ -246,6 +246,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Value-based column filtering is available by pressing `Enter` on a focused column item, which opens a selector overlay with distinct values for that column.
 * Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
 * Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
+* **State filter → server state (GitHub repositories only):** the Issues and MRs/PRs State filter picks what `gh issue list` / `gh pr list` fetch. `App::state_filter_query` turns one selected state into a `StateQuery` ([src/domain/state_query.rs](src/domain/state_query.rs)). Two or more states, or no filter, give `All`. `Backend::server_state_query` decides what the server is asked for: GitHub narrows repository listings, while GitLab and GitHub org listings keep fetching every state. Every `spawn_refresh_active_tab` / `spawn_refresh_all_tabs` call passes `app.requested_state_queries()`. `IssuesFetched` / `MrsFetched` carry the query they were listed with. A result that does not cover the current filter is dropped, and `ProjectCache::issues_state_query` / `mrs_state_query` make `App::restore_cached_issues` / `restore_cached_mrs` skip cached rows listed for a narrower state. `fetch::dispatch_state_query_refetch` (on `Event::Tick`) refetches a loaded or loading tab once its requested query changes, whatever path edited the filter. While the server narrows, the State picker offers every state, so the user can switch to one that was not fetched.
 * When rendering the MR/PR pipeline status column, check `is_github` to display "Pipeline" (GitLab) or "Action" (GitHub) terminology.
 * MR/PR review-state columns (`Approval`, `Mergeable`, `Workflow`) are derived in [src/domain/mr_state.rs](src/domain/mr_state.rs).
 
@@ -349,9 +350,9 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Command | Pagination |
 |---|---|---|
-| List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10) |
+| List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10). `<s>` is `open` / `closed` when the State filter selects exactly that state, otherwise `all` |
 | Get single issue | `gh issue view <iid> --json ... -R <repo>` | N/A |
-| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call; the JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
+| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call. `<s>` is `open` / `merged` / `closed` when the State filter selects exactly that state, otherwise `all`. `closed` also returns merged PRs, which the State filter hides. The JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
 | Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |

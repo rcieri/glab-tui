@@ -21,7 +21,12 @@ if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     exit 0
 fi
 
-if [[ "$*" == "run list"* ]]; then
+# `pr list --state merged` serves only merged PRs, so a test can tell a list
+# refetched for that state from one that was not.
+if [[ "$*" == "pr list"* && " $* " == *" --state merged "* ]]; then
+    cat "$FIXTURES_DIR/gh_prs_merged.json"
+    exit 0
+elif [[ "$*" == "run list"* ]]; then
     echo '[{"databaseId": 12345}]'
     exit 0
 fi

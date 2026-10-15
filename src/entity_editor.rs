@@ -1790,16 +1790,15 @@ pub async fn handle_entity_update(
                     .and_then(|m| m.description.clone())
                     .unwrap_or_default()
             };
-            app.text_input = Some(crate::app::TextInput {
-                title: " Edit Description ".to_string(),
-                value: current_desc.clone(),
-                cursor_idx: current_desc.len(),
-                action: crate::app::TextInputAction::EditField {
+            app.text_input = Some(crate::app::TextInput::new(
+                " Edit Description ",
+                current_desc,
+                crate::app::TextInputAction::EditField {
                     entity_iid: iid,
                     entity_type: entity_type.to_string(),
                     field_type: "description".to_string(),
                 },
-            });
+            ));
         }
         KeyCode::Char('D') => {
             let current_desc = if entity_is_issue(entity_type) {

@@ -251,7 +251,7 @@ pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_j
                 get_mr_diff(&client, &project, iid),
                 list_mr_notes(&client, &project, iid),
             )?;
-            let diff = DiffView::new(iid, project, raw_diff);
+            let diff = DiffView::without_highlighting(iid, project, raw_diff);
             let threads: Vec<ThreadOutput> = group_threads(&notes, |p| diff.contains_anchor(p))
                 .iter()
                 .map(ThreadOutput::from)
@@ -331,7 +331,7 @@ async fn anchor_comments(
     inputs: Vec<InputComment>,
 ) -> Result<Vec<DraftComment>> {
     let raw_diff = get_mr_diff(client, project, iid).await?;
-    let diff = DiffView::new(iid, project.to_string(), raw_diff);
+    let diff = DiffView::without_highlighting(iid, project.to_string(), raw_diff);
     inputs.into_iter().map(|c| c.anchor(&diff)).collect()
 }
 
@@ -371,7 +371,7 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     fn diff() -> DiffView {
-        DiffView::new(7, "group/project".to_string(), DIFF.to_string())
+        DiffView::without_highlighting(7, "group/project".to_string(), DIFF.to_string())
     }
 
     #[test]

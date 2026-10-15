@@ -9,7 +9,7 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 
 * **Primary Language:** Rust (Edition 2024)
 * **TUI Framework:** `ratatui` (v0.30.1)
-* **Syntax Highlighting:** `syntect` (v5, `default-fancy` features)
+* **Syntax Highlighting:** `syntect` (v5, `parsing` + `default-syntaxes` + `regex-fancy` features)
 * **Markdown Rendering:** `pulldown-cmark` (v0.13.0, GFM tables/code/lists)
 * **Async Runtime:** `tokio` (v1.38, full)
 * **Async Traits:** `async-trait` (v0.1.92)
@@ -109,11 +109,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * This is done using `crossterm::terminal::LeaveAlternateScreen` inside `editor::suspend_and_run` ([src/editor.rs](src/editor.rs)), which `edit_in_editor` and custom commands (via `suspend_while`) share. It also holds off SIGINT/SIGQUIT in glab-tui while the child owns the terminal, so Ctrl+C stops the child only. Any other foreground child process must go through it too. Do not reinvent this wheel.
 
 ### Syntax Highlighting (`syntect`)
-* Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
-* `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
-* **Theme-safe:** `highlight_line_syntax` builds highlighting tokens dynamically derived from the active `THEME`'s semantic tokens (mapped from syntect scope names) while reusing syntect's resolved font modifiers (bold/italic/underline). Highlighting remains theme-safe (no hardcoded palette) while fuzzy search match highlights (`yellow_bg`) are preserved.
-* The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
-* `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
+* All syntect use lives in [src/syntax.rs](src/syntax.rs). `SYNTAX_SET` is a `LazyLock` over `SyntaxSet::load_defaults_newlines()`, so `LineHighlighter::highlight` feeds every line with its `\n` restored. There is no syntect theme: colors come only from the app `THEME`.
+* **Stateful:** `LineHighlighter` carries the parse state from line to line. Markdown fences (`highlight_code`) and code suggestions highlight a block as one text. `DiffView::new` drives a `DiffHighlighter`, which keeps one state per side of the current file (context rows feed both, removals the old side, additions the new side) and restarts both at every hunk header.
+* **Grammar detection:** `syntax_for_path` matches the whole file name first (`Makefile`), then the extension. A file it cannot name is decided by `syntax_for_first_line` (shebang, mode line) only when its first diff row is line 1. Fences go through `syntax_for_token`.
+* **Theme-safe:** `DiffLine::syntax_highlighted` stores `SyntaxToken { kind: TokenKind, range }` runs over `DiffLine::code()` (the line without its diff marker), never resolved colors. Renderers call `DiffLine::syntax_spans(&theme)` / `styled_tokens`, which map each `TokenKind` to a theme token via `TokenKind::style`, so a theme reload recolors an open diff. Scope names are classified once per interned `Scope` by `ScopeKinds`. A token takes the kind of its innermost non-`meta.*` scope: region scopes such as `meta.method.body.java` stay open across lines and would otherwise color every identifier inside them.
+* `DiffView::without_highlighting` parses the same structure with no highlighting. The headless `glab-tui review` subcommand uses it, since it only checks anchors.
 
 ### Entity Inspector & Form Architecture (`src/ui/inspector.rs`)
 * **Unified Render Pipeline:** Read-only details preview and interactive edit/create modes share a single rendering path driven by `render_entity_inspector(f, &doc, area, mode, &label_colors)`. `InspectorMode` (`ReadOnly` vs `Interactive`) is the only structural switch, and `EntityDocument` is the single source of truth for both modes.

@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::{Config, KeybindingConfig, THEME, Theme};
+use crate::config::{Config, KeybindingConfig, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::workflow_inputs::WorkflowInput;
+use crate::syntax::{DiffHighlighter, DiffSide, SyntaxToken, styled_tokens};
 use crate::ui::list_tab::branches::BranchColumn;
 use crate::ui::list_tab::environments::EnvironmentColumn;
 use crate::ui::list_tab::releases::ReleaseColumn;
@@ -18,18 +19,11 @@ use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::widgets::ListState;
 use std::collections::HashSet;
 use std::sync::LazyLock;
-use syntect::highlighting::Highlighter;
-use syntect::highlighting::Style as SyntectStyle;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use syntect::parsing::{ParseState, ScopeStack};
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
 /// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
 /// key press).
@@ -55,181 +49,6 @@ impl ClipboardWriter for SystemClipboard {
             .set_text(text)?;
         Ok(())
     }
-}
-
-fn file_extension(file_path: &str) -> Option<&str> {
-    let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
-    let ext = file_name.rsplit('.').next()?;
-    if ext.is_empty() || ext == file_name {
-        None
-    } else {
-        Some(ext)
-    }
-}
-
-/// Highlight a single line's content using syntect, returning colored spans.
-///
-/// Colors are derived from the active theme's semantic tokens (mapped from each
-/// token's syntect scope name) so highlighting always matches the active theme
-/// rather than a hardcoded syntect palette. Font modifiers (bold/italic) come
-/// from syntect's resolved style.
-pub fn highlight_line_syntax(
-    file_path: &str,
-    line_content: &str,
-    ext: Option<&str>,
-) -> Option<Vec<(ratatui::style::Style, String)>> {
-    let ext = ext.or_else(|| file_extension(file_path))?;
-    let syntax = SYNTAX_SET
-        .find_syntax_by_extension(ext)
-        .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
-
-    let theme = THEME.read().unwrap();
-    let theme = theme.clone();
-
-    // Remove the leading +/-/space for syntax highlighting, but keep the actual code.
-    let code = if line_content.starts_with('+')
-        || line_content.starts_with('-')
-        || line_content.starts_with(' ')
-    {
-        if line_content.len() > 1 {
-            &line_content[1..]
-        } else {
-            ""
-        }
-    } else {
-        line_content
-    };
-
-    if code.is_empty() {
-        return Some(vec![(
-            syntect_style_to_ratatui(SyntectStyle::default()),
-            code.to_string(),
-        )]);
-    }
-
-    let mut parse_state = ParseState::new(syntax);
-    let ops = parse_state.parse_line(code, &SYNTAX_SET).ok()?;
-    if ops.is_empty() {
-        return Some(vec![(
-            Style::default().fg(theme.text_normal),
-            code.to_string(),
-        )]);
-    }
-
-    let syntax_theme = THEME_SET.themes.values().next()?;
-    let highlighter = Highlighter::new(syntax_theme);
-    let mut scope_stack = ScopeStack::new();
-    let mut result: Vec<(Style, String)> = Vec::new();
-    let mut pos = 0usize;
-    for (end, op) in ops {
-        if pos < end {
-            let text = &code[pos..end];
-            let top = scope_stack.as_slice().last().copied();
-            let style = highlighter.style_for_stack(scope_stack.as_slice());
-            let color = top
-                .map(|s| scope_color(&format!("{}", s), &theme))
-                .unwrap_or(theme.text_normal);
-            let mut span_style = Style::default().fg(color);
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::BOLD)
-            {
-                span_style = span_style.add_modifier(Modifier::BOLD);
-            }
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::ITALIC)
-            {
-                span_style = span_style.add_modifier(Modifier::ITALIC);
-            }
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::UNDERLINE)
-            {
-                span_style = span_style.add_modifier(Modifier::UNDERLINED);
-            }
-            result.push((span_style, text.to_string()));
-        }
-        let _ = scope_stack.apply(&op);
-        pos = end;
-    }
-    if pos < code.len() {
-        let text = &code[pos..];
-        let top = scope_stack.as_slice().last().copied();
-        let color = top
-            .map(|s| scope_color(&format!("{}", s), &theme))
-            .unwrap_or(theme.text_normal);
-        result.push((Style::default().fg(color), text.to_string()));
-    }
-
-    Some(result)
-}
-
-/// Map a syntect scope name (e.g. "keyword.control.rust") to a semantic theme
-/// color so syntax highlighting tracks the active theme rather than a hardcoded
-/// palette.
-fn scope_color(name: &str, theme: &Theme) -> Color {
-    if name.contains("comment") {
-        theme.text_muted
-    } else if name.contains("string")
-        || name.contains("regexp")
-        || name.contains("character")
-        || name.contains("quote")
-    {
-        theme.green
-    } else if name.contains("number") || name.contains("numeric") || name.contains("constant") {
-        theme.red
-    } else if name.contains("keyword")
-        || name.contains("storage")
-        || name.contains("control")
-        || name.contains("operator")
-    {
-        theme.purple
-    } else if name.contains("function")
-        || name.contains("method")
-        || name.contains("entity.name")
-        || name.contains("decorator")
-    {
-        theme.yellow
-    } else if name.contains("type")
-        || name.contains("class")
-        || name.contains("struct")
-        || name.contains("enum")
-        || name.contains("trait")
-        || name.contains("interface")
-        || name.contains("support.type")
-    {
-        theme.blue
-    } else if name.contains("variable") || name.contains("property") {
-        theme.text_normal
-    } else if name.contains("tag") || name.contains("markup") {
-        theme.blue
-    } else {
-        theme.text_normal
-    }
-}
-
-fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
-    let mut modifier = Modifier::empty();
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::BOLD)
-    {
-        modifier |= Modifier::BOLD;
-    }
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::ITALIC)
-    {
-        modifier |= Modifier::ITALIC;
-    }
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::UNDERLINE)
-    {
-        modifier |= Modifier::UNDERLINED;
-    }
-    ratatui::style::Style::default().add_modifier(modifier)
 }
 
 pub use crate::config::SaveMenu;
@@ -1040,8 +859,30 @@ pub struct DiffLine {
     pub file_path: String,
     pub old_line_num: Option<u32>,
     pub new_line_num: Option<u32>,
-    pub syntax_highlighted: Option<Vec<(ratatui::style::Style, String)>>,
+    /// Token runs over [`DiffLine::code`]; colours are resolved from the
+    /// theme at render time by [`DiffLine::syntax_spans`].
+    pub syntax_highlighted: Option<Vec<SyntaxToken>>,
     pub fuzzy_indices: Option<Vec<usize>>,
+}
+
+impl DiffLine {
+    /// The line's source text, without its `+`/`-`/space diff marker.
+    pub fn code(&self) -> &str {
+        strip_diff_marker(&self.content)
+    }
+
+    /// The highlighted runs of [`DiffLine::code`], styled by `theme`.
+    pub fn syntax_spans<'a>(
+        &'a self,
+        theme: &'a Theme,
+    ) -> Option<impl Iterator<Item = (Style, &'a str)> + 'a> {
+        let tokens = self.syntax_highlighted.as_deref()?;
+        Some(styled_tokens(tokens, self.code(), theme))
+    }
+}
+
+fn strip_diff_marker(line: &str) -> &str {
+    line.strip_prefix(['+', '-', ' ']).unwrap_or(line)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1513,8 +1354,28 @@ fn expand_diff_line_tabs(line: &str) -> String {
 }
 
 impl DiffView {
-    #[allow(clippy::too_many_lines)]
     pub fn new(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
+        Self::parse(
+            mr_iid,
+            project_path,
+            raw_diff,
+            Some(DiffHighlighter::default()),
+        )
+    }
+
+    /// Parses the diff without syntax highlighting, for callers that only
+    /// read its structure (anchors, line numbers) and never render it.
+    pub fn without_highlighting(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
+        Self::parse(mr_iid, project_path, raw_diff, None)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn parse(
+        mr_iid: u64,
+        project_path: String,
+        raw_diff: String,
+        mut highlighter: Option<DiffHighlighter>,
+    ) -> Self {
         // Expand tabs once, here: everything downstream — the stored line
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
@@ -1701,6 +1562,9 @@ impl DiffView {
                 }
                 Row::Meta => (DiffLineType::Meta, None, None, None),
                 Row::HunkHeader => {
+                    if let Some(highlighter) = highlighter.as_mut() {
+                        highlighter.start_hunk();
+                    }
                     let range = parse_hunk_header(line);
                     old_line_num = range.map(|r| r.old_start);
                     new_line_num = range.map(|r| r.new_start);
@@ -1716,7 +1580,14 @@ impl DiffView {
                         .entry(current_file.clone())
                         .or_insert((0, 0))
                         .1 += 1;
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlighter.as_mut().and_then(|h| {
+                        h.highlight_row(
+                            &current_file,
+                            DiffSide::New,
+                            strip_diff_marker(line),
+                            line_new,
+                        )
+                    });
                     (DiffLineType::Addition, None, line_new, highlighted)
                 }
                 Row::Deletion => {
@@ -1727,7 +1598,14 @@ impl DiffView {
                         .entry(current_file.clone())
                         .or_insert((0, 0))
                         .0 += 1;
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlighter.as_mut().and_then(|h| {
+                        h.highlight_row(
+                            &current_file,
+                            DiffSide::Old,
+                            strip_diff_marker(line),
+                            line_old,
+                        )
+                    });
                     (DiffLineType::Deletion, line_old, None, highlighted)
                 }
                 Row::Context => {
@@ -1736,7 +1614,14 @@ impl DiffView {
                     new_line_num = new_line_num.map(|n| n + 1);
                     hunk_old_left = hunk_old_left.saturating_sub(1);
                     hunk_new_left = hunk_new_left.saturating_sub(1);
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlighter.as_mut().and_then(|h| {
+                        h.highlight_row(
+                            &current_file,
+                            DiffSide::Both,
+                            strip_diff_marker(line),
+                            line_new,
+                        )
+                    });
                     (DiffLineType::Normal, line_old, line_new, highlighted)
                 }
             };
@@ -7946,15 +7831,132 @@ mod tests {
         assert_eq!(rebase.submit_label, "Rebase");
     }
 
+    const RUST_BLOCK_COMMENT_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,5 @@
+ fn kept() {}
++/* added opening
++   still inside the comment
++*/
++let after = 1;
+";
+
+    fn row_styles(line: &DiffLine, theme: &Theme) -> Vec<(Style, String)> {
+        line.syntax_spans(theme)
+            .expect("row is highlighted")
+            .map(|(style, text)| (style, text.to_string()))
+            .collect()
+    }
+
     #[test]
-    fn test_highlight_line_syntax_returns_theme_colors() {
-        // A Rust keyword line should produce spans carrying a non-default fg
-        // color derived from the active theme (not a hardcoded palette).
-        let spans = highlight_line_syntax("main.rs", "let x = 1;", None);
-        let spans = spans.expect("highlighting should succeed");
-        assert!(!spans.is_empty());
-        // At least one token (e.g. the `let` keyword) should carry an fg color.
-        assert!(spans.iter().any(|(style, _)| style.fg.is_some()));
+    fn a_block_comment_in_a_hunk_colors_the_lines_it_spans() {
+        let view = DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string());
+        let theme = Theme::default();
+        let comment = crate::syntax::TokenKind::Comment.style(&theme);
+        assert_eq!(
+            row_styles(diff_line(&view, "+   still inside the comment"), &theme),
+            [(comment, "   still inside the comment".to_string())]
+        );
+        assert_eq!(
+            row_styles(diff_line(&view, "+*/"), &theme),
+            [(comment, "*/".to_string())]
+        );
+        let after = row_styles(diff_line(&view, "+let after = 1;"), &theme);
+        assert_eq!(
+            after[0],
+            (
+                crate::syntax::TokenKind::Keyword.style(&theme),
+                "let".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_removed_line_is_not_swallowed_by_a_comment_opened_on_the_new_side() {
+        use crate::syntax::TokenKind::{Constant, Keyword, Plain};
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
+ fn kept() {}
++/* added opening
+ fn also_kept() {}
+-let removed = 2;
++*/
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let theme = Theme::default();
+        assert_eq!(
+            row_styles(diff_line(&view, "-let removed = 2;"), &theme),
+            [
+                (Keyword.style(&theme), "let".to_string()),
+                (Plain.style(&theme), " removed ".to_string()),
+                (Keyword.style(&theme), "=".to_string()),
+                (Plain.style(&theme), " ".to_string()),
+                (Constant.style(&theme), "2".to_string()),
+                (Plain.style(&theme), ";".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_extensionless_makefile_in_a_diff_is_highlighted() {
+        let diff = "\
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -1 +1 @@
+-# old build
++# new build
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let theme = Theme::default();
+        assert_eq!(
+            row_styles(diff_line(&view, "+# new build"), &theme),
+            [(
+                crate::syntax::TokenKind::Comment.style(&theme),
+                "# new build".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn an_open_diff_takes_its_colors_from_the_theme_it_is_rendered_with() {
+        let view = DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string());
+        let row = diff_line(&view, "+let after = 1;");
+        let before = Theme::default();
+        let reloaded_purple = ratatui::style::Color::Rgb(1, 2, 3);
+        let reloaded = Theme {
+            purple: reloaded_purple,
+            ..Theme::default()
+        };
+        assert_ne!(before.purple, reloaded_purple);
+        assert_eq!(row_styles(row, &before)[0].0.fg, Some(before.purple));
+        assert_eq!(row_styles(row, &reloaded)[0].0.fg, Some(reloaded_purple));
+    }
+
+    #[test]
+    fn a_diff_parsed_without_highlighting_has_no_syntax_tokens() {
+        let view = DiffView::without_highlighting(
+            1,
+            "o/r".to_string(),
+            RUST_BLOCK_COMMENT_DIFF.to_string(),
+        );
+        let unhighlighted: Vec<bool> = view
+            .all_lines
+            .iter()
+            .map(|l| l.syntax_highlighted.is_none())
+            .collect();
+        assert_eq!(unhighlighted, vec![true; view.all_lines.len()]);
+        assert_eq!(
+            view.all_lines.len(),
+            DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string())
+                .all_lines
+                .len()
+        );
     }
 
     #[test]
@@ -9434,10 +9436,10 @@ new mode 100755
         let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
         let mut highlighted_lines = 0;
         for line in &view.all_lines {
-            if let Some(ref spans) = line.syntax_highlighted {
+            if let Some(spans) = line.syntax_spans(&Theme::default()) {
                 highlighted_lines += 1;
-                let text: String = spans.iter().map(|(_, t)| t.as_str()).collect();
-                assert!(!text.contains('\t'), "a span kept its tab: {text:?}");
+                let text: String = spans.map(|(_, t)| t).collect();
+                assert_eq!(text, line.code(), "tokens must cover the whole line");
             }
         }
         assert!(

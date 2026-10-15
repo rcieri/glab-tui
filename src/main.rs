@@ -123,7 +123,7 @@ fn jump_to_unloaded_issue(app: &mut App, iid: u64, events: &EventHandler) {
         return;
     };
     let project = app.scope.as_str().to_string();
-    crate::fetch::spawn_fetch_issue(&client, &project, iid, events.sender());
+    crate::fetch::spawn_fetch_issue(&client, &project, iid, app.scoped_sender(events.sender()));
 }
 
 /// "go to issue/MR by ID": when the target MR/PR isn't already loaded, kick off
@@ -142,7 +142,7 @@ fn jump_to_unloaded_mr(app: &mut App, iid: u64, events: &EventHandler) {
         return;
     };
     let project = app.scope.as_str().to_string();
-    crate::fetch::spawn_fetch_mr(&client, &project, iid, events.sender());
+    crate::fetch::spawn_fetch_mr(&client, &project, iid, app.scoped_sender(events.sender()));
 }
 
 /// Runs a review mutation in the background and reports its outcome on the
@@ -765,7 +765,7 @@ async fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events
     app.cached_members = cache.members;
 
     if let Some(client) = app.gitlab_client.clone() {
-        let tx = events.sender();
+        let tx = app.scoped_sender(events.sender());
         app.start_loading_tab(app.active_tab);
         spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
         if app.config.prefetch_tabs {
@@ -984,7 +984,7 @@ async fn main() -> Result<()> {
                 crate::utils::cache::add_recent_group(&group);
             }
         }
-        let tx = events.sender();
+        let tx = app.scoped_sender(events.sender());
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
         }
@@ -1067,7 +1067,7 @@ async fn main() -> Result<()> {
                             app.fetching_pipelines.insert(pipe_id);
                             let client_clone = client.clone();
                             let project_context = app.project_path_for_pipeline(pipe_id);
-                            let tx = events.sender();
+                            let tx = app.scoped_sender(events.sender());
                             tokio::spawn(async move {
                                 if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
                                     &client_clone,
@@ -1121,7 +1121,7 @@ async fn main() -> Result<()> {
                                 } else {
                                     app.project_path_for_pipeline(pipe_id)
                                 };
-                                let tx = events.sender();
+                                let tx = app.scoped_sender(events.sender());
                                 tokio::spawn(async move {
                                     if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
                                         &client_clone,
@@ -1181,7 +1181,7 @@ async fn main() -> Result<()> {
                                     // `glab issue list --milestone` filters by milestone
                                     // title, not iid — passing the title here is required
                                     // for the glab backend to return any issues.
-                                    let tx = events.sender();
+                                    let tx = app.scoped_sender(events.sender());
                                     tokio::spawn(async move {
                                         match domain::milestones::list_milestone_issues(
                                             &client_clone,
@@ -1219,7 +1219,11 @@ async fn main() -> Result<()> {
 
         terminal.draw(|f| ui::render(f, &mut app))?;
 
-        if let Some(event) = events.next().await {
+        let event = events
+            .next()
+            .await
+            .and_then(|event| event.for_scope(app.scope_generation));
+        if let Some(event) = event {
             match event {
                 Event::Tick => {
                     app.tick();
@@ -1278,7 +1282,7 @@ async fn main() -> Result<()> {
                             if let Some(job) = app.filtered_jobs().get(selected) {
                                 if let Some(client) = app.gitlab_client.clone() {
                                     let project = app.scope.as_str().to_string();
-                                    let tx = events.sender();
+                                    let tx = app.scoped_sender(events.sender());
                                     let job_id = job.id();
                                     app.job_trace_loading = true;
                                     app.job_trace_last_refresh = std::time::Instant::now();
@@ -1315,7 +1319,7 @@ async fn main() -> Result<()> {
                                         &client.muted(),
                                         &app.scope,
                                         app.active_tab,
-                                        events.sender(),
+                                        app.scoped_sender(events.sender()),
                                     );
                                 }
                             }
@@ -1330,7 +1334,7 @@ async fn main() -> Result<()> {
                                 spawn_fetch_repo_attributes(
                                     &client.muted(),
                                     &app.scope,
-                                    events.sender(),
+                                    app.scoped_sender(events.sender()),
                                 );
                             }
                             app.last_attr_refresh = std::time::Instant::now();
@@ -1458,7 +1462,7 @@ async fn main() -> Result<()> {
                                 client,
                                 app.scope.as_str(),
                                 app.mrs.items.iter().map(|mr| mr.iid).collect(),
-                                events.sender(),
+                                app.scoped_sender(events.sender()),
                             );
                         }
                     }
@@ -1706,7 +1710,7 @@ async fn main() -> Result<()> {
                             &client,
                             &app.scope,
                             app::Tab::Issues,
-                            events.sender(),
+                            app.scoped_sender(events.sender()),
                         );
                     }
                 }
@@ -1722,7 +1726,7 @@ async fn main() -> Result<()> {
                             &client,
                             &app.scope,
                             app::Tab::MergeRequests,
-                            events.sender(),
+                            app.scoped_sender(events.sender()),
                         );
                     }
                 }
@@ -2138,13 +2142,13 @@ async fn main() -> Result<()> {
                                     &client.muted(),
                                     &app.scope,
                                     tab,
-                                    events.sender(),
+                                    app.scoped_sender(events.sender()),
                                 );
                             }
                             if let Some(diff_view) = &app.diff_view {
                                 let client = app.gitlab_client.clone();
                                 let project_context = diff_view.project_path.clone();
-                                let tx = events.sender();
+                                let tx = app.scoped_sender(events.sender());
                                 let mr_iid = diff_view.mr_iid;
                                 tokio::spawn(async move {
                                     let Some(client) = client else {
@@ -2287,7 +2291,7 @@ async fn main() -> Result<()> {
                                                         &client,
                                                         &app.scope,
                                                         app.active_tab,
-                                                        events.sender(),
+                                                        app.scoped_sender(events.sender()),
                                                     );
                                                 }
                                             }
@@ -2383,7 +2387,7 @@ async fn main() -> Result<()> {
                                                     app.project_path_for_pipeline(pipeline_id);
                                                 app.active_pipeline_project =
                                                     Some(project_context.clone());
-                                                let tx = events.sender();
+                                                let tx = app.scoped_sender(events.sender());
                                                 tokio::spawn(async move {
                                                     match domain::pipelines::list_pipeline_jobs(
                                                         &client_clone,
@@ -2984,7 +2988,7 @@ async fn main() -> Result<()> {
                                                 app.environments.items = cache.environments;
                                                 app.milestone_issues_cache = cache.milestone_issues;
                                                 if let Some(client) = app.gitlab_client.clone() {
-                                                    let tx = events.sender();
+                                                    let tx = app.scoped_sender(events.sender());
                                                     app.start_loading_tab(app.active_tab);
                                                     spawn_refresh_active_tab(
                                                         &client,
@@ -3184,12 +3188,12 @@ async fn main() -> Result<()> {
                                                             client,
                                                             &app.scope,
                                                             app.active_tab,
-                                                            events.sender(),
+                                                            app.scoped_sender(events.sender()),
                                                         );
                                                         spawn_fetch_repo_attributes(
                                                             &client.clone().muted(),
                                                             &app.scope,
-                                                            events.sender(),
+                                                            app.scoped_sender(events.sender()),
                                                         );
                                                     }
                                                 } else {
@@ -3790,7 +3794,7 @@ async fn main() -> Result<()> {
                                                         let client_clone = client.clone();
                                                         let project_context =
                                                             app.scope.as_str().to_string();
-                                                        let tx = events.sender();
+                                                        let tx = app.scoped_sender(events.sender());
                                                         tokio::spawn(async move {
                                                             match domain::pipelines::list_pipeline_jobs(
                                                                 &client_clone,
@@ -4478,7 +4482,10 @@ async fn main() -> Result<()> {
                                                                     crate::scope::Scope::Repository(
                                                                         display_val.clone(),
                                                                     );
-                                                                let tx = events.sender();
+                                                                let tx = crate::event::ScopedSender::new(
+                                                                    events.sender(),
+                                                                    app.scope_generation,
+                                                                );
                                                                 let (c1, c2, c3, c4) = (
                                                                     client.clone(),
                                                                     client.clone(),
@@ -6889,7 +6896,7 @@ async fn main() -> Result<()> {
                                                 app.scope.clone()
                                             };
                                             let field_type = field_type.to_string();
-                                            let tx = events.sender();
+                                            let tx = app.scoped_sender(events.sender());
                                             tokio::spawn(async move {
                                                 let res = match field_type.as_str() {
                                                     "labels" => client
@@ -8017,7 +8024,7 @@ async fn main() -> Result<()> {
                                                     &client,
                                                     &app.scope,
                                                     app.active_tab,
-                                                    events.sender(),
+                                                    app.scoped_sender(events.sender()),
                                                 );
                                             }
                                         }
@@ -8159,7 +8166,7 @@ async fn main() -> Result<()> {
                                         &client,
                                         &app.scope,
                                         app.active_tab,
-                                        events.sender(),
+                                        app.scoped_sender(events.sender()),
                                     );
                                 }
                             }
@@ -8220,7 +8227,7 @@ async fn main() -> Result<()> {
                                             &client,
                                             &app.scope,
                                             app.active_tab,
-                                            events.sender(),
+                                            app.scoped_sender(events.sender()),
                                         );
                                     }
                                 } else if idx < order_end {
@@ -8232,7 +8239,7 @@ async fn main() -> Result<()> {
                                             &client,
                                             &app.scope,
                                             app.active_tab,
-                                            events.sender(),
+                                            app.scoped_sender(events.sender()),
                                         );
                                     }
                                 } else if idx == page_size_idx {

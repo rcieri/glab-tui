@@ -104,6 +104,53 @@ pub enum Event {
         status: String,
         active: bool,
     },
+    /// A background fetch result, tagged with the scope generation that was
+    /// current when the fetch started. Built only by `ScopedSender`.
+    Scoped(ScopeGeneration, Box<Event>),
+}
+
+impl Event {
+    /// Unwraps a `Scoped` event requested in the `current` generation and
+    /// drops one requested before the last repository or group switch, so a
+    /// slow fetch never lands in the scope that replaced it. Other events
+    /// pass through.
+    pub fn for_scope(self, current: ScopeGeneration) -> Option<Event> {
+        match self {
+            Event::Scoped(generation, event) if generation == current => Some(*event),
+            Event::Scoped(..) => None,
+            event => Some(event),
+        }
+    }
+}
+
+/// Counts repository/group switches. Two fetches started in the same
+/// generation belong to the same scope.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScopeGeneration(u64);
+
+impl ScopeGeneration {
+    pub fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
+}
+
+/// The sending half handed to background fetches: every event it sends is
+/// wrapped in `Event::Scoped` with the generation it was created for.
+#[derive(Clone, Debug)]
+pub struct ScopedSender {
+    tx: mpsc::UnboundedSender<Event>,
+    generation: ScopeGeneration,
+}
+
+impl ScopedSender {
+    pub fn new(tx: mpsc::UnboundedSender<Event>, generation: ScopeGeneration) -> Self {
+        Self { tx, generation }
+    }
+
+    pub fn send(&self, event: Event) -> Result<(), mpsc::error::SendError<Event>> {
+        self.tx
+            .send(Event::Scoped(self.generation, Box::new(event)))
+    }
 }
 
 #[derive(Debug)]
@@ -168,5 +215,55 @@ impl EventHandler {
 
     pub async fn next(&mut self) -> Option<Event> {
         self.receiver.recv().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn received(
+        rx: &mut mpsc::UnboundedReceiver<Event>,
+        current: ScopeGeneration,
+    ) -> Option<Event> {
+        rx.try_recv().expect("an event was sent").for_scope(current)
+    }
+
+    #[test]
+    fn result_sent_before_a_scope_switch_is_dropped() {
+        let mut app = crate::app::App::default();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        app.scoped_sender(tx)
+            .send(Event::IssuesFetched(Vec::new()))
+            .expect("receiver is open");
+
+        app.reset_on_scope_change();
+
+        assert!(received(&mut rx, app.scope_generation).is_none());
+    }
+
+    #[test]
+    fn result_sent_in_the_current_scope_is_unwrapped() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let current = ScopeGeneration::default().next();
+        ScopedSender::new(tx, current)
+            .send(Event::FetchFailed(
+                crate::app::Tab::Issues,
+                "boom".to_string(),
+            ))
+            .expect("receiver is open");
+
+        match received(&mut rx, current) {
+            Some(Event::FetchFailed(crate::app::Tab::Issues, message)) => {
+                assert_eq!(message, "boom")
+            }
+            other => panic!("expected the unwrapped FetchFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unscoped_event_passes_through_any_generation() {
+        let current = ScopeGeneration::default().next().next();
+        assert!(matches!(Event::Tick.for_scope(current), Some(Event::Tick)));
     }
 }

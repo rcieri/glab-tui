@@ -26,7 +26,7 @@ fn spawn_open_diff(
         return;
     };
     app.diff_loading = true;
-    let tx = tx.clone();
+    let tx = app.scoped_sender(tx.clone());
     tokio::spawn(async move {
         let event = match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await {
             Ok((diff_view, comments)) => Event::DiffFetched {
@@ -991,7 +991,7 @@ pub async fn handle_active_tab_key(
                                     client,
                                     &app.scope,
                                     crate::app::Tab::Pipelines,
-                                    tx.clone(),
+                                    app.scoped_sender(tx.clone()),
                                 );
                             }
                         }
@@ -1331,7 +1331,7 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let scope = app.scope.clone();
                                 let project_context = scope.as_str().to_string();
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
                                 let active_tab = app.active_tab;
                                 if !app.selected_pipelines.is_empty() {
                                     let pipe_ids: Vec<u64> =
@@ -1409,7 +1409,7 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let scope = app.scope.clone();
                                 let project_context = scope.as_str().to_string();
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
                                 let active_tab = app.active_tab;
                                 tokio::spawn(async move {
                                     let _ = client_clone
@@ -1579,7 +1579,7 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
 
                                 if !app.selected_jobs.is_empty() {
                                     let job_ids: Vec<u64> =
@@ -1647,7 +1647,7 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
 
                                 if let Some(j) = app.jobs.items.get_mut(idx) {
                                     if j.status == "manual" {
@@ -1691,7 +1691,7 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
 
                                 if !app.selected_jobs.is_empty() {
                                     let job_ids: Vec<u64> =
@@ -1866,7 +1866,7 @@ pub async fn handle_active_tab_key(
                             } else if let Some(client) = &app.gitlab_client {
                                 let client = client.clone();
                                 let project_context = app.scope.as_str().to_string();
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
                                 app.job_trace_loading = true;
                                 tokio::spawn(async move {
                                     let res = crate::domain::pipelines::get_job_trace(
@@ -1937,17 +1937,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = tx.clone();
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.pause_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -1969,17 +1970,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = tx.clone();
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.resume_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -2510,7 +2512,7 @@ pub async fn handle_active_tab_key(
                         )));
                         let client = app.gitlab_client.clone();
                         let scope = app.scope.clone();
-                        let tx = tx.clone();
+                        let tx = app.scoped_sender(tx.clone());
                         tokio::spawn(async move {
                             if let Some(client) = client {
                                 match crate::domain::deployments::list_deployments(
@@ -2974,7 +2976,12 @@ pub async fn handle_active_tab_key(
                         if !app.loaded_tabs.contains(&app.active_tab) {
                             app.loading_tabs.insert(app.active_tab);
                         }
-                        spawn_refresh_active_tab(client, &app.scope, app.active_tab, tx.clone());
+                        spawn_refresh_active_tab(
+                            client,
+                            &app.scope,
+                            app.active_tab,
+                            app.scoped_sender(tx.clone()),
+                        );
                     }
                 }
                 if app.active_tab == crate::app::Tab::Issues {
@@ -2996,7 +3003,12 @@ pub async fn handle_active_tab_key(
                         if !app.loaded_tabs.contains(&app.active_tab) {
                             app.loading_tabs.insert(app.active_tab);
                         }
-                        spawn_refresh_active_tab(client, &app.scope, app.active_tab, tx.clone());
+                        spawn_refresh_active_tab(
+                            client,
+                            &app.scope,
+                            app.active_tab,
+                            app.scoped_sender(tx.clone()),
+                        );
                     }
                 }
                 if app.active_tab == crate::app::Tab::Issues {
@@ -3257,7 +3269,7 @@ pub(crate) fn jump_to_mr_tab(
             &client,
             &app.scope,
             crate::app::Tab::MergeRequests,
-            tx,
+            app.scoped_sender(tx),
         );
     } else {
         app.show_error("No backend client available to load Merge Requests.".to_string());
@@ -3330,7 +3342,12 @@ pub(crate) fn jump_to_issue_tab(
     app.active_tab = crate::app::Tab::Issues;
     app.detail_scroll = 0;
     if let Some(client) = client {
-        crate::fetch::spawn_refresh_active_tab(&client, &app.scope, crate::app::Tab::Issues, tx);
+        crate::fetch::spawn_refresh_active_tab(
+            &client,
+            &app.scope,
+            crate::app::Tab::Issues,
+            app.scoped_sender(tx),
+        );
     } else {
         app.show_error("No backend client available to load Issues.".to_string());
     }

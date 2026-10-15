@@ -20,7 +20,7 @@ use self::diff::{centered_rect_min, format_comment_with_suggestions};
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
-use crate::app::{App, DiffLine, Tab};
+use crate::app::{App, DiffLine, StatusMessage, Tab};
 use crate::config::{ICONS, THEME};
 use crate::utils::format::truncate;
 use std::collections::HashSet;
@@ -251,6 +251,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
         return;
     }
 
+    if app
+        .status_message
+        .as_ref()
+        .is_some_and(StatusMessage::is_expired)
+    {
+        app.status_message = None;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -323,6 +331,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
         title_spans.push(Span::styled(
             format!(" {} ", app.search_query),
             Style::default().fg(THEME.read().unwrap().yellow),
+        ));
+    }
+    if let Some(stale) = app.stale_tabs.get(&app.active_tab) {
+        let theme = THEME.read().unwrap();
+        title_spans.push(Span::raw(" "));
+        title_spans.push(Span::styled(
+            format!(" {} ", stale.label()),
+            Style::default()
+                .bg(theme.red)
+                .fg(theme.highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if let Some(status) = &app.status_message {
+        let text = crate::utils::format::sanitize_untrusted(status.text());
+        title_spans.push(Span::raw(" "));
+        title_spans.push(Span::styled(
+            format!(" {text} "),
+            Style::default().fg(THEME.read().unwrap().text_muted),
         ));
     }
 

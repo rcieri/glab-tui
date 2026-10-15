@@ -3684,6 +3684,53 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
+/// How long a `StatusMessage` stays in the header bar.
+pub const STATUS_NOTICE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A confirmation shown in the header bar until `STATUS_NOTICE_LIFETIME`
+/// passes. Errors use the toast instead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatusMessage {
+    text: String,
+    shown_at: std::time::Instant,
+}
+
+impl StatusMessage {
+    pub fn notice(text: impl Into<String>) -> Self {
+        StatusMessage {
+            text: text.into(),
+            shown_at: std::time::Instant::now(),
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.shown_at.elapsed() >= STATUS_NOTICE_LIFETIME
+    }
+}
+
+/// Why a tab shows rows that may be out of date. Kept per tab in
+/// `App::stale_tabs` until that tab's own fetch succeeds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaleData {
+    /// Loaded from the offline cache; the tab's refresh has not landed yet.
+    FromCache,
+    /// The tab's refresh failed, so the cached rows are still on screen.
+    RefreshFailed,
+}
+
+impl StaleData {
+    pub fn label(self) -> &'static str {
+        match self {
+            StaleData::FromCache => "Loaded from offline cache",
+            StaleData::RefreshFailed => "Offline: refresh failed, showing cached data",
+        }
+    }
+}
+
 pub struct App {
     pub config: Config,
     /// The first keypress of an in-progress key sequence (e.g. the `g` of
@@ -3842,7 +3889,8 @@ pub struct App {
     pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
-    pub status_message: Option<String>,
+    pub status_message: Option<StatusMessage>,
+    pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
@@ -3988,6 +4036,7 @@ impl Default for App {
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             status_message: None,
+            stale_tabs: std::collections::HashMap::new(),
             clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
             tx: None,
@@ -4162,6 +4211,7 @@ impl App {
         self.edit_menu = None;
         self.submit_dialog = None;
         self.status_message = None;
+        self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
         self.column_filter_context = None;
@@ -4782,6 +4832,12 @@ impl App {
         rows
     }
 
+    /// Single entry point for non-error feedback in the header bar. Stale
+    /// data has its own badge (`stale_tabs`), so a notice never hides it.
+    pub fn show_notice(&mut self, text: impl Into<String>) {
+        self.status_message = Some(StatusMessage::notice(text));
+    }
+
     /// Single entry point for surfacing a runtime error. Sets the transient
     /// error toast (`error_message`) and marks the failed terminal command so
     /// both UI surfaces stay in sync.
@@ -4925,6 +4981,33 @@ impl App {
         self.loading_tabs.remove(&tab);
         self.loaded_tabs.insert(tab);
         self.refreshed_tabs.insert(tab);
+    }
+
+    /// Whether a list tab has rows on screen. Jobs, which belong to one
+    /// pipeline, and the Terminal tab never count.
+    pub fn has_rows(&self, tab: Tab) -> bool {
+        match tab {
+            Tab::Issues => !self.issues.items.is_empty(),
+            Tab::MergeRequests => !self.mrs.items.is_empty(),
+            Tab::Pipelines => !self.pipelines.items.is_empty(),
+            Tab::Runners => !self.runners.items.is_empty(),
+            Tab::Releases => !self.releases.items.is_empty(),
+            Tab::Todos => !self.todos.items.is_empty(),
+            Tab::Milestones => !self.milestones.items.is_empty(),
+            Tab::Branches => !self.branches.items.is_empty(),
+            Tab::Environments => !self.environments.items.is_empty(),
+            Tab::Jobs | Tab::Terminal => false,
+        }
+    }
+
+    /// Flags every tab just filled from the offline cache as stale until its
+    /// own fetch succeeds.
+    pub fn mark_cached_tabs_stale(&mut self) {
+        for tab in Tab::ALL {
+            if self.has_rows(tab) {
+                self.stale_tabs.insert(tab, StaleData::FromCache);
+            }
+        }
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
@@ -6373,11 +6456,7 @@ impl App {
                 };
                 if enabled_cols.contains("State") {
                     try_match(&item.state);
-                    try_match(if item.state == "unread" || item.state == "pending" {
-                        "NEW"
-                    } else {
-                        "READ"
-                    });
+                    try_match(if item.is_unread() { "NEW" } else { "READ" });
                 }
                 if enabled_cols.contains("Project") {
                     try_match(&item.project_path);
@@ -6451,7 +6530,7 @@ impl App {
         col: &str,
     ) -> Vec<String> {
         match col {
-            "State" => vec![if item.state == "unread" || item.state == "pending" {
+            "State" => vec![if item.is_unread() {
                 "NEW".to_string()
             } else {
                 "READ".to_string()
@@ -7889,7 +7968,8 @@ mod tests {
             .unwrap(),
         ];
         app.issues.state.select(Some(0));
-        app.status_message = Some("Loaded from offline cache".to_string());
+        app.show_notice("Selected all 3 items");
+        let status = app.status_message.clone();
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -7897,10 +7977,7 @@ mod tests {
             copied.borrow().as_deref(),
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
-        assert_eq!(
-            app.status_message.as_deref(),
-            Some("Loaded from offline cache")
-        );
+        assert_eq!(app.status_message, status);
     }
 
     #[test]
@@ -7954,7 +8031,8 @@ mod tests {
             .unwrap(),
         ];
         app.mrs.state.select(Some(0));
-        app.status_message = Some("Offline".to_string());
+        app.show_notice("Selected all 3 items");
+        let status = app.status_message.clone();
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -7971,7 +8049,7 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message.as_deref(), Some("Offline"));
+        assert_eq!(app.status_message, status);
     }
 
     #[test]

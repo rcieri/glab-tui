@@ -697,6 +697,26 @@ pub fn spawn_refresh_child_level(
     });
 }
 
+/// Jobs of the newest pipeline for the checked-out branch. Reading the branch
+/// runs `git` synchronously, so it goes to the blocking pool.
+async fn fetch_current_branch_jobs(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+) -> Result<(u64, Vec<domain::pipelines::Job>), String> {
+    let branch = tokio::task::spawn_blocking(get_current_branch)
+        .await
+        .map_err(|e| format!("Failed to read the current git branch: {e}"))?
+        .ok_or_else(|| "Not on a git branch, so there is no pipeline to show.".to_string())?;
+    let pipeline_id = domain::pipelines::find_branch_pipeline_id(client, project_path, &branch)
+        .await
+        .map_err(|e| format!("Failed to find the pipeline for branch '{branch}': {e}"))?
+        .ok_or_else(|| "No pipeline found for the current branch/MR.".to_string())?;
+    let jobs = domain::pipelines::list_pipeline_jobs(client, project_path, pipeline_id)
+        .await
+        .map_err(|e| format!("Failed to fetch jobs for pipeline {pipeline_id}: {e}"))?;
+    Ok((pipeline_id, jobs))
+}
+
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
@@ -825,53 +845,14 @@ pub fn spawn_refresh_active_tab(
                     }
                 }
             }
-            app::Tab::Jobs => {
-                let branch_name = get_current_branch();
-                let mut found_pipeline_id = None;
-
-                if let Some(branch) = &branch_name {
-                    let mr_iid = match domain::mr::list_mrs(&client, &scope, false).await {
-                        Ok(mrs) => mrs
-                            .into_iter()
-                            .find(|m| &m.source_branch == branch)
-                            .map(|m| m.iid),
-                        Err(_) => None,
-                    };
-
-                    if let Ok(pipelines) = domain::pipelines::list_pipelines(&client, &scope).await
-                    {
-                        let target_ref =
-                            mr_iid.map(|iid| format!("refs/merge-requests/{}/head", iid));
-                        if let Some(pipeline) = pipelines.into_iter().find(|p| {
-                            p.ref_branch() == branch
-                                || target_ref.as_ref().map_or(false, |tr| p.ref_branch() == tr)
-                        }) {
-                            found_pipeline_id = Some(pipeline.id());
-                        }
-                    }
+            app::Tab::Jobs => match fetch_current_branch_jobs(&client, &repo_path).await {
+                Ok((pipeline_id, jobs)) => {
+                    let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
                 }
-
-                if let Some(pipeline_id) = found_pipeline_id {
-                    match domain::pipelines::list_pipeline_jobs(&client, &repo_path, pipeline_id)
-                        .await
-                    {
-                        Ok(jobs) => {
-                            let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                tab,
-                                format!("Failed to fetch jobs for pipeline {}: {}", pipeline_id, e),
-                            ));
-                        }
-                    }
-                } else {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        "No pipeline found for the current branch/MR.".to_string(),
-                    ));
+                Err(message) => {
+                    let _ = tx.send(Event::FetchFailed(tab, message));
                 }
-            }
+            },
             app::Tab::Milestones => {
                 match domain::milestones::list_milestones(&client, &scope).await {
                     Ok(milestones) => {

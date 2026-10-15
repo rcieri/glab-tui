@@ -21,6 +21,11 @@ if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     exit 0
 fi
 
+if [[ "$*" == "run list"* ]]; then
+    echo '[{"databaseId": 12345}]'
+    exit 0
+fi
+
 # Stacked PRs merge through the asynchronous merge endpoint: the request is
 # accepted as pending, and polling its uuid reports the merge done.
 if [[ "$*" == *"/merge-async"* ]]; then

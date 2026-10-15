@@ -1377,6 +1377,7 @@ async fn main() -> Result<()> {
                 }
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
+                    app.status_message = None;
                     app.loaded_tabs.insert(app::Tab::Jobs);
                     app.jobs.items = jobs;
                     app.active_pipeline_id = Some(pipeline_id);

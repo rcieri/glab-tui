@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Jobs tab finds the branch pipeline directly**: Opening the Jobs tab no longer lists every MR and every pipeline of the project to find the checked-out branch's pipeline. It asks for the newest pipeline of that branch (`glab ci list --ref` plus the branch's open MR via `glab mr list --source-branch`, or `gh run list --branch`) and reads the branch off the async runtime. Select-stage confirmations and other status messages now show in the header bar, and the GitLab-only start-job key is no longer offered on GitHub (#579).
+
 ## [0.9.3] - 2026-10-08
 
 ### Features

@@ -61,6 +61,13 @@ if [[ "$*" == *"api"* ]]; then
     else
         echo "{}"
     fi
+elif [[ "$*" == *"ci list"* && "$*" == *"--ref refs/merge-requests/"* ]]; then
+    # Newer than every pipelines.json id, so the Jobs tab must pick it.
+    echo '[{"id": 99999, "status": "success", "ref": "refs/merge-requests/2/head"}]'
+elif [[ "$*" == *"ci list"* ]]; then
+    cat "$FIXTURES_DIR/pipelines.json"
+elif [[ "$*" == *"mr list"* && "$*" == *"--source-branch"* ]]; then
+    cat "$FIXTURES_DIR/mrs.json"
 elif [[ "$*" == *"mr list"* ]]; then
     # Pages are requested concurrently; only the first carries the fixture so
     # the MR is not duplicated once per page.

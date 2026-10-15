@@ -669,7 +669,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 |---|---|---|
 | `Enter` | Fetch and display job trace (toggle zoom when trace is open) | `view_trace` |
 | `r` | Retry selected job (or all checked jobs) | `retry` |
-| `S` | Start manual (blocked) GitLab CI job | `start_job` |
+| `S` | Start manual (blocked) job. GitLab only: hidden on GitHub | `start_job` |
 | `c` | Cancel selected job (or all checked jobs) | `cancel` |
 | `d` | Download job artifact | `download_artifact` |
 | `y` | Copy pipeline commit SHA | `copy_sha` |

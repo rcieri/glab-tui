@@ -1224,6 +1224,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 }
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
+const START_MANUAL_JOB_ACTION: &str = "Start manual job";
 
 pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     if !app.show_help {
@@ -1667,7 +1668,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Jobs",
             key: d(app.config.keybindings.jobs.start_job.clone()),
-            action: "Start manual job (GitLab only)",
+            action: START_MANUAL_JOB_ACTION,
         },
         Shortcut {
             category: "Jobs",
@@ -2094,6 +2095,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             action: command.label(),
         }),
     );
+    if is_github {
+        shortcuts.retain(|shortcut| {
+            !(shortcut.category == "Jobs" && shortcut.action == START_MANUAL_JOB_ACTION)
+        });
+    }
 
     let active_categories: &[&str] = if app.diff_view.is_some() {
         &["Diff View", CUSTOM_COMMANDS_CATEGORY]

@@ -2473,6 +2473,36 @@ impl Backend for GhBackend {
         }
     }
 
+    /// `gh run list` lists newest first. Pull-request runs carry the head
+    /// branch too, so one query covers them.
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>> {
+        #[derive(Deserialize)]
+        struct ListedRun {
+            #[serde(rename = "databaseId")]
+            id: u64,
+        }
+        let raw = self
+            .run_gh(
+                &[
+                    "run",
+                    "list",
+                    "-R",
+                    project,
+                    "--branch",
+                    branch,
+                    "--limit",
+                    "1",
+                    "--json",
+                    "databaseId",
+                ],
+                "Finding Branch Run",
+            )
+            .await?;
+        let runs: Vec<ListedRun> =
+            serde_json::from_str(raw.trim()).context("parsing `gh run list` output")?;
+        Ok(runs.first().map(|run| run.id))
+    }
+
     async fn list_pipeline_jobs(
         &self,
         project: &str,

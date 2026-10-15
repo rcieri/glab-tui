@@ -40,6 +40,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/backend/](src/backend/): CLI backend layer.
     * [rate_limit.rs](src/backend/rate_limit.rs): `ApiRateLimiter` — automatic 429/graphql rate-limit detection and retry with exponential backoff plus bulk-operation pacing (`pace_bulk_operation`).
+    * [subprocess.rs](src/backend/subprocess.rs): `subprocess::output(&mut Command, input)` — the one way to run a `gh`/`glab` call: pipes stdout/stderr, writes `input` to stdin, and kills the child once it outlives `command_timeout_seconds` (`config::command_timeout()`), returning an error that names the command.
     * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits.
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
@@ -140,9 +141,10 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 ### Rate Limiting (`src/backend/rate_limit.rs`)
 * `ApiRateLimiter` is a global (`RATE_LIMITER`) that shields every `glab`/`gh` CLI call from HTTP 429 and GitLab GraphQL rate-limit errors.
 * Backend command execution delegates to `rate_limit::execute_with_retry` (used by both `GlabBackend` and `GhBackend`), which:
-  - acquires a concurrency slot via `RATE_LIMITER.pace_request()` (bounds concurrent subprocesses to `MAX_CONCURRENT_REQUESTS` and enforces a minimum inter-request burst delay),
-  - retries failures that `is_rate_limit_error()` recognizes (429, `rate_limit`, abuse-detection, `retry-after`) with exponential backoff plus per-thread jitter up to `MAX_RATE_LIMIT_RETRIES`,
+  - acquires a concurrency slot via `RATE_LIMITER.pace_request()` (bounds concurrent subprocesses to `MAX_CONCURRENT_REQUESTS` and enforces a minimum inter-request burst delay) for the duration of one attempt only; the slot is released before any backoff sleep,
+  - retries failures that `is_rate_limit_error()` recognizes (`429` as an HTTP status such as `HTTP 429` or `GET <url>: 429`, never bare digits like `#429`; `rate_limit`, abuse-detection, `retry-after`) with exponential backoff plus per-thread jitter up to `MAX_RATE_LIMIT_RETRIES`,
   - bubbles up immediately on non-rate-limit errors so the UI shows the real failure.
+* Every `gh`/`glab` API call (the four backend runners, the diff view's comment edit/delete and release creation) runs through `subprocess::output`, so a hung CLI (e.g. a credential helper waiting on a prompt) is killed after `command_timeout_seconds` (config, default 120, reloaded with `config::reload_command_timeout()` on repo switch) instead of holding its slot forever. New API calls must use it too, never `.output()` on a `gh`/`glab` `Command`. Not covered: the self-updater (`perform_self_update`: its `gh release view` calls and the large `gh release download`), the `auth status` probes in `git_helpers` (blocking `std::process` in `spawn_blocking`) and `web--browse`.
 * Bulk operations (merging, editing many MRs/issues, etc.) call `pace_bulk_operation()` before each item to avoid tripping secondary rate limits during batch loops.
 
 ### Code Review & Diff System

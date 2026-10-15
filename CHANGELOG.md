@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **Group-scope confirm actions hit the selected project** — Closing, deleting, reopening, merging, rebasing or revoking an issue/MR, closing, reopening or deleting a milestone, and submitting a review resolved the project from the first listed row sharing the iid. In group scope, issue `#5` of project B could close issue `#5` of project A. The confirm dialog now carries the selected row's project through to the CLI call and the local list update (#567).
+- **Hung `gh`/`glab` calls no longer stall the app** — Every `gh`/`glab` call made through the backends (tab fetches, mutations, the `review` subcommand), the diff view's comment edit/delete and release creation now runs under a timeout (`command_timeout_seconds`, default `120`). A call still running when it expires is killed and reported as an error naming the command, instead of hanging forever while holding one of the 8 concurrent-request slots. A request backing off after a rate limit no longer holds its slot during the sleep, and an error that merely contains the digits `429` (such as `issue #429 not found`) is no longer retried as a rate limit: `429` now has to appear as an HTTP status (`HTTP 429`, `status code: 429`, `GET <url>: 429`) (#575).
 
 ## [0.9.3] - 2026-10-08
 

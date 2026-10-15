@@ -59,10 +59,32 @@ impl ApiRateLimiter {
 
 pub static RATE_LIMITER: LazyLock<ApiRateLimiter> = LazyLock::new(ApiRateLimiter::new);
 
+/// Text that directly precedes an HTTP status in `gh`/`glab` errors: `HTTP 429`,
+/// `status code: 429`, and the GitLab client's `GET <url>: 429 <message>`.
+const HTTP_STATUS_PREFIXES: &[&str] = &[
+    "http ",
+    "http/1.1 ",
+    "http/2 ",
+    "status ",
+    "status code ",
+    ": ",
+];
+
+fn mentions_http_429(lower: &str) -> bool {
+    lower.match_indices("429").any(|(start, status)| {
+        let is_whole_number =
+            !lower[start + status.len()..].starts_with(|c: char| c.is_ascii_alphanumeric());
+        is_whole_number
+            && HTTP_STATUS_PREFIXES
+                .iter()
+                .any(|prefix| lower[..start].ends_with(prefix))
+    })
+}
+
 /// Checks if an error string or stderr output indicates rate limiting, HTTP 429, or abuse detection.
 pub fn is_rate_limit_error(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
-    lower.contains("429")
+    mentions_http_429(&lower)
         || lower.contains("rate limit")
         || lower.contains("ratelimit")
         || lower.contains("rate_limit")
@@ -96,17 +118,30 @@ fn calculate_jitter(attempt: u32) -> Duration {
 }
 
 /// Execute an async operation with rate limiter pacing and exponential backoff on rate limits.
-pub async fn execute_with_retry<F, Fut, T>(mut op: F) -> Result<T>
+pub async fn execute_with_retry<F, Fut, T>(op: F) -> Result<T>
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
+    Fut: Future<Output = Result<T>>,
+{
+    execute_with_retry_on(&RATE_LIMITER, op).await
+}
+
+async fn execute_with_retry_on<F, Fut, T>(limiter: &ApiRateLimiter, mut op: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
 {
     let mut attempt = 0;
     let mut backoff = BASE_BACKOFF_DURATION;
 
     loop {
-        let _permit = RATE_LIMITER.pace_request().await;
-        match op().await {
+        // The permit covers the subprocess only, so a request backing off
+        // leaves its concurrency slot to the others.
+        let result = {
+            let _permit = limiter.pace_request().await;
+            op().await
+        };
+        match result {
             Ok(res) => return Ok(res),
             Err(e) => {
                 let err_msg = e.to_string();
@@ -145,6 +180,48 @@ mod tests {
         assert!(!is_rate_limit_error("404 Not Found"));
         assert!(!is_rate_limit_error("GraphQL error: syntax error"));
         assert!(!is_rate_limit_error("remote repository not found"));
+        assert!(is_rate_limit_error("gh: Request failed (HTTP 429)"));
+        assert!(is_rate_limit_error(
+            "GET https://gitlab.example.com/api/v4/projects/1/issues: 429 failed to parse unknown error format: Retry later"
+        ));
+        assert!(is_rate_limit_error("unexpected status code: 429"));
+    }
+
+    #[test]
+    fn digits_429_outside_an_http_status_are_not_a_rate_limit() {
+        assert!(!is_rate_limit_error("issue #429 not found"));
+        assert!(!is_rate_limit_error("glab mr view 429: 404 Not Found"));
+        assert!(!is_rate_limit_error("syntax error at line 429"));
+        assert!(!is_rate_limit_error("commit 4291abc not found"));
+        assert!(!is_rate_limit_error("HTTP 4290 unknown"));
+    }
+
+    #[tokio::test]
+    async fn backoff_sleep_releases_the_concurrency_permit() {
+        let limiter = ApiRateLimiter::new();
+        let (first_failure_tx, first_failure_rx) = tokio::sync::oneshot::channel();
+        let mut first_failure_tx = Some(first_failure_tx);
+        let retrying = execute_with_retry_on(&limiter, || {
+            let signal = first_failure_tx.take();
+            async move {
+                if let Some(signal) = signal {
+                    let _ = signal.send(());
+                    anyhow::bail!("HTTP 429: Too Many Requests");
+                }
+                Ok(())
+            }
+        });
+        let permits_during_backoff = async {
+            first_failure_rx.await.unwrap();
+            // The failing attempt and the start of its backoff sleep run in the
+            // same poll of `retrying`, so the loop is asleep by the time this resumes.
+            limiter.semaphore.available_permits()
+        };
+
+        let (result, permits) = tokio::join!(retrying, permits_during_backoff);
+
+        result.unwrap();
+        assert_eq!(permits, MAX_CONCURRENT_REQUESTS);
     }
 
     #[tokio::test]

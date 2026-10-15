@@ -3,6 +3,10 @@ use crate::app::{App, ConfirmAction, DialogChoice};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
+use crate::handlers::tabs::{
+    OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
+    spawn_cancel_jobs,
+};
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
@@ -612,6 +616,44 @@ fn run_submit_action(
                 multi_select: false,
                 state: ListState::default(),
             });
+        }
+        crate::app::ConfirmAction::CancelPipeline(pipeline_id) => {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let rows = flip_pipeline_statuses(app, &[pipeline_id], "canceled");
+            let scope = app.scope.clone();
+            let active_tab = app.active_tab;
+            let tx = app.scoped_sender(tx);
+            tokio::spawn(async move {
+                run_optimistic_mutation(
+                    OptimisticTable::Pipelines,
+                    "cancel pipeline",
+                    rows,
+                    &tx,
+                    |id| client.cancel_pipeline(&project_path, id),
+                )
+                .await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                spawn_refresh_active_tab(&client, &scope, active_tab, tx);
+            });
+        }
+        crate::app::ConfirmAction::CancelJobs {
+            pipeline_id,
+            job_ids,
+        } => {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let rows = flip_job_statuses(app, &job_ids, "canceled");
+            app.selected_jobs.clear();
+            spawn_cancel_jobs(
+                client,
+                app.scoped_sender(tx),
+                project_path,
+                pipeline_id,
+                rows,
+            );
         }
     }
 }
@@ -1521,6 +1563,84 @@ diff --git a/src/lib.rs b/src/lib.rs
         );
     }
 
+    fn app_with_cancel_jobs_dialog() -> App {
+        let job = |id| crate::domain::pipelines::Job {
+            id,
+            status: "running".to_string(),
+            stage: "test".to_string(),
+            name: format!("job-{id}"),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: Vec::new(),
+        };
+        let mut app = App::default();
+        app.active_pipeline_id = Some(7);
+        app.jobs.items = vec![job(1), job(2), job(3)];
+        app.selected_jobs.extend([1, 3]);
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::CancelJobs {
+                pipeline_id: 7,
+                job_ids: vec![1, 3],
+            },
+            &app,
+        ));
+        app
+    }
+
+    fn press_in_submit_dialog(app: &mut App, code: KeyCode) {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        super::handle_submit_dialog(app, &KeyEvent::new(code, KeyModifiers::NONE), tx);
+    }
+
+    #[test]
+    fn dismissing_the_cancel_jobs_dialog_cancels_nothing() {
+        let mut app = app_with_cancel_jobs_dialog();
+
+        press_in_submit_dialog(&mut app, KeyCode::Esc);
+
+        assert!(app.submit_dialog.is_none());
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[test]
+    fn confirming_the_cancel_jobs_dialog_without_a_backend_cancels_nothing() {
+        let mut app = app_with_cancel_jobs_dialog();
+
+        press_in_submit_dialog(&mut app, KeyCode::Left);
+        press_in_submit_dialog(&mut app, KeyCode::Enter);
+
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn confirming_the_cancel_jobs_dialog_cancels_only_the_selected_jobs() {
+        let mut app = app_with_cancel_jobs_dialog();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+        });
+
+        press_in_submit_dialog(&mut app, KeyCode::Left);
+        press_in_submit_dialog(&mut app, KeyCode::Enter);
+
+        let statuses: Vec<(u64, &str)> = app
+            .jobs
+            .items
+            .iter()
+            .map(|j| (j.id, j.status.as_str()))
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![(1, "canceled"), (2, "running"), (3, "canceled")]
+        );
+        assert!(app.selected_jobs.is_empty());
+    }
     #[test]
     fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
         let _cache = isolate_cache();

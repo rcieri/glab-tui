@@ -26,15 +26,20 @@ fn spawn_open_diff(
         return;
     };
     app.diff_loading = true;
+    let sync_viewed = app.config.sync_viewed_files;
     let tx = tx.clone();
     tokio::spawn(async move {
-        let event = match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await {
-            Ok((diff_view, comments)) => Event::DiffFetched {
-                diff_view,
-                comments,
-            },
-            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err)),
-        };
+        let event =
+            match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid, sync_viewed)
+                .await
+            {
+                Ok((diff_view, comments, viewed_files)) => Event::DiffFetched {
+                    diff_view,
+                    comments,
+                    viewed_files,
+                },
+                Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err)),
+            };
         let _ = tx.send(event);
     });
 }

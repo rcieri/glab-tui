@@ -23,9 +23,12 @@ pub struct ProjectCache {
     pub label_colors: HashMap<String, String>,
     #[serde(default)]
     pub members: Vec<String>,
-    /// Files marked as reviewed in the diff view, keyed by MR/PR iid.
+    /// Files marked as reviewed in the diff view, keyed by MR/PR iid, then by
+    /// path, mapped to the fingerprint of the diff the mark was made on. The
+    /// path-only `reviewed_files` map of older versions is ignored on load and
+    /// dropped on the next save: which version those marks covered is unknown.
     #[serde(default)]
-    pub reviewed_files: HashMap<u64, Vec<String>>,
+    pub review_marks: HashMap<u64, HashMap<String, String>>,
     #[serde(default)]
     pub enabled_columns: HashMap<crate::app::Tab, std::collections::HashSet<String>>,
     #[serde(default)]
@@ -485,6 +488,23 @@ mod tests {
 
         assert_eq!(deserialized.labels[0], "bug");
         assert_eq!(deserialized.members[1], "@user2");
+    }
+
+    #[test]
+    fn legacy_path_only_review_marks_load_and_are_dropped_on_save() {
+        let mut legacy = serde_json::to_value(ProjectCache::default()).unwrap();
+        legacy["labels"] = serde_json::json!(["bug"]);
+        legacy["reviewed_files"] = serde_json::json!({"42": ["src/app.rs"]});
+
+        let cache: ProjectCache = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            cache.labels,
+            vec!["bug".to_string()],
+            "the rest still loads"
+        );
+        assert!(cache.review_marks.is_empty());
+        let saved = serde_json::to_value(&cache).unwrap();
+        assert!(saved.get("reviewed_files").is_none());
     }
 
     #[test]

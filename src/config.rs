@@ -240,6 +240,8 @@ pub struct Icons {
     pub folder_expanded: String,
     pub folder_collapsed: String,
     pub file_reviewed: String,
+    /// A file reviewed in an earlier version that has changed since.
+    pub file_changed_since_review: String,
     pub user: String,
     pub tag: String,
     pub date: String,
@@ -356,6 +358,7 @@ impl Icons {
             folder_expanded: "\u{f07c}".to_string(),
             folder_collapsed: "\u{f07b}".to_string(),
             file_reviewed: "\u{f4a7}".to_string(),
+            file_changed_since_review: "\u{f021}".to_string(),
             user: "\u{f007}".to_string(),
             tag: "\u{f02b}".to_string(),
             date: "\u{f073}".to_string(),
@@ -474,6 +477,7 @@ impl Icons {
             folder_expanded: "v".to_string(),
             folder_collapsed: ">".to_string(),
             file_reviewed: "+".to_string(),
+            file_changed_since_review: "~".to_string(),
             user: "@".to_string(),
             tag: "#".to_string(),
             date: "@".to_string(),
@@ -1649,6 +1653,10 @@ fn def_prefetch_tabs() -> bool {
     false
 }
 
+fn def_sync_viewed_files() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1693,6 +1701,10 @@ pub struct Config {
     /// startup and repository switches. Off by default to conserve API quota.
     #[serde(default = "def_prefetch_tabs")]
     pub prefetch_tabs: bool,
+    /// Sync files marked as reviewed in the diff view with GitHub's per-user
+    /// "Viewed" checkboxes. No effect on GitLab, which has no such API.
+    #[serde(default = "def_sync_viewed_files")]
+    pub sync_viewed_files: bool,
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
@@ -1724,6 +1736,7 @@ impl Default for Config {
             keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
             prefetch_tabs: def_prefetch_tabs(),
+            sync_viewed_files: def_sync_viewed_files(),
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
@@ -1787,6 +1800,10 @@ page_size = 100
 
 # Eagerly prefetch data for all enabled tabs in the background on startup / repo switch.
 # prefetch_tabs = false
+
+# Sync files marked as reviewed (`m` in the diff view) with GitHub's "Viewed"
+# checkboxes. Visible on your GitHub account; no effect on GitLab.
+# sync_viewed_files = true
 
 # Icon glyphs: "nerd" needs a Nerd Font (https://www.nerdfonts.com) in the terminal.
 # Use "ascii" when boxes and columns are misaligned because no Nerd Font is installed.

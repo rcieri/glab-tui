@@ -3,18 +3,26 @@ use crate::domain;
 use crate::event::Event;
 use crate::git_helpers::get_current_branch;
 
-/// Fetches an MR/PR diff with its review comments and builds the `DiffView`
-/// on a blocking thread, so the event loop keeps drawing (and the loading
-/// overlay stays up) while a large diff is parsed and highlighted. Comments
-/// that fail to load leave the diff viewable without them.
+/// Fetches an MR/PR diff with its review comments and, when `sync_viewed`,
+/// GitHub's viewed state of its files — concurrently, so syncing does not
+/// make opening the diff slower. Only the diff itself is required: missing
+/// notes or viewed state degrade to none / the local marks. The `DiffView`
+/// is built on a blocking thread, so the event loop keeps drawing (and the
+/// loading overlay stays up) while a large diff is parsed and highlighted.
 pub async fn fetch_diff_view(
     client: &domain::client::GitlabClient,
     project_path: &str,
     mr_iid: u64,
-) -> anyhow::Result<(Box<app::DiffView>, Vec<domain::mr::DiscussionNote>)> {
-    let (diff_res, comments_res) = tokio::join!(
+    sync_viewed: bool,
+) -> anyhow::Result<(
+    Box<app::DiffView>,
+    Vec<domain::mr::DiscussionNote>,
+    Option<domain::viewed_files::PrViewedFiles>,
+)> {
+    let (diff_res, comments_res, viewed_files) = tokio::join!(
         client.get_mr_diff(project_path, mr_iid),
-        client.list_mr_notes(project_path, mr_iid)
+        client.list_mr_notes(project_path, mr_iid),
+        client.synced_viewed_files(project_path, mr_iid, sync_viewed),
     );
     let raw_diff = diff_res?;
     let project_path = project_path.to_string();
@@ -22,7 +30,7 @@ pub async fn fetch_diff_view(
         Box::new(app::DiffView::new(mr_iid, project_path, raw_diff))
     })
     .await?;
-    Ok((diff_view, comments_res.unwrap_or_default()))
+    Ok((diff_view, comments_res.unwrap_or_default(), viewed_files))
 }
 
 /// Derive `workflow` for every MR in place.
@@ -1075,6 +1083,49 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
         return None;
     }
     Some(pr)
+}
+
+/// Toggles inside this window reach GitHub as one request, and a file toggled
+/// back and forth sends only its final state.
+const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Files per "Viewed" mutation; every path is a `gh` argument, and Windows
+/// caps a command line at 32 KiB.
+const VIEWED_SYNC_BATCH: usize = 50;
+
+pub fn spawn_viewed_sync_flush(mr_iid: u64, tx: tokio::sync::mpsc::UnboundedSender<Event>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(VIEWED_SYNC_DEBOUNCE).await;
+        let _ = tx.send(Event::ViewedSyncFlush(mr_iid));
+    });
+}
+
+/// Sends the viewed-state `changes` of a PR to GitHub, one result event per
+/// batch so each batch is settled (or reverted) on its own.
+pub fn spawn_viewed_files_sync(
+    client: &domain::client::GitlabClient,
+    pull_request_id: String,
+    mr_iid: u64,
+    changes: Vec<(String, bool)>,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let client = client.clone();
+    tokio::spawn(async move {
+        for (i, batch) in changes.chunks(VIEWED_SYNC_BATCH).enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
+            let result = client
+                .set_files_viewed(&pull_request_id, batch)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::ViewedFilesSynced {
+                mr_iid,
+                changes: batch.to_vec(),
+                result,
+            });
+        }
+    });
 }
 
 /// Kick off background fetches for enabled tabs in order,

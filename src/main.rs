@@ -1210,6 +1210,8 @@ async fn main() -> Result<()> {
             }
         }
 
+        app.discard_stale_deployments();
+
         terminal.draw(|f| ui::render(f, &mut app))?;
 
         let event = events
@@ -1960,9 +1962,16 @@ async fn main() -> Result<()> {
                         app.selector = Some(sel);
                     }
                 }
-                Event::DeploymentsFetched(deployments) => {
-                    app.deployments.items = deployments;
-                    app.deployments.state.select(Some(0));
+                Event::DeploymentsFetched {
+                    environment,
+                    deployments,
+                } => {
+                    if app.is_highlighted_environment(&environment) {
+                        let mut table = crate::utils::ui::StatefulTable::with_items(deployments);
+                        table.state.select(Some(0));
+                        app.environment_deployments =
+                            Some(app::EnvironmentDeployments { environment, table });
+                    }
                     app.status_message = None;
                     app.update_filter_selection();
                 }

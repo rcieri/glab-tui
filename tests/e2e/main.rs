@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 mod combinations;
 mod config;
 mod custom_keybindings;
+mod environments;
 mod group_scope_actions;
 mod keybindings;
 mod layout;

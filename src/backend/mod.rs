@@ -35,6 +35,12 @@ impl BackendKind {
         matches!(self, BackendKind::GitLab)
     }
 
+    /// Pausing, resuming and renaming runners. GitHub's runner API has no
+    /// pause, resume or description endpoint, so only GitLab can do it.
+    pub fn supports_runner_management(self) -> bool {
+        self.is_gitlab()
+    }
+
     pub fn term(self, key: &str) -> &'static str {
         match (self, key) {
             (BackendKind::GitLab, "mr") => "Merge Request",

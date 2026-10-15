@@ -12,6 +12,7 @@ mod pagination;
 mod pr_diff_fallback;
 mod review_cli;
 mod review_threads;
+mod runners;
 mod scenarios;
 mod stacked_prs;
 mod tabs;
@@ -532,6 +533,17 @@ impl TestSession {
     /// config before the app starts, so configuration-dependent behaviour is
     /// in effect on the very first fetch.
     pub fn with_config(is_github: bool, rows: u16, cols: u16, config_toml: Option<&str>) -> Self {
+        Self::with_config_and_args(is_github, rows, cols, config_toml, &[])
+    }
+
+    /// Like `with_config`, passing `args` to `glab-tui` (e.g. `--group`).
+    pub fn with_config_and_args(
+        is_github: bool,
+        rows: u16,
+        cols: u16,
+        config_toml: Option<&str>,
+        args: &[&str],
+    ) -> Self {
         let sandbox = Sandbox::new(is_github).unwrap();
         if let Some(toml) = config_toml {
             let conf_dir = sandbox.config_dir.join("glab-tui");
@@ -547,7 +559,7 @@ impl TestSession {
 
         let pty = Pty::spawn(
             bin_path.to_str().unwrap(),
-            &[],
+            args,
             &envs_ref,
             rows,
             cols,

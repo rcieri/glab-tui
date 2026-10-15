@@ -1226,6 +1226,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
 const START_MANUAL_JOB_ACTION: &str = "Start manual job";
 
+const RUNNER_PAUSE_RESUME_ACTION: &str = "Pause / Resume runner";
+const RUNNER_EDIT_DESCRIPTION_ACTION: &str = "Edit runner description text";
+
 pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     if !app.show_help {
         return;
@@ -1773,12 +1776,12 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
                 "{} / {}",
                 app.config.keybindings.runners.pause, app.config.keybindings.runners.resume,
             )),
-            action: "Pause / Resume runner",
+            action: RUNNER_PAUSE_RESUME_ACTION,
         },
         Shortcut {
             category: "Runners",
             key: d(app.config.keybindings.runners.edit_description.clone()),
-            action: "Edit runner description text",
+            action: RUNNER_EDIT_DESCRIPTION_ACTION,
         },
         Shortcut {
             category: "Runners",
@@ -2086,6 +2089,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             action: "Show this help modal",
         },
     ];
+    if !app.kind().supports_runner_management() {
+        shortcuts.retain(|shortcut| {
+            ![RUNNER_PAUSE_RESUME_ACTION, RUNNER_EDIT_DESCRIPTION_ACTION].contains(&shortcut.action)
+        });
+    }
     // The few user-defined commands go first, above the long built-in lists.
     shortcuts.splice(
         0..0,

@@ -1902,10 +1902,21 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Runners => {
+            let can_manage_runners = app.kind().supports_runner_management();
             if let Some(selected_idx) = app.runners.state.selected() {
                 if let Some(item) = app.filtered_runners().get(selected_idx) {
                     let runner_id = item.id;
                     match key_event.code {
+                        // GitHub cannot pause, resume or rename a runner. The keys are still
+                        // taken there, so a rebinding never reaches a list-view or custom binding.
+                        _ if !can_manage_runners
+                            && [
+                                &app.config.keybindings.runners.pause,
+                                &app.config.keybindings.runners.resume,
+                                &app.config.keybindings.runners.edit_description,
+                            ]
+                            .into_iter()
+                            .any(|binding| keybinding_matches(binding, key_event)) => {}
                         _ if keybinding_matches(
                             &app.config.keybindings.runners.pause,
                             key_event,

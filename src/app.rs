@@ -3033,6 +3033,7 @@ pub enum ConfirmAction {
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
     SubmitReview(u64),                // mr iid
+    MarkAllTodosRead,
 }
 
 impl ConfirmAction {
@@ -3051,6 +3052,7 @@ impl ConfirmAction {
                 | Self::ReopenMr(_)
                 | Self::ReopenMilestone(_)
                 | Self::RevokeMr(_)
+                | Self::MarkAllTodosRead
         )
     }
 }
@@ -3270,6 +3272,7 @@ impl SubmitDialog {
             | ConfirmAction::RebaseMr(iid)
             | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
             ConfirmAction::BulkMergeMrs(_) => app.scope.as_str().to_string(),
+            ConfirmAction::MarkAllTodosRead => String::new(),
         };
         Self::build_with_project(action, project_path, app)
     }
@@ -3475,6 +3478,22 @@ impl SubmitDialog {
                 vec![],
                 false,
             ),
+            ConfirmAction::MarkAllTodosRead => {
+                let todos = kind.term("todo_plural");
+                let body = if kind.is_github() {
+                    "Mark every notification in your inbox as read, across all repositories?"
+                        .to_string()
+                } else {
+                    "Mark every pending todo as done, across all projects?".to_string()
+                };
+                (
+                    format!("Mark All {todos} Read"),
+                    body,
+                    "Mark All".to_string(),
+                    vec![],
+                    true,
+                )
+            }
         };
 
         let cursor_idx = if safe {
@@ -4052,40 +4071,67 @@ impl App {
     /// Switch to the Issues tab, drop filters that would hide the target, and
     /// select + preview `iid`. Returns whether the item is already loaded.
     pub fn focus_issue(&mut self, iid: u64) -> bool {
+        self.focus_issue_matching(None, iid)
+    }
+
+    /// `focus_issue` restricted to `project`, so a group list holding the
+    /// same number in another project cannot take the selection.
+    pub fn focus_issue_in(&mut self, project: &str, iid: u64) -> bool {
+        self.focus_issue_matching(Some(project), iid)
+    }
+
+    fn focus_issue_matching(&mut self, project: Option<&str>, iid: u64) -> bool {
         self.active_tab = Tab::Issues;
         self.clear_tab_filters(Tab::Issues);
-        let idx = {
-            let filtered = self.filtered_issues();
-            filtered.iter().position(|i| i.iid == iid)
+        let idx = self.filtered_issues().iter().position(|i| {
+            i.iid == iid && project.is_none_or(|p| self.is_row_in_project(&i.project_path, p))
+        });
+        let Some(idx) = idx else {
+            return false;
         };
-        if let Some(idx) = idx {
-            self.issues.state.select(Some(idx));
-            self.detail_scroll = 0;
-            self.details_zoomed = false;
-            true
-        } else {
-            false
-        }
+        self.issues.state.select(Some(idx));
+        self.detail_scroll = 0;
+        self.details_zoomed = false;
+        true
     }
 
     /// Switch to the MergeRequests tab, drop filters that would hide the
     /// target, and select + preview `iid`. Returns whether the item is already
     /// loaded.
     pub fn focus_mr(&mut self, iid: u64) -> bool {
+        self.focus_mr_matching(None, iid)
+    }
+
+    /// `focus_mr` restricted to `project`, so a group list holding the same
+    /// number in another project cannot take the selection.
+    pub fn focus_mr_in(&mut self, project: &str, iid: u64) -> bool {
+        self.focus_mr_matching(Some(project), iid)
+    }
+
+    fn focus_mr_matching(&mut self, project: Option<&str>, iid: u64) -> bool {
         self.active_tab = Tab::MergeRequests;
         self.clear_tab_filters(Tab::MergeRequests);
-        let idx = {
-            let filtered = self.filtered_mrs();
-            filtered.iter().position(|m| m.iid == iid)
+        let idx = self.filtered_mrs().iter().position(|m| {
+            m.iid == iid && project.is_none_or(|p| self.is_row_in_project(&m.project_path, p))
+        });
+        let Some(idx) = idx else {
+            return false;
         };
-        if let Some(idx) = idx {
-            self.mrs.state.select(Some(idx));
-            self.detail_scroll = 0;
-            self.details_zoomed = false;
-            true
+        self.mrs.state.select(Some(idx));
+        self.detail_scroll = 0;
+        self.details_zoomed = false;
+        true
+    }
+
+    /// Whether a listed row belongs to `project`. A repository-scoped list
+    /// may leave a row's project empty: it is the repository in scope.
+    pub fn is_row_in_project(&self, row_project: &str, project: &str) -> bool {
+        let row_project = if row_project.is_empty() {
+            self.scope.as_str()
         } else {
-            false
-        }
+            row_project
+        };
+        row_project.eq_ignore_ascii_case(project)
     }
 
     pub fn project_path_for_issue(&self, iid: u64) -> String {
@@ -6212,11 +6258,7 @@ impl App {
                 };
                 if enabled_cols.contains("State") {
                     try_match(&item.state);
-                    try_match(if item.state == "unread" || item.state == "pending" {
-                        "NEW"
-                    } else {
-                        "READ"
-                    });
+                    try_match(if item.is_unread() { "NEW" } else { "READ" });
                 }
                 if enabled_cols.contains("Project") {
                     try_match(&item.project_path);
@@ -6290,7 +6332,7 @@ impl App {
         col: &str,
     ) -> Vec<String> {
         match col {
-            "State" => vec![if item.state == "unread" || item.state == "pending" {
+            "State" => vec![if item.is_unread() {
                 "NEW".to_string()
             } else {
                 "READ".to_string()
@@ -6322,6 +6364,73 @@ impl App {
             Self::todo_filter_values,
         );
         list
+    }
+
+    pub fn selected_todo(&self) -> Option<&crate::domain::notifications::Notification> {
+        let idx = self.todos.state.selected()?;
+        self.filtered_todos().get(idx).copied()
+    }
+
+    /// Whether the Todos tab lists read (GitHub) or done (GitLab) items too.
+    pub fn shows_read_todos(&self) -> bool {
+        self.gitlab_client
+            .as_ref()
+            .is_some_and(|client| client.show_read_notifications)
+    }
+
+    /// Flips the Todos tab between unread-only and everything. The list
+    /// follows on the next fetch, which the caller starts.
+    pub fn toggle_show_read_todos(&mut self) {
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.show_read_notifications = !client.show_read_notifications;
+        }
+    }
+
+    /// Applies a todo mutation the server accepted to the local list. Read
+    /// and done items stay listed only while the tab shows them. GitHub's
+    /// done notifications leave the inbox whatever the filter.
+    pub fn apply_todo_change(&mut self, change: &crate::domain::notifications::TodoChange) {
+        use crate::domain::notifications::TodoChange;
+        let kind = self.kind();
+        let shows_read = self.shows_read_todos();
+        let read_state = crate::domain::notifications::read_state(kind);
+        match change {
+            TodoChange::MarkedRead(id) => self.settle_todo(id, shows_read.then_some(read_state)),
+            TodoChange::MarkedDone(id) => {
+                let stays_listed = shows_read && kind.is_gitlab();
+                self.settle_todo(id, stays_listed.then_some(read_state));
+            }
+            TodoChange::MarkedAllRead if shows_read => {
+                for todo in self.todos.items.iter_mut().filter(|t| t.is_unread()) {
+                    todo.state = read_state.to_string();
+                }
+            }
+            TodoChange::MarkedAllRead => self.todos.items.clear(),
+            TodoChange::Unsubscribed(_) => {}
+        }
+        self.clamp_todo_selection();
+    }
+
+    /// Restates the todo `id` as `state`, or drops it from the list for `None`.
+    fn settle_todo(&mut self, id: &str, state: Option<&str>) {
+        match state {
+            Some(state) => {
+                if let Some(todo) = self.todos.items.iter_mut().find(|t| t.id == id) {
+                    todo.state = state.to_string();
+                }
+            }
+            None => self.todos.items.retain(|t| t.id != id),
+        }
+    }
+
+    fn clamp_todo_selection(&mut self) {
+        let len = self.filtered_todos().len();
+        let selected = match (len, self.todos.state.selected()) {
+            (0, _) => None,
+            (_, Some(idx)) => Some(idx.min(len - 1)),
+            (_, None) => Some(0),
+        };
+        self.todos.state.select(selected);
     }
 
     pub fn filter_milestones_list<'a>(
@@ -11462,12 +11571,13 @@ index 123456..789012 100644
         // keybinding_matches), not two literal characters. It must not
         // register 'U' as a sequence-prefix char.
         let mut keybindings = crate::config::KeybindingConfig::default();
+        let (_, default_standalone) = keybinding_char_sets(&keybindings);
         keybindings.global.scroll_top = "Up".to_string();
 
         let (prefixes, standalone) = keybinding_char_sets(&keybindings);
 
         assert!(!prefixes.contains(&'U'));
-        assert!(!standalone.contains(&'U'));
+        assert_eq!(standalone, default_standalone);
     }
 
     #[test]
@@ -11976,5 +12086,150 @@ index 123456..789012 100644
             .collect();
         assert!(mr_headers.iter().any(|h| h.contains("Closes Issues")));
         assert!(mr_headers.iter().any(|h| h.contains("No Issues")));
+    }
+
+    /// An app on the Todos tab holding todo `1` (unread), `2` (unread) and
+    /// `3` (already read), with the highlight on todo `2`.
+    fn app_with_todos(kind: BackendKind, shows_read: bool) -> App {
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: kind.is_github(),
+            backend: crate::backend::create_backend(kind.is_github()),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: shows_read,
+        });
+        app.active_tab = Tab::Todos;
+        let read_state = crate::domain::notifications::read_state(kind);
+        app.todos.items = serde_json::from_value(serde_json::json!([
+            {"id": "1", "project_path": "acme/api", "title": "One", "target_type": "Issue",
+             "target_iid": 1, "state": "pending", "updated_at": ""},
+            {"id": "2", "project_path": "acme/api", "title": "Two", "target_type": "MergeRequest",
+             "target_iid": 2, "state": "pending", "updated_at": ""},
+            {"id": "3", "project_path": "acme/api", "title": "Three", "target_type": "Issue",
+             "target_iid": 3, "state": read_state, "updated_at": ""},
+        ]))
+        .unwrap();
+        app.todos.state.select(Some(1));
+        app
+    }
+
+    fn todo_states(app: &App) -> Vec<(&str, &str)> {
+        app.todos
+            .items
+            .iter()
+            .map(|t| (t.id.as_str(), t.state.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn marking_a_todo_read_drops_it_while_only_unread_todos_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitHub, false);
+        app.todos.state.select(Some(2));
+
+        app.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
+
+        assert_eq!(todo_states(&app), vec![("2", "pending"), ("3", "read")]);
+        assert_eq!(app.todos.state.selected(), Some(1));
+    }
+
+    #[test]
+    fn marking_a_todo_read_keeps_it_as_read_while_read_todos_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut github = app_with_todos(BackendKind::GitHub, true);
+        github.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
+        assert_eq!(
+            todo_states(&github),
+            vec![("1", "read"), ("2", "pending"), ("3", "read")]
+        );
+
+        let mut gitlab = app_with_todos(BackendKind::GitLab, true);
+        gitlab.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
+        assert_eq!(
+            todo_states(&gitlab),
+            vec![("1", "done"), ("2", "pending"), ("3", "done")]
+        );
+    }
+
+    #[test]
+    fn a_done_github_notification_leaves_the_list_even_while_read_ones_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut github = app_with_todos(BackendKind::GitHub, true);
+        github.apply_todo_change(&TodoChange::MarkedDone("2".to_string()));
+        assert_eq!(todo_states(&github), vec![("1", "pending"), ("3", "read")]);
+
+        let mut gitlab = app_with_todos(BackendKind::GitLab, true);
+        gitlab.apply_todo_change(&TodoChange::MarkedDone("2".to_string()));
+        assert_eq!(
+            todo_states(&gitlab),
+            vec![("1", "pending"), ("2", "done"), ("3", "done")]
+        );
+    }
+
+    #[test]
+    fn marking_all_read_clears_an_unread_only_list_and_restates_a_full_one() {
+        use crate::domain::notifications::TodoChange;
+        let mut unread_only = app_with_todos(BackendKind::GitLab, false);
+        unread_only.apply_todo_change(&TodoChange::MarkedAllRead);
+        assert_eq!(todo_states(&unread_only), vec![]);
+        assert_eq!(unread_only.todos.state.selected(), None);
+
+        let mut full = app_with_todos(BackendKind::GitHub, true);
+        full.apply_todo_change(&TodoChange::MarkedAllRead);
+        assert_eq!(
+            todo_states(&full),
+            vec![("1", "read"), ("2", "read"), ("3", "read")]
+        );
+    }
+
+    #[test]
+    fn unsubscribing_leaves_the_todo_listed_and_unread() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.apply_todo_change(&TodoChange::Unsubscribed("1".to_string()));
+        assert_eq!(
+            todo_states(&app),
+            vec![("1", "pending"), ("2", "pending"), ("3", "done")]
+        );
+        assert_eq!(app.todos.state.selected(), Some(1));
+    }
+
+    #[test]
+    fn toggling_show_read_flips_the_filter_the_todos_fetch_uses() {
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.toggle_show_read_todos();
+        assert!(app.shows_read_todos());
+        assert!(app.gitlab_client.as_ref().unwrap().show_read_notifications);
+        app.toggle_show_read_todos();
+        assert!(!app.shows_read_todos());
+    }
+
+    #[test]
+    fn focusing_an_issue_in_a_project_skips_the_same_number_in_another_project() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        let mut web = issue_with_milestone(5, "opened", 1);
+        web.project_path = "acme/web".to_string();
+        let mut api = issue_with_milestone(5, "opened", 1);
+        api.project_path = "acme/api".to_string();
+        app.issues.items = vec![web, api];
+
+        assert!(app.focus_issue_in("acme/api", 5));
+        assert_eq!(app.active_tab, Tab::Issues);
+        let selected = app.filtered_issues()[app.issues.state.selected().unwrap()];
+        assert_eq!(selected.project_path, "acme/api");
+
+        assert!(!app.focus_issue_in("acme/docs", 5));
+    }
+
+    #[test]
+    fn rows_without_a_project_belong_to_the_repository_in_scope() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("acme/api".to_string());
+        assert!(app.is_row_in_project("", "ACME/api"));
+        assert!(!app.is_row_in_project("", "acme/web"));
+        assert!(app.is_row_in_project("acme/web", "acme/web"));
     }
 }

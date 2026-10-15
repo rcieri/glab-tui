@@ -994,6 +994,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 icons.action_review.clone()
             }
             crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
+            crate::app::ConfirmAction::MarkAllTodosRead => icons.tab_todo.clone(),
         };
         let option_rows = dialog.options.len();
 
@@ -1825,6 +1826,26 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             key: d(app.config.keybindings.todos.open_in_browser.clone()),
             action: "Open todo in browser",
         },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.mark_as_done.clone()),
+            action: "Mark todo done",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.mark_all_as_read.clone()),
+            action: "Mark all todos read",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.unsubscribe.clone()),
+            action: "Unsubscribe from todo target",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.toggle_show_read.clone()),
+            action: "Toggle showing read todos",
+        },
         // ── Terminal ──
         Shortcut {
             category: "Terminal",
@@ -2399,6 +2420,7 @@ mod tests {
             tx: None,
             page_size: 50,
             api_per_page: 50,
+            show_read_notifications: false,
         });
         app.show_help = true;
         app.active_tab = Tab::MergeRequests;

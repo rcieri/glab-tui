@@ -5,7 +5,7 @@ use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
-use crate::domain::notifications::Notification;
+use crate::domain::notifications::{Notification, NotificationTarget};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
@@ -2528,6 +2528,40 @@ impl Backend for GlabBackend {
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         self.run_glab(&["todo", "done", id], "Marking Todo Done")
             .await?;
+        Ok(())
+    }
+
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()> {
+        self.mark_notification_as_read(id).await
+    }
+
+    async fn mark_all_notifications_as_read(&self) -> Result<()> {
+        self.run_glab(&["todo", "done", "--all"], "Marking All Todos Done")
+            .await?;
+        Ok(())
+    }
+
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()> {
+        let entity = match notification.target() {
+            Some(NotificationTarget::Issue) => "issue",
+            Some(NotificationTarget::MergeRequest) => "mr",
+            None => anyhow::bail!(
+                "unsubscribing from a {} todo is not supported on GitLab",
+                notification.target_type
+            ),
+        };
+        let iid = notification.target_iid.to_string();
+        self.run_glab(
+            &[
+                entity,
+                "unsubscribe",
+                &iid,
+                "-R",
+                &notification.project_path,
+            ],
+            "Unsubscribing",
+        )
+        .await?;
         Ok(())
     }
 

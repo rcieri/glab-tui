@@ -4,9 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- **Todos / Notifications actions**: New keys on the Todos tab. `d` marks the highlighted item done (`mark_as_done`), `A` marks every item read after a confirmation (`mark_all_as_read`), `U` unsubscribes from the item's issue, MR/PR or thread (`unsubscribe`) and `r` toggles listing read (GitHub) or done (GitLab) items (`toggle_show_read`). The tab now lists unread items only by default, and its title names the active filter (`Unread` / `All`) (#583).
+
 ### Bug Fixes
 - **Jobs tab finds the branch pipeline directly**: Opening the Jobs tab no longer lists every MR and every pipeline of the project to find the checked-out branch's pipeline. It asks for the newest pipeline of that branch (`glab ci list --ref` plus the branch's open MR via `glab mr list --source-branch`, or `gh run list --branch`) and reads the branch off the async runtime. Select-stage confirmations and other status messages now show in the header bar, and the GitLab-only start-job key is no longer offered on GitHub (#579).
 - **Releases tab consistency**: Searching, sorting, grouping and the Configure column filter now work on the `Release Notes` column (they looked for a `Description` column that does not exist). Release edits, deletes and open-in-browser target the release's own project instead of the raw scope string. A release edit form opened from the zoomed inspector no longer submits empty release notes. The unreachable text-input release creation path, which shelled out to `gh`/`glab release create` from the event loop, is gone: every release is created through `Backend::create_release` (#580).
+- **Todos mark-read and jump**: Marking a todo or notification read discarded the CLI result, so the item stayed listed until the next refetch and a failure was silently dropped. The list now updates as soon as the call succeeds and a failure raises an error toast. `Enter` and the `mark_as_read` key share one implementation, and the jump selects the issue or MR/PR in the todo's own project instead of the first item with the same number. A todo from a project outside the current scope reports that instead of landing on an unrelated item, and stays unread (#583).
 
 ## [0.9.3] - 2026-10-08
 

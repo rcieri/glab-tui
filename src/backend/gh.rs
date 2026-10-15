@@ -3130,7 +3130,32 @@ impl Backend for GhBackend {
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         let endpoint = format!("notifications/threads/{}", id);
-        self.raw_api(&endpoint, "PATCH", None, "Marking Todo Done")
+        self.raw_api(&endpoint, "PATCH", None, "Marking Notification Read")
+            .await?;
+        Ok(())
+    }
+
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()> {
+        let endpoint = format!("notifications/threads/{}", id);
+        self.raw_api(&endpoint, "DELETE", None, "Marking Notification Done")
+            .await?;
+        Ok(())
+    }
+
+    async fn mark_all_notifications_as_read(&self) -> Result<()> {
+        self.raw_api(
+            "notifications",
+            "PUT",
+            None,
+            "Marking All Notifications Read",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()> {
+        let endpoint = format!("notifications/threads/{}/subscription", notification.id);
+        self.raw_api(&endpoint, "DELETE", None, "Unsubscribing")
             .await?;
         Ok(())
     }

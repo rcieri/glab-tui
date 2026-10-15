@@ -122,7 +122,7 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
         # For Github runners, we wrap runners.json into GithubRunners
         echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online"}]}'
-    elif [[ "$*" == *"/notifications"* ]]; then
+    elif [[ "$*" == *"notifications"* ]]; then
         # GitHub notifications:
         echo '[{
             "id": "1",

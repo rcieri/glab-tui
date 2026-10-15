@@ -605,6 +605,9 @@ fn run_submit_action(
                 state: ListState::default(),
             });
         }
+        crate::app::ConfirmAction::MarkAllTodosRead => {
+            crate::handlers::todos::mark_all_read(app, &tx);
+        }
     }
 }
 

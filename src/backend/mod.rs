@@ -636,7 +636,13 @@ pub trait Backend: Send + Sync {
 
     // ── Notifications ──
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>>;
+    /// GitLab todos have no read state, so on GitLab this marks the todo done.
     async fn mark_notification_as_read(&self, id: &str) -> Result<()>;
+    /// Removes the notification from the inbox (GitHub "done", GitLab todo done).
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()>;
+    async fn mark_all_notifications_as_read(&self) -> Result<()>;
+    /// Stops further notifications about the notification's issue, MR/PR or thread.
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()>;
 
     // ── Branches ──
     async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;

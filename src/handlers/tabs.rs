@@ -2118,91 +2118,28 @@ pub async fn handle_active_tab_key(
             }
             _ => handled = false,
         },
-        crate::app::Tab::Todos => {
-            if let Some(selected_idx) = app.todos.state.selected() {
-                if let Some(item) = app.filtered_todos().get(selected_idx) {
-                    match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.todos.mark_as_read,
-                            key_event,
-                        ) =>
-                        {
-                            let n_id = item.id.clone();
-                            let target_iid = item.target_iid;
-                            let target_type = item.target_type.clone();
-                            let client_opt = app.gitlab_client.clone();
-                            if let Some(client) = client_opt {
-                                tokio::spawn(async move {
-                                    let _ =
-                                        crate::domain::notifications::mark_notification_as_read(
-                                            &client, &n_id,
-                                        )
-                                        .await;
-                                });
-                            }
-                            app.active_tab = match target_type.as_str() {
-                                "MergeRequest" => crate::app::Tab::MergeRequests,
-                                _ => crate::app::Tab::Issues,
-                            };
-                            app.update_filter_selection();
-                            match app.active_tab {
-                                crate::app::Tab::Issues => {
-                                    if let Some(pos) =
-                                        app.issues.items.iter().position(|i| i.iid == target_iid)
-                                    {
-                                        app.issues.state.select(Some(pos));
-                                    }
-                                }
-                                crate::app::Tab::MergeRequests => {
-                                    if let Some(pos) =
-                                        app.mrs.items.iter().position(|m| m.iid == target_iid)
-                                    {
-                                        app.mrs.state.select(Some(pos));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.todos.open_in_browser,
-                            key_event,
-                        ) =>
-                        {
-                            let is_github = app.is_github();
-                            let entity = if item.target_type.contains("MergeRequest") {
-                                if is_github { "pr" } else { "mr" }
-                            } else {
-                                "issue"
-                            };
-                            let Some(client) = app.gitlab_client.clone() else {
-                                return false;
-                            };
-                            let project_path = if !item.project_path.is_empty() {
-                                item.project_path.clone()
-                            } else {
-                                app.scope.as_str().to_string()
-                            };
-                            let target_iid = item.target_iid.to_string();
-                            let tx2 = tx.clone();
-                            let _ = tokio::spawn(async move {
-                                let result = client
-                                    .open_in_browser(&project_path, &entity, &target_iid)
-                                    .await;
-                                let _ = tx2.send(Event::CommandCompleted(
-                                    crate::app::Tab::Todos,
-                                    result.map_err(|e| e.to_string()),
-                                ));
-                            });
-                        }
-                        _ => handled = false,
-                    }
-                } else {
-                    handled = false;
-                }
-            } else {
-                handled = false;
+        crate::app::Tab::Todos => match key_event.code {
+            _ if keybinding_matches(&app.config.keybindings.todos.toggle_show_read, key_event) => {
+                crate::handlers::todos::toggle_show_read(app, &tx);
             }
-        }
+            _ if keybinding_matches(&app.config.keybindings.todos.mark_all_as_read, key_event) => {
+                crate::handlers::todos::confirm_mark_all_read(app);
+            }
+            _ if app.selected_todo().is_none() => handled = false,
+            _ if keybinding_matches(&app.config.keybindings.todos.mark_as_read, key_event) => {
+                crate::handlers::todos::open_selected(app, &tx);
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.mark_as_done, key_event) => {
+                crate::handlers::todos::mark_selected_done(app, &tx);
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.unsubscribe, key_event) => {
+                crate::handlers::todos::unsubscribe_selected(app, &tx);
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.open_in_browser, key_event) => {
+                crate::handlers::todos::open_selected_in_browser(app, &tx);
+            }
+            _ => handled = false,
+        },
         crate::app::Tab::Milestones => match key_event.code {
             _ if keybinding_matches(
                 &app.config.keybindings.milestones.create_milestone,
@@ -2662,47 +2599,7 @@ pub async fn handle_active_tab_key(
                 app.is_typing_search = true;
             }
             KeyCode::Enter => match app.active_tab {
-                crate::app::Tab::Todos => {
-                    if let Some(idx) = app.todos.state.selected() {
-                        if let Some(n) = app.filtered_todos().get(idx) {
-                            let n_id = n.id.clone();
-                            let target_iid = n.target_iid;
-                            let target_type = n.target_type.clone();
-                            let client_opt = app.gitlab_client.clone();
-                            if let Some(client) = client_opt {
-                                tokio::spawn(async move {
-                                    let _ =
-                                        crate::domain::notifications::mark_notification_as_read(
-                                            &client, &n_id,
-                                        )
-                                        .await;
-                                });
-                            }
-                            app.active_tab = match target_type.as_str() {
-                                "MergeRequest" => crate::app::Tab::MergeRequests,
-                                _ => crate::app::Tab::Issues,
-                            };
-                            app.update_filter_selection();
-                            match app.active_tab {
-                                crate::app::Tab::Issues => {
-                                    if let Some(pos) =
-                                        app.issues.items.iter().position(|i| i.iid == target_iid)
-                                    {
-                                        app.issues.state.select(Some(pos));
-                                    }
-                                }
-                                crate::app::Tab::MergeRequests => {
-                                    if let Some(pos) =
-                                        app.mrs.items.iter().position(|m| m.iid == target_iid)
-                                    {
-                                        app.mrs.state.select(Some(pos));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+                crate::app::Tab::Todos => crate::handlers::todos::open_selected(app, &tx),
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
                         let pipe_info = app

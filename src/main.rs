@@ -1474,11 +1474,16 @@ async fn main() -> Result<()> {
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::IssueFetched(iid, Ok(issue)) => {
-                    if !app.issues.items.iter().any(|i| i.iid == iid) {
+                    let project = issue.project_path.clone();
+                    let is_listed =
+                        app.issues.items.iter().any(|i| {
+                            i.iid == iid && app.is_row_in_project(&i.project_path, &project)
+                        });
+                    if !is_listed {
                         app.issues.items.push(issue);
                         app.update_filter_selection();
                     }
-                    app.focus_issue(iid);
+                    app.focus_issue_in(&project, iid);
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -1487,12 +1492,17 @@ async fn main() -> Result<()> {
                     app.show_error(format!("Failed to fetch issue #{}: {}", iid, err));
                 }
                 Event::MrFetched(iid, Ok(mr)) => {
-                    if !app.mrs.items.iter().any(|m| m.iid == iid) {
+                    let project = mr.project_path.clone();
+                    let is_listed =
+                        app.mrs.items.iter().any(|m| {
+                            m.iid == iid && app.is_row_in_project(&m.project_path, &project)
+                        });
+                    if !is_listed {
                         app.mrs.items.push(mr);
                         app.apply_pr_stacks();
                         app.update_filter_selection();
                     }
-                    app.focus_mr(iid);
+                    app.focus_mr_in(&project, iid);
                     crate::handlers::tabs::maybe_fetch_mr_related_issues(
                         &mut app,
                         &events.sender(),
@@ -1581,15 +1591,26 @@ async fn main() -> Result<()> {
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
-                Event::TodosFetched(notifs) => {
+                Event::TodosFetched { show_read, .. } if show_read != app.shows_read_todos() => {}
+                Event::TodosFetched { notifications, .. } => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
                     app.loaded_tabs.insert(app::Tab::Todos);
                     app.refreshed_tabs.insert(app::Tab::Todos);
                     app.status_message = None;
-                    app.todos.items = notifs;
+                    app.todos.items = notifications;
                     app.update_filter_selection();
                     app.project_cache.todos = app.todos.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::TodoChanged(change, Ok(())) => {
+                    app.apply_todo_change(&change);
+                    app.project_cache.todos = app.todos.items.clone();
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::TodoChanged(change, Err(err)) => {
+                    app.show_error(change.failure_message(app.kind(), &err));
+                    // CLI failure: full stderr is in the terminal log.
+                    app.error_has_cli_detail = true;
                 }
                 Event::RunnersFetched(runners) => {
                     app.complete_loading_tab(app::Tab::Runners, "Success");

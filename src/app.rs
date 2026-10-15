@@ -3911,6 +3911,8 @@ pub struct App {
     /// `max`, so it resolves the flag in the same frame and clears it.
     pub detail_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
+    /// Job whose trace opens in the editor once its in-flight fetch lands.
+    pub pending_job_trace_editor: Option<u64>,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
@@ -4061,6 +4063,7 @@ impl Default for App {
             detail_visible: false,
             detail_scroll_to_bottom: false,
             job_trace_loading: false,
+            pending_job_trace_editor: None,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),
             job_trace_searching: false,
@@ -4299,6 +4302,7 @@ impl App {
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.pending_job_trace_editor = None;
         self.pending_issue_select = None;
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;

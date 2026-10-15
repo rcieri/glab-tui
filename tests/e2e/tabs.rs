@@ -1,4 +1,4 @@
-use crate::TestSession;
+use crate::{Sandbox, TestSession};
 
 /// Enter on a parent pipeline asks GitLab for its bridges and lists the
 /// downstream pipelines they spawned, named after the trigger job that made
@@ -329,6 +329,64 @@ fn test_notice_over_stale_list_keeps_the_offline_banner() {
     assert!(
         after.contains("Offline: refresh failed, showing cached data"),
         "the badge outlives the notice:\n{after}"
+    );
+}
+
+/// The trace editor key hands the real log to an `EDITOR` that carries its
+/// own arguments, fetching the trace first when it was never shown, and
+/// leaves the file behind for an editor that returns before reading it
+/// (`code` without `--wait`). A placeholder file, `EDITOR` run as one program
+/// name, or a file deleted as soon as the editor returns are the bugs.
+#[test]
+fn trace_editor_key_hands_the_fetched_trace_to_a_multi_word_non_blocking_editor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new(false).unwrap();
+    let tmp_dir = sandbox.temp_dir.path().join("tmp");
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let received = sandbox.temp_dir.path().join("editor_received.txt");
+    let editor = sandbox.bin_dir.join("path-editor");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\n[ \"$1\" = \"--into\" ] || exit 2\nprintf '%s' \"$3\" > \"$2\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let editor_env = format!("path-editor --into {}", received.display());
+
+    let mut session = TestSession::launch(
+        sandbox,
+        24,
+        100,
+        &[
+            ("EDITOR", &editor_env),
+            ("TMPDIR", tmp_dir.to_str().unwrap()),
+        ],
+    );
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 5000)
+        .expect("the pipeline is listed");
+    session.send_input(b"\x1bj"); // Alt+j
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the pipeline's job is listed");
+
+    session.send_input(b"e");
+    // The terminal handoff probes keyboard-enhancement support on the way out
+    // and back, and this emulator never answers: each probe waits out
+    // crossterm's 2 s timeout.
+    session
+        .wait_for_screen_contains("mock gitlab job trace output", 15_000)
+        .expect("the TUI is back and shows the fetched trace");
+
+    let trace_path = std::fs::read_to_string(&received).expect("the editor ran");
+    assert_eq!(
+        std::fs::read_to_string(&trace_path).expect("the trace file outlives the editor"),
+        "mock gitlab job trace output\n"
     );
 }
 

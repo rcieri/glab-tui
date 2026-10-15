@@ -189,6 +189,37 @@ fn spawn_mark_todo_read(app: &App, todo_id: String, tx: &UnboundedSender<Event>)
     });
 }
 
+/// Returns whether a fetch started: there is none without a client.
+pub(crate) fn spawn_job_trace_fetch(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
+    job_id: u64,
+) -> bool {
+    let Some(client) = app.gitlab_client.clone() else {
+        return false;
+    };
+    let project_context = app.project_path_for_jobs();
+    let tx = app.scoped_sender(tx.clone());
+    app.job_trace_loading = true;
+    tokio::spawn(async move {
+        let res = crate::domain::pipelines::get_job_trace(&client, &project_context, job_id).await;
+        let _ = tx.send(Event::JobTraceFetched(
+            job_id,
+            res.map_err(|e| e.to_string()),
+        ));
+    });
+    true
+}
+
+pub(crate) fn open_job_trace_in_editor(app: &mut App, job_id: u64, terminal: &mut AppTerminal) {
+    let Some(trace) = app.job_trace.as_deref() else {
+        return;
+    };
+    let prefix = format!("job_{job_id}_trace_");
+    if let Err(error) = crate::editor::view_in_editor(trace, &prefix, terminal) {
+        app.show_error(format!("Failed to open job trace in editor: {error}"));
+    }
+}
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -1861,43 +1892,11 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let temp_file =
-                                std::env::temp_dir().join(format!("job_{}_trace.txt", job_id));
-                            if let Some(trace) = &app.job_trace {
-                                let _ = std::fs::write(&temp_file, trace);
-                            } else if let Some(_) = &app.gitlab_client {
-                                let _ = std::fs::write(&temp_file, "Trace will be here");
+                            if app.job_trace.is_some() {
+                                open_job_trace_in_editor(app, job_id, terminal);
+                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
+                                app.pending_job_trace_editor = Some(job_id);
                             }
-                            crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
-                            let _ = crossterm::terminal::disable_raw_mode();
-                            let mut editor_stdout = std::io::stdout();
-                            crate::editor::try_pop_keyboard_enhancement_flags(&mut editor_stdout);
-                            let _ = crossterm::execute!(
-                                editor_stdout,
-                                crossterm::terminal::LeaveAlternateScreen,
-                                crossterm::event::DisableMouseCapture,
-                            );
-                            let editor = std::env::var("EDITOR")
-                                .or_else(|_| std::env::var("VISUAL"))
-                                .unwrap_or_else(|_| "helix".to_string());
-                            let mut cmd = std::process::Command::new(&editor);
-                            cmd.arg(temp_file.as_os_str());
-                            cmd.stdin(std::process::Stdio::inherit());
-                            cmd.stdout(std::process::Stdio::inherit());
-                            cmd.stderr(std::process::Stdio::inherit());
-                            if let Ok(mut child) = cmd.spawn() {
-                                let _ = child.wait();
-                            }
-                            let _ = crossterm::terminal::enable_raw_mode();
-                            let mut editor_stdout = std::io::stdout();
-                            let _ = crossterm::execute!(
-                                editor_stdout,
-                                crossterm::terminal::EnterAlternateScreen,
-                                crossterm::event::EnableMouseCapture,
-                            );
-                            crate::editor::try_push_keyboard_enhancement_flags(&mut editor_stdout);
-                            let _ = terminal.clear();
-                            crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace,
@@ -1906,23 +1905,8 @@ pub async fn handle_active_tab_key(
                         {
                             if app.job_trace.is_some() {
                                 app.details_zoomed = !app.details_zoomed;
-                            } else if let Some(client) = &app.gitlab_client {
-                                let client = client.clone();
-                                let project_context = app.project_path_for_jobs();
-                                let tx = app.scoped_sender(tx.clone());
-                                app.job_trace_loading = true;
-                                tokio::spawn(async move {
-                                    let res = crate::domain::pipelines::get_job_trace(
-                                        &client,
-                                        &project_context,
-                                        job_id,
-                                    )
-                                    .await;
-                                    let _ = tx.send(Event::JobTraceFetched(
-                                        job_id,
-                                        res.map_err(|e| e.to_string()),
-                                    ));
-                                });
+                            } else {
+                                spawn_job_trace_fetch(app, &tx, job_id);
                             }
                         }
                         _ if keybinding_matches(
@@ -2638,6 +2622,7 @@ pub async fn handle_active_tab_key(
                     // Selections cleared; fall through to other Esc semantics below.
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
+                    app.pending_job_trace_editor = None;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;
                     app.job_trace = None;
@@ -2705,29 +2690,9 @@ pub async fn handle_active_tab_key(
                     if app.job_trace.is_some() {
                         app.details_zoomed = !app.details_zoomed;
                     } else if let Some(idx) = app.jobs.state.selected() {
-                        let job_info = app
-                            .filtered_jobs()
-                            .get(idx)
-                            .map(|j| (j.id(), j.name().to_string()));
-                        if let Some((job_id, _)) = job_info {
-                            if let Some(client) = &app.gitlab_client {
-                                let client = client.clone();
-                                let project_context = app.scope.as_str().to_string();
-                                let tx = tx.clone();
-                                app.job_trace_loading = true;
-                                tokio::spawn(async move {
-                                    let res = crate::domain::pipelines::get_job_trace(
-                                        &client,
-                                        &project_context,
-                                        job_id,
-                                    )
-                                    .await;
-                                    let _ = tx.send(Event::JobTraceFetched(
-                                        job_id,
-                                        res.map_err(|e| e.to_string()),
-                                    ));
-                                });
-                            }
+                        let job_id = app.filtered_jobs().get(idx).map(|j| j.id());
+                        if let Some(job_id) = job_id {
+                            spawn_job_trace_fetch(app, &tx, job_id);
                         }
                     }
                 }

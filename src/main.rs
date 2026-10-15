@@ -5,6 +5,7 @@
 mod app;
 mod backend;
 mod cli;
+mod command_log;
 mod config;
 mod custom_commands;
 mod domain;
@@ -1004,11 +1005,12 @@ async fn main() -> Result<()> {
         spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        app.terminal_commands.push(crate::app::TerminalCommand {
-            timestamp,
-            command: "Initialization: gitlab client".to_string(),
-            status: "Failed: Failed to initialize GitLab client".to_string(),
-        });
+        app.terminal_commands
+            .push(crate::command_log::TerminalCommand {
+                timestamp,
+                command: "Initialization: gitlab client".to_string(),
+                status: "Failed: Failed to initialize GitLab client".to_string(),
+            });
         app.show_error("Failed to initialize GitLab client".to_string());
     }
 
@@ -1019,11 +1021,12 @@ async fn main() -> Result<()> {
         let switchable = crate::utils::cache::get_switchable_repos();
         if !switchable.is_empty() {
             let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-            app.terminal_commands.push(crate::app::TerminalCommand {
-                timestamp,
-                command: "Startup: Not in a git repository".to_string(),
-                status: "Failed: No repo detected — select one below or press Esc".to_string(),
-            });
+            app.terminal_commands
+                .push(crate::command_log::TerminalCommand {
+                    timestamp,
+                    command: "Startup: Not in a git repository".to_string(),
+                    status: "Failed: No repo detected — select one below or press Esc".to_string(),
+                });
             let mut switch_repo_paths = std::collections::HashMap::new();
             for entry in &switchable {
                 switch_repo_paths.insert(entry.display.clone(), entry.absolute_path.clone());
@@ -2063,12 +2066,11 @@ async fn main() -> Result<()> {
                     }
                     app.last_fetched_mr_iid = Some(mr_iid);
                     app.in_review_mode = true;
-                    if let Some(pos) = app
+                    if let Some(row) = app
                         .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
+                        .find_latest(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
                     {
-                        app.terminal_commands[pos].status = "Success".to_string();
+                        app.terminal_commands.set_status(row, "Success".to_string());
                     }
                 }
                 Event::CustomCommandFinished(report) => {
@@ -2085,37 +2087,39 @@ async fn main() -> Result<()> {
                     status,
                 } => {
                     if status == "Running" {
-                        app.terminal_commands.push(crate::app::TerminalCommand {
-                            timestamp,
-                            command,
-                            status,
-                        });
-                    } else if let Some(pos) = app
+                        app.terminal_commands
+                            .push(crate::command_log::TerminalCommand {
+                                timestamp,
+                                command,
+                                status,
+                            });
+                    } else if let Some(row) = app
                         .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.command == command && cmd.status == "Running")
+                        .find_latest(|cmd| cmd.command == command && cmd.status == "Running")
                     {
-                        app.terminal_commands[pos].status = status;
-                    } else if let Some(pos) = app.latest_running_cli_command() {
+                        app.terminal_commands.set_status(row, status);
+                    } else if let Some(row) = app.latest_running_cli_command() {
                         // fallback: update most recent Running entry when
                         // command strings differ (e.g. CommandStarted vs backend log)
-                        app.terminal_commands[pos].status = status;
+                        app.terminal_commands.set_status(row, status);
                     } else {
-                        app.terminal_commands.push(crate::app::TerminalCommand {
-                            timestamp,
-                            command,
-                            status,
-                        });
+                        app.terminal_commands
+                            .push(crate::command_log::TerminalCommand {
+                                timestamp,
+                                command,
+                                status,
+                            });
                     }
                 }
                 Event::CommandStarted(msg) => {
                     app.status_message = Some(msg.clone());
                     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                    app.terminal_commands.push(crate::app::TerminalCommand {
-                        timestamp,
-                        command: msg,
-                        status: "Running".to_string(),
-                    });
+                    app.terminal_commands
+                        .push(crate::command_log::TerminalCommand {
+                            timestamp,
+                            command: msg,
+                            status: "Running".to_string(),
+                        });
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     terminal.draw(|f| ui::render(f, &mut app))?;
@@ -2123,8 +2127,8 @@ async fn main() -> Result<()> {
                 Event::CommandCompleted(tab, res) => {
                     match &res {
                         Ok(_) => {
-                            if let Some(pos) = app.latest_running_cli_command() {
-                                app.terminal_commands[pos].status = "Success".to_string();
+                            if let Some(row) = app.latest_running_cli_command() {
+                                app.terminal_commands.set_status(row, "Success".to_string());
                             }
                         }
                         Err(_) => {}

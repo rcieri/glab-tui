@@ -622,10 +622,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
             }
 
-            for i in start_idx..num_cmds {
-                if let Some(cmd) = app.terminal_commands.get(i) {
-                    log_lines.push(build_log_line(cmd, bottom_inner.width as usize));
-                }
+            for cmd in app.terminal_commands.iter().skip(start_idx) {
+                log_lines.push(build_log_line(cmd, bottom_inner.width as usize));
             }
 
             f.render_widget(Paragraph::new(log_lines), bottom_inner);

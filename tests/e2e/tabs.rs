@@ -351,6 +351,56 @@ fn test_gitlab_jobs_help_offers_start_job() {
         .expect("start job is offered on GitLab");
 }
 
+/// The Terminal tab's log is narrowed by the standard search bar and emptied
+/// by the clear key. The log otherwise grows for the whole session with no
+/// way to find one command in it or start over.
+#[test]
+fn test_terminal_log_filters_with_search_and_clears() {
+    let mut session = TestSession::new(false, 30, 160);
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+
+    // Visiting Merge Requests logs a second command next to the issues fetch.
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("glab mr list", 5000)
+        .expect("the MR fetch is logged");
+
+    // Merge Requests -> Issues -> wraps back to the last tab, Terminal.
+    session.send_input(b"hh");
+    session
+        .wait_for_screen_contains("┌ Terminal ─", 5000)
+        .expect("the Terminal tab opens");
+    session
+        .wait_for_screen_contains("glab issue list", 5000)
+        .expect("the issues fetch is in the log");
+
+    session.send_input(b"/mr list\r");
+    session
+        .wait_for_screen_contains("┌ Terminal [", 5000)
+        .expect("the title counts the entries the search keeps");
+    session.settle(300);
+    let text = session.emulator.get_text();
+    assert!(text.contains("glab mr list"), "{text}");
+    assert!(
+        !text.contains("glab issue list"),
+        "the search drops entries that do not match: {text}"
+    );
+
+    session.send_input(b"\x1b");
+    session
+        .wait_for_screen_contains("glab issue list", 5000)
+        .expect("Esc clears the search and brings the full log back");
+
+    session.send_input(b"C");
+    session.settle(500);
+    let text = session.emulator.get_text();
+    assert!(
+        !text.contains("glab issue list") && !text.contains("glab mr list"),
+        "the clear key empties the log: {text}"
+    );
+}
 // --- Tier 1: Feature Coverage (5 cases) ---
 
 #[test]

@@ -768,7 +768,7 @@ On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 
 ### Terminal tab
 
-Logs every `glab` / `gh` command the TUI executes, with success/failure status.
+Logs every `glab` / `gh` command the TUI executes, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status. The bottom row of the view is highlighted, and it is the entry the copy key acts on.
 
 > Remappable via `[keybindings.terminal]` in `config.toml`.
 
@@ -777,6 +777,8 @@ Logs every `glab` / `gh` command the TUI executes, with success/failure status.
 | `j` / `↓` | Scroll log down | — |
 | `k` / `↑` | Scroll log up | — |
 | `w` | Toggle line wrapping | `toggle_wrap` |
+| `y` | Copy the highlighted entry's command line to the clipboard (the newest entry while wrapping) | `copy_command` |
+| `C` | Clear the log | `clear_log` |
 
 ---
 

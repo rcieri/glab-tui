@@ -1836,6 +1836,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             key: d(app.config.keybindings.terminal.toggle_wrap.clone()),
             action: "Toggle terminal line wrapping",
         },
+        Shortcut {
+            category: "Terminal",
+            key: d(app.config.keybindings.terminal.copy_command.clone()),
+            action: "Copy the highlighted command line",
+        },
+        Shortcut {
+            category: "Terminal",
+            key: d(app.config.keybindings.terminal.clear_log.clone()),
+            action: "Clear the terminal log",
+        },
         // ── Branches ──
         Shortcut {
             category: "Branches",

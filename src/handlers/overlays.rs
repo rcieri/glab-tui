@@ -1,5 +1,5 @@
 use crate::AppTerminal;
-use crate::app::App;
+use crate::app::{App, ConfirmAction, DialogChoice};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
@@ -20,10 +20,11 @@ pub fn handle_submit_dialog(
 
     let mut submit = false;
     let mut cancel = false;
+    let mut choice = None;
 
     match key_event.code {
         KeyCode::Up | KeyCode::Char('k') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
+            if dialog.is_on_button() {
                 if !dialog.options.is_empty() {
                     dialog.cursor_idx = dialog.options.len(); // jump up to last option
                 }
@@ -34,7 +35,7 @@ pub fn handle_submit_dialog(
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
+            if dialog.is_on_button() {
                 if !dialog.options.is_empty() {
                     dialog.cursor_idx = 1; // wrap around to first option
                 }
@@ -45,14 +46,10 @@ pub fn handle_submit_dialog(
             }
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
-                dialog.cursor_idx = crate::app::SubmitDialog::SUBMIT_IDX; // Submit is left
-            }
+            dialog.move_between_buttons(-1);
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
-                dialog.cursor_idx = dialog.cancel_idx(); // Cancel is right
-            }
+            dialog.move_between_buttons(1);
         }
         KeyCode::Tab => {
             dialog.move_next();
@@ -68,6 +65,8 @@ pub fn handle_submit_dialog(
                 submit = true;
             } else if dialog.is_on_cancel() {
                 cancel = true;
+            } else if let Some(focused) = dialog.focused_choice() {
+                choice = Some(focused);
             } else {
                 dialog.toggle_focused_option();
             }
@@ -91,19 +90,45 @@ pub fn handle_submit_dialog(
         let project_path = std::mem::take(&mut dialog.project_path);
         let options = std::mem::take(&mut dialog.options);
         run_submit_action(app, action, project_path, options, tx);
-    } else if cancel {
-        if matches!(dialog.action, crate::app::ConfirmAction::SubmitReview(_)) {
-            app.draft_comments.clear();
-            app.in_review_mode = false;
-            app.diff_view = None;
-        }
-    } else {
+    } else if let Some(choice) = choice {
+        run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
+    } else if !cancel {
         // Either the user navigated or toggled an option — keep the
         // dialog open.
         app.submit_dialog = Some(dialog);
     }
 
     true
+}
+
+fn run_dialog_choice(
+    app: &mut App,
+    action: &ConfirmAction,
+    project_path: &str,
+    choice: DialogChoice,
+) {
+    let ConfirmAction::SubmitReview(mr_iid) = *action else {
+        return;
+    };
+    let count = app.draft_comments.len() + app.stale_draft_comments.len();
+    let noun = if count == 1 { "comment" } else { "comments" };
+    match choice {
+        DialogChoice::KeepDrafts => {
+            // The project cache already holds them, and opening this diff
+            // again restores them from there.
+            app.draft_comments.clear();
+            app.stale_draft_comments.clear();
+            app.status_message = Some(format!("Kept {count} draft {noun} for later"));
+        }
+        DialogChoice::DiscardDrafts => {
+            app.draft_comments.clear();
+            app.stale_draft_comments.clear();
+            app.persist_draft_comments(project_path, mr_iid);
+            app.in_review_mode = false;
+            app.status_message = Some(format!("Discarded {count} draft {noun}"));
+        }
+    }
+    app.diff_view = None;
 }
 
 fn merge_options_from(
@@ -993,8 +1018,12 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_help_keybinding, handle_help_overlay, handle_review_threads};
-    use crate::app::{App, DiffView, EditEntityKind, EditMenu, Selector};
+    use super::{
+        handle_help_keybinding, handle_help_overlay, handle_review_threads, handle_submit_dialog,
+    };
+    use crate::app::{
+        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, SubmitDialog,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -1344,5 +1373,209 @@ diff --git a/src/lib.rs b/src/lib.rs
             "keys belong to the selector on top"
         );
         assert!(app.review_threads.is_some());
+    }
+
+    /// Holds the env lock and points the cache dir at a tempdir, because the
+    /// submit-review dialog writes drafts to the project cache.
+    struct IsolatedCache {
+        _env: crate::config::EnvGuard,
+        _home: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn isolate_cache() -> IsolatedCache {
+        let lock = crate::config::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let env = crate::config::EnvGuard::isolate_home(home.path());
+        IsolatedCache {
+            _env: env,
+            _home: home,
+            _lock: lock,
+        }
+    }
+
+    fn draft(body: &str) -> crate::domain::review::DraftComment {
+        crate::domain::review::DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: Some(2),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: body.to_string(),
+        }
+    }
+
+    fn bodies(drafts: &[crate::domain::review::DraftComment]) -> Vec<&str> {
+        drafts.iter().map(|d| d.body.as_str()).collect()
+    }
+
+    const PROJECT: &str = "acme/widget";
+
+    /// Diff view of MR 7 in review mode with two saved drafts, and the
+    /// submit-review dialog that leaving it raises.
+    fn app_leaving_the_diff_with_drafts() -> App {
+        let mut app = App::default();
+        app.diff_view = Some(DiffView::new(
+            7,
+            PROJECT.to_string(),
+            REVIEW_DIFF.to_string(),
+        ));
+        app.in_review_mode = true;
+        app.draft_comments = vec![draft("nit"), draft("typo")];
+        app.persist_draft_comments(PROJECT, 7);
+        app.submit_dialog = Some(SubmitDialog::build_with_project(
+            ConfirmAction::SubmitReview(7),
+            PROJECT.to_string(),
+            &app,
+        ));
+        app
+    }
+
+    fn press_in_dialog(app: &mut App, codes: &[KeyCode]) {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        for &code in codes {
+            assert!(handle_submit_dialog(
+                app,
+                &KeyEvent::new(code, KeyModifiers::NONE),
+                tx.clone()
+            ));
+        }
+    }
+
+    fn saved_drafts(app: &App, project_path: &str, mr_iid: u64) -> Vec<String> {
+        crate::utils::cache::load_cache(app.scope.as_str())
+            .draft_comments
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
+            .map(|drafts| drafts.iter().map(|d| d.body.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn esc_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Esc]);
+
+        assert!(app.submit_dialog.is_none());
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
+    fn cancel_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Right; 3]);
+        assert!(app.submit_dialog.as_ref().is_some_and(|d| d.is_on_cancel()));
+        press_in_dialog(&mut app, &[KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+    }
+
+    #[test]
+    fn keep_drafts_closes_the_diff_and_reopening_or_restarting_restores_them() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        assert!(app.diff_view.is_none());
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Kept 2 draft comments for later")
+        );
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
+    fn discard_drops_the_drafts_and_their_saved_copy_and_closes_the_diff() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        assert!(app.diff_view.is_none());
+        assert!(app.draft_comments.is_empty());
+        assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Discarded 2 draft comments")
+        );
+    }
+
+    #[test]
+    fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        app.draft_comments = vec![draft("other project")];
+        app.persist_draft_comments("acme/gadget", 7);
+
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr("acme/gadget", 7)),
+            ["other project"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(saved_drafts(&app, "acme/gadget", 7), ["other project"]);
+    }
+
+    #[test]
+    fn drafts_whose_lines_left_the_diff_are_held_back_but_kept_until_discarded() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        let moved = crate::domain::review::DraftComment {
+            line_num: Some(9),
+            ..draft("moved")
+        };
+        let range_end_moved = crate::domain::review::DraftComment {
+            end_line_num: Some(9),
+            ..draft("range")
+        };
+        app.draft_comments = vec![draft("nit"), moved, range_end_moved];
+        app.persist_draft_comments(PROJECT, 7);
+
+        let diff_view = app.diff_view.take().expect("fixture opens a diff");
+        assert_eq!(app.restore_draft_comments(&diff_view), 2);
+        app.diff_view = Some(diff_view);
+        assert_eq!(bodies(&app.draft_comments), ["nit"]);
+
+        app.draft_comments.push(draft("new"));
+        app.persist_draft_comments(PROJECT, 7);
+        assert_eq!(
+            saved_drafts(&app, PROJECT, 7),
+            ["nit", "new", "moved", "range"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.stale_draft_comments.is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Discarded 4 draft comments")
+        );
     }
 }

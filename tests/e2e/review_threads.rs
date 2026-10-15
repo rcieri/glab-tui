@@ -184,3 +184,57 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
     assert_eq!(draft["position"]["new_path"], "docs/readme.md");
     assert_eq!(draft["position"]["new_line"], 1, "the draft keeps its line");
 }
+
+#[test]
+fn test_leaving_the_diff_keeps_drafts_on_esc_and_restores_kept_drafts_on_reopen() {
+    let mut session = session_in_diff_view();
+
+    press_keys(&session, b"\t");
+    let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
+    for _ in 0..8 {
+        if wait_for_row(&mut session, on_code_line, 300).is_ok() {
+            break;
+        }
+        press_keys(&session, b"j");
+    }
+    session.send_input(b"c");
+    press_keys(&session, b"nit");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains("1 pending", 5000)
+        .expect("the comment should be kept as a draft");
+
+    // Diff pane -> file tree -> leave: the submit-review dialog opens.
+    press_keys(&session, b"\x1b\x1b");
+    session
+        .wait_for_screen_contains("Keep drafts", 5000)
+        .expect("leaving with drafts should open the submit-review dialog");
+
+    press_keys(&session, b"\x1b");
+    session.settle(300);
+    let screen = session.emulator.get_text();
+    assert!(!screen.contains("Keep drafts"), "Esc closes the dialog");
+    assert!(
+        screen.contains("Merge Request Diff #2") && screen.contains("1 pending"),
+        "Esc returns to the diff with the draft:\n{screen}"
+    );
+
+    press_keys(&session, b"\x1b");
+    session
+        .wait_for_screen_contains("Keep drafts", 5000)
+        .expect("the dialog opens again");
+    press_keys(&session, b"l\r");
+    session.settle(500);
+    assert!(
+        !session
+            .emulator
+            .get_text()
+            .contains("Merge Request Diff #2"),
+        "Keep drafts closes the diff"
+    );
+
+    session.send_input(b"D");
+    session
+        .wait_for_screen_contains("1 pending", 15000)
+        .expect("reopening the diff restores the kept draft");
+}

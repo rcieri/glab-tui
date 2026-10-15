@@ -1424,10 +1424,7 @@ async fn main() -> Result<()> {
                     app.issues.items = issues;
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_issue_select.take() {
-                        if let Some(idx) = app.issues.items.iter().position(|i| i.iid == target_iid)
-                        {
-                            app.issues.state.select(Some(idx));
-                        }
+                        app.select_visible_issue(None, target_iid);
                     }
                     app.rebuild_milestone_progress_cache();
                     app.update_filter_selection();
@@ -1444,9 +1441,7 @@ async fn main() -> Result<()> {
                     app.apply_pr_stacks();
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_mr_select.take() {
-                        if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == target_iid) {
-                            app.mrs.state.select(Some(idx));
-                        }
+                        app.select_visible_mr(None, target_iid);
                     }
                     app.update_filter_selection();
                     if app.is_stack_column_needed() {
@@ -1471,7 +1466,7 @@ async fn main() -> Result<()> {
                         app.issues.items.push(issue);
                         app.update_filter_selection();
                     }
-                    app.focus_issue(iid);
+                    app.focus_issue(None, iid);
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -1485,7 +1480,7 @@ async fn main() -> Result<()> {
                         app.apply_pr_stacks();
                         app.update_filter_selection();
                     }
-                    app.focus_mr(iid);
+                    app.focus_mr(None, iid);
                     crate::handlers::tabs::maybe_fetch_mr_related_issues(
                         &mut app,
                         &events.sender(),
@@ -2852,19 +2847,20 @@ async fn main() -> Result<()> {
                                              id: u64| {
                                                 match kind {
                                                     Some(crate::app::JumpKind::Issue) => {
-                                                        if !app.focus_issue(id) {
+                                                        if !app.focus_issue(None, id) {
                                                             jump_to_unloaded_issue(
                                                                 app, id, &events,
                                                             );
                                                         }
                                                     }
                                                     Some(crate::app::JumpKind::Mr) => {
-                                                        if !app.focus_mr(id) {
+                                                        if !app.focus_mr(None, id) {
                                                             jump_to_unloaded_mr(app, id, &events);
                                                         }
                                                     }
                                                     None => {
-                                                        if !app.focus_issue(id) && !app.focus_mr(id)
+                                                        if !app.focus_issue(None, id)
+                                                            && !app.focus_mr(None, id)
                                                         {
                                                             match app.active_tab {
                                                             crate::app::Tab::Issues => {

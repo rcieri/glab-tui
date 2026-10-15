@@ -960,59 +960,6 @@ pub fn apply_field_text_change(
         return;
     }
 
-    if entity_type == "release" {
-        let release_opt = app.releases.items.get(iid as usize).cloned();
-        if let Some(release) = release_opt {
-            let mut name = release.name.clone();
-            let mut tag = release.tag_name.clone();
-            let mut description = release.description.clone().unwrap_or_default();
-
-            match field_type {
-                "title" | "release_name" => name = value.clone(),
-                "tag" => tag = value.clone(),
-                "description" => description = value.clone(),
-                _ => {}
-            }
-
-            if let Some(item) = app.releases.items.get_mut(iid as usize) {
-                if field_type == "title" || field_type == "release_name" {
-                    item.name = value.clone();
-                }
-                if field_type == "description" {
-                    item.description = Some(value.clone());
-                }
-            }
-
-            let Some(client) = app.gitlab_client.clone() else {
-                return;
-            };
-            let project_path = app.project_path_for_release(&tag);
-            let tx_spawn = tx.clone();
-            tokio::spawn(async move {
-                let res = crate::domain::releases::update_release(
-                    &client,
-                    &project_path,
-                    &tag,
-                    &name,
-                    &description,
-                )
-                .await;
-                match res {
-                    Ok(_) => {
-                        let _ = tx_spawn.send(Event::ReleaseUpdated);
-                    }
-                    Err(e) => {
-                        let _ = tx_spawn.send(Event::CommandCompleted(
-                            crate::app::Tab::Releases,
-                            Err(e.to_string()),
-                        ));
-                    }
-                }
-            });
-        }
-        return;
-    }
-
     match field_type {
         "title" => {
             let project_path = get_entity_project_path(app, entity_type, iid);
@@ -1580,35 +1527,34 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 desc_scroll: 0,
             });
         }
-    } else if entity_type == "release" {
-        if let Some(release) = app.releases.items.get(entity_iid as usize).cloned() {
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut doc = build_release_document(&release);
-            doc.fields.push(crate::app::Field::text(
-                "Release Notes",
-                release.description.clone().unwrap_or_default(),
-            ));
-
-            app.open_edit_menu(crate::app::EditMenu {
-                title: format!("Edit Release {}", release.tag_name),
-                entity_project: app.scope.as_str().to_string(),
-                fields: doc.fields,
-                initial_fields: std::collections::HashMap::new(),
-                selected_idx,
-                entity_iid,
-                entity_kind: crate::app::EditEntityKind::EditRelease,
-                state: {
-                    let mut s = ratatui::widgets::ListState::default();
-                    s.select(Some(selected_idx));
-                    s
-                },
-                workflow_inputs: vec![],
-                cursor_pos: 0,
-                editing: false,
-                desc_scroll: 0,
-            });
-        }
     }
+}
+
+pub fn open_release_edit_menu(app: &mut App, release: &crate::domain::releases::Release) {
+    let mut doc = build_release_document(release);
+    doc.fields.push(crate::app::Field::text(
+        "Release Notes",
+        release.description.clone().unwrap_or_default(),
+    ));
+
+    app.open_edit_menu(crate::app::EditMenu {
+        title: format!("Edit Release {}", release.tag_name),
+        entity_project: release.project_or(&app.scope).to_string(),
+        fields: doc.fields,
+        initial_fields: std::collections::HashMap::new(),
+        selected_idx: 0,
+        entity_iid: 0,
+        entity_kind: crate::app::EditEntityKind::EditRelease,
+        state: {
+            let mut s = ratatui::widgets::ListState::default();
+            s.select(Some(0));
+            s
+        },
+        workflow_inputs: vec![],
+        cursor_pos: 0,
+        editing: false,
+        desc_scroll: 0,
+    });
 }
 
 pub async fn handle_entity_update(
@@ -2388,5 +2334,35 @@ mod tests {
         } else {
             panic!("Expected Markdown content");
         }
+    }
+
+    #[test]
+    fn release_edit_form_targets_the_selected_row_project_when_tags_repeat() {
+        let release = |project: &str| crate::domain::releases::Release {
+            name: format!("Release in {project}"),
+            tag_name: "v1.0.0".to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(format!("notes for {project}")),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        };
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.releases.items = vec![release("group/a"), release("group/b")];
+
+        let selected = app.releases.items[1].clone();
+        open_release_edit_menu(&mut app, &selected);
+
+        let menu = app.edit_menu.as_ref().expect("release edit form opens");
+        let notes = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Release Notes")
+            .map(|f| f.value.as_str());
+        assert_eq!(menu.entity_project, "group/b");
+        assert_eq!(notes, Some("notes for group/b"));
     }
 }

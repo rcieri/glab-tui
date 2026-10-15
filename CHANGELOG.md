@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **Jobs tab finds the branch pipeline directly**: Opening the Jobs tab no longer lists every MR and every pipeline of the project to find the checked-out branch's pipeline. It asks for the newest pipeline of that branch (`glab ci list --ref` plus the branch's open MR via `glab mr list --source-branch`, or `gh run list --branch`) and reads the branch off the async runtime. Select-stage confirmations and other status messages now show in the header bar, and the GitLab-only start-job key is no longer offered on GitHub (#579).
+- **Releases tab consistency**: Searching, sorting, grouping and the Configure column filter now work on the `Release Notes` column (they looked for a `Description` column that does not exist). Release edits, deletes and open-in-browser target the release's own project instead of the raw scope string. A release edit form opened from the zoomed inspector no longer submits empty release notes. The unreachable text-input release creation path, which shelled out to `gh`/`glab release create` from the event loop, is gone: every release is created through `Backend::create_release` (#580).
 
 ## [0.9.3] - 2026-10-08
 

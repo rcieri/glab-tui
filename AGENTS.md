@@ -289,7 +289,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Command |
 |---|---|
-| Update release | `glab release update <tag> -R <repo> -n <name> -N <desc>` |
+| Create release | `glab release create <tag> -R <repo> -n <name> -N <notes>` |
+| Update release | `glab release create <tag> -R <repo> -n <name> -N <desc>` (updates the existing release, since `glab release` has no `update` subcommand) |
 | Delete release | `glab release delete <tag> -R <repo> -y` |
 | Close/reopen milestone | `glab milestone close\|reopen <iid> -R <repo>` |
 | Update milestone | `glab milestone update <iid> -R <repo> --title ... --description ...` |
@@ -358,6 +359,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Retry run | `gh run rerun <id> -R <repo>` |
 | Cancel run | `gh run cancel <id> -R <repo>` |
 | Retry job | `gh run rerun --job <id> -R <repo>` |
+| Create release | `gh release create <tag> -R <repo> -t <name> -n <notes>` |
 | Update release | `gh release edit <tag> -R <repo> -t <name> -n <desc>` |
 | Delete release | `gh release delete <tag> -R <repo> -y` |
 | Update milestone state | `gh api -X PATCH repos/{}/milestones/{} -f state=...` |
@@ -409,7 +411,6 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --squash --remove-source-branch --yes` (the `--yes` flag skips the CLI's interactive confirmation; multiple selected MRs are merged in sequence through `Backend::merge_mr`) |
 | Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
 | Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
-| Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |
 | Create milestone | `gh api POST repos/{}/milestones -f title=...` / `glab api POST projects/{}/milestones -f title=...` |
 | Create branch | `glab api POST ...repository/branches` / `gh api POST ...git/refs` |
 | Delete branch | `glab api DELETE ...repository/branches/{}` / `gh api DELETE ...git/refs/heads/{}` |

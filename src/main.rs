@@ -1686,8 +1686,10 @@ async fn main() -> Result<()> {
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.status_message = None;
-                    if let Some(tag) = app.pending_delete_release_tag.take() {
-                        app.releases.items.retain(|r| r.tag_name != tag);
+                    if let Some((project, tag)) = app.pending_delete_release.take() {
+                        app.releases
+                            .items
+                            .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
                     }
                     app.project_cache.releases = app.releases.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -2406,152 +2408,6 @@ async fn main() -> Result<()> {
                                         } else {
                                             app.error_message =
                                                 Some("Invalid pipeline ID".to_string());
-                                        }
-                                    }
-                                    crate::app::TextInputAction::CreateRelease => {
-                                        if !value.trim().is_empty() {
-                                            let tag_name = value.trim().to_string();
-                                            let tx = events.sender();
-                                            let is_github = app.is_github();
-                                            let program = if is_github { "gh" } else { "glab" };
-                                            let _ = tx.send(Event::CommandStarted(format!(
-                                                "Creating Release: {} release create {}",
-                                                program, tag_name
-                                            )));
-                                            let active_tab = app.active_tab;
-                                            tokio::spawn(async move {
-                                                let last_tag = if let Ok(output) =
-                                                    tokio::process::Command::new("git")
-                                                        .args(["describe", "--tags", "--abbrev=0"])
-                                                        .output()
-                                                        .await
-                                                {
-                                                    let t = String::from_utf8_lossy(&output.stdout)
-                                                        .trim()
-                                                        .to_string();
-                                                    if t.is_empty() { None } else { Some(t) }
-                                                } else {
-                                                    None
-                                                };
-
-                                                let log_args = if let Some(ref tag) = last_tag {
-                                                    vec![
-                                                        "log".to_string(),
-                                                        format!("{}..HEAD", tag),
-                                                        "--oneline".to_string(),
-                                                    ]
-                                                } else {
-                                                    vec!["log".to_string(), "--oneline".to_string()]
-                                                };
-
-                                                let commits = if let Ok(output) =
-                                                    tokio::process::Command::new("git")
-                                                        .args(&log_args)
-                                                        .output()
-                                                        .await
-                                                {
-                                                    String::from_utf8_lossy(&output.stdout)
-                                                        .lines()
-                                                        .map(|line| {
-                                                            let parts: Vec<&str> =
-                                                                line.splitn(2, ' ').collect();
-                                                            if parts.len() == 2 {
-                                                                format!(
-                                                                    "- {} ({})",
-                                                                    parts[1], parts[0]
-                                                                )
-                                                            } else {
-                                                                format!("- {}", line)
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                        .join("\n")
-                                                } else {
-                                                    "".to_string()
-                                                };
-
-                                                let title_range = if let Some(ref tag) = last_tag {
-                                                    format!("Changes since {}", tag)
-                                                } else {
-                                                    "All Changes".to_string()
-                                                };
-
-                                                let changelog = format!(
-                                                    "## Release Notes\n\n### {}\n\n{}\n",
-                                                    title_range,
-                                                    if commits.is_empty() {
-                                                        "- No changes found".to_string()
-                                                    } else {
-                                                        commits
-                                                    }
-                                                );
-
-                                                let temp_path = std::env::temp_dir().join(format!(
-                                                    "glab-tui-release-{}.md",
-                                                    tag_name
-                                                ));
-                                                if let Ok(_) =
-                                                    std::fs::write(&temp_path, &changelog)
-                                                {
-                                                    let temp_str =
-                                                        temp_path.to_string_lossy().to_string();
-
-                                                    let program =
-                                                        if is_github { "gh" } else { "glab" };
-                                                    let args = [
-                                                        "release", "create", &tag_name, "-F",
-                                                        &temp_str,
-                                                    ];
-
-                                                    let mut cmd =
-                                                        tokio::process::Command::new(program);
-                                                    cmd.args(&args);
-
-                                                    match cmd.output().await {
-                                                        Ok(output) => {
-                                                            let _ =
-                                                                std::fs::remove_file(&temp_path);
-                                                            if output.status.success() {
-                                                                let _ = tx.send(
-                                                                    Event::CommandCompleted(
-                                                                        active_tab,
-                                                                        Ok(()),
-                                                                    ),
-                                                                );
-                                                            } else {
-                                                                let err_msg =
-                                                                    String::from_utf8_lossy(
-                                                                        &output.stderr,
-                                                                    )
-                                                                    .trim()
-                                                                    .to_string();
-                                                                let _ = tx.send(
-                                                                    Event::CommandCompleted(
-                                                                        active_tab,
-                                                                        Err(format!(
-                                                                            "Command failed: {}",
-                                                                            err_msg
-                                                                        )),
-                                                                    ),
-                                                                );
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                std::fs::remove_file(&temp_path);
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                active_tab,
-                                                                Err(format!("Failed to execute command: {}", e)),
-                                                            ));
-                                                        }
-                                                    }
-                                                } else {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        active_tab,
-                                                        Err("Failed to write temporary changelog file".to_string()),
-                                                    ));
-                                                }
-                                            });
                                         }
                                     }
                                     crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
@@ -5671,7 +5527,11 @@ async fn main() -> Result<()> {
                                                 );
                                                 continue;
                                             };
-                                            let project = app.scope.as_str().to_string();
+                                            let project = if !menu.entity_project.is_empty() {
+                                                menu.entity_project.clone()
+                                            } else {
+                                                app.scope.as_str().to_string()
+                                            };
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             let _ = tx.send(Event::CommandStarted(format!(

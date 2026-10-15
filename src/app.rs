@@ -2813,7 +2813,6 @@ pub enum TextInputAction {
         end_old_line_num: Option<u32>,
     },
     EnterPipelineId,
-    CreateRelease,
     CreateMilestone,
     SubmitReviewFinal {
         mr_iid: u64,
@@ -3014,7 +3013,7 @@ pub enum StackAction {
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
-    DeleteRelease(String),            // release tag_name
+    DeleteRelease(String, String),    // (project_path, release tag_name)
     DeleteBranch(String),             // branch name
     DeleteIssue(u64),                 // issue iid
     DeleteMr(u64),                    // mr iid
@@ -3037,7 +3036,7 @@ impl ConfirmAction {
         matches!(
             self,
             Self::DeleteMilestone(_)
-                | Self::DeleteRelease(_)
+                | Self::DeleteRelease(..)
                 | Self::DeleteBranch(_)
                 | Self::DeleteIssue(_)
                 | Self::DeleteMr(_)
@@ -3253,7 +3252,7 @@ impl SubmitDialog {
             ConfirmAction::DeleteMilestone(iid)
             | ConfirmAction::CloseMilestone(iid)
             | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
-            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
+            ConfirmAction::DeleteRelease(project, _) => project.clone(),
             ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
             ConfirmAction::CloseIssue(iid)
             | ConfirmAction::DeleteIssue(iid)
@@ -3286,7 +3285,7 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::DeleteRelease(tag_name) => (
+            ConfirmAction::DeleteRelease(_, tag_name) => (
                 format!("Delete Release {tag_name}"),
                 format!("Are you sure you want to delete release {tag_name}?"),
                 "Delete".to_string(),
@@ -3754,7 +3753,7 @@ pub struct App {
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
     pub pending_delete_milestone_iid: Option<u64>,
-    pub pending_delete_release_tag: Option<String>,
+    pub pending_delete_release: Option<(String, String)>,
 }
 
 impl Default for App {
@@ -3894,7 +3893,7 @@ impl Default for App {
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
             pending_delete_milestone_iid: None,
-            pending_delete_release_tag: None,
+            pending_delete_release: None,
         }
     }
 }
@@ -4240,10 +4239,6 @@ impl App {
             .map(|p| p.project_path.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| self.scope.as_str().to_string())
-    }
-
-    pub fn project_path_for_release(&self, _tag_name: &str) -> String {
-        self.scope.as_str().to_string()
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -6034,7 +6029,7 @@ impl App {
                     check_match(&item.released_at);
                     check_match(&crate::utils::format::time_ago(&item.released_at));
                 }
-                if enabled_cols.contains("Description") {
+                if enabled_cols.contains("Release Notes") {
                     if let Some(ref desc) = item.description {
                         check_match(desc);
                     }
@@ -6065,7 +6060,7 @@ impl App {
                     "Tag" => a.tag_name.clone(),
                     "Release Name" => a.name.clone(),
                     "Date" => a.released_at.clone(),
-                    "Description" => a.description.clone().unwrap_or_default(),
+                    "Release Notes" => a.description.clone().unwrap_or_default(),
                     "Author" => a.author_name.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -6073,7 +6068,7 @@ impl App {
                     "Tag" => b.tag_name.clone(),
                     "Release Name" => b.name.clone(),
                     "Date" => b.released_at.clone(),
-                    "Description" => b.description.clone().unwrap_or_default(),
+                    "Release Notes" => b.description.clone().unwrap_or_default(),
                     "Author" => b.author_name.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -6091,7 +6086,7 @@ impl App {
         match col {
             "Tag" => vec![item.tag_name.clone()],
             "Release Name" => vec![item.name.clone()],
-            "Description" => item
+            "Release Notes" => item
                 .description
                 .clone()
                 .map(|d| vec![d])
@@ -7429,6 +7424,89 @@ mod tests {
         };
         let values = App::milestone_filter_values(&closed, "State");
         assert_eq!(values, vec!["CLOSED".to_string()]);
+    }
+
+    fn release_fixture(tag: &str, notes: &str, project: &str) -> crate::domain::releases::Release {
+        crate::domain::releases::Release {
+            name: format!("Release {tag}"),
+            tag_name: tag.to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(notes.to_string()),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        }
+    }
+
+    #[test]
+    fn release_notes_column_drives_search_and_column_filter() {
+        let mut app = App::default();
+        app.releases.items = vec![
+            release_fixture("v1.0.0", "Fixes the login crash", "owner/repo"),
+            release_fixture("v1.1.0", "Adds dark mode", "owner/repo"),
+        ];
+        app.enabled_columns
+            .entry(Tab::Releases)
+            .or_default()
+            .insert("Release Notes".to_string());
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Releases, "Release Notes"),
+            vec![
+                "Adds dark mode".to_string(),
+                "Fixes the login crash".to_string()
+            ]
+        );
+
+        app.search_query = "login crash".to_string();
+        let tags: Vec<&str> = app
+            .filtered_releases()
+            .iter()
+            .map(|r| r.tag_name.as_str())
+            .collect();
+        assert_eq!(tags, vec!["v1.0.0"]);
+
+        app.search_query.clear();
+        app.set_column_filter(
+            Tab::Releases,
+            "Release Notes",
+            ["Adds dark mode".to_string()].into_iter().collect(),
+        );
+        let tags: Vec<&str> = app
+            .filtered_releases()
+            .iter()
+            .map(|r| r.tag_name.as_str())
+            .collect();
+        assert_eq!(tags, vec!["v1.1.0"]);
+    }
+
+    #[test]
+    fn grouping_releases_by_release_notes_sorts_by_notes_text() {
+        let items = vec![
+            release_fixture("v1.0.0", "b second", "owner/repo"),
+            release_fixture("v1.1.0", "a first", "owner/repo"),
+        ];
+        let sorted = App::filtered_releases_list(
+            &items,
+            "",
+            &std::collections::HashMap::new(),
+            true,
+            &Some("Release Notes".to_string()),
+        );
+        let tags: Vec<&str> = sorted.iter().map(|r| r.tag_name.as_str()).collect();
+        assert_eq!(tags, vec!["v1.1.0", "v1.0.0"]);
+    }
+
+    #[test]
+    fn release_project_is_its_own_and_falls_back_to_scope_when_unknown() {
+        let scope = crate::scope::Scope::Group("group".to_string());
+        let listed = release_fixture("v1.0.0", "", "group/repo-a");
+        let cached_without_project = release_fixture("v1.0.0", "", "");
+
+        assert_eq!(listed.project_or(&scope), "group/repo-a");
+        assert_eq!(cached_without_project.project_or(&scope), "group");
     }
 
     #[test]

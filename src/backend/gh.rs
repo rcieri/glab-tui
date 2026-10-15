@@ -2797,6 +2797,7 @@ impl Backend for GhBackend {
                 commit_id: None,
                 commit_title: None,
                 assets_link: None,
+                project_path: project.clone(),
             })
             .collect())
     }

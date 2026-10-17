@@ -100,7 +100,7 @@ pub async fn perform_self_update() -> Result<bool> {
         .context("No tagName in release")?;
 
     let current_version = env!("CARGO_PKG_VERSION");
-    let current_tag = format!("v{}", current_version);
+    let current_tag = format!("v{current_version}");
     if latest_tag == current_tag {
         return Ok(false);
     }
@@ -111,7 +111,7 @@ pub async fn perform_self_update() -> Result<bool> {
 
     let candidates = asset_candidates(target_os, arch);
     if candidates.is_empty() {
-        anyhow::bail!("Unsupported operating system: {}", target_os);
+        anyhow::bail!("Unsupported operating system: {target_os}");
     }
 
     let temp_dir = tempdir()?;
@@ -144,7 +144,7 @@ pub async fn perform_self_update() -> Result<bool> {
 
     let asset_name = candidates
         .iter()
-        .find(|c| available.iter().any(|a| *a == c.as_str()))
+        .find(|c| available.contains(&c.as_str()))
         .cloned()
         .context(format!(
             "No matching release asset for this platform ({} {}). Available: {}",
@@ -170,15 +170,12 @@ pub async fn perform_self_update() -> Result<bool> {
 
     if !download_output.status.success() {
         let err = String::from_utf8_lossy(&download_output.stderr);
-        anyhow::bail!("Failed to download release binary: {}", err);
+        anyhow::bail!("Failed to download release binary: {err}");
     }
 
     let archive_path = temp_dir.path().join(&asset_name);
     if !archive_path.exists() {
-        anyhow::bail!(
-            "Downloaded asset not found at expected path: {:?}",
-            archive_path
-        );
+        anyhow::bail!("Downloaded asset not found at expected path: {archive_path:?}");
     }
 
     let extract_dir = temp_dir.path().join("extracted");
@@ -199,7 +196,7 @@ pub async fn perform_self_update() -> Result<bool> {
             .await?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Failed to unzip Windows release archive: {}", err);
+            anyhow::bail!("Failed to unzip Windows release archive: {err}");
         }
     } else {
         let output = tokio::process::Command::new("tar")
@@ -213,7 +210,7 @@ pub async fn perform_self_update() -> Result<bool> {
             .await?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Failed to untar Linux/macOS release archive: {}", err);
+            anyhow::bail!("Failed to untar Linux/macOS release archive: {err}");
         }
     }
 
@@ -221,7 +218,7 @@ pub async fn perform_self_update() -> Result<bool> {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.file_name().map_or(false, |n| n == target_name) {
+                if path.is_file() && path.file_name().is_some_and(|n| n == target_name) {
                     return Some(path);
                 } else if path.is_dir() {
                     if let Some(found) = find_file_recursive(&path, target_name) {
@@ -239,10 +236,7 @@ pub async fn perform_self_update() -> Result<bool> {
         "glab-tui"
     };
     let new_bin_path = find_file_recursive(&extract_dir, exe_filename).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Extracted binary `{}` not found inside archive",
-            exe_filename
-        )
+        anyhow::anyhow!("Extracted binary `{exe_filename}` not found inside archive")
     })?;
 
     let current_exe = std::env::current_exe()?;

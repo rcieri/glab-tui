@@ -43,7 +43,7 @@ impl Scope {
     pub fn display(&self) -> String {
         match self {
             Scope::Repository(s) => s.clone(),
-            Scope::Group(s) => format!("Group: {}", s),
+            Scope::Group(s) => format!("Group: {s}"),
         }
     }
 }

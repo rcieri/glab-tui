@@ -187,7 +187,7 @@ fn qualify_head_ref(local_project: &str, target_project: &str, branch: &str) -> 
         return branch.to_string();
     }
     match local_project.split_once('/') {
-        Some((owner, _)) if !owner.is_empty() => format!("{}:{}", owner, branch),
+        Some((owner, _)) if !owner.is_empty() => format!("{owner}:{branch}"),
         _ => branch.to_string(),
     }
 }
@@ -484,8 +484,8 @@ async fn run_gh_command(
         Ok(output.stdout)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {}", err_msg));
-        anyhow::bail!("gh command failed: {}", err_msg)
+        log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {err_msg}"));
+        anyhow::bail!("gh command failed: {err_msg}")
     }
 }
 
@@ -561,8 +561,8 @@ async fn run_git_command(
         Ok(output.stdout)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log_terminal_command(tx, desc, &cmd_str, format!("Failed: {}", err_msg));
-        anyhow::bail!("git command failed: {}", err_msg)
+        log_terminal_command(tx, desc, &cmd_str, format!("Failed: {err_msg}"));
+        anyhow::bail!("git command failed: {err_msg}")
     }
 }
 
@@ -626,13 +626,9 @@ fn related_prs_graphql_query(owner: &str, repo: &str, issue_number: u64, first: 
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ issue(number:{n}) {{ \
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ issue(number:{issue_number}) {{ \
          closedByPullRequestsReferences(first:{first}) {{ \
          nodes {{ number title state }} }} }} }} }}",
-        owner = owner,
-        repo = repo,
-        n = issue_number,
-        first = first,
     )
 }
 
@@ -935,13 +931,9 @@ fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: 
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{n}) {{ \
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{pr_number}) {{ \
          closingIssuesReferences(first:{first}) {{ \
          nodes {{ number title state }} }} }} }} }}",
-        owner = owner,
-        repo = repo,
-        n = pr_number,
-        first = first,
     )
 }
 
@@ -1329,7 +1321,7 @@ impl Backend for GhBackend {
         // the CLI surfaces the raw GraphQL nodes. Pull the same relationship
         // via a single GraphQL call so we get `title` and `state` in one round
         // trip, capped to the requested page size.
-        let first = page_size.min(100).max(1);
+        let first = page_size.clamp(1, 100);
         let query = related_prs_graphql_query(owner, repo, issue_iid, first);
         let raw = self
             .run_gh(
@@ -1356,17 +1348,16 @@ impl Backend for GhBackend {
             .collect())
     }
 
-    async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()> {
+    async fn create_issue(&self, project: &str, issue: &super::NewIssue<'_>) -> Result<()> {
+        let super::NewIssue {
+            title,
+            description,
+            labels,
+            assignees,
+            milestone,
+            due_date,
+            weight,
+        } = *issue;
         let mut args: Vec<String> = vec![
             "issue".into(),
             "create".into(),
@@ -1381,11 +1372,11 @@ impl Backend for GhBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1997,10 +1988,7 @@ impl Backend for GhBackend {
         mr_iid: u64,
         page_size: usize,
     ) -> Result<Vec<DiscussionNote>> {
-        let endpoint = format!(
-            "/repos/{}/pulls/{}/comments?per_page={}",
-            project, mr_iid, page_size
-        );
+        let endpoint = format!("/repos/{project}/pulls/{mr_iid}/comments?per_page={page_size}");
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
         let query_arg = format!(
@@ -2125,7 +2113,7 @@ impl Backend for GhBackend {
     ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
-        let first = page_size.min(100).max(1);
+        let first = page_size.clamp(1, 100);
         let query = related_issues_graphql_query(owner, repo, mr_iid, first);
         let raw = self
             .run_gh(
@@ -2190,14 +2178,17 @@ impl Backend for GhBackend {
         &self,
         project: &str,
         iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
+        options: &super::MergeOptions<'_>,
+    ) -> Result<()> {
         // GitHub's `gh pr merge` has no `--sha` equivalent — the CLI works
         // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
-        _sha: Option<&str>,
-    ) -> Result<()> {
+        let super::MergeOptions {
+            squash,
+            delete_branch,
+            strategy,
+            auto_merge,
+            sha: _,
+        } = *options;
         let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "MERGING PR").await?;
@@ -2221,19 +2212,18 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()> {
+    async fn create_mr(&self, project: &str, mr: &super::NewMr<'_>) -> Result<()> {
+        let super::NewMr {
+            title,
+            description,
+            source_branch,
+            target_branch,
+            labels,
+            assignees,
+            reviewers,
+            milestone,
+            issue_iid,
+        } = *mr;
         let mut args: Vec<String> = vec![
             "pr".into(),
             "create".into(),
@@ -2254,9 +2244,9 @@ impl Backend for GhBackend {
         }
         let body = if let Some(iid) = issue_iid {
             if description.is_empty() {
-                format!("Closes #{}", iid)
+                format!("Closes #{iid}")
             } else if !description.contains("Closes #") {
-                format!("{}\n\nCloses #{}", description, iid)
+                format!("{description}\n\nCloses #{iid}")
             } else {
                 description.to_string()
             }
@@ -2265,19 +2255,19 @@ impl Backend for GhBackend {
         };
         if !body.is_empty() {
             args.push("--body".into());
-            args.push(body.into());
+            args.push(body);
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !reviewers.is_empty() {
             args.push("--reviewer".into());
-            args.push(strip_ats(reviewers).into());
+            args.push(strip_ats(reviewers));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -2298,7 +2288,7 @@ impl Backend for GhBackend {
     ) -> Result<()> {
         let payload = github_review_payload(event, body, comments).to_string();
         self.raw_api(
-            &format!("/repos/{}/pulls/{}/reviews", project, iid),
+            &format!("/repos/{project}/pulls/{iid}/reviews"),
             "POST",
             Some(&payload),
             "SUBMITTING REVIEW",
@@ -2316,13 +2306,12 @@ impl Backend for GhBackend {
     ) -> Result<()> {
         let root_comment_id: u64 = thread_id.parse().with_context(|| {
             format!(
-                "GitHub thread ids are the numeric id of the thread's first comment, got '{}'",
-                thread_id
+                "GitHub thread ids are the numeric id of the thread's first comment, got '{thread_id}'"
             )
         })?;
         let payload = serde_json::json!({ "body": body, "in_reply_to": root_comment_id });
         self.raw_api(
-            &format!("/repos/{}/pulls/{}/comments", project, iid),
+            &format!("/repos/{project}/pulls/{iid}/comments"),
             "POST",
             Some(&payload.to_string()),
             "REPLYING TO THREAD",
@@ -2633,7 +2622,7 @@ impl Backend for GhBackend {
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
         // GitHub cancels at the run level, but for individual jobs we use raw API
-        let endpoint = format!("/repos/{}/actions/jobs/{}/cancel", project, job_id);
+        let endpoint = format!("/repos/{project}/actions/jobs/{job_id}/cancel");
         self.raw_api(&endpoint, "POST", Some(""), "Cancelling Job")
             .await?;
         Ok(())
@@ -2666,11 +2655,11 @@ impl Backend for GhBackend {
         }
         for (k, v) in variables {
             args.push("-f".into());
-            args.push(format!("{}={}", k, v));
+            args.push(format!("{k}={v}"));
         }
         for (k, v) in inputs {
             args.push("-f".into());
-            args.push(format!("{}={}", k, v));
+            args.push(format!("{k}={v}"));
         }
         let mut cmd: Vec<String> = vec!["workflow".into(), "run".into()];
         cmd.extend(args);
@@ -2702,7 +2691,7 @@ impl Backend for GhBackend {
                 return Err(anyhow::anyhow!("Org-level runners not supported on GitHub"));
             }
         };
-        let endpoint = format!("/repos/{}/actions/runners?per_page={}", project, page_size);
+        let endpoint = format!("/repos/{project}/actions/runners?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Runners")
             .await?;
@@ -2761,7 +2750,7 @@ impl Backend for GhBackend {
             .run_gh(
                 &[
                     "api",
-                    &format!("repos/{}/releases?per_page={}", project, page_size),
+                    &format!("repos/{project}/releases?per_page={page_size}"),
                 ],
                 "Fetching Releases",
             )
@@ -2876,10 +2865,7 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let endpoint = format!(
-            "/repos/{}/milestones?state=all&per_page={}",
-            project, page_size
-        );
+        let endpoint = format!("/repos/{project}/milestones?state=all&per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Milestones")
             .await?;
@@ -2973,17 +2959,17 @@ impl Backend for GhBackend {
         ];
         if !description.is_empty() {
             args.push("-f".into());
-            args.push(format!("description={}", description));
+            args.push(format!("description={description}"));
         }
         if let Some(due) = due_date {
             if !due.is_empty() {
                 let iso_due = if due.contains('T') {
                     due.to_string()
                 } else {
-                    format!("{}T00:00:00Z", due)
+                    format!("{due}T00:00:00Z")
                 };
                 args.push("-f".into());
-                args.push(format!("due_on={}", iso_due));
+                args.push(format!("due_on={iso_due}"));
             }
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -3008,9 +2994,9 @@ impl Backend for GhBackend {
                 "api",
                 "-X",
                 "PATCH",
-                &format!("repos/{}/milestones/{}", project, milestone_iid),
+                &format!("repos/{project}/milestones/{milestone_iid}"),
                 "-f",
-                &format!("state={}", state),
+                &format!("state={state}"),
             ],
             desc,
         )
@@ -3037,17 +3023,17 @@ impl Backend for GhBackend {
         ];
         if !description.is_empty() {
             args.push("-f".into());
-            args.push(format!("description={}", description));
+            args.push(format!("description={description}"));
         }
         if let Some(due) = due_date {
             if !due.is_empty() {
                 let iso_due = if due.contains('T') {
                     due.to_string()
                 } else {
-                    format!("{}T00:00:00Z", due)
+                    format!("{due}T00:00:00Z")
                 };
                 args.push("-f".into());
-                args.push(format!("due_on={}", iso_due));
+                args.push(format!("due_on={iso_due}"));
             }
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -3061,7 +3047,7 @@ impl Backend for GhBackend {
                 "api",
                 "-X",
                 "DELETE",
-                &format!("repos/{}/milestones/{}", project, milestone_iid),
+                &format!("repos/{project}/milestones/{milestone_iid}"),
             ],
             "Deleting Milestone",
         )
@@ -3111,7 +3097,7 @@ impl Backend for GhBackend {
                     .subject
                     .url
                     .split('/')
-                    .last()
+                    .next_back()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(0);
                 let state = if item.unread {
@@ -3133,7 +3119,7 @@ impl Backend for GhBackend {
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
-        let endpoint = format!("notifications/threads/{}", id);
+        let endpoint = format!("notifications/threads/{id}");
         self.raw_api(&endpoint, "PATCH", None, "Marking Todo Done")
             .await?;
         Ok(())
@@ -3150,7 +3136,7 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let endpoint = format!("/repos/{}/branches?per_page={}", project, page_size);
+        let endpoint = format!("/repos/{project}/branches?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
             .await?;
@@ -3171,7 +3157,7 @@ impl Backend for GhBackend {
         }
         let repo_raw = self
             .raw_api(
-                &format!("/repos/{}", project),
+                &format!("/repos/{project}"),
                 "GET",
                 None,
                 "Fetching Repo Info",
@@ -3207,7 +3193,7 @@ impl Backend for GhBackend {
         } else {
             // Try to resolve branch name to SHA via GitHub API
             let encoded = Self::encode_branch(ref_branch);
-            let endpoint = format!("/repos/{}/git/refs/heads/{}", project, encoded);
+            let endpoint = format!("/repos/{project}/git/refs/heads/{encoded}");
             let resp = self
                 .raw_api(&endpoint, "GET", None, "Resolving Branch SHA")
                 .await?;
@@ -3220,12 +3206,10 @@ impl Backend for GhBackend {
                 .and_then(|s| s.as_str())
                 .or_else(|| parsed.get("sha").and_then(|s| s.as_str()))
                 .map(|s| s.to_string())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Could not resolve branch '{}' to SHA", ref_branch)
-                })?
+                .ok_or_else(|| anyhow::anyhow!("Could not resolve branch '{ref_branch}' to SHA"))?
         };
 
-        let endpoint = format!("/repos/{}/git/refs", project);
+        let endpoint = format!("/repos/{project}/git/refs");
         let payload = serde_json::json!({
             "ref": format!("refs/heads/{}", branch_name),
             "sha": sha,
@@ -3238,7 +3222,7 @@ impl Backend for GhBackend {
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_branch(branch_name);
-        let endpoint = format!("/repos/{}/git/refs/heads/{}", project, encoded);
+        let endpoint = format!("/repos/{project}/git/refs/heads/{encoded}");
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
@@ -3255,7 +3239,7 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let endpoint = format!("/repos/{}/environments?per_page={}", project, page_size);
+        let endpoint = format!("/repos/{project}/environments?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Environments")
             .await?;
@@ -3298,9 +3282,9 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let mut endpoint = format!("/repos/{}/deployments?per_page={}", project, page_size);
+        let mut endpoint = format!("/repos/{project}/deployments?per_page={page_size}");
         if let Some(env) = environment {
-            endpoint.push_str(&format!("&environment={}", env));
+            endpoint.push_str(&format!("&environment={env}"));
         }
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Deployments")
@@ -3388,8 +3372,8 @@ impl Backend for GhBackend {
 
     async fn fetch_members(&self, scope: &Scope) -> Result<Vec<String>> {
         let endpoint = match scope {
-            Scope::Repository(project) => format!("/repos/{}/assignees?per_page=100", project),
-            Scope::Group(org) => format!("/orgs/{}/members?per_page=100", org),
+            Scope::Repository(project) => format!("/repos/{project}/assignees?per_page=100"),
+            Scope::Group(org) => format!("/orgs/{org}/members?per_page=100"),
         };
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Members")
@@ -3506,16 +3490,13 @@ impl Backend for GhBackend {
     }
 
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        let url = format!("https://github.com/{}/milestone/{}", project, id);
+        let url = format!("https://github.com/{project}/milestone/{id}");
         open_github_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
         let path = scope.as_str().replace('/', "%2F");
-        let url = format!(
-            "https://github.com/{}/settings/actions/runners/{}",
-            path, runner_id
-        );
+        let url = format!("https://github.com/{path}/settings/actions/runners/{runner_id}");
         open_github_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
@@ -3535,7 +3516,7 @@ impl Backend for GhBackend {
         if project.is_empty() {
             anyhow::bail!("project path required to open environment in browser");
         }
-        let url = format!("https://github.com/{}/settings/environments", project,);
+        let url = format!("https://github.com/{project}/settings/environments");
         open_github_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
     }
     // ── Raw API ──
@@ -3624,7 +3605,7 @@ async fn run_gh_raw_api(
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{}: {}", label, cmd_str),
+                        command: format!("{label}: {cmd_str}"),
                         status: "Success".to_string(),
                     });
                 }
@@ -3639,20 +3620,20 @@ async fn run_gh_raw_api(
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: format!("Failed: {}", err_msg),
+                        command: format!("{label}: {cmd_str}"),
+                        status: format!("Failed: {err_msg}"),
                     });
                 }
-                anyhow::bail!("gh api failed: {}", err_msg)
+                anyhow::bail!("gh api failed: {err_msg}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{}", e);
+            let err_msg = format!("{e}");
             if let Some(ref tx) = tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
+                    command: format!("{label}: {cmd_str}"),
+                    status: format!("Failed: {err_msg}"),
                 });
             }
             Err(e.into())
@@ -3715,7 +3696,7 @@ async fn open_github_url(
     if let Some(ref tx) = tx {
         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
             timestamp,
-            command: format!("{}: git web--browse {}", label, url),
+            command: format!("{label}: git web--browse {url}"),
             status,
         });
     }
@@ -4603,7 +4584,7 @@ mod tests {
         assert_eq!(s102.size, 3);
         assert_eq!(s102.position, 2);
 
-        assert!(stacks.get(&103).is_none());
+        assert!(!stacks.contains_key(&103));
     }
 
     #[test]

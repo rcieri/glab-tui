@@ -41,7 +41,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/backend/](src/backend/): CLI backend layer.
     * [bounded_output.rs](src/backend/bounded_output.rs): `output_bounded`, the subprocess reader behind the command runners. Keeps at most a given number of stdout bytes and kills a child that writes more.
     * [rate_limit.rs](src/backend/rate_limit.rs): `ApiRateLimiter` — automatic 429/graphql rate-limit detection and retry with exponential backoff plus bulk-operation pacing (`pace_bulk_operation`).
-    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits.
+    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits and `NewIssue`/`NewMr`/`MergeOptions` for creation and merge calls.
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
@@ -6350,6 +6350,8 @@ Below is the complete reference of all available `glab` and `gh` subcommands and
 
 * **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `App::show_error(msg)`. Do not `unwrap()` or `panic!()` in UI or event handling code.
 * **Test env isolation:** Unit tests that mutate process-global environment variables (config paths via `GLAB_TUI_CONFIG`/`XDG_CONFIG_HOME`, cache dirs) must acquire `config::TEST_ENV_MUTEX` first — env vars are visible to every test thread, and overlapping mutations caused an intermittent Windows CI failure. Never introduce a second ad-hoc mutex for env mutation; reuse the crate-wide one.
+* **Secondary-tab smoke matrix:** `tests/e2e/secondary_tabs.rs` drives Runners, Releases, Todos, Milestones, Branches and Environments on GitLab: list every fixture row, filter to one with `/`, run one action on it. The `glab` mock serves `runner list` / `release list` / `todo list` / `milestone list` and the branches / environments / deployments endpoints from `tests/fixtures/{runners,releases,todos,milestones,branches,environments,deployments}.json`. Every list fixture holds two rows so a search visibly narrows the list. `TestSession::press_keys` sends keys one at a time and `TestSession::wait_for_cli_call` waits for a mocked call.
+* **Overlay snapshots:** `ui::overlays::tests` renders the merge `SubmitDialog` on a `TestBackend` at 60, 80 and 120 columns and compares it with `src/ui/snapshots/*.txt` (icons normalized to the ASCII set, so the developer's icon config cannot change the result). After an intended layout change, regenerate with `GLAB_TUI_UPDATE_SNAPSHOTS=1 cargo test --bin glab-tui merge_dialog` and review the diff.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.88`. Edition 2024

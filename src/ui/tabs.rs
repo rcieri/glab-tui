@@ -42,7 +42,6 @@ pub(crate) fn render_tab_issues(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -406,7 +405,6 @@ pub(crate) fn render_tab_merge_requests(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -1153,7 +1151,6 @@ pub(crate) fn render_tab_pipelines(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -1390,7 +1387,7 @@ pub(crate) fn render_tab_pipelines(
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Created") {
-                let created_str = p.created_at().map(|c| time_ago(c)).unwrap_or_default();
+                let created_str = p.created_at().map(time_ago).unwrap_or_default();
                 row_cells.push(Cell::from(Span::styled(
                     truncate(&created_str, 15),
                     Style::default().fg(theme.yellow),
@@ -1546,7 +1543,6 @@ pub(crate) fn render_tab_jobs(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -1666,7 +1662,7 @@ pub(crate) fn render_tab_jobs(
             }
             if app.is_column_visible(Tab::Jobs, "Stage") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.stage(),
+                    j.stage(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1689,7 +1685,7 @@ pub(crate) fn render_tab_jobs(
             }
             if app.is_column_visible(Tab::Jobs, "Name") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.name(),
+                    j.name(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1806,11 +1802,11 @@ pub(crate) fn render_tab_jobs(
         let jobs_title = Tab::Jobs.title(kind);
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
-            .block(main_block.clone().title(format!(" {} ", jobs_title)))
+            .block(main_block.clone().title(format!(" {jobs_title} ")))
             .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
-        let mut state = app.jobs.state.clone();
+        let mut state = app.jobs.state;
         let filtered_count = filtered_jobs.len();
         if filtered_count > 0 {
             if let Some(sel) = state.selected() {
@@ -1884,8 +1880,7 @@ pub(crate) fn render_tab_jobs(
             let preview_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " Preview{}{}{}{} ",
-                    title_suffix, truncated_suffix, search_suffix, follow_suffix
+                    " Preview{title_suffix}{truncated_suffix}{search_suffix}{follow_suffix} "
                 ))
                 .title_style(
                     Style::default()
@@ -1978,7 +1973,7 @@ pub(crate) fn render_tab_jobs(
                         text.push(Line::from(vec![
                             Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
                             Span::styled(
-                                format!("{}m {}s", mins, secs),
+                                format!("{mins}m {secs}s"),
                                 Style::default().fg(theme.text_normal),
                             ),
                         ]));
@@ -2045,7 +2040,6 @@ pub(crate) fn render_tab_runners(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2269,7 +2263,6 @@ pub(crate) fn render_tab_releases(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2377,7 +2370,7 @@ pub(crate) fn render_tab_releases(
             if app.is_column_visible(Tab::Releases, "Author") {
                 let author = r.author_name.as_deref().unwrap_or("");
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &author.to_string(),
+                    author,
                     &app.search_query,
                     is_row_highlighted,
                     false,
@@ -2497,7 +2490,6 @@ pub(crate) fn render_tab_todos(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2735,7 +2727,6 @@ pub(crate) fn render_tab_milestones(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2899,7 +2890,7 @@ pub(crate) fn render_tab_milestones(
                                 .milestone_progress_cache
                                 .get(&m.iid)
                                 .copied()
-                                .filter(|(closed, total)| *total > 0);
+                                .filter(|&(_, total)| total > 0);
                             let (closed, total) = cached.unwrap_or_else(|| {
                                 app.milestone_issues_cache
                                     .get(&m.iid)
@@ -3439,15 +3430,7 @@ pub(crate) fn render_tab_environments(
     }
 }
 
-pub(crate) fn render_tab_terminal(
-    f: &mut Frame,
-    app: &mut App,
-    content_area: Rect,
-    detail_rect: Rect,
-    _main_block: Block<'_>,
-    _highlight_style: Style,
-    _header_style: Style,
-) {
+pub(crate) fn render_tab_terminal(f: &mut Frame, app: &mut App, content_area: Rect) {
     let theme = THEME.read().unwrap();
     let num_cmds = app.terminal_commands.len();
     let area = content_area;
@@ -3485,7 +3468,7 @@ pub(crate) fn render_tab_terminal(
     app.terminal_scroll = app.terminal_scroll.min(max_scroll);
 
     let block_title = if app.terminal_wrap {
-        format!(" Terminal (Wrap) [{} lines] ", total_lines)
+        format!(" Terminal (Wrap) [{total_lines} lines] ")
     } else if app.terminal_scroll > 0 {
         format!(
             " Terminal (Scroll: {}/{}) ",
@@ -3583,7 +3566,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                     Style::default(),
                 );
             })
@@ -3691,7 +3673,6 @@ mod tests {
                     detail_rect,
                     Block::default(),
                     Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3732,7 +3713,6 @@ mod tests {
                     detail_rect,
                     Block::default(),
                     Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3770,7 +3750,6 @@ mod tests {
                     detail_rect,
                     Block::default(),
                     Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3802,7 +3781,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                     Style::default(),
                 );
             })
@@ -3846,7 +3824,6 @@ mod tests {
                 let content_area = Rect::new(0, 0, area.width, 5);
                 let detail_rect = Rect::new(0, 5, area.width, 5);
                 let theme = THEME.read().unwrap();
-                let highlight_style = Style::default().bg(theme.highlight_bg);
                 let header_style = Style::default().fg(theme.text_normal);
                 render_tab_issues(
                     f,
@@ -3854,7 +3831,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    highlight_style,
                     header_style,
                 );
             })
@@ -3899,7 +3875,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                     Style::default(),
                 );
             })
@@ -3987,7 +3962,6 @@ mod tests {
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 10),
                     Block::default(),
-                    Style::default(),
                     Style::default(),
                 );
             })

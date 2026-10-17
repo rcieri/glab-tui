@@ -15,7 +15,7 @@ pub(crate) fn modal_block(title: &str) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
         .border_style(Style::default().fg(theme.modal_border))
-        .title(format!(" {} ", title))
+        .title(format!(" {title} "))
         .title_style(
             Style::default()
                 .fg(theme.modal_border)

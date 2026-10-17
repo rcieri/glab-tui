@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod diff;
 mod helpers;
 pub(crate) mod inspector;
@@ -17,7 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-use self::diff::{centered_rect_min, format_comment_with_suggestions};
+use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestions};
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
@@ -272,7 +270,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     };
     let mut title_spans = vec![
         Span::styled(
-            format!(" {} GLAB-TUI ", header_icon),
+            format!(" {header_icon} GLAB-TUI "),
             Style::default()
                 .bg(THEME.read().unwrap().border_focused)
                 .fg(THEME.read().unwrap().highlight_bg)
@@ -494,7 +492,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::MergeRequests => tabs::render_tab_merge_requests(
@@ -503,7 +500,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Pipelines => tabs::render_tab_pipelines(
@@ -512,7 +508,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Jobs => tabs::render_tab_jobs(
@@ -521,7 +516,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Runners => tabs::render_tab_runners(
@@ -530,7 +524,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Releases => tabs::render_tab_releases(
@@ -539,7 +532,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Todos => tabs::render_tab_todos(
@@ -548,7 +540,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Milestones => tabs::render_tab_milestones(
@@ -557,7 +548,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             content_area,
             detail_rect,
             main_block.clone(),
-            highlight_style,
             header_style,
         ),
         Tab::Branches => tabs::render_tab_branches(
@@ -578,15 +568,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             highlight_style,
             header_style,
         ),
-        Tab::Terminal => tabs::render_tab_terminal(
-            f,
-            app,
-            content_area,
-            detail_rect,
-            main_block,
-            highlight_style,
-            header_style,
-        ),
+        Tab::Terminal => tabs::render_tab_terminal(f, app, content_area),
     }
 
     // Compact terminal pane at bottom of the middle column
@@ -869,7 +851,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let stats_total_len = stats_str.as_ref().map_or(0, |s| s.chars().count())
                         + count_suffix.chars().count();
 
-                    let prefix = format!(" {}{}", indent, indicator);
+                    let prefix = format!(" {indent}{indicator}");
                     if let (Some(old_path), Some(new_path)) = (&node.old_file_path, &node.file_path)
                     {
                         name_display = crate::ui::helpers::rename_label(
@@ -943,7 +925,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 if let Some(bg) = sel_bg {
                                     stat_style = stat_style.bg(bg);
                                 }
-                                line_spans.push(Span::styled(format!(" {}", part), stat_style));
+                                line_spans.push(Span::styled(format!(" {part}"), stat_style));
                             } else if part.starts_with('-') {
                                 let mut stat_style = Style::default()
                                     .fg(THEME.read().unwrap().diff_deletion_fg)
@@ -951,7 +933,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 if let Some(bg) = sel_bg {
                                     stat_style = stat_style.bg(bg);
                                 }
-                                line_spans.push(Span::styled(format!(" {}", part), stat_style));
+                                line_spans.push(Span::styled(format!(" {part}"), stat_style));
                             }
                             i += 1;
                         }
@@ -1020,7 +1002,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let in_selection = updated_diff_view
                         .selection_start
                         .zip(updated_diff_view.selection_end)
-                        .map_or(false, |(s, e)| idx >= s && idx <= e);
+                        .is_some_and(|(s, e)| idx >= s && idx <= e);
 
                     let num_width = updated_diff_view.line_number_width;
                     let gutter_bg = THEME.read().unwrap().diff_gutter_bg;
@@ -1062,10 +1044,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 },
                                 marker_style,
                             ),
-                            Span::styled(
-                                format!("{:>width$} ", old_str, width = num_width),
-                                num_style,
-                            ),
+                            Span::styled(format!("{old_str:>num_width$} "), num_style),
                             Span::styled("│ ", sep_style),
                         ]);
 
@@ -1231,10 +1210,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 },
                                 marker_style,
                             ),
-                            Span::styled(
-                                format!("{:>width$} ", new_str, width = num_width),
-                                num_style,
-                            ),
+                            Span::styled(format!("{new_str:>num_width$} "), num_style),
                             Span::styled("│ ", sep_style),
                         ]);
 
@@ -1389,11 +1365,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             let path_matches = sline
                                 .left
                                 .as_ref()
-                                .map_or(false, |l| l.file_path == c.file_path)
+                                .is_some_and(|l| l.file_path == c.file_path)
                                 || sline
                                     .right
                                     .as_ref()
-                                    .map_or(false, |r| r.file_path == c.file_path);
+                                    .is_some_and(|r| r.file_path == c.file_path);
 
                             path_matches
                                 && ((c.line_num.is_some()
@@ -1425,17 +1401,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .add_modifier(Modifier::BOLD);
 
                         let bubble = ICONS.read().unwrap().comment_bubble.clone();
-                        let right_prefix_first = format!(" {bubble} Draft Note{}: ", range_info);
+                        let right_prefix_first = format!(" {bubble} Draft Note{range_info}: ");
                         let left_prefix_first = format!(" {bubble} Draft ");
                         let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
 
                         let formatted_lines = format_comment_with_suggestions(
                             &comment.body,
-                            &comment.file_path,
-                            comment.line_num.map(|n| n as u64),
-                            comment.end_line_num.map(|n| n as u64),
-                            comment.old_line_num.map(|n| n as u64),
-                            comment.end_old_line_num.map(|n| n as u64),
+                            &CommentAnchor {
+                                file_path: &comment.file_path,
+                                start_new: comment.line_num.map(|n| n as u64),
+                                end_new: comment.end_line_num.map(|n| n as u64),
+                                start_old: comment.old_line_num.map(|n| n as u64),
+                                end_old: comment.end_old_line_num.map(|n| n as u64),
+                            },
                             &updated_diff_view.all_lines,
                             &right_prefix_first,
                             prefix_style,
@@ -1516,11 +1494,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                         let formatted_lines = format_comment_with_suggestions(
                             &comment.body,
-                            &file_path,
-                            start_new,
-                            end_new,
-                            start_old,
-                            end_old,
+                            &CommentAnchor {
+                                file_path: &file_path,
+                                start_new,
+                                end_new,
+                                start_old,
+                                end_old,
+                            },
                             &updated_diff_view.all_lines,
                             &right_prefix_first,
                             prefix_style,
@@ -1560,7 +1540,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let in_selection = updated_diff_view
                         .selection_start
                         .zip(updated_diff_view.selection_end)
-                        .map_or(false, |(s, e)| idx >= s && idx <= e);
+                        .is_some_and(|(s, e)| idx >= s && idx <= e);
 
                     let old_str = line
                         .old_line_num
@@ -1598,14 +1578,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             },
                             marker_style,
                         ),
-                        Span::styled(
-                            format!("{:>width$} ", old_str, width = num_width),
-                            num_style,
-                        ),
-                        Span::styled(
-                            format!("{:>width$} ", new_str, width = num_width),
-                            num_style,
-                        ),
+                        Span::styled(format!("{old_str:>num_width$} "), num_style),
+                        Span::styled(format!("{new_str:>num_width$} "), num_style),
                         Span::styled("│ ", sep_style),
                     ];
 
@@ -1801,11 +1775,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                         let formatted_lines = format_comment_with_suggestions(
                             &comment.body,
-                            &comment.file_path,
-                            comment.line_num.map(|n| n as u64),
-                            comment.end_line_num.map(|n| n as u64),
-                            comment.old_line_num.map(|n| n as u64),
-                            comment.end_old_line_num.map(|n| n as u64),
+                            &CommentAnchor {
+                                file_path: &comment.file_path,
+                                start_new: comment.line_num.map(|n| n as u64),
+                                end_new: comment.end_line_num.map(|n| n as u64),
+                                start_old: comment.old_line_num.map(|n| n as u64),
+                                end_old: comment.end_old_line_num.map(|n| n as u64),
+                            },
                             &updated_diff_view.all_lines,
                             &right_prefix_first,
                             prefix_style,
@@ -1869,11 +1845,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                         let formatted_lines = format_comment_with_suggestions(
                             &comment.body,
-                            &file_path,
-                            start_new,
-                            end_new,
-                            start_old,
-                            end_old,
+                            &CommentAnchor {
+                                file_path: &file_path,
+                                start_new,
+                                end_new,
+                                start_old,
+                                end_old,
+                            },
                             &updated_diff_view.all_lines,
                             &right_prefix_first,
                             prefix_style,
@@ -1940,7 +1918,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     render_overlays(f, app, size);
 
-    if let Some(msg) = &app.error_message {
+    if app.error_message.is_some() {
         if app.error_message_at.is_none() {
             app.error_message_at = Some(std::time::Instant::now());
         }

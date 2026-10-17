@@ -1,6 +1,4 @@
-#![allow(clippy::all)]
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
+#![allow(clippy::should_implement_trait, clippy::new_without_default)]
 
 pub mod app;
 pub mod backend;

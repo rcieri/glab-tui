@@ -248,15 +248,13 @@ pub fn gh_resolved_project() -> Option<String> {
 
 fn strip_remote_prefix(head: &str, remote: &str) -> Option<String> {
     let branch = head.trim();
-    let branch = branch
-        .strip_prefix(&format!("{}/", remote))
-        .unwrap_or(branch);
+    let branch = branch.strip_prefix(&format!("{remote}/")).unwrap_or(branch);
     (!branch.is_empty() && branch != "HEAD").then(|| branch.to_string())
 }
 
 fn default_branch_of(remote: &str) -> Option<String> {
     let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])
+        .args(["rev-parse", "--abbrev-ref", &format!("{remote}/HEAD")])
         .output()
         .ok()?;
     if !output.status.success() {

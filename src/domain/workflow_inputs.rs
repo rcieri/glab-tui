@@ -71,7 +71,7 @@ impl InputDefault {
 pub fn parse_workflow_inputs(yaml_path: &str) -> Option<Vec<WorkflowInput>> {
     let content = std::fs::read_to_string(yaml_path).ok()?;
     let wf: WorkflowTop = serde_saphyr::from_str(&content)
-        .inspect_err(|e| eprintln!("workflow YAML parse error for {}: {}", yaml_path, e))
+        .inspect_err(|e| eprintln!("workflow YAML parse error for {yaml_path}: {e}"))
         .ok()?;
     let on = wf.on.or(wf.true_on)?;
     let inputs = on.workflow_dispatch?.inputs?;

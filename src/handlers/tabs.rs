@@ -33,7 +33,7 @@ fn spawn_open_diff(
                 diff_view,
                 comments,
             },
-            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err)),
+            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {err}")),
         };
         let _ = tx.send(event);
     });
@@ -314,14 +314,11 @@ pub async fn handle_active_tab_key(
                     app.scope.as_str().to_string()
                 };
                 let fields = crate::entity_editor::issue_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    "No".to_string(),
-                    String::new(),
-                    "0".to_string(),
-                    String::new(),
+                    crate::entity_editor::IssueFieldValues {
+                        confidential: "No".to_string(),
+                        weight: "0".to_string(),
+                        ..Default::default()
+                    },
                     is_github,
                     if app.scope.is_group() {
                         Some(project.clone())
@@ -352,7 +349,7 @@ pub async fn handle_active_tab_key(
                 if app.selected_issues.len() > 1 {
                     let count = app.selected_issues.len();
                     app.open_edit_menu(crate::app::EditMenu {
-                        title: format!("Bulk Edit {} Issues", count),
+                        title: format!("Bulk Edit {count} Issues"),
                         entity_project: app.scope.as_str().to_string(),
                         fields: vec![
                             crate::app::Field::multi_select("Assignees", String::new()),
@@ -447,7 +444,7 @@ pub async fn handle_active_tab_key(
                         );
                     }
                     Some(RelatedMrsState::Failed(msg)) => {
-                        app.show_error(format!("Failed to fetch related Merge Requests: {}", msg));
+                        app.show_error(format!("Failed to fetch related Merge Requests: {msg}"));
                     }
                     Some(RelatedMrsState::Items(items)) => {
                         let is_github = app.is_github();
@@ -645,14 +642,15 @@ pub async fn handle_active_tab_key(
                             app.scope.as_str().to_string()
                         };
                         let mut fields = crate::entity_editor::mr_fields(
-                            title_val,
-                            labels_val,
-                            assignees_val,
-                            String::new(),
-                            milestone_val,
-                            target_branch_val,
-                            "Draft".to_string(),
-                            String::new(),
+                            crate::entity_editor::MrFieldValues {
+                                title: title_val,
+                                labels: labels_val,
+                                assignees: assignees_val,
+                                milestone: milestone_val,
+                                target_branch: target_branch_val,
+                                draft_status: "Draft".to_string(),
+                                ..Default::default()
+                            },
                             is_github,
                             if app.scope.is_group() {
                                 Some(project_val.clone())
@@ -722,14 +720,11 @@ pub async fn handle_active_tab_key(
                     app.scope.as_str().to_string()
                 };
                 let fields = crate::entity_editor::mr_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    target_branch_val,
-                    "Draft".to_string(),
-                    String::new(),
+                    crate::entity_editor::MrFieldValues {
+                        target_branch: target_branch_val,
+                        draft_status: "Draft".to_string(),
+                        ..Default::default()
+                    },
                     is_github,
                     if app.scope.is_group() {
                         Some(project.clone())
@@ -738,7 +733,7 @@ pub async fn handle_active_tab_key(
                     },
                 );
                 app.open_edit_menu(crate::app::EditMenu {
-                    title: format!("Create {}", pr_suffix),
+                    title: format!("Create {pr_suffix}"),
                     entity_project: project,
                     fields,
                     initial_fields: std::collections::HashMap::new(),
@@ -793,7 +788,7 @@ pub async fn handle_active_tab_key(
                     let count = app.selected_mrs.len();
                     let pr_suffix = if app.is_github() { "PR" } else { "MR" };
                     app.open_edit_menu(crate::app::EditMenu {
-                        title: format!("Bulk Edit {} {}s", count, pr_suffix),
+                        title: format!("Bulk Edit {count} {pr_suffix}s"),
                         entity_project: app.scope.as_str().to_string(),
                         fields: vec![
                             crate::app::Field::multi_select("Assignees", String::new()),
@@ -1005,7 +1000,7 @@ pub async fn handle_active_tab_key(
                             };
                             let tx2 = tx.clone();
                             let iid_str = mr_iid.to_string();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result = client
                                     .open_in_browser(&project_path, entity, &iid_str)
                                     .await;
@@ -1129,10 +1124,7 @@ pub async fn handle_active_tab_key(
                                     );
                                 }
                                 Some(RelatedIssuesState::Failed(msg)) => {
-                                    app.show_error(format!(
-                                        "Failed to fetch linked issues: {}",
-                                        msg
-                                    ));
+                                    app.show_error(format!("Failed to fetch linked issues: {msg}"));
                                 }
                                 Some(RelatedIssuesState::Items(items)) => {
                                     if items.len() == 1 {
@@ -1143,8 +1135,7 @@ pub async fn handle_active_tab_key(
                                         let pr_term = if is_github { "PR" } else { "MR" };
                                         app.selector = Some(crate::app::Selector {
                                             title: format!(
-                                                " Linked Issues for {} #{} ",
-                                                pr_term, mr_iid
+                                                " Linked Issues for {pr_term} #{mr_iid} "
                                             ),
                                             all_items: items
                                                 .iter()
@@ -1256,10 +1247,10 @@ pub async fn handle_active_tab_key(
                 });
             } else if keybinding_matches(
                 &app.config.keybindings.pipelines.selection_toggle,
-                &key_event,
+                key_event,
             ) {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, &key_event) {
+            } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, key_event) {
                 let added = app.select_all_filtered();
                 if added > 0 {
                     app.status_message = Some(format!(
@@ -1270,7 +1261,7 @@ pub async fn handle_active_tab_key(
                 }
             } else if keybinding_matches(
                 &app.config.keybindings.pipelines.trigger_pipeline,
-                &key_event,
+                key_event,
             ) {
                 if let Some(client) = app.gitlab_client.clone() {
                     let branch = crate::git_helpers::get_current_branch()
@@ -1279,7 +1270,7 @@ pub async fn handle_active_tab_key(
                     let tx2 = tx.clone();
                     tokio::spawn(async move {
                         let result = client
-                            .run_pipeline(&project_path, &branch, false, &vec![], &vec![], "")
+                            .run_pipeline(&project_path, &branch, false, &[], &[], "")
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Pipelines,
@@ -1294,7 +1285,7 @@ pub async fn handle_active_tab_key(
                         _ if (key_event.code == KeyCode::Char(' ')
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.select_pipeline,
-                                &key_event,
+                                key_event,
                             )) =>
                         {
                             if app.selected_pipelines.contains(&pipe_id) {
@@ -1306,7 +1297,7 @@ pub async fn handle_active_tab_key(
                         _ if (key_event.code == KeyCode::Char('r')
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.retry,
-                                &key_event,
+                                key_event,
                             )) =>
                         {
                             if let Some(client) = &app.gitlab_client {
@@ -1376,7 +1367,7 @@ pub async fn handle_active_tab_key(
                             && key_event.modifiers.is_empty())
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.cancel,
-                                &key_event,
+                                key_event,
                             )) =>
                         {
                             if let Some(p) = app
@@ -1448,7 +1439,6 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
@@ -1459,7 +1449,7 @@ pub async fn handle_active_tab_key(
                             };
                             let pid_str = pipe_id.to_string();
                             let tx2 = tx.clone();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result = client
                                     .open_pipeline_in_browser(&project_path, &pid_str)
                                     .await;
@@ -1526,10 +1516,9 @@ pub async fn handle_active_tab_key(
                         s
                     },
                 });
-            } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, &key_event)
-            {
+            } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, key_event) {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.jobs.select_all, &key_event) {
+            } else if keybinding_matches(&app.config.keybindings.jobs.select_all, key_event) {
                 let added = app.select_all_filtered();
                 if added > 0 {
                     app.status_message = Some(format!(
@@ -1665,7 +1654,7 @@ pub async fn handle_active_tab_key(
                                     }
                                 }
                                 app.status_message =
-                                    Some(format!("Selected all jobs in stage '{}'", stage_name));
+                                    Some(format!("Selected all jobs in stage '{stage_name}'"));
                             }
                         }
                         _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
@@ -1786,7 +1775,7 @@ pub async fn handle_active_tab_key(
                                 active_pipe_path.unwrap_or_else(|| app.scope.as_str().to_string());
                             let jid_str = job_id.to_string();
                             let tx2 = tx.clone();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result =
                                     client.open_job_in_browser(&project_path, &jid_str).await;
                                 let _ = tx2.send(Event::CommandCompleted(
@@ -1801,10 +1790,10 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             let temp_file =
-                                std::env::temp_dir().join(format!("job_{}_trace.txt", job_id));
+                                std::env::temp_dir().join(format!("job_{job_id}_trace.txt"));
                             if let Some(view) = &app.job_trace {
                                 let _ = std::fs::write(&temp_file, view.trace().text());
-                            } else if let Some(_) = &app.gitlab_client {
+                            } else if app.gitlab_client.is_some() {
                                 let _ = std::fs::write(&temp_file, "Trace will be here");
                             }
                             crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -2087,7 +2076,6 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
-                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
@@ -2175,9 +2163,9 @@ pub async fn handle_active_tab_key(
                             };
                             let target_iid = item.target_iid.to_string();
                             let tx2 = tx.clone();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result = client
-                                    .open_in_browser(&project_path, &entity, &target_iid)
+                                    .open_in_browser(&project_path, entity, &target_iid)
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Todos,
@@ -2342,7 +2330,6 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
@@ -2484,8 +2471,7 @@ pub async fn handle_active_tab_key(
                     if let Some(env) = filtered.get(selected_idx) {
                         let env_name = env.name.clone();
                         let _ = tx.send(Event::CommandStarted(format!(
-                            "Fetching deployments for {}",
-                            env_name
+                            "Fetching deployments for {env_name}"
                         )));
                         let client = app.gitlab_client.clone();
                         let scope = app.scope.clone();
@@ -2505,11 +2491,11 @@ pub async fn handle_active_tab_key(
                                     Err(e) => {
                                         let _ = tx.send(Event::CommandCompleted(
                                             crate::app::Tab::Environments,
-                                            Err(format!("Failed to fetch deployments: {}", e)),
+                                            Err(format!("Failed to fetch deployments: {e}")),
                                         ));
                                         let _ = tx.send(Event::FetchFailed(
                                             crate::app::Tab::Environments,
-                                            format!("Failed to fetch deployments: {}", e),
+                                            format!("Failed to fetch deployments: {e}"),
                                         ));
                                     }
                                 }
@@ -2523,7 +2509,7 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Terminal => {
-            if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, &key_event) {
+            if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, key_event) {
                 app.terminal_wrap = !app.terminal_wrap;
                 app.terminal_scroll = 0;
             } else {
@@ -2535,17 +2521,17 @@ pub async fn handle_active_tab_key(
     if !handled {
         let mut detail_scrolled = true;
         if app.detail_visible
-            && (keybinding_matches(&app.config.keybindings.global.scroll_down, &key_event)
+            && (keybinding_matches(&app.config.keybindings.global.scroll_down, key_event)
                 || key_event.code == KeyCode::Char('J'))
         {
             app.detail_scroll = app.detail_scroll.saturating_add(1);
         } else if app.detail_visible
-            && (keybinding_matches(&app.config.keybindings.global.scroll_up, &key_event)
+            && (keybinding_matches(&app.config.keybindings.global.scroll_up, key_event)
                 || key_event.code == KeyCode::Char('K'))
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, &key_event)
+            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, key_event)
         {
             // Only the flag — the last line's index is the render pass's
             // `max`, which no handler knows. `settle_detail_scroll` resolves
@@ -2555,7 +2541,7 @@ pub async fn handle_active_tab_key(
             && crate::keybinding::matches_with_pending(
                 &app.config.keybindings.global.scroll_top,
                 pending,
-                &key_event,
+                key_event,
             )
         {
             // `scroll_top` jumps to the first line directly: 0 is a known
@@ -2589,7 +2575,7 @@ pub async fn handle_active_tab_key(
                         Err(e) => {
                             let _ = tx.send(Event::FetchFailed(
                                 crate::app::Tab::Todos,
-                                format!("Update failed: {}", e),
+                                format!("Update failed: {e}"),
                             ));
                         }
                     }
@@ -2943,7 +2929,7 @@ pub async fn handle_active_tab_key(
             },
             _ if (key_event.code == KeyCode::Right
                 || key_event.code == KeyCode::Char('l')
-                || keybinding_matches(&app.config.keybindings.global.next_tab, &key_event)) =>
+                || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
                 if let Some(client) = &app.gitlab_client {
@@ -2965,7 +2951,7 @@ pub async fn handle_active_tab_key(
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
-                || keybinding_matches(&app.config.keybindings.global.prev_tab, &key_event)) =>
+                || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
                 if let Some(client) = &app.gitlab_client {

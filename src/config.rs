@@ -520,7 +520,7 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
 fn color_to_hex(c: Color) -> String {
     match c {
         Color::Reset => String::new(),
-        Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
         _ => String::new(),
     }
 }
@@ -846,7 +846,7 @@ fn ensure_themes() {
     // User-created themes use filenames not present in BUNDLED_THEMES and are
     // never touched here.
     for (name, toml_str) in BUNDLED_THEMES {
-        let theme_path = dir.join(format!("{}.toml", name));
+        let theme_path = dir.join(format!("{name}.toml"));
         let _ = private_fs::write(&theme_path, toml_str);
     }
 }
@@ -867,7 +867,7 @@ impl Theme {
 
     pub fn preset(name: &str) -> Option<Self> {
         // Check user's themes directory first
-        let theme_path = themes_dir().join(format!("{}.toml", name));
+        let theme_path = themes_dir().join(format!("{name}.toml"));
         if theme_path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
@@ -1258,7 +1258,7 @@ pub struct KeybindingTerminal {
     pub toggle_wrap: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingConfig {
     #[serde(default)]
     pub global: KeybindingGlobal,
@@ -1592,25 +1592,6 @@ impl Default for KeybindingTerminal {
     fn default() -> Self {
         Self {
             toggle_wrap: def_toggle_terminal_wrap(),
-        }
-    }
-}
-
-impl Default for KeybindingConfig {
-    fn default() -> Self {
-        Self {
-            global: KeybindingGlobal::default(),
-            issues: KeybindingIssues::default(),
-            mrs: KeybindingMrs::default(),
-            pipelines: KeybindingPipelines::default(),
-            releases: KeybindingReleases::default(),
-            milestones: KeybindingMilestones::default(),
-            jobs: KeybindingJobs::default(),
-            runners: KeybindingRunners::default(),
-            todos: KeybindingTodos::default(),
-            branches: KeybindingBranches::default(),
-            environments: KeybindingEnvironments::default(),
-            terminal: KeybindingTerminal::default(),
         }
     }
 }
@@ -2039,7 +2020,7 @@ toggle_wrap = "w"
         match Config::deserialize(merged_value) {
             Ok(cfg) => cfg,
             Err(e) => {
-                eprintln!("Error deserializing merged config: {}. Using defaults.", e);
+                eprintln!("Error deserializing merged config: {e}. Using defaults.");
                 Config::default()
             }
         }
@@ -2052,7 +2033,7 @@ toggle_wrap = "w"
                 let _ = private_fs::write(&path, &toml_str);
             }
             Err(e) => {
-                eprintln!("Error serializing config: {}", e);
+                eprintln!("Error serializing config: {e}");
             }
         }
     }
@@ -2262,7 +2243,7 @@ impl Config {
         ] {
             if pane != base_pane {
                 let val = pane_to_value(pane);
-                if val.as_table().map_or(false, |t| !t.is_empty()) {
+                if val.as_table().is_some_and(|t| !t.is_empty()) {
                     table.insert(tab_name.to_string(), val);
                 } else {
                     table.remove(*tab_name);
@@ -2342,9 +2323,10 @@ mod tests {
 
     #[test]
     fn api_per_page_clamped_bounds_to_gitlab_range() {
-        let mut cfg = Config::default();
-
-        cfg.api_per_page = 0;
+        let mut cfg = Config {
+            api_per_page: 0,
+            ..Config::default()
+        };
         assert_eq!(cfg.api_per_page_clamped(), 1);
 
         cfg.api_per_page = 250;
@@ -2637,8 +2619,10 @@ page_size = 250
         let temp_dir = tempfile::tempdir().unwrap();
         let guard = EnvGuard::isolate_home(temp_dir.path());
 
-        let mut config = Config::default();
-        config.prefetch_tabs = true;
+        let mut config = Config {
+            prefetch_tabs: true,
+            ..Config::default()
+        };
         config.save_layout(SaveMenu::Global).unwrap();
 
         let loaded = Config::load();

@@ -45,7 +45,6 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
-    let label_colors = app.label_colors.clone();
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
@@ -67,7 +66,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let has_filter = selector.field_type != "comment_action_select"
                 && selector.field_type != "review_submit_status"
-                && selector.field_type != "merge_options"
                 && selector.field_type != "related_mrs";
 
             let constraints = if has_filter {
@@ -250,7 +248,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 if let Some(abs_path) = app.switch_repo_paths.get(item) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(
-                                            format!(" {}", abs_path),
+                                            format!(" {abs_path}"),
                                             Style::default()
                                                 .fg(THEME.read().unwrap().text_muted)
                                                 .bg(item_bg),
@@ -266,7 +264,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
                     let list =
                         List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-                    let mut state = selector.state.clone();
+                    let mut state = selector.state;
                     f.render_stateful_widget(list, list_chunk, &mut state);
                     selector.state = state;
                 }
@@ -398,7 +396,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let mut row_cells = Vec::new();
             for c in 0..7 {
                 let cell_idx = r * 7 + c;
-                let day_num = (cell_idx as i32) - (start_weekday as i32) + 1;
+                let day_num = cell_idx - (start_weekday as i32) + 1;
                 if day_num >= 1 && day_num <= total_days as i32 {
                     let is_selected = day_num as u32 == date_picker.day;
                     let style = if is_selected {
@@ -444,11 +442,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
         let kind = app.kind();
-        let is_github = kind.is_github();
         let cols = tab.columns(kind, app.scope.is_group());
         let active_idx = app.column_checklist_idx;
 
-        let group_cols: Vec<&str> = cols.iter().copied().collect();
+        let group_cols: Vec<&str> = cols.to_vec();
 
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
@@ -679,7 +676,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
-        let theme_value = format!("[ {} ]", current_theme_name);
+        let theme_value = format!("[ {current_theme_name} ]");
         let theme_style = if is_theme_active {
             Style::default()
                 .fg(t.highlight_bg)
@@ -966,7 +963,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .collect();
 
                 let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-                let mut state = selector.state.clone();
+                let mut state = selector.state;
                 f.render_stateful_widget(list, list_chunk, &mut state);
                 selector.state = state;
             }
@@ -1100,14 +1097,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         } else {
                             "( ) ".to_string()
                         }
+                    } else if o.checked {
+                        "[x] ".to_string()
                     } else {
-                        if o.checked {
-                            "[x] ".to_string()
-                        } else {
-                            "[ ] ".to_string()
-                        }
+                        "[ ] ".to_string()
                     };
-                    Line::from(format!("{mark}{}", display_label))
+                    Line::from(format!("{mark}{display_label}"))
                 })
                 .collect();
             let list = List::new(items)
@@ -1194,12 +1189,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     Style::default()
                         .fg(if submit_selected {
                             theme.bg
+                        } else if dialog.action.is_destructive() {
+                            theme.red
                         } else {
-                            if dialog.action.is_destructive() {
-                                theme.red
-                            } else {
-                                theme.green
-                            }
+                            theme.green
                         })
                         .bg(if submit_selected {
                             if dialog.action.is_destructive() {
@@ -1270,7 +1263,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.configure)),
+            key: d(app.config.keybindings.global.configure.to_string()),
             action: "Toggle columns config popup (filter / group / sort)",
         },
         Shortcut {
@@ -1306,12 +1299,12 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.scroll_to_end)),
+            key: d(app.config.keybindings.global.scroll_to_end.to_string()),
             action: "Jump to the last line of the description pane",
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.scroll_top)),
+            key: d(app.config.keybindings.global.scroll_top.to_string()),
             action: "Jump to the top of the description pane",
         },
         Shortcut {
@@ -1331,7 +1324,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.jump_to_id)),
+            key: d(app.config.keybindings.global.jump_to_id.to_string()),
             action: "Jump to issue/MR by ID; fetch if not cached",
         },
         Shortcut {
@@ -2509,5 +2502,84 @@ command = "true"
             !text_empty.contains("Create new issue"),
             "empty keybinding shortcut should be filtered from help: {text_empty:?}",
         );
+    }
+
+    /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:
+    /// a body line, five options and both buttons.
+    fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut app = App::default();
+        app.mrs.items =
+            serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::MergeMr(2),
+            &app,
+        ));
+        terminal
+            .draw(|f| render_overlays(f, &mut app, f.area()))
+            .unwrap();
+        terminal
+    }
+
+    /// One line per buffer row, trailing blanks trimmed, with the icons the
+    /// dialog draws rewritten into the ASCII set: `ICONS` comes from the
+    /// developer's own config, the snapshot must not.
+    fn snapshot_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for row in buffer.content.chunks(buffer.area.width as usize) {
+            let line: String = row.iter().map(|cell| cell.symbol()).collect();
+            text.push_str(line.trim_end());
+            text.push('\n');
+        }
+        let icons = crate::config::ICONS.read().unwrap();
+        let ascii = crate::config::Icons::ascii();
+        [
+            (&icons.action_merge, &ascii.action_merge),
+            (&icons.check_on, &ascii.check_on),
+            (&icons.check_off, &ascii.check_off),
+        ]
+        .into_iter()
+        .fold(text, |text, (icon, replacement)| {
+            text.replace(icon.as_str(), replacement)
+        })
+    }
+
+    /// Compares against `src/ui/snapshots/<name>.txt`. Set
+    /// `GLAB_TUI_UPDATE_SNAPSHOTS=1` to rewrite the file after an intended
+    /// layout change.
+    fn assert_snapshot(name: &str, actual: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ui/snapshots")
+            .join(format!("{name}.txt"));
+        if std::env::var_os("GLAB_TUI_UPDATE_SNAPSHOTS").is_some() {
+            std::fs::write(&path, actual).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}\nactual:\n{actual}", path.display()))
+            .replace("\r\n", "\n");
+        assert_eq!(
+            actual, expected,
+            "{name} changed; rerun with GLAB_TUI_UPDATE_SNAPSHOTS=1 if intended"
+        );
+    }
+
+    #[test]
+    fn merge_dialog_at_60_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(60, 24);
+        assert_snapshot("submit_dialog_merge_60x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn merge_dialog_at_80_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(80, 24);
+        assert_snapshot("submit_dialog_merge_80x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn merge_dialog_at_120_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(120, 24);
+        assert_snapshot("submit_dialog_merge_120x24", &snapshot_text(&terminal));
     }
 }

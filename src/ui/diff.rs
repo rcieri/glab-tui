@@ -6,17 +6,34 @@ use ratatui::{
     text::Span,
 };
 
+/// The diff lines a comment is anchored to; a suggestion shows them as the
+/// lines it replaces.
+#[derive(Clone, Copy)]
+pub(crate) struct CommentAnchor<'a> {
+    pub file_path: &'a str,
+    pub start_new: Option<u64>,
+    pub end_new: Option<u64>,
+    pub start_old: Option<u64>,
+    pub end_old: Option<u64>,
+}
+
+/// One rendered comment row: prefix text, prefix style and content spans.
+pub(crate) type CommentRow = (String, Style, Vec<(Style, String)>);
+
 pub(crate) fn format_comment_with_suggestions(
     body: &str,
-    file_path: &str,
-    start_new: Option<u64>,
-    end_new: Option<u64>,
-    start_old: Option<u64>,
-    end_old: Option<u64>,
+    anchor: &CommentAnchor,
     all_lines: &[crate::app::DiffLine],
     prefix: &str,
     prefix_style: Style,
-) -> Vec<(String, Style, Vec<(Style, String)>)> {
+) -> Vec<CommentRow> {
+    let CommentAnchor {
+        file_path,
+        start_new,
+        end_new,
+        start_old,
+        end_old,
+    } = *anchor;
     let mut result_lines = Vec::new();
     let mut in_suggestion = false;
     let mut is_first = true;
@@ -33,14 +50,14 @@ pub(crate) fn format_comment_with_suggestions(
         let min_o = oln.min(end_o);
         let max_o = oln.max(end_o);
         for dl in all_lines {
-            if &dl.file_path == file_path {
+            if dl.file_path == file_path {
                 if let Some(num) = dl.old_line_num {
-                    if num as u64 >= min_o && num as u64 <= max_o {
-                        if dl.line_type != crate::app::DiffLineType::Addition
-                            && !original_lines.iter().any(|ol| ol.content == dl.content)
-                        {
-                            original_lines.push(dl.clone());
-                        }
+                    if num as u64 >= min_o
+                        && num as u64 <= max_o
+                        && dl.line_type != crate::app::DiffLineType::Addition
+                        && !original_lines.iter().any(|ol| ol.content == dl.content)
+                    {
+                        original_lines.push(dl.clone());
                     }
                 }
             }
@@ -50,14 +67,14 @@ pub(crate) fn format_comment_with_suggestions(
         let min_n = nln.min(end_n);
         let max_n = nln.max(end_n);
         for dl in all_lines {
-            if &dl.file_path == file_path {
+            if dl.file_path == file_path {
                 if let Some(num) = dl.new_line_num {
-                    if num as u64 >= min_n && num as u64 <= max_n {
-                        if dl.line_type != crate::app::DiffLineType::Deletion
-                            && !original_lines.iter().any(|ol| ol.content == dl.content)
-                        {
-                            original_lines.push(dl.clone());
-                        }
+                    if num as u64 >= min_n
+                        && num as u64 <= max_n
+                        && dl.line_type != crate::app::DiffLineType::Deletion
+                        && !original_lines.iter().any(|ol| ol.content == dl.content)
+                    {
+                        original_lines.push(dl.clone());
                     }
                 }
             }
@@ -390,11 +407,11 @@ mod tests {
         let labels = vec!["bug".to_string(), "backend".to_string()];
         let colors = std::collections::HashMap::new();
         let cell_empty = render_labels_cell(&[], &colors, "", false, false, 24);
-        let cell_str_empty = format!("{:?}", cell_empty);
+        let cell_str_empty = format!("{cell_empty:?}");
         assert!(cell_str_empty.contains("—"));
 
         let cell_normal = render_labels_cell(&labels, &colors, "", false, false, 24);
-        let cell_str = format!("{:?}", cell_normal);
+        let cell_str = format!("{cell_normal:?}");
         assert!(cell_str.contains("bug"));
         assert!(cell_str.contains("backend"));
     }
@@ -417,11 +434,13 @@ mod tests {
 
         let formatted = format_comment_with_suggestions(
             body,
-            file_path,
-            None,
-            None,
-            Some(1),
-            Some(1),
+            &CommentAnchor {
+                file_path,
+                start_new: None,
+                end_new: None,
+                start_old: Some(1),
+                end_old: Some(1),
+            },
             &all_lines,
             prefix,
             prefix_style,
@@ -444,11 +463,13 @@ mod tests {
         let prefix = " 💬 @alice: ";
         let formatted = format_comment_with_suggestions(
             "first line\nsecond line",
-            "src/app.rs",
-            None,
-            None,
-            None,
-            None,
+            &CommentAnchor {
+                file_path: "src/app.rs",
+                start_new: None,
+                end_new: None,
+                start_old: None,
+                end_old: None,
+            },
             &[],
             prefix,
             Style::default(),

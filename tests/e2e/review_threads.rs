@@ -56,14 +56,6 @@ fn wait_for_row(
     }
 }
 
-/// Sends keys one at a time: the app reads a burst of bytes as one sequence.
-fn press_keys(session: &TestSession, keys: &[u8]) {
-    for key in keys {
-        session.send_input(&[*key]);
-        std::thread::sleep(Duration::from_millis(150));
-    }
-}
-
 #[test]
 fn test_review_threads_list_general_and_outdated_threads() {
     let mut session = session_in_diff_view();
@@ -97,7 +89,7 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
 
     // The tree opens focused on `docs/`; move to `src/`, mark it reviewed
     // (which folds it) and hide reviewed files, so `src/lib.rs` has no tree row.
-    press_keys(&session, b"jjmM");
+    session.press_keys(b"jjmM");
     session
         .wait_for_screen_contains("readme.md", 5000)
         .expect("docs/ stays in the tree");
@@ -129,19 +121,19 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
 fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
     let mut session = session_in_diff_view();
 
-    press_keys(&session, b"\t");
+    session.press_keys(b"\t");
     let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
     for _ in 0..8 {
         if wait_for_row(&mut session, on_code_line, 300).is_ok() {
             break;
         }
-        press_keys(&session, b"j");
+        session.press_keys(b"j");
     }
     wait_for_row(&mut session, on_code_line, 2000)
         .expect("the cursor should reach the unchanged `# Pagination` line (old 1, new 1)");
 
     session.send_input(b"c");
-    press_keys(&session, b"nit");
+    session.press_keys(b"nit");
     session.send_input(b"\r");
     session
         .wait_for_screen_contains("1 pending", 5000)

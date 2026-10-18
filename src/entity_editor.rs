@@ -12,14 +12,9 @@ pub fn branch_fields(
     fields
 }
 
-use crate::AppTerminal;
 use crate::app::App;
 use crate::domain::issues::Issue;
-use crate::editor::edit_in_editor;
 use crate::event::Event;
-use crossterm::event::KeyCode;
-use ratatui::Terminal;
-use ratatui::backend::Backend;
 
 fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
     if entity_type.contains("issue") {
@@ -36,17 +31,17 @@ fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
 }
 
 #[inline]
-pub(crate) fn entity_is_mr(entity_type: &str) -> bool {
+pub fn entity_is_mr(entity_type: &str) -> bool {
     entity_type == "mr" || entity_type == "edit_mr"
 }
 
 #[inline]
-pub(crate) fn entity_is_issue(entity_type: &str) -> bool {
+pub fn entity_is_issue(entity_type: &str) -> bool {
     entity_type == "issue" || entity_type == "edit_issue"
 }
 
 #[inline]
-pub(crate) fn entity_is_milestone(entity_type: &str) -> bool {
+pub fn entity_is_milestone(entity_type: &str) -> bool {
     entity_type == "milestone" || entity_type == "edit_milestone"
 }
 
@@ -62,15 +57,21 @@ pub(crate) fn display_branch(value: &str) -> &str {
 
 // ── Shared field builders (single source of truth for edit/creation forms) ──
 
+/// Initial values of the issue edit/creation form fields.
+#[derive(Default)]
+pub struct IssueFieldValues {
+    pub title: String,
+    pub labels: String,
+    pub assignees: String,
+    pub milestone: String,
+    pub confidential: String,
+    pub due_date: String,
+    pub weight: String,
+    pub description: String,
+}
+
 pub fn issue_fields(
-    title: String,
-    labels: String,
-    assignees: String,
-    milestone: String,
-    confidential: String,
-    due_date: String,
-    weight: String,
-    description: String,
+    values: IssueFieldValues,
     is_github: bool,
     project: Option<String>,
 ) -> Vec<crate::app::Field> {
@@ -78,32 +79,47 @@ pub fn issue_fields(
     if let Some(proj) = project {
         fields.push(crate::app::Field::ref_field("Project", proj));
     }
-    fields.push(crate::app::Field::text("Title", title));
-    fields.push(crate::app::Field::multi_select("Assignees", assignees));
-    fields.push(crate::app::Field::multi_select("Milestone", milestone));
-    fields.push(crate::app::Field::multi_select("Labels", labels));
+    fields.push(crate::app::Field::text("Title", values.title));
+    fields.push(crate::app::Field::multi_select(
+        "Assignees",
+        values.assignees,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Milestone",
+        values.milestone,
+    ));
+    fields.push(crate::app::Field::multi_select("Labels", values.labels));
     if !is_github {
-        fields.push(crate::app::Field::toggle("Confidential", confidential));
-        fields.push(crate::app::Field::date("Due Date", due_date));
-        fields.push(crate::app::Field::text("Weight", weight));
+        fields.push(crate::app::Field::toggle(
+            "Confidential",
+            values.confidential,
+        ));
+        fields.push(crate::app::Field::date("Due Date", values.due_date));
+        fields.push(crate::app::Field::text("Weight", values.weight));
     }
     fields.push(crate::app::Field::ref_field(
         "Description Template",
         String::new(),
     ));
-    fields.push(crate::app::Field::text("Description", description));
+    fields.push(crate::app::Field::text("Description", values.description));
     fields
 }
 
+/// Initial values of the MR/PR edit/creation form fields.
+#[derive(Default)]
+pub struct MrFieldValues {
+    pub title: String,
+    pub labels: String,
+    pub assignees: String,
+    pub reviewers: String,
+    pub milestone: String,
+    pub target_branch: String,
+    pub draft_status: String,
+    pub description: String,
+}
+
 pub fn mr_fields(
-    title: String,
-    labels: String,
-    assignees: String,
-    reviewers: String,
-    milestone: String,
-    target_branch: String,
-    draft_status: String,
-    description: String,
+    values: MrFieldValues,
     is_github: bool,
     project: Option<String>,
 ) -> Vec<crate::app::Field> {
@@ -111,28 +127,40 @@ pub fn mr_fields(
     if let Some(proj) = project {
         fields.push(crate::app::Field::ref_field("Project", proj));
     }
-    fields.push(crate::app::Field::text("Title", title));
+    fields.push(crate::app::Field::text("Title", values.title));
     if !is_github {
         fields.push(crate::app::Field::toggle(
             "Status (Draft/Ready)",
-            draft_status,
+            values.draft_status,
         ));
     }
-    fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
+    fields.push(crate::app::Field::ref_field(
+        "Target Branch",
+        values.target_branch,
+    ));
     fields.push(crate::app::Field::ref_field(
         "Create from Issue",
         String::new(),
     ));
     fields.push(crate::app::Field::ref_field("Source Branch", String::new()));
-    fields.push(crate::app::Field::multi_select("Assignees", assignees));
-    fields.push(crate::app::Field::multi_select("Reviewers", reviewers));
-    fields.push(crate::app::Field::multi_select("Milestone", milestone));
-    fields.push(crate::app::Field::multi_select("Labels", labels));
+    fields.push(crate::app::Field::multi_select(
+        "Assignees",
+        values.assignees,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Reviewers",
+        values.reviewers,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Milestone",
+        values.milestone,
+    ));
+    fields.push(crate::app::Field::multi_select("Labels", values.labels));
     fields.push(crate::app::Field::ref_field(
         "Description Template",
         String::new(),
     ));
-    fields.push(crate::app::Field::text("Description", description));
+    fields.push(crate::app::Field::text("Description", values.description));
     fields
 }
 
@@ -548,7 +576,7 @@ pub fn build_pipeline_document(
     if let Some(duration) = pipeline.duration_seconds {
         fields.push(crate::app::Field::read_only(
             "Duration",
-            format!("{}s", duration),
+            format!("{duration}s"),
         ));
     }
     if let Some(created) = &pipeline.created_at {
@@ -561,41 +589,6 @@ pub fn build_pipeline_document(
         title: format!("Pipeline #{}", pipeline.id),
         fields,
         content: crate::app::InspectorContent::PipelineStages(jobs.to_vec()),
-    }
-}
-
-pub fn build_job_document(
-    job: &crate::domain::pipelines::Job,
-    trace: Option<&str>,
-    wrap: bool,
-) -> crate::app::EntityDocument {
-    let mut fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", job.id)),
-        crate::app::Field::read_only("Name", job.name.clone()),
-        crate::app::Field::read_only("Stage", job.stage.clone()),
-        crate::app::Field::read_only("Status", job.status.to_uppercase()),
-    ];
-    if let Some(runner) = &job.runner {
-        fields.push(crate::app::Field::read_only("Runner", runner.clone()));
-    }
-    if let Some(duration) = job.duration_seconds {
-        fields.push(crate::app::Field::read_only(
-            "Duration",
-            format!("{}s", duration),
-        ));
-    }
-    let content = if let Some(tr) = trace {
-        crate::app::InspectorContent::AnsiTrace {
-            trace: tr.to_string(),
-            wrap,
-        }
-    } else {
-        crate::app::InspectorContent::Empty("Press Enter to fetch/view job trace...")
-    };
-    crate::app::EntityDocument {
-        title: format!("Job #{} - {}", job.id, job.name),
-        fields,
-        content,
     }
 }
 
@@ -690,10 +683,7 @@ pub fn build_release_document(
         crate::app::Field::text("Release Name", release.name.clone()),
     ];
     if let Some(author) = &release.author_name {
-        fields.push(crate::app::Field::read_only(
-            "Author",
-            format!("@{}", author),
-        ));
+        fields.push(crate::app::Field::read_only("Author", format!("@{author}")));
     }
     if let Some(commit_id) = &release.commit_id {
         let commit_text = if let Some(title) = &release.commit_title {
@@ -875,7 +865,6 @@ pub fn apply_field_text_change(
     iid: u64,
     field_type: &str,
     value: String,
-    terminal: &mut AppTerminal,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
@@ -1067,7 +1056,6 @@ pub fn apply_field_text_change(
             }
         }
         "runner_description" => {
-            let project_path = app.project_path_for_runner(iid);
             app.runners.update(&iid, |runner| {
                 runner.description = Some(value.clone());
             });
@@ -1120,13 +1108,12 @@ pub fn apply_field_text_change(
     }
 }
 
-pub fn apply_selector_changes<B: Backend>(
+pub fn apply_selector_changes(
     app: &mut App,
     entity_type: &str,
     iid: u64,
     field_type: &str,
     values: Vec<String>,
-    terminal: &mut Terminal<B>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
@@ -1562,244 +1549,6 @@ pub fn release_edit_menu(
     }
 }
 
-pub async fn handle_entity_update(
-    app: &mut App,
-    entity_type: &str,
-    iid: u64,
-    code: KeyCode,
-    terminal: &mut AppTerminal,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
-) {
-    match code {
-        KeyCode::Char('t') => {
-            let current_title = if entity_is_issue(entity_type) {
-                app.issues
-                    .items
-                    .iter()
-                    .find(|i| i.iid == iid)
-                    .map(|i| i.title.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .map(|m| m.title.clone())
-                    .unwrap_or_default()
-            };
-
-            if let Some(new_title) = edit_in_editor(&current_title, terminal) {
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = get_entity_project_path(app, entity_type, iid);
-                let result = if entity_is_issue(entity_type) {
-                    client
-                        .update_issue_title(&project_path, iid, &new_title)
-                        .await
-                } else {
-                    client.update_mr_title(&project_path, iid, &new_title).await
-                };
-                if let Err(e) = result {
-                    app.show_error(format!("Failed to update title: {}", e));
-                    return;
-                }
-                if entity_is_issue(entity_type) {
-                    if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                        item.title = new_title;
-                    }
-                } else if entity_is_mr(entity_type) {
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.title = new_title;
-                    }
-                }
-            }
-        }
-        KeyCode::Char('s') => {
-            if entity_is_mr(entity_type) {
-                let is_draft = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .map(|m| m.draft)
-                    .unwrap_or(false);
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = app.project_path_for_mr(iid);
-                if let Err(e) = client.toggle_mr_draft(&project_path, iid, is_draft).await {
-                    app.show_error(format!("Failed to toggle draft: {}", e));
-                    return;
-                }
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.draft = !is_draft;
-                }
-            }
-        }
-        KeyCode::Char('g') => {
-            if entity_is_mr(entity_type) {
-                let current_branch = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .map(|m| m.target_branch.clone())
-                    .unwrap_or_default();
-                if let Some(target) = edit_in_editor(&current_branch, terminal) {
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let project_path = app.project_path_for_mr(iid);
-                    if let Err(e) = client
-                        .update_mr_target_branch(&project_path, iid, &target)
-                        .await
-                    {
-                        app.show_error(format!("Failed to update target branch: {}", e));
-                        return;
-                    }
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.target_branch = target;
-                    }
-                }
-            }
-        }
-        KeyCode::Char('c') => {
-            if entity_is_issue(entity_type) {
-                if let Some(res) = edit_in_editor("public", terminal) {
-                    let flag = if res.to_lowercase().contains("confidential") {
-                        "--confidential"
-                    } else {
-                        "--public"
-                    };
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let ppc = app.project_path_for_issue(iid);
-                    let confidential_val = flag == "--confidential";
-                    if let Err(e) = client
-                        .update_issue_confidential(&ppc, iid, confidential_val)
-                        .await
-                    {
-                        app.error_message =
-                            Some(format!("Failed to update confidentiality: {}", e));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('u') => {
-            if entity_is_issue(entity_type) {
-                if let Some(due_date) = edit_in_editor("YYYY-MM-DD", terminal) {
-                    let flag_value = if due_date == "YYYY-MM-DD" || due_date.is_empty() {
-                        ""
-                    } else {
-                        &due_date
-                    };
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let project_path = app.project_path_for_issue(iid);
-                    if let Err(e) = client
-                        .update_issue_due_date(&project_path, iid, flag_value)
-                        .await
-                    {
-                        app.show_error(format!("Failed to update due date: {}", e));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('w') => {
-            if entity_is_issue(entity_type) {
-                if let Some(weight) = edit_in_editor("0", terminal) {
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let project_path = app.project_path_for_issue(iid);
-                    if let Err(e) = client
-                        .update_issue_weight(&project_path, iid, &weight)
-                        .await
-                    {
-                        app.show_error(format!("Failed to update weight: {}", e));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('d') => {
-            let current_desc = if entity_is_issue(entity_type) {
-                app.issues
-                    .items
-                    .iter()
-                    .find(|i| i.iid == iid)
-                    .and_then(|i| i.description.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .and_then(|m| m.description.clone())
-                    .unwrap_or_default()
-            };
-            app.text_input = Some(crate::app::TextInput {
-                title: " Edit Description ".to_string(),
-                value: current_desc.clone(),
-                cursor_idx: current_desc.len(),
-                action: crate::app::TextInputAction::EditField {
-                    entity_iid: iid,
-                    entity_type: entity_type.to_string(),
-                    field_type: "description".to_string(),
-                },
-            });
-        }
-        KeyCode::Char('D') => {
-            let current_desc = if entity_is_issue(entity_type) {
-                app.issues
-                    .items
-                    .iter()
-                    .find(|i| i.iid == iid)
-                    .and_then(|i| i.description.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .and_then(|m| m.description.clone())
-                    .unwrap_or_default()
-            };
-            if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                if entity_is_issue(entity_type) {
-                    if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                        item.description = Some(new_desc.clone());
-                    }
-                } else if entity_is_mr(entity_type) {
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.description = Some(new_desc.clone());
-                    }
-                }
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = get_entity_project_path(app, entity_type, iid);
-                let result = if entity_is_issue(entity_type) {
-                    client
-                        .update_issue_description(&project_path, iid, &new_desc)
-                        .await
-                } else {
-                    client
-                        .update_mr_description(&project_path, iid, &new_desc)
-                        .await
-                };
-                if let Err(e) = result {
-                    app.show_error(format!("Failed to update description: {}", e));
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1966,8 +1715,6 @@ mod tests {
         app.mrs.items = vec![mr];
 
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let backend = ratatui::backend::TestBackend::new(80, 24);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
 
         // Clear milestone by passing no value (deselected in the selector) on Issue
         apply_selector_changes(
@@ -1976,7 +1723,6 @@ mod tests {
             1,
             "milestone",
             vec![],
-            &mut terminal,
             tx.clone(),
             crate::app::Tab::Issues,
         );
@@ -1990,7 +1736,6 @@ mod tests {
             1,
             "milestone",
             vec![],
-            &mut terminal,
             tx,
             crate::app::Tab::MergeRequests,
         );
@@ -2019,14 +1764,12 @@ mod tests {
     #[test]
     fn test_group_view_creation_fields_include_project() {
         let issue_f = issue_fields(
-            "title".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "No".into(),
-            "".into(),
-            "0".into(),
-            "".into(),
+            IssueFieldValues {
+                title: "title".into(),
+                confidential: "No".into(),
+                weight: "0".into(),
+                ..IssueFieldValues::default()
+            },
             false,
             Some("owner/repo".into()),
         );
@@ -2034,14 +1777,12 @@ mod tests {
         assert_eq!(issue_f[0].value, "owner/repo");
 
         let mr_f = mr_fields(
-            "title".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "main".into(),
-            "Draft".into(),
-            "".into(),
+            MrFieldValues {
+                title: "title".into(),
+                target_branch: "main".into(),
+                draft_status: "Draft".into(),
+                ..MrFieldValues::default()
+            },
             false,
             Some("owner/repo".into()),
         );

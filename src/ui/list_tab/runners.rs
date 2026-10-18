@@ -21,7 +21,7 @@ impl Row for Runner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RunnerColumn {
+pub enum RunnerColumn {
     Id,
     Description,
     Status,

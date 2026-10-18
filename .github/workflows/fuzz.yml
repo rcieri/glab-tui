@@ -1,0 +1,76 @@
+name: Fuzz
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "fuzz/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "fuzz/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_SECONDS: "60"
+  FUZZ_MAX_INPUT_BYTES: "16384"
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: diff_parser
+            seed_inputs: tests/fixtures/mr_diff.txt
+          - target: markdown
+            seed_inputs: README.md,CHANGELOG.md
+          - target: ansi_trace
+            seed_inputs: fuzz/seeds/ansi_trace.log
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: nightly
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+          key: ${{ matrix.target }}
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+
+      - name: Run ${{ matrix.target }} for ${{ env.FUZZ_SECONDS }} seconds
+        run: >-
+          cargo +nightly fuzz run ${{ matrix.target }} --
+          -max_total_time=${{ env.FUZZ_SECONDS }}
+          -max_len=${{ env.FUZZ_MAX_INPUT_BYTES }}
+          -seed_inputs=${{ matrix.seed_inputs }}
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

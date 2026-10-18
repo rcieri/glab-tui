@@ -225,8 +225,7 @@ mod tests {
         let serialized = serde_json::to_string(&issue).unwrap();
         assert!(
             serialized.contains("related_mrs"),
-            "related_mrs must be serialized with cache: {}",
-            serialized
+            "related_mrs must be serialized with cache: {serialized}"
         );
 
         let round_trip: Issue = serde_json::from_str(&serialized).unwrap();

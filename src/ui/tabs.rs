@@ -1,7 +1,7 @@
 use crate::app::{App, Tab};
 use crate::config::THEME;
 use crate::ui::list_tab::TableContext;
-use crate::utils::format::{format_ref, time_ago, truncate};
+use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Rect},
@@ -85,7 +85,6 @@ pub(crate) fn render_tab_issues(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -449,7 +448,6 @@ pub(crate) fn render_tab_merge_requests(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -1196,7 +1194,6 @@ pub(crate) fn render_tab_pipelines(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -1433,7 +1430,7 @@ pub(crate) fn render_tab_pipelines(
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Created") {
-                let created_str = p.created_at().map(|c| time_ago(c)).unwrap_or_default();
+                let created_str = p.created_at().map(time_ago).unwrap_or_default();
                 row_cells.push(Cell::from(Span::styled(
                     truncate(&created_str, 15),
                     Style::default().fg(theme.yellow),
@@ -1589,7 +1586,6 @@ pub(crate) fn render_tab_jobs(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -1709,7 +1705,7 @@ pub(crate) fn render_tab_jobs(
             }
             if app.is_column_visible(Tab::Jobs, "Stage") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.stage(),
+                    j.stage(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1732,7 +1728,7 @@ pub(crate) fn render_tab_jobs(
             }
             if app.is_column_visible(Tab::Jobs, "Name") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.name(),
+                    j.name(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1768,7 +1764,7 @@ pub(crate) fn render_tab_jobs(
                     j.needs().join(", ")
                 };
                 row_cells.push(Cell::from(Span::styled(
-                    truncate(&needs_str, 25),
+                    truncate(&sanitize_untrusted(&needs_str), 25),
                     Style::default().fg(theme.text_muted),
                 )));
             }
@@ -1849,11 +1845,11 @@ pub(crate) fn render_tab_jobs(
         let jobs_title = Tab::Jobs.title(kind);
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
-            .block(main_block.clone().title(format!(" {} ", jobs_title)))
+            .block(main_block.clone().title(format!(" {jobs_title} ")))
             .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
-        let mut state = app.jobs.state.clone();
+        let mut state = app.jobs.state;
         let filtered_count = filtered_jobs.len();
         if filtered_count > 0 {
             if let Some(sel) = state.selected() {
@@ -1885,20 +1881,24 @@ pub(crate) fn render_tab_jobs(
                     .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
-        } else if let Some(trace) = &app.job_trace {
+        } else if app.job_trace.is_some() {
             let width = detail_rect.width.saturating_sub(2) as usize;
             let height = detail_rect.height.saturating_sub(2) as usize;
+            let wrap_width = app.job_trace_wrap.then_some(width);
 
-            let formatted_lines = crate::utils::format::parse_ansi_trace(trace, &theme);
-
-            let total_lines = if app.job_trace_wrap {
-                let stripped = crate::utils::format::strip_ansi_escapes(trace);
-                super::diff::count_wrapped_lines(&stripped, width)
+            let (total_lines, is_truncated) = app.job_trace.as_mut().map_or((0, false), |view| {
+                (view.rows(&theme, wrap_width), view.trace().is_truncated())
+            });
+            let truncated_suffix = if is_truncated {
+                format!(
+                    " [TRUNCATED: first {} MiB]",
+                    crate::domain::job_trace::JOB_TRACE_MAX_BYTES / (1024 * 1024)
+                )
             } else {
-                formatted_lines.len()
+                String::new()
             };
 
-            let max_scroll = total_lines.saturating_sub(height) as u16;
+            let max_scroll = u16::try_from(total_lines.saturating_sub(height)).unwrap_or(u16::MAX);
 
             settle_detail_scroll(app, max_scroll);
 
@@ -1923,8 +1923,7 @@ pub(crate) fn render_tab_jobs(
             let preview_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " Preview{}{}{} ",
-                    title_suffix, search_suffix, follow_suffix
+                    " Preview{title_suffix}{truncated_suffix}{search_suffix}{follow_suffix} "
                 ))
                 .title_style(
                     Style::default()
@@ -1933,9 +1932,15 @@ pub(crate) fn render_tab_jobs(
                 )
                 .border_style(Style::default().fg(theme.border));
 
-            let mut paragraph = Paragraph::new(formatted_lines)
+            let scroll = usize::from(app.detail_scroll);
+            let (visible_lines, rows_above) = app
+                .job_trace
+                .as_mut()
+                .map(|view| view.visible_lines(&theme, wrap_width, scroll, height))
+                .unwrap_or_default();
+            let mut paragraph = Paragraph::new(visible_lines)
                 .block(preview_block)
-                .scroll((app.detail_scroll, 0));
+                .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
 
             if app.job_trace_wrap {
                 paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
@@ -2011,7 +2016,7 @@ pub(crate) fn render_tab_jobs(
                         text.push(Line::from(vec![
                             Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
                             Span::styled(
-                                format!("{}m {}s", mins, secs),
+                                format!("{mins}m {secs}s"),
                                 Style::default().fg(theme.text_normal),
                             ),
                         ]));
@@ -2078,7 +2083,6 @@ pub(crate) fn render_tab_runners(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2134,7 +2138,7 @@ pub(crate) fn render_tab_runners(
             TableContext {
                 block: main_block,
                 header_style,
-                highlight_style,
+                highlight_style: Style::default().bg(theme.highlight_bg),
                 theme: &theme,
                 icons: &icons,
                 query: &app.search_query,
@@ -2153,7 +2157,6 @@ pub(crate) fn render_tab_releases(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2212,7 +2215,7 @@ pub(crate) fn render_tab_releases(
             TableContext {
                 block: main_block,
                 header_style,
-                highlight_style,
+                highlight_style: Style::default().bg(theme.highlight_bg),
                 theme: &theme,
                 icons: &icons,
                 query: &app.search_query,
@@ -2231,7 +2234,6 @@ pub(crate) fn render_tab_todos(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2294,7 +2296,7 @@ pub(crate) fn render_tab_todos(
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
 
-            let (state_str, state_style) = if n.state == "unread" || n.state == "pending" {
+            let (state_str, state_style) = if n.is_unread() {
                 (
                     " NEW",
                     Style::default()
@@ -2469,7 +2471,6 @@ pub(crate) fn render_tab_milestones(
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
     header_style: Style,
 ) {
     let theme = THEME.read().unwrap();
@@ -2633,7 +2634,7 @@ pub(crate) fn render_tab_milestones(
                                 .milestone_progress_cache
                                 .get(&m.iid)
                                 .copied()
-                                .filter(|(closed, total)| *total > 0);
+                                .filter(|&(_, total)| total > 0);
                             let (closed, total) = cached.unwrap_or_else(|| {
                                 app.milestone_issues_cache
                                     .get(&m.iid)
@@ -2871,16 +2872,13 @@ pub(crate) fn render_tab_environments(
                 query: &app.search_query,
             },
         );
-        if app.deployments.items.is_empty() {
-            let doc = app
-                .environments
-                .cursor_row()
-                .map(crate::entity_editor::build_environment_document);
-            render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
-        } else {
-            // Show fetched deployments in the detail pane
-            let deploy_rows: Vec<Row> = app
-                .deployments
+        let shown_deployments = app
+            .environment_deployments
+            .as_mut()
+            .map(|shown| &mut shown.table)
+            .filter(|table| !table.items.is_empty());
+        if let Some(deployments) = shown_deployments {
+            let deploy_rows: Vec<Row> = deployments
                 .items
                 .iter()
                 .map(|d| {
@@ -2927,20 +2925,18 @@ pub(crate) fn render_tab_environments(
                         .border_style(Style::default().fg(theme.border)),
                 )
                 .row_highlight_style(highlight_style);
-            f.render_stateful_widget(deploy_table, detail_rect, &mut app.deployments.state);
+            f.render_stateful_widget(deploy_table, detail_rect, &mut deployments.state);
+        } else {
+            let doc = app
+                .environments
+                .cursor_row()
+                .map(crate::entity_editor::build_environment_document);
+            render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
         }
     }
 }
 
-pub(crate) fn render_tab_terminal(
-    f: &mut Frame,
-    app: &mut App,
-    content_area: Rect,
-    detail_rect: Rect,
-    _main_block: Block<'_>,
-    _highlight_style: Style,
-    _header_style: Style,
-) {
+pub(crate) fn render_tab_terminal(f: &mut Frame, app: &mut App, content_area: Rect) {
     let theme = THEME.read().unwrap();
     let num_cmds = app.terminal_commands.len();
     let area = content_area;
@@ -2978,7 +2974,7 @@ pub(crate) fn render_tab_terminal(
     app.terminal_scroll = app.terminal_scroll.min(max_scroll);
 
     let block_title = if app.terminal_wrap {
-        format!(" Terminal (Wrap) [{} lines] ", total_lines)
+        format!(" Terminal (Wrap) [{total_lines} lines] ")
     } else if app.terminal_scroll > 0 {
         format!(
             " Terminal (Scroll: {}/{}) ",
@@ -3076,7 +3072,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                     Style::default(),
                 );
             })
@@ -3184,7 +3179,6 @@ mod tests {
                     detail_rect,
                     Block::default(),
                     Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3225,7 +3219,6 @@ mod tests {
                     detail_rect,
                     Block::default(),
                     Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3263,7 +3256,6 @@ mod tests {
                     detail_rect,
                     Block::default(),
                     Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3295,7 +3287,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                     Style::default(),
                 );
             })
@@ -3339,7 +3330,6 @@ mod tests {
                 let content_area = Rect::new(0, 0, area.width, 5);
                 let detail_rect = Rect::new(0, 5, area.width, 5);
                 let theme = THEME.read().unwrap();
-                let highlight_style = Style::default().bg(theme.highlight_bg);
                 let header_style = Style::default().fg(theme.text_normal);
                 render_tab_issues(
                     f,
@@ -3347,7 +3337,6 @@ mod tests {
                     content_area,
                     detail_rect,
                     Block::default(),
-                    highlight_style,
                     header_style,
                 );
             })
@@ -3362,10 +3351,7 @@ mod tests {
         assert_eq!(buffer[(5, 1)].bg, theme.highlight_bg);
     }
 
-    #[test]
-    fn render_tab_jobs_clamps_page_scroll_past_trace_end() {
-        let backend = TestBackend::new(100, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
+    fn jobs_app_showing_trace(trace: crate::domain::job_trace::JobTrace) -> App {
         let mut app = App::default();
         app.jobs.items = vec![crate::domain::pipelines::Job {
             id: 1,
@@ -3377,9 +3363,13 @@ mod tests {
             runner: None,
             needs: vec![],
         }];
-        app.job_trace = Some("line\n".repeat(200));
-        app.detail_scroll = 999;
+        app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(trace));
+        app
+    }
 
+    /// Renders the Jobs tab with the trace pane on rows 10-19.
+    fn render_jobs_with_trace_pane(app: &mut App) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3387,9 +3377,144 @@ mod tests {
                 let detail_rect = Rect::new(0, 10, area.width, 10);
                 render_tab_jobs(
                     f,
-                    &mut app,
+                    app,
                     content_area,
                     detail_rect,
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+        terminal
+    }
+
+    fn buffer_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn render_tab_jobs_clamps_page_scroll_past_trace_end() {
+        let trace =
+            crate::domain::job_trace::JobTrace::from_read("line\n".repeat(200).as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.detail_scroll = 999;
+
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        assert_eq!(
+            app.detail_scroll, 192,
+            "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
+        );
+        assert_eq!(buffer_row(&terminal, 18), format!("│{:<98}│", "line"));
+    }
+
+    #[test]
+    fn render_tab_jobs_marks_a_truncated_trace_in_the_pane_title() {
+        let trace = crate::domain::job_trace::JobTrace::from_read(b"first part\n", true);
+        let mut app = jobs_app_showing_trace(trace);
+
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        let title = " Preview [TRUNCATED: first 16 MiB] ";
+        assert_eq!(
+            buffer_row(&terminal, 10),
+            format!("┌{title}{}┐", "─".repeat(98 - title.len()))
+        );
+        assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "first part"));
+    }
+
+    fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn render_tab_jobs_strips_escape_sequences_from_needs() {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.jobs.items = vec![crate::domain::pipelines::Job {
+            id: 1,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "deploy".to_string(),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: vec![
+                "\u{1b}[31mbuild\u{1b}[0m".to_string(),
+                "\u{9b}2Jlint".to_string(),
+            ],
+        }];
+        app.enabled_columns
+            .entry(Tab::Jobs)
+            .or_default()
+            .insert("Needs".to_string());
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 10),
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let rows = buffer_rows(&terminal);
+        let job_row = rows
+            .iter()
+            .find(|row| row.contains("deploy"))
+            .expect("job row rendered");
+        assert!(
+            job_row.trim_end().ends_with(" build, lint"),
+            "row: {job_row:?}"
+        );
+    }
+
+    #[test]
+    fn render_tab_environments_strips_escape_sequences_from_url() {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.active_tab = Tab::Environments;
+        app.environments
+            .set_items(vec![crate::domain::deployments::Environment {
+            id: 1,
+            name: "production".to_string(),
+            state: "available".to_string(),
+            external_url: Some(
+                "\u{1b}]8;;https://evil.example\u{7}https://prod.example\u{1b}]8;;\u{7}\u{1b}[2J"
+                    .to_string(),
+            ),
+            last_deployment: None,
+        }]);
+        app.enabled_columns
+            .entry(Tab::Environments)
+            .or_default()
+            .insert("URL".to_string());
+        app.sync_list_views();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_environments(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 10),
                     Block::default(),
                     Style::default(),
                     Style::default(),
@@ -3397,9 +3522,35 @@ mod tests {
             })
             .unwrap();
 
+        let rows = buffer_rows(&terminal);
+        let env_row = rows
+            .iter()
+            .find(|row| row.contains("production"))
+            .expect("environment row rendered");
+        let cells: Vec<_> = env_row.split_whitespace().collect();
+        let highlight_arrow = crate::config::ICONS.read().unwrap().highlight_arrow.clone();
         assert_eq!(
-            app.detail_scroll, 192,
-            "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
+            cells,
+            [
+                highlight_arrow.as_str(),
+                "production",
+                "available",
+                "N/A",
+                "https://prod.example"
+            ],
         );
+    }
+
+    #[test]
+    fn render_tab_jobs_saturates_follow_scroll_past_u16_rows() {
+        let text: String = (0..70_000).map(|line| format!("{line}\n")).collect();
+        let trace = crate::domain::job_trace::JobTrace::from_read(text.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.detail_scroll_to_bottom = true;
+
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        assert_eq!(app.detail_scroll, u16::MAX);
+        assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "65535"));
     }
 }

@@ -24,5 +24,18 @@
     "target_type": "Issue",
     "state": "pending",
     "updated_at": "2026-07-05T12:00:00Z"
+  },
+  {
+    "id": 3,
+    "project": {
+      "path_with_namespace": "test-owner/test-repo"
+    },
+    "target": {
+      "title": "Review pagination",
+      "iid": 2
+    },
+    "target_type": "MergeRequest",
+    "state": "pending",
+    "updated_at": "2026-07-04T12:00:00Z"
   }
 ]

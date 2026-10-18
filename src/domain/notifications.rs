@@ -66,7 +66,6 @@ impl TodoChange {
 pub fn read_state(kind: BackendKind) -> &'static str {
     if kind.is_github() { "read" } else { "done" }
 }
-
 pub async fn list_notifications(
     client: &GitlabClient,
     show_read: bool,

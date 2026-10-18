@@ -9,6 +9,7 @@ use crate::{Sandbox, find_glab_tui_binary};
 use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 fn run_review(sandbox: &Sandbox, args: &[&str], stdin: &str, extra: &[(&str, &str)]) -> Output {
     let mut child = Command::new(find_glab_tui_binary())
@@ -268,4 +269,39 @@ fn test_review_resolve_on_github_is_unsupported() {
     let output = run_review(&sandbox, &["resolve", "2", "--thread", "201"], "", &[]);
 
     assert_failed_quietly(&output, "isn't supported on GitHub");
+}
+
+fn run_review_with_hung_cli(is_github: bool, hang_env: &str, hang_match: &str) -> Output {
+    let sandbox = Sandbox::new(is_github).unwrap();
+    let config_dir = sandbox.config_dir.join("glab-tui");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.toml"),
+        "command_timeout_seconds = 1\n",
+    )
+    .unwrap();
+    let started = Instant::now();
+
+    let output = run_review(&sandbox, &["threads", "2"], "", &[(hang_env, hang_match)]);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "a hung CLI must not outlive command_timeout_seconds, took {:?}",
+        started.elapsed()
+    );
+    output
+}
+
+#[test]
+fn hung_glab_call_fails_the_review_after_the_command_timeout() {
+    let output = run_review_with_hung_cli(false, "TEST_GLAB_HANG_MATCH", "mr diff");
+
+    assert_failed_quietly(&output, "timed out after 1s and was killed");
+}
+
+#[test]
+fn hung_gh_call_fails_the_review_after_the_command_timeout() {
+    let output = run_review_with_hung_cli(true, "TEST_GH_HANG_MATCH", "pr diff");
+
+    assert_failed_quietly(&output, "timed out after 1s and was killed");
 }

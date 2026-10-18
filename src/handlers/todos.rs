@@ -101,7 +101,12 @@ pub fn toggle_show_read(app: &mut App, tx: &UnboundedSender<Event>) {
         return;
     };
     app.start_loading_tab(Tab::Todos);
-    crate::fetch::spawn_refresh_active_tab(&client, &app.scope, Tab::Todos, tx.clone());
+    crate::fetch::spawn_refresh_active_tab(
+        &client,
+        &app.scope,
+        Tab::Todos,
+        app.scoped_sender(tx.clone()),
+    );
 }
 
 fn backend_client(app: &mut App) -> Option<GitlabClient> {
@@ -158,18 +163,18 @@ fn jump_to_target(
         return false;
     }
     let is_loaded = match target {
-        NotificationTarget::Issue => app.focus_issue_in(project, iid),
-        NotificationTarget::MergeRequest => app.focus_mr_in(project, iid),
+        NotificationTarget::Issue => app.focus_issue(Some(project), iid),
+        NotificationTarget::MergeRequest => app.focus_mr(Some(project), iid),
     };
     if is_loaded {
         return true;
     }
     match target {
         NotificationTarget::Issue => {
-            crate::fetch::spawn_fetch_issue(client, project, iid, tx.clone());
+            crate::fetch::spawn_fetch_issue(client, project, iid, app.scoped_sender(tx.clone()));
         }
         NotificationTarget::MergeRequest => {
-            crate::fetch::spawn_fetch_mr(client, project, iid, tx.clone());
+            crate::fetch::spawn_fetch_mr(client, project, iid, app.scoped_sender(tx.clone()));
         }
     }
     true

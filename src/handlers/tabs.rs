@@ -1,6 +1,6 @@
 use crate::AppTerminal;
-use crate::app::App;
-use crate::event::Event;
+use crate::app::{App, Tab};
+use crate::event::{Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
@@ -25,19 +25,180 @@ fn spawn_open_diff(
         return;
     };
     app.diff_loading = true;
-    let tx = tx.clone();
+    let tx = app.scoped_sender(tx.clone());
     tokio::spawn(async move {
         let event = match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await {
             Ok((diff_view, comments)) => Event::DiffFetched {
                 diff_view,
                 comments,
             },
-            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err)),
+            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {err}")),
         };
         let _ = tx.send(event);
     });
 }
 
+fn show_selected_all_notice(app: &mut App, added: usize) {
+    if added == 0 {
+        return;
+    }
+    let plural = if added == 1 { "" } else { "s" };
+    app.show_notice(format!("Selected all {added} item{plural}"));
+}
+
+/// A row whose status was set before the backend confirmed the mutation:
+/// its id and the status it showed before, when the row was on screen.
+pub(crate) type OptimisticRow = (u64, Option<String>);
+
+/// The table an optimistic status flip was applied to.
+#[derive(Clone, Copy)]
+pub(crate) enum OptimisticTable {
+    Pipelines,
+    Jobs,
+}
+
+impl OptimisticTable {
+    fn tab(self) -> Tab {
+        match self {
+            OptimisticTable::Pipelines => Tab::Pipelines,
+            OptimisticTable::Jobs => Tab::Jobs,
+        }
+    }
+
+    fn revert(self, id: u64, status: String) -> Event {
+        match self {
+            OptimisticTable::Pipelines => Event::PipelineStatusRevert {
+                pipeline_id: id,
+                status,
+            },
+            OptimisticTable::Jobs => Event::JobStatusRevert { job_id: id, status },
+        }
+    }
+}
+
+pub(crate) fn flip_pipeline_statuses(
+    app: &mut App,
+    ids: &[u64],
+    status: &str,
+) -> Vec<OptimisticRow> {
+    ids.iter()
+        .map(|&id| {
+            let previous = app
+                .pipelines
+                .items
+                .iter_mut()
+                .find(|pipeline| pipeline.id() == id && pipeline.status != status)
+                .map(|pipeline| std::mem::replace(&mut pipeline.status, status.to_string()));
+            (id, previous)
+        })
+        .collect()
+}
+
+pub(crate) fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<OptimisticRow> {
+    ids.iter()
+        .map(|&id| {
+            let previous = app
+                .jobs
+                .items
+                .iter_mut()
+                .find(|job| job.id() == id && job.status != status)
+                .map(|job| std::mem::replace(&mut job.status, status.to_string()));
+            (id, previous)
+        })
+        .collect()
+}
+
+/// Runs `mutate` for every row, pacing bulk runs. A failed row gets its prior
+/// status back, and all failures surface as a single error toast.
+pub(crate) async fn run_optimistic_mutation<F, Fut>(
+    table: OptimisticTable,
+    action: &str,
+    rows: Vec<OptimisticRow>,
+    tx: &ScopedSender,
+    mutate: F,
+) where
+    F: Fn(u64) -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    let mut failures = Vec::new();
+    for (i, (id, previous)) in rows.into_iter().enumerate() {
+        if i > 0 {
+            crate::backend::rate_limit::pace_bulk_operation().await;
+        }
+        if let Err(e) = mutate(id).await {
+            if let Some(status) = previous {
+                let _ = tx.send(table.revert(id, status));
+            }
+            failures.push(format!("#{id}: {e}"));
+        }
+    }
+    if let Some(message) = mutation_failure_message(action, &failures) {
+        let _ = tx.send(Event::CommandCompleted(table.tab(), Err(message)));
+    }
+}
+
+/// Cancels `rows`' jobs, then refreshes the pipeline's job list.
+pub(crate) fn spawn_cancel_jobs(
+    client: crate::domain::client::GitlabClient,
+    tx: ScopedSender,
+    project_path: String,
+    pipeline_id: u64,
+    rows: Vec<OptimisticRow>,
+) {
+    tokio::spawn(async move {
+        run_optimistic_mutation(OptimisticTable::Jobs, "cancel job", rows, &tx, |id| {
+            client.cancel_job(&project_path, id)
+        })
+        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Ok(jobs) =
+            crate::domain::pipelines::list_pipeline_jobs(&client, &project_path, pipeline_id).await
+        {
+            let _ = tx.send(Event::PipelineJobs(pipeline_id, jobs));
+        }
+    });
+}
+
+fn mutation_failure_message(action: &str, failures: &[String]) -> Option<String> {
+    let (first, rest) = failures.split_first()?;
+    Some(match rest.len() {
+        0 => format!("Failed to {action} {first}"),
+        more => format!("Failed to {action} {first} (+{more} more failed)"),
+    })
+}
+
+/// Returns whether a fetch started: there is none without a client.
+pub(crate) fn spawn_job_trace_fetch(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
+    job_id: u64,
+) -> bool {
+    let Some(client) = app.gitlab_client.clone() else {
+        return false;
+    };
+    let project_context = app.project_path_for_jobs();
+    let tx = app.scoped_sender(tx.clone());
+    app.job_trace_loading = true;
+    tokio::spawn(async move {
+        let res = crate::domain::pipelines::get_job_trace(&client, &project_context, job_id).await;
+        let _ = tx.send(Event::JobTraceFetched(
+            job_id,
+            res.map_err(|e| e.to_string()),
+        ));
+    });
+    true
+}
+
+pub fn open_job_trace_in_editor(app: &mut App, job_id: u64, terminal: &mut AppTerminal) {
+    let Some(view) = &app.job_trace else {
+        return;
+    };
+    let trace = view.trace().text();
+    let prefix = format!("job_{job_id}_trace_");
+    if let Err(error) = crate::editor::view_in_editor(trace, &prefix, terminal) {
+        app.show_error(format!("Failed to open job trace in editor: {error}"));
+    }
+}
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -50,7 +211,7 @@ fn spawn_open_diff(
 /// The `tx` parameter is accepted (not consumed) so existing keypress handler
 /// call sites keep passing their sender without churn; the dispatcher is what
 /// ultimately drives `spawn_fetch_related_mrs`.
-pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
+pub fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .issues
         .state
@@ -76,7 +237,7 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event
 }
 
 /// Record a request to fetch linked issues for the currently selected MR/PR.
-pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender<Event>) {
+pub fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .mrs
         .state
@@ -122,7 +283,7 @@ fn with_pr_stack(
     if !is_known && can_be_stacked {
         if let Some(client) = app.gitlab_client.clone() {
             crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
-            app.status_message = Some(format!("Loading the stack of PR #{}…", pr.1));
+            app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
             app.pending_stack_action = Some((pr, action));
             return;
         }
@@ -131,7 +292,7 @@ fn with_pr_stack(
 }
 
 /// Run a PR action whose stack the session already knows.
-pub(crate) fn run_stack_action(
+pub fn run_stack_action(
     app: &mut App,
     project: &str,
     pr_number: u64,
@@ -152,7 +313,11 @@ fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
         }
         _ => crate::app::ConfirmAction::MergeMr(pr_number),
     };
-    app.submit_dialog = Some(crate::app::SubmitDialog::build(action, app));
+    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+        action,
+        project.to_string(),
+        app,
+    ));
 }
 
 /// Open the selector over a PR's stack the session already knows, so the
@@ -295,10 +460,11 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
                 let is_github = app.is_github();
                 let project = if app.scope.is_group() {
+                    let issues = app.filtered_issues();
                     app.issues
                         .state
                         .selected()
-                        .and_then(|idx| app.issues.items.get(idx))
+                        .and_then(|idx| issues.get(idx))
                         .map(|i| {
                             if !i.project_path.is_empty() {
                                 i.project_path.clone()
@@ -313,14 +479,11 @@ pub async fn handle_active_tab_key(
                     app.scope.as_str().to_string()
                 };
                 let fields = crate::entity_editor::issue_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    "No".to_string(),
-                    String::new(),
-                    "0".to_string(),
-                    String::new(),
+                    crate::entity_editor::IssueFieldValues {
+                        confidential: "No".to_string(),
+                        weight: "0".to_string(),
+                        ..Default::default()
+                    },
                     is_github,
                     if app.scope.is_group() {
                         Some(project.clone())
@@ -351,7 +514,7 @@ pub async fn handle_active_tab_key(
                 if app.selected_issues.len() > 1 {
                     let count = app.selected_issues.len();
                     app.open_edit_menu(crate::app::EditMenu {
-                        title: format!("Bulk Edit {} Issues", count),
+                        title: format!("Bulk Edit {count} Issues"),
                         entity_project: app.scope.as_str().to_string(),
                         fields: vec![
                             crate::app::Field::multi_select("Assignees", String::new()),
@@ -446,7 +609,7 @@ pub async fn handle_active_tab_key(
                         );
                     }
                     Some(RelatedMrsState::Failed(msg)) => {
-                        app.show_error(format!("Failed to fetch related Merge Requests: {}", msg));
+                        app.show_error(format!("Failed to fetch related Merge Requests: {msg}"));
                     }
                     Some(RelatedMrsState::Items(items)) => {
                         let is_github = app.is_github();
@@ -504,8 +667,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        let project_path = app.scope.project_of(&issue.project_path).to_string();
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::CloseIssue(issue_iid),
+                            project_path,
                             app,
                         ));
                     }
@@ -516,8 +681,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        let project_path = app.scope.project_of(&issue.project_path).to_string();
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::DeleteIssue(issue_iid),
+                            project_path,
                             app,
                         ));
                     }
@@ -558,8 +725,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        let project_path = app.scope.project_of(&issue.project_path).to_string();
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::ReopenIssue(issue_iid),
+                            project_path,
                             app,
                         ));
                     }
@@ -594,13 +763,7 @@ pub async fn handle_active_tab_key(
             }
             _ if keybinding_matches(&app.config.keybindings.issues.select_all, key_event) => {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
@@ -644,14 +807,15 @@ pub async fn handle_active_tab_key(
                             app.scope.as_str().to_string()
                         };
                         let mut fields = crate::entity_editor::mr_fields(
-                            title_val,
-                            labels_val,
-                            assignees_val,
-                            String::new(),
-                            milestone_val,
-                            target_branch_val,
-                            "Draft".to_string(),
-                            String::new(),
+                            crate::entity_editor::MrFieldValues {
+                                title: title_val,
+                                labels: labels_val,
+                                assignees: assignees_val,
+                                milestone: milestone_val,
+                                target_branch: target_branch_val,
+                                draft_status: "Draft".to_string(),
+                                ..Default::default()
+                            },
                             is_github,
                             if app.scope.is_group() {
                                 Some(project_val.clone())
@@ -701,10 +865,11 @@ pub async fn handle_active_tab_key(
                 };
                 let target_branch_val = get_default_branch().unwrap_or_else(|| "main".to_string());
                 let project = if app.scope.is_group() {
+                    let mrs = app.filtered_mrs();
                     app.mrs
                         .state
                         .selected()
-                        .and_then(|idx| app.mrs.items.get(idx))
+                        .and_then(|idx| mrs.get(idx))
                         .map(|m| {
                             if !m.project_path.is_empty() {
                                 m.project_path.clone()
@@ -721,14 +886,11 @@ pub async fn handle_active_tab_key(
                     app.scope.as_str().to_string()
                 };
                 let fields = crate::entity_editor::mr_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    target_branch_val,
-                    "Draft".to_string(),
-                    String::new(),
+                    crate::entity_editor::MrFieldValues {
+                        target_branch: target_branch_val,
+                        draft_status: "Draft".to_string(),
+                        ..Default::default()
+                    },
                     is_github,
                     if app.scope.is_group() {
                         Some(project.clone())
@@ -737,7 +899,7 @@ pub async fn handle_active_tab_key(
                     },
                 );
                 app.open_edit_menu(crate::app::EditMenu {
-                    title: format!("Create {}", pr_suffix),
+                    title: format!("Create {pr_suffix}"),
                     entity_project: project,
                     fields,
                     initial_fields: std::collections::HashMap::new(),
@@ -780,19 +942,13 @@ pub async fn handle_active_tab_key(
                 app.toggle_select_mode();
             } else if keybinding_matches(&app.config.keybindings.mrs.select_all, key_event) {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 if app.selected_mrs.len() > 1 {
                     let count = app.selected_mrs.len();
                     let pr_suffix = if app.is_github() { "PR" } else { "MR" };
                     app.open_edit_menu(crate::app::EditMenu {
-                        title: format!("Bulk Edit {} {}s", count, pr_suffix),
+                        title: format!("Bulk Edit {count} {pr_suffix}s"),
                         entity_project: app.scope.as_str().to_string(),
                         fields: vec![
                             crate::app::Field::multi_select("Assignees", String::new()),
@@ -905,10 +1061,12 @@ pub async fn handle_active_tab_key(
                                     Some("Revoking approval isn't supported on GitHub".to_string());
                                 app.error_message_at = Some(std::time::Instant::now());
                             } else {
-                                app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                    crate::app::ConfirmAction::RevokeMr(mr_iid),
-                                    app,
-                                ));
+                                app.submit_dialog =
+                                    Some(crate::app::SubmitDialog::build_with_project(
+                                        crate::app::ConfirmAction::RevokeMr(mr_iid),
+                                        app.scope.project_of(&mr.project_path).to_string(),
+                                        app,
+                                    ));
                             }
                         }
                         _ if (key_event.code == KeyCode::Char('R')
@@ -920,10 +1078,12 @@ pub async fn handle_active_tab_key(
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
                                 RebaseGate::Allowed => {
-                                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                        crate::app::ConfirmAction::RebaseMr(mr_iid),
-                                        app,
-                                    ));
+                                    app.submit_dialog =
+                                        Some(crate::app::SubmitDialog::build_with_project(
+                                            crate::app::ConfirmAction::RebaseMr(mr_iid),
+                                            app.scope.project_of(&mr.project_path).to_string(),
+                                            app,
+                                        ));
                                 }
                                 RebaseGate::ResolveLocally => {
                                     app.show_error(
@@ -976,7 +1136,7 @@ pub async fn handle_active_tab_key(
                                     client,
                                     &app.scope,
                                     crate::app::Tab::Pipelines,
-                                    tx.clone(),
+                                    app.scoped_sender(tx.clone()),
                                 );
                             }
                         }
@@ -1004,7 +1164,7 @@ pub async fn handle_active_tab_key(
                             };
                             let tx2 = tx.clone();
                             let iid_str = mr_iid.to_string();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result = client
                                     .open_in_browser(&project_path, entity, &iid_str)
                                     .await;
@@ -1050,8 +1210,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                                 crate::app::ConfirmAction::CloseMr(mr_iid),
+                                app.scope.project_of(&mr.project_path).to_string(),
                                 app,
                             ));
                         }
@@ -1066,10 +1227,12 @@ pub async fn handle_active_tab_key(
                                 .map(|c| c.is_github)
                                 .unwrap_or(false)
                             {
-                                app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                    crate::app::ConfirmAction::DeleteMr(mr_iid),
-                                    app,
-                                ));
+                                app.submit_dialog =
+                                    Some(crate::app::SubmitDialog::build_with_project(
+                                        crate::app::ConfirmAction::DeleteMr(mr_iid),
+                                        app.scope.project_of(&mr.project_path).to_string(),
+                                        app,
+                                    ));
                             } else {
                                 app.show_error(
                                     "GitHub does not support deleting pull requests".to_string(),
@@ -1081,8 +1244,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                                 crate::app::ConfirmAction::ReopenMr(mr_iid),
+                                app.scope.project_of(&mr.project_path).to_string(),
                                 app,
                             ));
                         }
@@ -1128,10 +1292,7 @@ pub async fn handle_active_tab_key(
                                     );
                                 }
                                 Some(RelatedIssuesState::Failed(msg)) => {
-                                    app.show_error(format!(
-                                        "Failed to fetch linked issues: {}",
-                                        msg
-                                    ));
+                                    app.show_error(format!("Failed to fetch linked issues: {msg}"));
                                 }
                                 Some(RelatedIssuesState::Items(items)) => {
                                     if items.len() == 1 {
@@ -1142,8 +1303,7 @@ pub async fn handle_active_tab_key(
                                         let pr_term = if is_github { "PR" } else { "MR" };
                                         app.selector = Some(crate::app::Selector {
                                             title: format!(
-                                                " Linked Issues for {} #{} ",
-                                                pr_term, mr_iid
+                                                " Linked Issues for {pr_term} #{mr_iid} "
                                             ),
                                             all_items: items
                                                 .iter()
@@ -1196,22 +1356,29 @@ pub async fn handle_active_tab_key(
                     .selected()
                     .and_then(|idx| app.filtered_pipelines().get(idx).map(|p| p.id()));
                 if let Some(pipeline_id) = pipe_id {
-                    if !enter_pipeline_jobs(app, pipeline_id, false).await {
-                        app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
-                    }
+                    let project_context = app.project_path_for_pipeline(pipeline_id);
+                    spawn_open_pipeline(
+                        app,
+                        &tx,
+                        pipeline_id,
+                        project_context,
+                        PipelineOpening::OwnJobs,
+                    );
                 }
             } else if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
-                let current_branch =
-                    crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
+                let current_branch = crate::git_helpers::get_current_branch()
+                    .await
+                    .unwrap_or_else(|| "main".to_string());
 
                 let is_github = app.is_github();
                 let mut fields = vec![];
                 let default_project = if app.scope.is_group() {
+                    let pipelines = app.filtered_pipelines();
                     let proj = app
                         .pipelines
                         .state
                         .selected()
-                        .and_then(|idx| app.pipelines.items.get(idx))
+                        .and_then(|idx| pipelines.get(idx))
                         .map(|p| p.project_path.clone())
                         .filter(|p| !p.is_empty())
                         .unwrap_or_default();
@@ -1255,30 +1422,25 @@ pub async fn handle_active_tab_key(
                 });
             } else if keybinding_matches(
                 &app.config.keybindings.pipelines.selection_toggle,
-                &key_event,
+                key_event,
             ) {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, &key_event) {
+            } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, key_event) {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             } else if keybinding_matches(
                 &app.config.keybindings.pipelines.trigger_pipeline,
-                &key_event,
+                key_event,
             ) {
                 if let Some(client) = app.gitlab_client.clone() {
-                    let branch = crate::git_helpers::get_current_branch()
-                        .unwrap_or_else(|| "main".to_string());
                     let project_path = app.scope.as_str().to_string();
                     let tx2 = tx.clone();
                     tokio::spawn(async move {
+                        let branch = crate::git_helpers::get_current_branch()
+                            .await
+                            .unwrap_or_else(|| "main".to_string());
                         let result = client
-                            .run_pipeline(&project_path, &branch, false, &vec![], &vec![], "")
+                            .run_pipeline(&project_path, &branch, false, &[], &[], "")
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Pipelines,
@@ -1293,7 +1455,7 @@ pub async fn handle_active_tab_key(
                         _ if (key_event.code == KeyCode::Char(' ')
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.select_pipeline,
-                                &key_event,
+                                key_event,
                             )) =>
                         {
                             if app.selected_pipelines.contains(&pipe_id) {
@@ -1305,101 +1467,51 @@ pub async fn handle_active_tab_key(
                         _ if (key_event.code == KeyCode::Char('r')
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.retry,
-                                &key_event,
+                                key_event,
                             )) =>
                         {
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
                                 let scope = app.scope.clone();
-                                let project_context = scope.as_str().to_string();
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
                                 let active_tab = app.active_tab;
-                                if !app.selected_pipelines.is_empty() {
-                                    let pipe_ids: Vec<u64> =
-                                        app.selected_pipelines.iter().cloned().collect();
-                                    for p_id in &pipe_ids {
-                                        if let Some(p) = app
-                                            .pipelines
-                                            .items
-                                            .iter_mut()
-                                            .find(|pipe| pipe.id() == *p_id)
-                                        {
-                                            p.status = "running".to_string();
-                                        }
-                                    }
-                                    app.selected_pipelines.clear();
-                                    tokio::spawn(async move {
-                                        for (i, p_id) in pipe_ids.iter().enumerate() {
-                                            if i > 0 {
-                                                crate::backend::rate_limit::pace_bulk_operation()
-                                                    .await;
-                                            }
-                                            let _ = client_clone
-                                                .retry_pipeline(&project_context, *p_id)
-                                                .await;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        spawn_refresh_active_tab(
-                                            &client_clone,
-                                            &scope,
-                                            active_tab,
-                                            tx.clone(),
-                                        );
-                                    });
+                                let pipe_ids: Vec<u64> = if app.selected_pipelines.is_empty() {
+                                    vec![pipe_id]
                                 } else {
-                                    if let Some(p) = app
-                                        .pipelines
-                                        .items
-                                        .iter_mut()
-                                        .find(|pipe| pipe.id() == pipe_id)
-                                    {
-                                        p.status = "running".to_string();
-                                    }
-                                    let tx = tx.clone();
-                                    tokio::spawn(async move {
-                                        let _ = client_clone
-                                            .retry_pipeline(&project_context, pipe_id)
-                                            .await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        spawn_refresh_active_tab(
-                                            &client_clone,
-                                            &scope,
-                                            active_tab,
-                                            tx,
-                                        );
-                                    });
-                                }
+                                    app.selected_pipelines.drain().collect()
+                                };
+                                let projects: std::collections::HashMap<u64, String> = pipe_ids
+                                    .iter()
+                                    .map(|&id| (id, app.project_path_for_pipeline(id)))
+                                    .collect();
+                                let rows = flip_pipeline_statuses(app, &pipe_ids, "running");
+                                tokio::spawn(async move {
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Pipelines,
+                                        "retry pipeline",
+                                        rows,
+                                        &tx,
+                                        |id| client_clone.retry_pipeline(&projects[&id], id),
+                                    )
+                                    .await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    spawn_refresh_active_tab(&client_clone, &scope, active_tab, tx);
+                                });
                             }
                         }
                         _ if ((key_event.code == KeyCode::Char('d')
                             && key_event.modifiers.is_empty())
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.cancel,
-                                &key_event,
+                                key_event,
                             )) =>
                         {
-                            if let Some(p) = app
-                                .pipelines
-                                .items
-                                .iter_mut()
-                                .find(|pipe| pipe.id() == pipe_id)
-                            {
-                                p.status = "canceled".to_string();
-                            }
-                            if let Some(client) = &app.gitlab_client {
-                                let client_clone = client.clone();
-                                let scope = app.scope.clone();
-                                let project_context = scope.as_str().to_string();
-                                let tx = tx.clone();
-                                let active_tab = app.active_tab;
-                                tokio::spawn(async move {
-                                    let _ = client_clone
-                                        .cancel_pipeline(&project_context, pipe_id)
-                                        .await;
-                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    spawn_refresh_active_tab(&client_clone, &scope, active_tab, tx);
-                                });
-                            }
+                            let project_path = app.project_path_for_pipeline(pipe_id);
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+                                crate::app::ConfirmAction::CancelPipeline(pipe_id),
+                                project_path,
+                                app,
+                            ));
                         }
                         _ if (key_event.code == KeyCode::Char('W')
                             || keybinding_matches(
@@ -1429,7 +1541,7 @@ pub async fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
-                            let project_context = app.scope.as_str().to_string();
+                            let project_context = app.project_path_for_pipeline(pipe_id);
                             let tx2 = tx.clone();
                             tokio::spawn(async move {
                                 let result = client
@@ -1447,7 +1559,6 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
@@ -1458,7 +1569,7 @@ pub async fn handle_active_tab_key(
                             };
                             let pid_str = pipe_id.to_string();
                             let tx2 = tx.clone();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result = client
                                     .open_pipeline_in_browser(&project_path, &pid_str)
                                     .await;
@@ -1525,18 +1636,11 @@ pub async fn handle_active_tab_key(
                         s
                     },
                 });
-            } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, &key_event)
-            {
+            } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, key_event) {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.jobs.select_all, &key_event) {
+            } else if keybinding_matches(&app.config.keybindings.jobs.select_all, key_event) {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             } else if let Some(idx) = app.jobs.state.selected() {
                 let job_info = app
                     .filtered_jobs()
@@ -1560,60 +1664,34 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
-                                let tx = tx.clone();
-
-                                if !app.selected_jobs.is_empty() {
-                                    let job_ids: Vec<u64> =
-                                        app.selected_jobs.iter().cloned().collect();
-                                    for j in app.jobs.items.iter_mut() {
-                                        if app.selected_jobs.contains(&j.id()) {
-                                            j.status = "running".to_string();
-                                        }
-                                    }
-                                    app.selected_jobs.clear();
-                                    app.status_message = None;
-                                    tokio::spawn(async move {
-                                        for (i, j_id) in job_ids.iter().enumerate() {
-                                            if i > 0 {
-                                                crate::backend::rate_limit::pace_bulk_operation()
-                                                    .await;
-                                            }
-                                            let _ = client_clone
-                                                .retry_job(&project_context, *j_id)
-                                                .await;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
+                                let tx = app.scoped_sender(tx.clone());
+                                let job_ids: Vec<u64> = if app.selected_jobs.is_empty() {
+                                    vec![job_id]
                                 } else {
-                                    if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        j.status = "running".to_string();
+                                    app.status_message = None;
+                                    app.selected_jobs.drain().collect()
+                                };
+                                let rows = flip_job_statuses(app, &job_ids, "running");
+                                tokio::spawn(async move {
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Jobs,
+                                        "retry job",
+                                        rows,
+                                        &tx,
+                                        |id| client_clone.retry_job(&project_context, id),
+                                    )
+                                    .await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
+                                        &client_clone,
+                                        &project_context,
+                                        pipe_id,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
                                     }
-                                    tokio::spawn(async move {
-                                        let _ =
-                                            client_clone.retry_job(&project_context, job_id).await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
-                                }
+                                });
                             }
                         }
                         _ if key_event.code == KeyCode::Char('S')
@@ -1630,15 +1708,25 @@ pub async fn handle_active_tab_key(
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
-                                let tx = tx.clone();
+                                let tx = app.scoped_sender(tx.clone());
 
-                                if let Some(j) = app.jobs.items.get_mut(idx) {
-                                    if j.status == "manual" {
-                                        j.status = "running".to_string();
-                                    }
-                                }
+                                let previous = app
+                                    .jobs
+                                    .items
+                                    .iter_mut()
+                                    .find(|job| job.id() == job_id && job.status == "manual")
+                                    .map(|job| {
+                                        std::mem::replace(&mut job.status, "running".to_string())
+                                    });
                                 tokio::spawn(async move {
-                                    let _ = client_clone.start_job(&project_context, job_id).await;
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Jobs,
+                                        "start job",
+                                        vec![(job_id, previous)],
+                                        &tx,
+                                        |id| client_clone.start_job(&project_context, id),
+                                    )
+                                    .await;
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                     if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
                                         &client_clone,
@@ -1657,73 +1745,44 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let jobs = &app.jobs.items;
-                            if let Some(highlighted_job) = jobs.get(idx) {
-                                let stage_name = highlighted_job.stage();
-                                for job in jobs {
-                                    if job.stage() == stage_name {
-                                        app.selected_jobs.insert(job.id());
-                                    }
-                                }
-                                app.status_message =
-                                    Some(format!("Selected all jobs in stage '{}'", stage_name));
+                            let highlighted_stage = app
+                                .filtered_jobs()
+                                .get(idx)
+                                .map(|job| job.stage().to_string());
+                            if let Some(stage_name) = highlighted_stage {
+                                let stage_ids: Vec<u64> = app
+                                    .filtered_jobs()
+                                    .iter()
+                                    .filter(|job| job.stage() == stage_name)
+                                    .map(|job| job.id())
+                                    .collect();
+                                app.selected_jobs.extend(stage_ids);
+                                app.show_notice(format!(
+                                    "Selected all jobs in stage '{stage_name}'"
+                                ));
                             }
                         }
                         _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
-                            if let Some(client) = &app.gitlab_client {
-                                let client_clone = client.clone();
-                                let pipe_id = app.active_pipeline_id.unwrap_or(0);
-                                let project_context = app.project_path_for_pipeline(pipe_id);
-                                let tx = tx.clone();
-
-                                if !app.selected_jobs.is_empty() {
-                                    let job_ids: Vec<u64> =
-                                        app.selected_jobs.iter().cloned().collect();
-                                    for j in app.jobs.items.iter_mut() {
-                                        if app.selected_jobs.contains(&j.id()) {
-                                            j.status = "canceled".to_string();
-                                        }
-                                    }
-                                    app.selected_jobs.clear();
-                                    app.status_message = None;
-                                    tokio::spawn(async move {
-                                        for j_id in &job_ids {
-                                            let _ = client_clone
-                                                .cancel_job(&project_context, *j_id)
-                                                .await;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
-                                } else {
-                                    if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        j.status = "canceled".to_string();
-                                    }
-                                    tokio::spawn(async move {
-                                        let _ =
-                                            client_clone.cancel_job(&project_context, job_id).await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
-                                }
+                            let pipe_id = app.active_pipeline_id.unwrap_or(0);
+                            if !app.selected_jobs.is_empty() {
+                                let mut job_ids: Vec<u64> =
+                                    app.selected_jobs.iter().copied().collect();
+                                job_ids.sort_unstable();
+                                let project_path = app.project_path_for_pipeline(pipe_id);
+                                app.submit_dialog =
+                                    Some(crate::app::SubmitDialog::build_with_project(
+                                        crate::app::ConfirmAction::CancelJobs {
+                                            pipeline_id: pipe_id,
+                                            job_ids,
+                                        },
+                                        project_path,
+                                        app,
+                                    ));
+                            } else if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_path_for_pipeline(pipe_id);
+                                let tx = app.scoped_sender(tx.clone());
+                                let rows = flip_job_statuses(app, &[job_id], "canceled");
+                                spawn_cancel_jobs(client, tx, project_path, pipe_id, rows);
                             }
                         }
                         _ if keybinding_matches(
@@ -1788,7 +1847,7 @@ pub async fn handle_active_tab_key(
                                 active_pipe_path.unwrap_or_else(|| app.scope.as_str().to_string());
                             let jid_str = job_id.to_string();
                             let tx2 = tx.clone();
-                            let _ = tokio::spawn(async move {
+                            tokio::spawn(async move {
                                 let result =
                                     client.open_job_in_browser(&project_path, &jid_str).await;
                                 let _ = tx2.send(Event::CommandCompleted(
@@ -1802,43 +1861,11 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let temp_file =
-                                std::env::temp_dir().join(format!("job_{}_trace.txt", job_id));
-                            if let Some(trace) = &app.job_trace {
-                                let _ = std::fs::write(&temp_file, trace);
-                            } else if let Some(_) = &app.gitlab_client {
-                                let _ = std::fs::write(&temp_file, "Trace will be here");
+                            if app.job_trace.is_some() {
+                                open_job_trace_in_editor(app, job_id, terminal);
+                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
+                                app.pending_job_trace_editor = Some(job_id);
                             }
-                            crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
-                            let _ = crossterm::terminal::disable_raw_mode();
-                            let mut editor_stdout = std::io::stdout();
-                            crate::editor::try_pop_keyboard_enhancement_flags(&mut editor_stdout);
-                            let _ = crossterm::execute!(
-                                editor_stdout,
-                                crossterm::terminal::LeaveAlternateScreen,
-                                crossterm::event::DisableMouseCapture,
-                            );
-                            let editor = std::env::var("EDITOR")
-                                .or_else(|_| std::env::var("VISUAL"))
-                                .unwrap_or_else(|_| "helix".to_string());
-                            let mut cmd = std::process::Command::new(&editor);
-                            cmd.arg(temp_file.as_os_str());
-                            cmd.stdin(std::process::Stdio::inherit());
-                            cmd.stdout(std::process::Stdio::inherit());
-                            cmd.stderr(std::process::Stdio::inherit());
-                            if let Ok(mut child) = cmd.spawn() {
-                                let _ = child.wait();
-                            }
-                            let _ = crossterm::terminal::enable_raw_mode();
-                            let mut editor_stdout = std::io::stdout();
-                            let _ = crossterm::execute!(
-                                editor_stdout,
-                                crossterm::terminal::EnterAlternateScreen,
-                                crossterm::event::EnableMouseCapture,
-                            );
-                            crate::editor::try_push_keyboard_enhancement_flags(&mut editor_stdout);
-                            let _ = terminal.clear();
-                            crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace,
@@ -1847,23 +1874,8 @@ pub async fn handle_active_tab_key(
                         {
                             if app.job_trace.is_some() {
                                 app.details_zoomed = !app.details_zoomed;
-                            } else if let Some(client) = &app.gitlab_client {
-                                let client = client.clone();
-                                let project_context = app.scope.as_str().to_string();
-                                let tx = tx.clone();
-                                app.job_trace_loading = true;
-                                tokio::spawn(async move {
-                                    let res = crate::domain::pipelines::get_job_trace(
-                                        &client,
-                                        &project_context,
-                                        job_id,
-                                    )
-                                    .await;
-                                    let _ = tx.send(Event::JobTraceFetched(
-                                        job_id,
-                                        res.map_err(|e| e.to_string()),
-                                    ));
-                                });
+                            } else {
+                                spawn_job_trace_fetch(app, &tx, job_id);
                             }
                         }
                         _ if keybinding_matches(
@@ -1932,17 +1944,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = tx.clone();
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.pause_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -1964,17 +1977,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = tx.clone();
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.resume_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -1987,16 +2001,15 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             let current_desc = item.description.clone().unwrap_or_default();
-                            app.text_input = Some(crate::app::TextInput {
-                                title: " Edit Runner Description ".to_string(),
-                                cursor_idx: current_desc.len(),
-                                value: current_desc,
-                                action: crate::app::TextInputAction::EditField {
+                            app.text_input = Some(crate::app::TextInput::new(
+                                " Edit Runner Description ",
+                                current_desc,
+                                crate::app::TextInputAction::EditField {
                                     entity_iid: runner_id,
                                     entity_type: "runner".to_string(),
                                     field_type: "runner_description".to_string(),
                                 },
-                            });
+                            ));
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.runners.open_in_browser,
@@ -2078,11 +2091,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::DeleteRelease(
-                                release.project_or(&app.scope).to_string(),
-                                release.tag_name.clone(),
-                            ),
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+                            crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
+                            release.project_or(&app.scope).to_string(),
                             app,
                         ));
                     }
@@ -2096,7 +2107,6 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
-                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
@@ -2148,10 +2158,11 @@ pub async fn handle_active_tab_key(
             {
                 let is_github = app.is_github();
                 let project = if app.scope.is_group() {
+                    let milestones = app.filtered_milestones();
                     app.milestones
                         .state
                         .selected()
-                        .and_then(|idx| app.milestones.items.get(idx))
+                        .and_then(|idx| milestones.get(idx))
                         .map(|m| m.project_path.clone())
                         .filter(|p| !p.is_empty())
                         .unwrap_or_default()
@@ -2243,8 +2254,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::CloseMilestone(milestone.iid),
+                            app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
                     }
@@ -2258,8 +2270,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
+                            app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
                     }
@@ -2273,8 +2286,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::DeleteMilestone(milestone.iid),
+                            app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
                     }
@@ -2288,7 +2302,6 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
@@ -2429,13 +2442,13 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_environments();
                     if let Some(env) = filtered.get(selected_idx) {
                         let env_name = env.name.clone();
+                        app.detail_visible = true;
                         let _ = tx.send(Event::CommandStarted(format!(
-                            "Fetching deployments for {}",
-                            env_name
+                            "Fetching deployments for {env_name}"
                         )));
                         let client = app.gitlab_client.clone();
                         let scope = app.scope.clone();
-                        let tx = tx.clone();
+                        let tx = app.scoped_sender(tx.clone());
                         tokio::spawn(async move {
                             if let Some(client) = client {
                                 match crate::domain::deployments::list_deployments(
@@ -2446,16 +2459,15 @@ pub async fn handle_active_tab_key(
                                 .await
                                 {
                                     Ok(deployments) => {
-                                        let _ = tx.send(Event::DeploymentsFetched(deployments));
+                                        let _ = tx.send(Event::DeploymentsFetched {
+                                            environment: env_name,
+                                            deployments,
+                                        });
                                     }
                                     Err(e) => {
                                         let _ = tx.send(Event::CommandCompleted(
                                             crate::app::Tab::Environments,
-                                            Err(format!("Failed to fetch deployments: {}", e)),
-                                        ));
-                                        let _ = tx.send(Event::FetchFailed(
-                                            crate::app::Tab::Environments,
-                                            format!("Failed to fetch deployments: {}", e),
+                                            Err(format!("Failed to fetch deployments: {e}")),
                                         ));
                                     }
                                 }
@@ -2469,13 +2481,12 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Terminal => {
-            if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, &key_event) {
+            if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, key_event) {
                 app.terminal_wrap = !app.terminal_wrap;
                 app.terminal_scroll = 0;
-            } else if keybinding_matches(&app.config.keybindings.terminal.clear_log, &key_event) {
+            } else if keybinding_matches(&app.config.keybindings.terminal.clear_log, key_event) {
                 app.clear_terminal_log();
-            } else if keybinding_matches(&app.config.keybindings.terminal.copy_command, &key_event)
-            {
+            } else if keybinding_matches(&app.config.keybindings.terminal.copy_command, key_event) {
                 if let Err(error) = app.copy_terminal_command() {
                     app.raise_error_toast(format!("Failed to copy command: {error}"));
                 }
@@ -2488,17 +2499,17 @@ pub async fn handle_active_tab_key(
     if !handled {
         let mut detail_scrolled = true;
         if app.detail_visible
-            && (keybinding_matches(&app.config.keybindings.global.scroll_down, &key_event)
+            && (keybinding_matches(&app.config.keybindings.global.scroll_down, key_event)
                 || key_event.code == KeyCode::Char('J'))
         {
             app.detail_scroll = app.detail_scroll.saturating_add(1);
         } else if app.detail_visible
-            && (keybinding_matches(&app.config.keybindings.global.scroll_up, &key_event)
+            && (keybinding_matches(&app.config.keybindings.global.scroll_up, key_event)
                 || key_event.code == KeyCode::Char('K'))
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, &key_event)
+            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, key_event)
         {
             // Only the flag — the last line's index is the render pass's
             // `max`, which no handler knows. `settle_detail_scroll` resolves
@@ -2508,7 +2519,7 @@ pub async fn handle_active_tab_key(
             && crate::keybinding::matches_with_pending(
                 &app.config.keybindings.global.scroll_top,
                 pending,
-                &key_event,
+                key_event,
             )
         {
             // `scroll_top` jumps to the first line directly: 0 is a known
@@ -2528,21 +2539,17 @@ pub async fn handle_active_tab_key(
                 tokio::spawn(async move {
                     match crate::utils::update::perform_self_update().await {
                         Ok(true) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                crate::app::Tab::Todos,
+                            let _ = tx.send(Event::Notice(
                                 "Update complete! Please restart glab-tui.".to_string(),
                             ));
                         }
                         Ok(false) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                crate::app::Tab::Todos,
-                                "Already up to date.".to_string(),
-                            ));
+                            let _ = tx.send(Event::Notice("Already up to date.".to_string()));
                         }
                         Err(e) => {
-                            let _ = tx.send(Event::FetchFailed(
+                            let _ = tx.send(Event::CommandCompleted(
                                 crate::app::Tab::Todos,
-                                format!("Update failed: {}", e),
+                                Err(format!("Update failed: {e}")),
                             ));
                         }
                     }
@@ -2562,6 +2569,7 @@ pub async fn handle_active_tab_key(
                     app.status_message = None;
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
+                    app.pending_job_trace_editor = None;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;
                     app.job_trace = None;
@@ -2602,53 +2610,19 @@ pub async fn handle_active_tab_key(
                 crate::app::Tab::Todos => crate::handlers::todos::open_selected(app, &tx),
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
-                        let pipe_info = app
-                            .filtered_pipelines()
-                            .get(idx)
-                            .map(|p| (p.id(), p.project_path.clone()));
-                        if let Some((pipeline_id, pipe_project)) = pipe_info {
-                            app.loading_tabs.insert(crate::app::Tab::Jobs);
+                        let pipe_info = app.filtered_pipelines().get(idx).map(|p| {
                             // A group-scoped list mixes projects, so the row's
                             // own path wins over the scope it was listed under.
-                            let project_context = if !pipe_project.is_empty() {
-                                pipe_project.clone()
-                            } else {
-                                app.scope.as_str().to_string()
-                            };
-                            let bridges = match &app.gitlab_client {
-                                Some(client) => Some(
-                                    crate::domain::pipelines::list_pipeline_bridges(
-                                        client,
-                                        &project_context,
-                                        pipeline_id,
-                                    )
-                                    .await,
-                                ),
-                                None => None,
-                            };
-                            match bridges {
-                                Some(Err(_)) => {
-                                    // Never fall back to the jobs path here: a
-                                    // failed fetch would read as "no downstream
-                                    // pipelines", which is the silent emptiness
-                                    // this drill-down exists to remove.
-                                    app.show_error(
-                                        "Failed to fetch downstream pipelines".to_string(),
-                                    );
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                }
-                                Some(Ok(bridges)) if !bridges.is_empty() => {
-                                    let level = crate::domain::pipelines::bridges_to_level(bridges);
-                                    app.descend_into(pipeline_id, level);
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                }
-                                _ => {
-                                    // A leaf pipeline: its own jobs are the
-                                    // level below it.
-                                    enter_pipeline_jobs(app, pipeline_id, true).await;
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                }
-                            }
+                            (p.id(), app.scope.project_of(&p.project_path).to_string())
+                        });
+                        if let Some((pipeline_id, project_context)) = pipe_info {
+                            spawn_open_pipeline(
+                                app,
+                                &tx,
+                                pipeline_id,
+                                project_context,
+                                PipelineOpening::Descend,
+                            );
                         }
                     }
                 }
@@ -2656,29 +2630,9 @@ pub async fn handle_active_tab_key(
                     if app.job_trace.is_some() {
                         app.details_zoomed = !app.details_zoomed;
                     } else if let Some(idx) = app.jobs.state.selected() {
-                        let job_info = app
-                            .filtered_jobs()
-                            .get(idx)
-                            .map(|j| (j.id(), j.name().to_string()));
-                        if let Some((job_id, _)) = job_info {
-                            if let Some(client) = &app.gitlab_client {
-                                let client = client.clone();
-                                let project_context = app.scope.as_str().to_string();
-                                let tx = tx.clone();
-                                app.job_trace_loading = true;
-                                tokio::spawn(async move {
-                                    let res = crate::domain::pipelines::get_job_trace(
-                                        &client,
-                                        &project_context,
-                                        job_id,
-                                    )
-                                    .await;
-                                    let _ = tx.send(Event::JobTraceFetched(
-                                        job_id,
-                                        res.map_err(|e| e.to_string()),
-                                    ));
-                                });
-                            }
+                        let job_id = app.filtered_jobs().get(idx).map(|j| j.id());
+                        if let Some(job_id) = job_id {
+                            spawn_job_trace_fetch(app, &tx, job_id);
                         }
                     }
                 }
@@ -2836,7 +2790,7 @@ pub async fn handle_active_tab_key(
             },
             _ if (key_event.code == KeyCode::Right
                 || key_event.code == KeyCode::Char('l')
-                || keybinding_matches(&app.config.keybindings.global.next_tab, &key_event)) =>
+                || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
                 if let Some(client) = &app.gitlab_client {
@@ -2846,7 +2800,12 @@ pub async fn handle_active_tab_key(
                         if !app.loaded_tabs.contains(&app.active_tab) {
                             app.loading_tabs.insert(app.active_tab);
                         }
-                        spawn_refresh_active_tab(client, &app.scope, app.active_tab, tx.clone());
+                        spawn_refresh_active_tab(
+                            client,
+                            &app.scope,
+                            app.active_tab,
+                            app.scoped_sender(tx.clone()),
+                        );
                     }
                 }
                 if app.active_tab == crate::app::Tab::Issues {
@@ -2858,7 +2817,7 @@ pub async fn handle_active_tab_key(
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
-                || keybinding_matches(&app.config.keybindings.global.prev_tab, &key_event)) =>
+                || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
                 if let Some(client) = &app.gitlab_client {
@@ -2868,7 +2827,12 @@ pub async fn handle_active_tab_key(
                         if !app.loaded_tabs.contains(&app.active_tab) {
                             app.loading_tabs.insert(app.active_tab);
                         }
-                        spawn_refresh_active_tab(client, &app.scope, app.active_tab, tx.clone());
+                        spawn_refresh_active_tab(
+                            client,
+                            &app.scope,
+                            app.active_tab,
+                            app.scoped_sender(tx.clone()),
+                        );
                     }
                 }
                 if app.active_tab == crate::app::Tab::Issues {
@@ -3107,29 +3071,26 @@ pub async fn handle_active_tab_key(
     handled
 }
 
-/// Switch to the Merge Requests tab and focus the given MR/PR. If the MR is
-/// already loaded, focus it immediately; otherwise set `pending_mr_select`
-/// so the `Event::MrsFetched` handler in `main.rs` can focus it once the
-/// in-flight tab refresh completes.
+/// Switch to the Merge Requests tab, drop the filters that would hide the
+/// target, and focus the given MR/PR. If the MR is already loaded, focus it
+/// immediately; otherwise set `pending_mr_select` so the `Event::MrsFetched`
+/// handler in `main.rs` can focus it once the in-flight tab refresh completes.
 pub(crate) fn jump_to_mr_tab(
     app: &mut crate::app::App,
     mr_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
 ) {
-    if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == mr_iid) {
-        app.mrs.state.select(Some(idx));
-    } else {
+    if !app.focus_mr(None, mr_iid) {
         app.pending_mr_select = Some(mr_iid);
     }
-    app.active_tab = crate::app::Tab::MergeRequests;
     app.detail_scroll = 0;
     if let Some(client) = client {
         crate::fetch::spawn_refresh_active_tab(
             &client,
             &app.scope,
             crate::app::Tab::MergeRequests,
-            tx,
+            app.scoped_sender(tx),
         );
     } else {
         app.show_error("No backend client available to load Merge Requests.".to_string());
@@ -3137,7 +3098,7 @@ pub(crate) fn jump_to_mr_tab(
 }
 
 /// Public entry point used by the related-MRs selector.
-pub(crate) fn jump_to_mr_tab_from_selector(
+pub fn jump_to_mr_tab_from_selector(
     app: &mut crate::app::App,
     mr_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
@@ -3146,70 +3107,150 @@ pub(crate) fn jump_to_mr_tab_from_selector(
     jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
 }
 
-/// Load a pipeline's own jobs into the Jobs tab, switching to it. Returns
-/// whether the pipeline had any jobs of its own. With `enter_when_empty` false
-/// the tab is left alone when there are none, so the caller does not strand the
-/// user on an empty Jobs tab.
-async fn enter_pipeline_jobs(
-    app: &mut crate::app::App,
+/// How a pipeline was opened from the Pipelines tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineOpening {
+    /// Only the pipeline's own jobs. None of them leaves the user on the
+    /// Pipelines tab instead of stranding them on an empty Jobs tab.
+    OwnJobs,
+    /// The level below the pipeline: its downstream pipelines, or for a leaf
+    /// pipeline its own jobs, entered even when there are none.
+    Descend,
+}
+
+/// What lies below a pipeline opened from the Pipelines tab.
+#[derive(Clone, Debug)]
+pub enum PipelineContents {
+    Downstream(crate::domain::pipelines::ChildLevel),
+    Jobs(Vec<crate::domain::pipelines::Job>),
+}
+
+/// Fetches what lies below `pipeline_id` off the event loop and reports it as
+/// `Event::PipelineOpened`, applied by `apply_opened_pipeline`.
+fn spawn_open_pipeline(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
     pipeline_id: u64,
-    enter_when_empty: bool,
-) -> bool {
-    let jobs = match &app.gitlab_client {
-        Some(client) => {
-            crate::domain::pipelines::list_pipeline_jobs(client, app.scope.as_str(), pipeline_id)
-                .await
-                .ok()
-        }
-        None => None,
+    project_context: String,
+    opening: PipelineOpening,
+) {
+    let Some(client) = app.gitlab_client.clone() else {
+        app.show_error("Failed to fetch jobs".to_string());
+        return;
     };
-    match jobs {
-        Some(jobs) => {
-            let found_any = !jobs.is_empty();
+    app.loading_tabs.insert(crate::app::Tab::Jobs);
+    let tx = app.scoped_sender(tx.clone());
+    tokio::spawn(async move {
+        let result = fetch_pipeline_contents(&client, &project_context, pipeline_id, opening).await;
+        let _ = tx.send(Event::PipelineOpened {
+            pipeline_id,
+            opening,
+            result,
+        });
+    });
+}
+
+async fn fetch_pipeline_contents(
+    client: &crate::domain::client::GitlabClient,
+    project_context: &str,
+    pipeline_id: u64,
+    opening: PipelineOpening,
+) -> Result<PipelineContents, String> {
+    if opening == PipelineOpening::Descend {
+        // Never fall back to the jobs path on failure: a failed fetch would
+        // read as "no downstream pipelines", which is the silent emptiness
+        // this drill-down exists to remove.
+        let bridges =
+            crate::domain::pipelines::list_pipeline_bridges(client, project_context, pipeline_id)
+                .await
+                .map_err(|_| "Failed to fetch downstream pipelines".to_string())?;
+        if !bridges.is_empty() {
+            return Ok(PipelineContents::Downstream(
+                crate::domain::pipelines::bridges_to_level(bridges),
+            ));
+        }
+    }
+    crate::domain::pipelines::list_pipeline_jobs(client, project_context, pipeline_id)
+        .await
+        .map(PipelineContents::Jobs)
+        .map_err(|_| "Failed to fetch jobs".to_string())
+}
+
+/// Applies an `Event::PipelineOpened` reply. A reply for a pipeline that is no
+/// longer listed on the Pipelines tab (the user moved on while it was in
+/// flight) only caches the jobs, so it never yanks the user to another view.
+pub fn apply_opened_pipeline(
+    app: &mut App,
+    pipeline_id: u64,
+    opening: PipelineOpening,
+    result: Result<PipelineContents, String>,
+) {
+    app.loading_tabs.remove(&crate::app::Tab::Jobs);
+    let contents = match result {
+        Ok(contents) => contents,
+        Err(message) => {
+            app.show_error(message);
+            return;
+        }
+    };
+    let is_still_listed = app.active_tab == crate::app::Tab::Pipelines
+        && app.pipelines.items.iter().any(|p| p.id() == pipeline_id);
+    match contents {
+        PipelineContents::Downstream(level) => {
+            if is_still_listed {
+                app.descend_into(pipeline_id, level);
+            }
+        }
+        PipelineContents::Jobs(jobs) => {
             app.pipeline_jobs.insert(pipeline_id, jobs.clone());
+            if !is_still_listed {
+                return;
+            }
+            let has_jobs = !jobs.is_empty();
             app.jobs.items = jobs;
+            app.active_pipeline_project = Some(app.project_path_for_pipeline(pipeline_id));
             app.active_pipeline_id = Some(pipeline_id);
             app.jobs.state.select(Some(0));
             app.detail_scroll = 0;
             app.job_trace = None;
-            if found_any || enter_when_empty {
+            if has_jobs || opening == PipelineOpening::Descend {
                 app.active_tab = crate::app::Tab::Jobs;
+            } else {
+                app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }
-            found_any
-        }
-        None => {
-            app.show_error("Failed to fetch jobs".to_string());
-            false
         }
     }
 }
 
-/// Switch to the Issues tab and focus the given Issue. If the Issue is
-/// already loaded, focus it immediately; otherwise set `pending_issue_select`
-/// so the `Event::IssuesFetched` handler in `main.rs` can focus it once the
-/// in-flight tab refresh completes.
+/// Switch to the Issues tab, drop the filters that would hide the target, and
+/// focus the given Issue. If the Issue is already loaded, focus it
+/// immediately; otherwise set `pending_issue_select` so the
+/// `Event::IssuesFetched` handler in `main.rs` can focus it once the in-flight
+/// tab refresh completes.
 pub(crate) fn jump_to_issue_tab(
     app: &mut crate::app::App,
     issue_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
 ) {
-    if let Some(idx) = app.issues.items.iter().position(|i| i.iid == issue_iid) {
-        app.issues.state.select(Some(idx));
-    } else {
+    if !app.focus_issue(None, issue_iid) {
         app.pending_issue_select = Some(issue_iid);
     }
-    app.active_tab = crate::app::Tab::Issues;
     app.detail_scroll = 0;
     if let Some(client) = client {
-        crate::fetch::spawn_refresh_active_tab(&client, &app.scope, crate::app::Tab::Issues, tx);
+        crate::fetch::spawn_refresh_active_tab(
+            &client,
+            &app.scope,
+            crate::app::Tab::Issues,
+            app.scoped_sender(tx),
+        );
     } else {
         app.show_error("No backend client available to load Issues.".to_string());
     }
 }
 
 /// Public entry point used by the linked-issues selector.
-pub(crate) fn jump_to_issue_tab_from_selector(
+pub fn jump_to_issue_tab_from_selector(
     app: &mut crate::app::App,
     issue_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
@@ -3222,7 +3263,104 @@ pub(crate) fn jump_to_issue_tab_from_selector(
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::event::ScopeGeneration;
     use crossterm::event::{KeyEvent, KeyModifiers};
+    use std::collections::{HashMap, HashSet};
+
+    #[tokio::test]
+    async fn failed_bulk_mutation_reverts_only_failed_rows_and_reports_once() {
+        let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
+        let rows = vec![
+            (1, Some("failed".to_string())),
+            (2, Some("success".to_string())),
+            (3, Some("failed".to_string())),
+        ];
+
+        run_optimistic_mutation(
+            OptimisticTable::Pipelines,
+            "retry pipeline",
+            rows,
+            &tx,
+            |id| async move {
+                if id == 2 {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("offline"))
+                }
+            },
+        )
+        .await;
+        drop(tx);
+
+        let mut reverted = Vec::new();
+        let mut errors = Vec::new();
+        while let Some(event) = rx.recv().await {
+            match event
+                .for_scope(ScopeGeneration::default())
+                .expect("event from the current scope")
+            {
+                Event::PipelineStatusRevert {
+                    pipeline_id,
+                    status,
+                } => reverted.push((pipeline_id, status)),
+                Event::CommandCompleted(Tab::Pipelines, Err(message)) => errors.push(message),
+                other => panic!("unexpected event {other:?}"),
+            }
+        }
+        assert_eq!(
+            reverted,
+            vec![(1, "failed".to_string()), (3, "failed".to_string())]
+        );
+        assert_eq!(
+            errors,
+            vec!["Failed to retry pipeline #1: offline (+1 more failed)".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_mutation_sends_nothing() {
+        let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
+        run_optimistic_mutation(
+            OptimisticTable::Jobs,
+            "cancel job",
+            vec![(7, Some("running".to_string()))],
+            &tx,
+            |_| async { Ok(()) },
+        )
+        .await;
+        drop(tx);
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[test]
+    fn second_flip_while_in_flight_keeps_the_revert_with_the_first() {
+        let mut app = App::default();
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "failed".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        }];
+
+        let first = flip_pipeline_statuses(&mut app, &[1], "running");
+        let second = flip_pipeline_statuses(&mut app, &[1], "running");
+
+        assert_eq!(first, vec![(1, Some("failed".to_string()))]);
+        assert_eq!(second, vec![(1, None)]);
+        assert_eq!(app.pipelines.items[0].status, "running");
+    }
 
     /// Constructs the real `AppTerminal` and dispatches `key_event` through
     /// `handle_active_tab_key`, discarding any events it sends.
@@ -3516,6 +3654,86 @@ mod tests {
             app.pipelines.items[0].status, "running",
             "Ctrl+d must not flip the pipeline status to canceled"
         );
+    }
+
+    #[tokio::test]
+    async fn d_on_a_pipeline_asks_for_confirmation_before_cancelling() {
+        use crate::domain::pipelines::Pipeline;
+
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![Pipeline {
+            id: 42,
+            status: "running".to_string(),
+            r#ref: String::new(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        }];
+        app.pipelines.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        assert!(matches!(
+            dialog.action,
+            crate::app::ConfirmAction::CancelPipeline(42)
+        ));
+        assert_eq!(app.pipelines.items[0].status, "running");
+    }
+
+    #[tokio::test]
+    async fn cancelling_selected_jobs_asks_for_confirmation_first() {
+        use crate::domain::pipelines::Job;
+
+        let job = |id| Job {
+            id,
+            status: "running".to_string(),
+            stage: "test".to_string(),
+            name: format!("job-{id}"),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: Vec::new(),
+        };
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Jobs;
+        app.active_pipeline_id = Some(7);
+        app.jobs.items = vec![job(3), job(1), job(2)];
+        app.jobs.state.select(Some(0));
+        app.selected_jobs.extend([3, 1]);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        match &dialog.action {
+            crate::app::ConfirmAction::CancelJobs {
+                pipeline_id,
+                job_ids,
+            } => {
+                assert_eq!(*pipeline_id, 7);
+                assert_eq!(job_ids, &vec![1, 3]);
+            }
+            other => panic!("expected CancelJobs, got {other:?}"),
+        }
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
     }
 
     /// `Ctrl+u` must not start a self-update check.
@@ -3894,5 +4112,191 @@ mod tests {
         )
         .await;
         assert_eq!(app.error_message, None);
+    }
+
+    #[tokio::test]
+    async fn milestone_close_in_group_scope_targets_the_selected_rows_project() {
+        use crate::domain::milestones::Milestone;
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.active_tab = crate::app::Tab::Milestones;
+        let milestone = |project: &str| Milestone {
+            iid: 3,
+            title: format!("{project} v1"),
+            state: "active".to_string(),
+            project_path: project.to_string(),
+            ..Milestone::default()
+        };
+        app.milestones.items = vec![milestone("acme/alpha"), milestone("acme/beta")];
+        app.milestones.state.select(Some(1));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let dialog = app.submit_dialog.expect("close opens a confirm dialog");
+        assert!(matches!(
+            dialog.action,
+            crate::app::ConfirmAction::CloseMilestone(3)
+        ));
+        assert_eq!(dialog.project_path, "acme/beta");
+    }
+
+    fn mr_in(project: &str, iid: u64, author: &str) -> crate::domain::mr::MergeRequest {
+        serde_json::from_value(serde_json::json!({
+            "iid": iid,
+            "title": format!("MR {iid}"),
+            "state": "opened",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "author": { "username": author },
+            "target_branch": "main",
+            "draft": false,
+            "project_path": project,
+        }))
+        .expect("merge request fixture")
+    }
+
+    fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {
+        HashMap::from([(column.to_string(), HashSet::from([value.to_string()]))])
+    }
+
+    #[tokio::test]
+    async fn group_milestone_create_uses_project_of_highlighted_filtered_row() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("grp".to_string());
+        app.active_tab = crate::app::Tab::Milestones;
+        app.milestones.items = serde_json::from_value(serde_json::json!([
+            { "iid": 1, "title": "Alpha", "description": null, "start_date": null,
+              "due_date": null, "project_path": "grp/a" },
+            { "iid": 2, "title": "Beta", "description": null, "start_date": null,
+              "due_date": null, "project_path": "grp/b" },
+        ]))
+        .expect("milestone fixtures");
+        app.column_filters
+            .insert(crate::app::Tab::Milestones, column_filter("Title", "Beta"));
+        app.milestones.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let menu = app.edit_menu.expect("create milestone menu");
+        assert_eq!(menu.entity_project, "grp/b");
+    }
+
+    #[tokio::test]
+    async fn select_stage_selects_visible_jobs_in_the_highlighted_stage() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Jobs;
+        app.jobs.items = serde_json::from_value(serde_json::json!([
+            { "id": 1, "status": "success", "stage": "build", "name": "compile" },
+            { "id": 2, "status": "success", "stage": "test", "name": "unit" },
+            { "id": 3, "status": "failed", "stage": "test", "name": "e2e" },
+        ]))
+        .expect("job fixtures");
+        app.column_filters
+            .insert(crate::app::Tab::Jobs, column_filter("Name", "e2e"));
+        app.jobs.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        )
+        .await;
+
+        assert_eq!(app.selected_jobs, HashSet::from([3]));
+    }
+
+    #[test]
+    fn jump_to_mr_tab_highlights_target_mr_while_a_filter_hides_earlier_rows() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("me/repo".to_string());
+        app.mrs.items = vec![
+            mr_in("me/repo", 1, "alice"),
+            mr_in("me/repo", 2, "bob"),
+            mr_in("me/repo", 3, "bob"),
+        ];
+        app.column_filters.insert(
+            crate::app::Tab::MergeRequests,
+            column_filter("Author", "bob"),
+        );
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        jump_to_mr_tab(&mut app, 3, None, tx);
+
+        assert_eq!(app.active_tab, crate::app::Tab::MergeRequests);
+        assert_eq!(app.selected_mr_ref(), Some(("me/repo".to_string(), 3)));
+    }
+
+    fn listed_pipeline(id: u64) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "success", "ref": "main", "updated_at": "",
+            "name": "", "display_title": "", "event": "", "head_sha": "",
+            "actor_login": "", "project_path": ""
+        }))
+        .unwrap()
+    }
+
+    fn job(id: u64) -> crate::domain::pipelines::Job {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "success", "stage": "test", "name": "unit"
+        }))
+        .unwrap()
+    }
+
+    /// The user left the Pipelines tab while the jobs fetch was in flight: the
+    /// reply is cached but must not pull them onto the Jobs tab.
+    #[test]
+    fn jobs_reply_after_leaving_pipelines_is_cached_without_switching_tabs() {
+        let mut app = App::default();
+        app.pipelines.items = vec![listed_pipeline(7)];
+        app.active_tab = crate::app::Tab::Issues;
+        app.loading_tabs.insert(crate::app::Tab::Jobs);
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Issues);
+        assert_eq!(app.active_pipeline_id, None);
+        assert!(app.jobs.items.is_empty());
+        let cached: Vec<u64> = app.pipeline_jobs[&7].iter().map(|j| j.id()).collect();
+        assert_eq!(cached, vec![70]);
+        assert!(!app.loading_tabs.contains(&crate::app::Tab::Jobs));
+    }
+
+    /// Enter pressed twice before the first reply: the first reply descends,
+    /// so the second finds its pipeline no longer listed and must not push a
+    /// second level.
+    #[test]
+    fn downstream_reply_for_a_pipeline_no_longer_listed_does_not_descend() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![listed_pipeline(7)];
+        let level = || crate::domain::pipelines::ChildLevel {
+            children: vec![listed_pipeline(8)],
+            pending: vec![],
+        };
+
+        for _ in 0..2 {
+            apply_opened_pipeline(
+                &mut app,
+                7,
+                PipelineOpening::Descend,
+                Ok(PipelineContents::Downstream(level())),
+            );
+        }
+
+        assert_eq!(app.nav_depth(), 1);
+        assert_eq!(app.current_parent_id(), Some(7));
+        let listed: Vec<u64> = app.pipelines.items.iter().map(|p| p.id()).collect();
+        assert_eq!(listed, vec![8]);
     }
 }

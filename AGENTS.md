@@ -65,12 +65,14 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches (routed through `&Scope`); `spawn_refresh_all_tabs()` — background tab prefetcher when `config.prefetch_tabs` is enabled; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
 * [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_project_path_from_web_url`, `parse_group`, `parse_remote_host`, `get_current_branch`, `repo_root`, `slugify`, `get_workflow_files`.
 * [src/custom_commands.rs](src/custom_commands.rs): User-defined `[[custom_keybindings.<pane>]]` commands — `CustomCommands::load` (validation, built-in shadow detection, `ConfigProblem` reports), `CommandPane` (universal / issues / mrs / diff and their template arguments), gh-dash style `{{.Name}}` templating (`render`, `TemplateValues`, `GLAB_TUI_*` environment) and `shell_process` (`$SHELL -c`).
+* [src/command_log.rs](src/command_log.rs): `CommandLog`, the Terminal tab's history behind `App::terminal_commands`. It keeps the newest `MAX_LOG_ENTRIES` (1,000) `TerminalCommand`s and hands out `LogRow` handles that stay valid while older entries are dropped or the log is cleared. Update entries through `find_latest` / `set_status` / `App::settle_command`, never by position, since positions shift on every eviction. The Terminal tab filters it with the global search bar (`App::filtered_terminal_commands`), copies the bottom row of the view (`App::terminal_cursor`, `App::copy_terminal_command`, `copy_command` key) and clears it (`clear_log` key).
 * [src/scope.rs](src/scope.rs): `Scope` enum (`Repository` / `Group`) — `as_str()`, `is_group()`/`is_repository()`, `cli_repo_arg()`/`cli_group_arg()` (glab/gh flag injection), `api_path_prefix()` (with `%2F` URL encoding), and `Display`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
     * [custom_commands.rs](src/handlers/custom_commands.rs): `run_bound_command` — resolves the highlighted row's template values, runs the custom command through `editor::suspend_while` (or a background thread) and logs the outcome.
+    * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle). Every mutation goes through `spawn_todo_change`, which reports `Event::TodoChanged`.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
@@ -147,6 +149,10 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Non-error feedback goes through `App::show_notice(text)`, the only way to set `App::status_message` (`StatusMessage` in [src/app.rs](src/app.rs)), rendered muted in the header bar until `STATUS_NOTICE_LIFETIME` passes. Stale data is tracked per tab in `App::stale_tabs` (`Tab → StaleData`) and drawn as a red badge next to the notice only while that tab is active: `App::mark_cached_tabs_stale` flags every tab filled from the offline cache, a `FetchFailed` over cached rows flags its tab `RefreshFailed` instead of toasting, and only that tab's own `*Fetched` arm clears it. Because of that, only list refreshes send `FetchFailed`: other background failures send `CommandCompleted(Err)`, and background successes send `Event::Notice`.
 * Background mutations never discard their `Result`. Optimistic pipeline/job status flips go through `run_optimistic_mutation` ([src/handlers/tabs.rs](src/handlers/tabs.rs)): failed rows are restored via `PipelineStatusRevert`/`JobStatusRevert`, and all failures surface as one `CommandCompleted(Err)` toast. A failed fetch sends exactly one error event.
 
+### Jobs Tab (current branch)
+* `fetch::fetch_current_branch_jobs` reads the branch with `git_helpers::get_current_branch`, then asks `Backend::find_branch_pipeline_id` for the newest pipeline of that branch (on GitLab also its open MR's `refs/merge-requests/<iid>/head` pipeline). Never list every MR or pipeline to find it.
+* Starting a manual job is GitLab only. On GitHub the `start_job` key is omitted from the help overlay and does nothing when pressed (it is still consumed, so the custom-command shadow report stays accurate).
+
 ### Rate Limiting (`src/backend/rate_limit.rs`)
 * `ApiRateLimiter` is a global (`RATE_LIMITER`) that shields every `glab`/`gh` CLI call from HTTP 429 and GitLab GraphQL rate-limit errors.
 * Backend command execution delegates to `rate_limit::execute_with_retry` (used by both `GlabBackend` and `GhBackend`), which:
@@ -195,6 +201,13 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * `MergeRequest` carries `approval` and `mergeability` as `Option<…>` and a `#[serde(skip)]` derived `workflow`. After any load (live fetch or cache read), call `derive_workflow()` in [src/fetch.rs](src/fetch.rs) to recompute `workflow` from approval state — cached rows deserialize with it unset even though the approval state it reads was persisted.
 * **Rebase gating:** `rebase_gate()` in [src/domain/mr_state.rs](src/domain/mr_state.rs) decides whether `R` may rebase — `Allowed`, `ResolveLocally` (conflicts), or `NotNeeded` — surfaced as a confirm popup or a user-facing error toast. Revoking approval (`A`) is GitLab-only; `gh pr review` has no revoke path.
 
+### Todos Tab (GitLab Todos / GitHub Notifications)
+* The read filter lives on `GitlabClient::show_read_notifications` (default `false`, unread only) so every refresh path fetches with it. `App::toggle_show_read_todos` flips it and `Event::TodosFetched` carries the filter it was requested with, so a list fetched before a toggle is dropped.
+* Mutations report `Event::TodoChanged(TodoChange, Result)`. On success `App::apply_todo_change` updates `app.todos` in place (no refetch): read and done items are restated while the tab shows them and dropped otherwise, and GitHub's done notifications always leave the list. On failure the error goes through `App::show_error`.
+* GitLab todos have no read state: `mark_notification_as_read` and `mark_notification_as_done` both run `glab todo done`.
+* `mark_as_read` and `Enter` share `handlers::todos::open_selected`. The jump resolves the target in the todo's own project (`Scope::contains_project`, `App::focus_issue` / `focus_mr` with `Some(project)`) and fetches it when unlisted. A todo outside the current scope, or whose target has no view in glab-tui, raises an error instead of landing on a same-numbered item, and stays unread: `jump_to_target` returns whether it had something to open, and only then is the todo marked read.
+* E2E coverage: `tests/e2e/todos.rs`, driven by `todo list` (`todos.json`) and `api todos?state=done` (`todos_done.json`) in `tests/mocks/glab`.
+
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
 * `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, `reviewed_files`, and `draft_comments` in addition to API data.
@@ -229,7 +242,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Dispatch happens in the last arm of the list-view fallback in `handle_active_tab_key`, so every built-in, configured or hard-wired, wins. `builtin_action()` in [src/custom_commands.rs](src/custom_commands.rs) mirrors that precedence to report shadowed keys; when you hard-wire a new list-view key, add it to `LIST_VIEW_CODE_KEYS` / `tab_hardwired_keys()` when the arm compares only `key_event.code` (any modifier is taken), or to `LIST_VIEW_EXACT_KEYS` / `tab_hardwired_exact_keys()` when it goes through `keybinding_matches` or checks modifiers. Pane-specific custom bindings win over universal ones.
 * A non-empty `selected_issues` / `selected_mrs` turns an `issues` / `mrs` command into a bulk run: `targets()` yields one `Target` per selected item (sorted by project and number), and all renderable runs execute inside one `editor::suspend_while` handoff. Each run is logged with `App::record_command_outcome`; failures raise a single summary toast via `App::raise_error_toast`.
 * `background = true` entries skip the handoff: `execute()` runs them on a thread with stdin/stdout detached (`Handoff::Background`) and sends `Event::CustomCommandFinished(RunReport)`; the main loop logs it through `report_runs()`, the same path terminal runs use. Stderr is always collected so a failure names its cause; it is only echoed to the screen for terminal runs. `detach_from_terminal()` starts background runs with `setsid(2)` (Unix): Go/termenv tools open `/dev/tty` and query the background colour even with stdio redirected, and the terminal's reply would otherwise arrive as keypresses. `tests/e2e/custom_keybindings.rs` guards this.
-* Feedback while a command works: a background run logs each rendered command as `Running` up front (`App::start_command`) and `report_runs()` settles those rows by index (`RunReport::log_rows`, `App::settle_command`); a terminal run prints `glab-tui: running "<label>": <command>` to stderr before starting, so a silent command does not leave a blank screen. Custom-command log rows start with `CUSTOM_COMMAND_LOG_PREFIX`, and the generic "most recent `Running` entry" fallbacks (`show_error`, `CommandCompleted`, `TerminalCommandLogged`) go through `App::latest_running_cli_command()`, which skips them so an unrelated completion cannot stamp a background command finished.
+* Feedback while a command works: a background run logs each rendered command as `Running` up front (`App::start_command`) and `report_runs()` settles those rows through their `LogRow` handles (`RunReport::log_rows`, `App::settle_command`); a terminal run prints `glab-tui: running "<label>": <command>` to stderr before starting, so a silent command does not leave a blank screen. Custom-command log rows start with `CUSTOM_COMMAND_LOG_PREFIX`, and the generic "most recent `Running` entry" fallbacks (`show_error`, `CommandCompleted`, `TerminalCommandLogged`) go through `App::latest_running_cli_command()`, which skips them so an unrelated completion cannot stamp a background command finished.
 * `render()` splices a value into `sh -c` only when it is a single plain word: it refuses values starting with `-` or `+` (vim/nvim/less run `+cmd` as a command, and `FilePath` comes from the PR diff) and values containing whitespace, control characters or a `SHELL_SIGNIFICANT_CHARACTERS` entry (quoting, substitution, separators, redirection, glob, brace/tilde expansion, `#`, `=`). Every value is also exported as `GLAB_TUI_<NAME>`, the only safe way to pass free text such as titles. Keep that guard when adding arguments.
 * Keys are parsed with `keybinding::binding_key_event`, the inverse of `keybinding_matches`; a key it rejects is reported as unbindable.
 
@@ -258,6 +271,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Value-based column filtering is available by pressing `Enter` on a focused column item, which opens a selector overlay with distinct values for that column.
 * Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
 * Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
+* **State filter → server state (GitHub repositories only):** the Issues and MRs/PRs State filter picks what `gh issue list` / `gh pr list` fetch. `App::state_filter_query` turns one selected state into a `StateQuery` ([src/domain/state_query.rs](src/domain/state_query.rs)). Two or more states, or no filter, give `All`. `Backend::server_state_query` decides what the server is asked for: GitHub narrows repository listings, while GitLab and GitHub org listings keep fetching every state. Every `spawn_refresh_active_tab` / `spawn_refresh_all_tabs` call passes `app.requested_state_queries()`. `IssuesFetched` / `MrsFetched` carry the query they were listed with. A result that does not cover the current filter is dropped, and `ProjectCache::issues_state_query` / `mrs_state_query` make `App::restore_cached_issues` / `restore_cached_mrs` skip cached rows listed for a narrower state. `fetch::dispatch_state_query_refetch` (on `Event::Tick`) refetches a loaded or loading tab once its requested query changes, whatever path edited the filter. While the server narrows, the State picker offers every state, so the user can switch to one that was not fetched.
 * When rendering the MR/PR pipeline status column, check `is_github` to display "Pipeline" (GitLab) or "Action" (GitHub) terminology.
 * MR/PR review-state columns (`Approval`, `Mergeable`, `Workflow`) are derived in [src/domain/mr_state.rs](src/domain/mr_state.rs).
 
@@ -298,18 +312,20 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
+| Current branch's pipeline (Jobs tab) | `glab ci list --output json -R <repo> --ref <branch> --per-page 1` and `glab mr list --output json -R <repo> --source-branch <branch> --per-page 1`, then `glab ci list … --ref refs/merge-requests/<iid>/head --per-page 1` when the branch has an open MR. Newest id wins | Single targeted calls, never a full MR or pipeline listing |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
 | List milestone issues | `glab issue list --milestone <title> --all --output json -R <repo> --per-page <N>` | Single call (`--milestone` filters by milestone **title**, not iid — resolved from the selected milestone at the call site) |
-| List todos | `glab todo list --output=json` | Single call |
+| List todos | `glab todo list --output=json` | Single call (done todos are added from the raw API only while the Todos tab shows read items) |
 | List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call (label colors feed the Labels column) |
 
 #### Mutations — Native Subcommands
 
 | Operation | Command |
 |---|---|
-| Update release | `glab release update <tag> -R <repo> -n <name> -N <desc>` |
+| Create release | `glab release create <tag> -R <repo> -n <name> -N <notes>` |
+| Update release | `glab release create <tag> -R <repo> -n <name> -N <desc>` (updates the existing release, since `glab release` has no `update` subcommand) |
 | Delete release | `glab release delete <tag> -R <repo> -y` |
 | Close/reopen milestone | `glab milestone close\|reopen <iid> -R <repo>` |
 | Update milestone | `glab milestone update <iid> -R <repo> --title ... --description ...` |
@@ -320,6 +336,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Start manual job | `glab ci retry <job_id> -R <repo>` |
 | Run pipeline (variables/inputs) | `glab ci run [--branch <ref>] [--mr] [--variables k:v ...] [--input k:v ...]` |
 | Mark todo done | `glab todo done <id>` |
+| Mark all todos done | `glab todo done --all` |
+| Unsubscribe from a todo's issue/MR | `glab issue\|mr unsubscribe <iid> -R <project>` |
 | Revoke MR approval | `glab mr revoke <iid> -R <repo>` |
 | Rebase MR | `glab mr rebase <iid> -R <repo>` |
 | MR diff refs (review anchors) | `glab mr view <iid> --output json -R <repo>` (`diff_refs`) |
@@ -358,13 +376,14 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Command | Pagination |
 |---|---|---|
-| List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10) |
+| List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10). `<s>` is `open` / `closed` when the State filter selects exactly that state, otherwise `all` |
 | Get single issue | `gh issue view <iid> --json ... -R <repo>` | N/A |
-| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call; the JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
+| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call. `<s>` is `open` / `merged` / `closed` when the State filter selects exactly that state, otherwise `all`. `closed` also returns merged PRs, which the State filter hides. The JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
 | Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
+| Current branch's run (Jobs tab) | `gh run list -R <repo> --branch <branch> --limit 1 --json databaseId` | Single call. PR runs carry the head branch |
 | List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
@@ -378,6 +397,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Retry run | `gh run rerun <id> -R <repo>` |
 | Cancel run | `gh run cancel <id> -R <repo>` |
 | Retry job | `gh run rerun --job <id> -R <repo>` |
+| Create release | `gh release create <tag> -R <repo> -t <name> -n <notes>` |
 | Update release | `gh release edit <tag> -R <repo> -t <name> -n <desc>` |
 | Delete release | `gh release delete <tag> -R <repo> -y` |
 | Update milestone state | `gh api -X PATCH repos/{}/milestones/{} -f state=...` |
@@ -398,6 +418,9 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
 | List notifications | `GET notifications[?all=true]` | No `gh notification` command |
 | Mark notification read | `PATCH notifications/threads/{}` | No native command |
+| Mark notification done | `DELETE notifications/threads/{}` | No native command |
+| Mark all notifications read | `PUT notifications` | No native command |
+| Unsubscribe from notification thread | `DELETE notifications/threads/{}/subscription` | No native command |
 | List branches | `GET /repos/{}/branches?per_page=<N>` | No native command |
 | Create branch | `POST /repos/{}/git/refs` | No native command |
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |
@@ -429,7 +452,6 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --squash --remove-source-branch --yes` (the `--yes` flag skips the CLI's interactive confirmation; multiple selected MRs are merged in sequence through `Backend::merge_mr`) |
 | Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
 | Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
-| Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |
 | Create milestone | `gh api POST repos/{}/milestones -f title=...` / `glab api POST projects/{}/milestones -f title=...` |
 | Create branch | `glab api POST ...repository/branches` / `gh api POST ...git/refs` |
 | Delete branch | `glab api DELETE ...repository/branches/{}` / `gh api DELETE ...git/refs/heads/{}` |

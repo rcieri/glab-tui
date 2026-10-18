@@ -3,6 +3,7 @@
 pub mod app;
 pub mod backend;
 pub mod cli;
+pub mod command_log;
 pub mod config;
 pub mod custom_commands;
 pub mod domain;

@@ -24,7 +24,7 @@ fn runners_tab_renders_typed_columns_and_filters_through_the_view() {
         screen.contains("ONLINE"),
         "status cell shows the display text"
     );
-    assert!(screen.contains("true"), "active cell shows the raw flag");
+    assert!(screen.contains("YES"), "active cell shows the display text");
 
     session.send_input(b"/");
     session.send_input(b"no such runner");

@@ -376,7 +376,6 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                 if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
                     let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
                     app.click_active_table_row(row_idx);
-                    return;
                 }
             }
         }
@@ -694,8 +693,8 @@ fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &Eve
 
     let cache = crate::utils::cache::load_cache(app.scope.as_str());
     app.project_cache = cache.clone();
-    app.issues.items = cache.issues;
-    app.mrs.items = cache.mrs;
+    app.restore_cached_issues(cache.issues, cache.issues_state_query);
+    app.restore_cached_mrs(cache.mrs, cache.mrs_state_query);
     crate::fetch::derive_workflow(&mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
     app.runners.set_items(cache.runners);
@@ -770,11 +769,13 @@ fn apply_client_ready(
     }
 
     let tx = app.scoped_sender(tx);
-    spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+    let states = app.requested_state_queries();
+    spawn_refresh_active_tab(&client, &app.scope, states, app.active_tab, tx.clone());
     if app.config.prefetch_tabs {
         spawn_refresh_all_tabs(
             &client,
             &app.scope,
+            states,
             app.active_tab,
             app.available_tabs(),
             app.loaded_tabs.clone(),
@@ -905,9 +906,9 @@ async fn main() -> Result<()> {
     // Load offline cache
     let cache = crate::utils::cache::load_cache(app.scope.as_str());
     app.project_cache = cache.clone();
-    app.issues.items = cache.issues;
+    app.restore_cached_issues(cache.issues, cache.issues_state_query);
     app.rebuild_milestone_progress_cache();
-    app.mrs.items = cache.mrs;
+    app.restore_cached_mrs(cache.mrs, cache.mrs_state_query);
     // workflow is #[serde(skip)] — cached rows arrive with it unset even
     // though the approval state it derives from was persisted and just
     // loaded above.
@@ -980,13 +981,20 @@ async fn main() -> Result<()> {
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+        spawn_refresh_active_tab(
+            &client,
+            &app.scope,
+            app.requested_state_queries(),
+            app.active_tab,
+            tx.clone(),
+        );
         // If configured, queue background fetches for remaining enabled tabs
         // so a quick tab-switch lands on already-populated data.
         if app.config.prefetch_tabs {
             spawn_refresh_all_tabs(
                 &client,
                 &app.scope,
+                app.requested_state_queries(),
                 app.active_tab,
                 app.available_tabs(),
                 app.loaded_tabs.clone(),
@@ -996,11 +1004,12 @@ async fn main() -> Result<()> {
         spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        app.terminal_commands.push(crate::app::TerminalCommand {
-            timestamp,
-            command: "Initialization: gitlab client".to_string(),
-            status: "Failed: Failed to initialize GitLab client".to_string(),
-        });
+        app.terminal_commands
+            .push(crate::command_log::TerminalCommand {
+                timestamp,
+                command: "Initialization: gitlab client".to_string(),
+                status: "Failed: Failed to initialize GitLab client".to_string(),
+            });
         app.show_error("Failed to initialize GitLab client".to_string());
     }
 
@@ -1009,11 +1018,12 @@ async fn main() -> Result<()> {
         let switchable = crate::utils::cache::get_switchable_repos();
         if !switchable.is_empty() {
             let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-            app.terminal_commands.push(crate::app::TerminalCommand {
-                timestamp,
-                command: "Startup: Not in a git repository".to_string(),
-                status: "Failed: No repo detected — select one below or press Esc".to_string(),
-            });
+            app.terminal_commands
+                .push(crate::command_log::TerminalCommand {
+                    timestamp,
+                    command: "Startup: Not in a git repository".to_string(),
+                    status: "Failed: No repo detected — select one below or press Esc".to_string(),
+                });
             let mut switch_repo_paths = std::collections::HashMap::new();
             for entry in &switchable {
                 switch_repo_paths.insert(entry.display.clone(), entry.absolute_path.clone());
@@ -1252,6 +1262,11 @@ async fn main() -> Result<()> {
                             &mut app,
                             &events.sender(),
                         );
+                        crate::fetch::dispatch_state_query_refetch(
+                            &client,
+                            &mut app,
+                            &events.sender(),
+                        );
                         let _ = crate::fetch::dispatch_inspected_pr_stack_fetch(
                             &client,
                             &mut app,
@@ -1312,6 +1327,7 @@ async fn main() -> Result<()> {
                                     spawn_refresh_active_tab(
                                         &client.muted(),
                                         &app.scope,
+                                        app.requested_state_queries(),
                                         app.active_tab,
                                         app.scoped_sender(events.sender()),
                                     );
@@ -1385,6 +1401,7 @@ async fn main() -> Result<()> {
                 }
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
+                    app.status_message = None;
                     app.loaded_tabs.insert(app::Tab::Jobs);
                     app.jobs.items = jobs;
                     app.active_pipeline_id = Some(pipeline_id);
@@ -1444,7 +1461,14 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                Event::IssuesFetched(issues) => {
+                // Listed before the State filter widened: showing these rows
+                // would pass a narrower list off as the wider view. The
+                // refetch the filter change started replaces them.
+                Event::IssuesFetched(listed, _)
+                    if !app.covers_state_filter(app::Tab::Issues, listed) => {}
+                Event::MrsFetched(listed, _)
+                    if !app.covers_state_filter(app::Tab::MergeRequests, listed) => {}
+                Event::IssuesFetched(listed, issues) => {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
                     app.loaded_tabs.insert(app::Tab::Issues);
                     app.refreshed_tabs.insert(app::Tab::Issues);
@@ -1458,9 +1482,10 @@ async fn main() -> Result<()> {
                     app.update_filter_selection();
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
+                    app.project_cache.issues_state_query = listed;
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
-                Event::MrsFetched(mrs) => {
+                Event::MrsFetched(listed, mrs) => {
                     app.complete_loading_tab(app::Tab::MergeRequests, "Success");
                     app.loaded_tabs.insert(app::Tab::MergeRequests);
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
@@ -1487,14 +1512,20 @@ async fn main() -> Result<()> {
                         &events.sender(),
                     );
                     app.project_cache.mrs = app.mrs.items.clone();
+                    app.project_cache.mrs_state_query = listed;
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::IssueFetched(iid, Ok(issue)) => {
-                    if !app.issues.items.iter().any(|i| i.iid == iid) {
+                    let project = issue.project_path.clone();
+                    let is_listed =
+                        app.issues.items.iter().any(|i| {
+                            i.iid == iid && app.is_listed_in(&i.project_path, Some(&project))
+                        });
+                    if !is_listed {
                         app.issues.items.push(*issue);
                         app.update_filter_selection();
                     }
-                    app.focus_issue(None, iid);
+                    app.focus_issue(Some(&project), iid);
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -1503,12 +1534,17 @@ async fn main() -> Result<()> {
                     app.show_error(format!("Failed to fetch issue #{iid}: {err}"));
                 }
                 Event::MrFetched(iid, Ok(mr)) => {
-                    if !app.mrs.items.iter().any(|m| m.iid == iid) {
+                    let project = mr.project_path.clone();
+                    let is_listed =
+                        app.mrs.items.iter().any(|m| {
+                            m.iid == iid && app.is_listed_in(&m.project_path, Some(&project))
+                        });
+                    if !is_listed {
                         app.mrs.items.push(*mr);
                         app.apply_pr_stacks();
                         app.update_filter_selection();
                     }
-                    app.focus_mr(None, iid);
+                    app.focus_mr(Some(&project), iid);
                     crate::handlers::tabs::maybe_fetch_mr_related_issues(
                         &mut app,
                         &events.sender(),
@@ -1597,15 +1633,26 @@ async fn main() -> Result<()> {
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
-                Event::TodosFetched(notifs) => {
+                Event::TodosFetched { show_read, .. } if show_read != app.shows_read_todos() => {}
+                Event::TodosFetched { notifications, .. } => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
                     app.loaded_tabs.insert(app::Tab::Todos);
                     app.refreshed_tabs.insert(app::Tab::Todos);
                     app.stale_tabs.remove(&app::Tab::Todos);
-                    app.todos.items = notifs;
+                    app.todos.items = notifications;
                     app.update_filter_selection();
                     app.project_cache.todos = app.todos.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::TodoChanged(change, Ok(())) => {
+                    app.apply_todo_change(&change);
+                    app.project_cache.todos = app.todos.items.clone();
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::TodoChanged(change, Err(err)) => {
+                    app.show_error(change.failure_message(app.kind(), &err));
+                    // CLI failure: full stderr is in the terminal log.
+                    app.error_has_cli_detail = true;
                 }
                 Event::RunnersFetched(runners) => {
                     app.complete_loading_tab(app::Tab::Runners, "Success");
@@ -1707,8 +1754,9 @@ async fn main() -> Result<()> {
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.status_message = None;
-                    if let Some(tag) = app.pending_delete_release_tag.take() {
-                        app.releases.retain(|r| r.tag_name != tag);
+                    if let Some((project, tag)) = app.pending_delete_release.take() {
+                        app.releases
+                            .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
                     }
                     app.project_cache.releases = app.releases.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -1725,6 +1773,7 @@ async fn main() -> Result<()> {
                         spawn_refresh_active_tab(
                             &client,
                             &app.scope,
+                            app.requested_state_queries(),
                             app::Tab::Issues,
                             app.scoped_sender(events.sender()),
                         );
@@ -1741,6 +1790,7 @@ async fn main() -> Result<()> {
                         spawn_refresh_active_tab(
                             &client,
                             &app.scope,
+                            app.requested_state_queries(),
                             app::Tab::MergeRequests,
                             app.scoped_sender(events.sender()),
                         );
@@ -2091,12 +2141,11 @@ async fn main() -> Result<()> {
                     }
                     app.last_fetched_mr_iid = Some(mr_iid);
                     app.in_review_mode = true;
-                    if let Some(pos) = app
+                    if let Some(row) = app
                         .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
+                        .find_latest(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
                     {
-                        app.terminal_commands[pos].status = "Success".to_string();
+                        app.terminal_commands.set_status(row, "Success".to_string());
                     }
                 }
                 Event::CustomCommandFinished(report) => {
@@ -2113,37 +2162,39 @@ async fn main() -> Result<()> {
                     status,
                 } => {
                     if status == "Running" {
-                        app.terminal_commands.push(crate::app::TerminalCommand {
-                            timestamp,
-                            command,
-                            status,
-                        });
-                    } else if let Some(pos) = app
+                        app.terminal_commands
+                            .push(crate::command_log::TerminalCommand {
+                                timestamp,
+                                command,
+                                status,
+                            });
+                    } else if let Some(row) = app
                         .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.command == command && cmd.status == "Running")
+                        .find_latest(|cmd| cmd.command == command && cmd.status == "Running")
                     {
-                        app.terminal_commands[pos].status = status;
-                    } else if let Some(pos) = app.latest_running_cli_command() {
+                        app.terminal_commands.set_status(row, status);
+                    } else if let Some(row) = app.latest_running_cli_command() {
                         // fallback: update most recent Running entry when
                         // command strings differ (e.g. CommandStarted vs backend log)
-                        app.terminal_commands[pos].status = status;
+                        app.terminal_commands.set_status(row, status);
                     } else {
-                        app.terminal_commands.push(crate::app::TerminalCommand {
-                            timestamp,
-                            command,
-                            status,
-                        });
+                        app.terminal_commands
+                            .push(crate::command_log::TerminalCommand {
+                                timestamp,
+                                command,
+                                status,
+                            });
                     }
                 }
                 Event::CommandStarted(msg) => {
                     app.show_notice(msg.clone());
                     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                    app.terminal_commands.push(crate::app::TerminalCommand {
-                        timestamp,
-                        command: msg,
-                        status: "Running".to_string(),
-                    });
+                    app.terminal_commands
+                        .push(crate::command_log::TerminalCommand {
+                            timestamp,
+                            command: msg,
+                            status: "Running".to_string(),
+                        });
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     app.sync_list_views();
@@ -2151,8 +2202,8 @@ async fn main() -> Result<()> {
                 }
                 Event::CommandCompleted(tab, res) => {
                     if res.is_ok() {
-                        if let Some(pos) = app.latest_running_cli_command() {
-                            app.terminal_commands[pos].status = "Success".to_string();
+                        if let Some(row) = app.latest_running_cli_command() {
+                            app.terminal_commands.set_status(row, "Success".to_string());
                         }
                     }
                     match res {
@@ -2164,6 +2215,7 @@ async fn main() -> Result<()> {
                                 spawn_refresh_active_tab(
                                     &client.muted(),
                                     &app.scope,
+                                    app.requested_state_queries(),
                                     tab,
                                     app.scoped_sender(events.sender()),
                                 );
@@ -2229,13 +2281,6 @@ async fn main() -> Result<()> {
                 Event::JobStatusRevert { job_id, status } => {
                     if let Some(job) = app.jobs.items.iter_mut().find(|j| j.id() == job_id) {
                         job.status = status;
-                    }
-                }
-                Event::TodoMarkedRead(todo_id) => {
-                    if let Some(todo) = app.todos.items.iter_mut().find(|t| t.id == todo_id) {
-                        todo.mark_read();
-                        app.project_cache.todos = app.todos.items.clone();
-                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                     }
                 }
                 Event::Mouse(mouse_event) => {
@@ -2330,6 +2375,7 @@ async fn main() -> Result<()> {
                                                     spawn_refresh_active_tab(
                                                         &client,
                                                         &app.scope,
+                                                        app.requested_state_queries(),
                                                         app.active_tab,
                                                         app.scoped_sender(events.sender()),
                                                     );
@@ -2461,151 +2507,6 @@ async fn main() -> Result<()> {
                                         } else {
                                             app.error_message =
                                                 Some("Invalid pipeline ID".to_string());
-                                        }
-                                    }
-                                    crate::app::TextInputAction::CreateRelease => {
-                                        if !value.trim().is_empty() {
-                                            let tag_name = value.trim().to_string();
-                                            let tx = events.sender();
-                                            let is_github = app.is_github();
-                                            let program = if is_github { "gh" } else { "glab" };
-                                            let _ = tx.send(Event::CommandStarted(format!(
-                                                "Creating Release: {program} release create {tag_name}"
-                                            )));
-                                            let active_tab = app.active_tab;
-                                            tokio::spawn(async move {
-                                                let last_tag = if let Ok(output) =
-                                                    tokio::process::Command::new("git")
-                                                        .args(["describe", "--tags", "--abbrev=0"])
-                                                        .output()
-                                                        .await
-                                                {
-                                                    let t = String::from_utf8_lossy(&output.stdout)
-                                                        .trim()
-                                                        .to_string();
-                                                    if t.is_empty() { None } else { Some(t) }
-                                                } else {
-                                                    None
-                                                };
-
-                                                let log_args = if let Some(ref tag) = last_tag {
-                                                    vec![
-                                                        "log".to_string(),
-                                                        format!("{}..HEAD", tag),
-                                                        "--oneline".to_string(),
-                                                    ]
-                                                } else {
-                                                    vec!["log".to_string(), "--oneline".to_string()]
-                                                };
-
-                                                let commits = if let Ok(output) =
-                                                    tokio::process::Command::new("git")
-                                                        .args(&log_args)
-                                                        .output()
-                                                        .await
-                                                {
-                                                    String::from_utf8_lossy(&output.stdout)
-                                                        .lines()
-                                                        .map(|line| {
-                                                            let parts: Vec<&str> =
-                                                                line.splitn(2, ' ').collect();
-                                                            if parts.len() == 2 {
-                                                                format!(
-                                                                    "- {} ({})",
-                                                                    parts[1], parts[0]
-                                                                )
-                                                            } else {
-                                                                format!("- {line}")
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                        .join("\n")
-                                                } else {
-                                                    "".to_string()
-                                                };
-
-                                                let title_range = if let Some(ref tag) = last_tag {
-                                                    format!("Changes since {tag}")
-                                                } else {
-                                                    "All Changes".to_string()
-                                                };
-
-                                                let changelog = format!(
-                                                    "## Release Notes\n\n### {}\n\n{}\n",
-                                                    title_range,
-                                                    if commits.is_empty() {
-                                                        "- No changes found".to_string()
-                                                    } else {
-                                                        commits
-                                                    }
-                                                );
-
-                                                let temp_path = std::env::temp_dir().join(format!(
-                                                    "glab-tui-release-{tag_name}.md"
-                                                ));
-                                                if std::fs::write(&temp_path, &changelog).is_ok() {
-                                                    let temp_str =
-                                                        temp_path.to_string_lossy().to_string();
-
-                                                    let program =
-                                                        if is_github { "gh" } else { "glab" };
-                                                    let args = [
-                                                        "release", "create", &tag_name, "-F",
-                                                        &temp_str,
-                                                    ];
-
-                                                    let mut cmd =
-                                                        tokio::process::Command::new(program);
-                                                    cmd.args(args);
-
-                                                    match crate::backend::subprocess::output(
-                                                        &mut cmd, None,
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(output) => {
-                                                            let _ =
-                                                                std::fs::remove_file(&temp_path);
-                                                            if output.status.success() {
-                                                                let _ = tx.send(
-                                                                    Event::CommandCompleted(
-                                                                        active_tab,
-                                                                        Ok(()),
-                                                                    ),
-                                                                );
-                                                            } else {
-                                                                let err_msg =
-                                                                    String::from_utf8_lossy(
-                                                                        &output.stderr,
-                                                                    )
-                                                                    .trim()
-                                                                    .to_string();
-                                                                let _ = tx.send(
-                                                                    Event::CommandCompleted(
-                                                                        active_tab,
-                                                                        Err(format!(
-                                                                            "Command failed: {err_msg}"
-                                                                        )),
-                                                                    ),
-                                                                );
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                std::fs::remove_file(&temp_path);
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                active_tab,
-                                                                Err(format!("Failed to execute command: {e}")),
-                                                            ));
-                                                        }
-                                                    }
-                                                } else {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        active_tab,
-                                                        Err("Failed to write temporary changelog file".to_string()),
-                                                    ));
-                                                }
-                                            });
                                         }
                                     }
                                     crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
@@ -2995,8 +2896,14 @@ async fn main() -> Result<()> {
                                                     app.scope.as_str(),
                                                 );
                                                 app.project_cache = cache.clone();
-                                                app.issues.items = cache.issues;
-                                                app.mrs.items = cache.mrs;
+                                                app.restore_cached_issues(
+                                                    cache.issues,
+                                                    cache.issues_state_query,
+                                                );
+                                                app.restore_cached_mrs(
+                                                    cache.mrs,
+                                                    cache.mrs_state_query,
+                                                );
                                                 crate::fetch::derive_workflow(&mut app.mrs.items);
                                                 crate::fetch::sync_linked_references(
                                                     &mut app.issues.items,
@@ -3059,8 +2966,14 @@ async fn main() -> Result<()> {
                                                         app.scope.as_str(),
                                                     );
                                                     app.project_cache = cache.clone();
-                                                    app.issues.items = cache.issues;
-                                                    app.mrs.items = cache.mrs;
+                                                    app.restore_cached_issues(
+                                                        cache.issues,
+                                                        cache.issues_state_query,
+                                                    );
+                                                    app.restore_cached_mrs(
+                                                        cache.mrs,
+                                                        cache.mrs_state_query,
+                                                    );
                                                     // workflow is #[serde(skip)] — see the
                                                     // comment at the startup cache load.
                                                     crate::fetch::derive_workflow(
@@ -5330,7 +5243,11 @@ async fn main() -> Result<()> {
                                                 );
                                                 continue;
                                             };
-                                            let project = app.scope.as_str().to_string();
+                                            let project = if !menu.entity_project.is_empty() {
+                                                menu.entity_project.clone()
+                                            } else {
+                                                app.scope.as_str().to_string()
+                                            };
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             let _ = tx.send(Event::CommandStarted(format!(
@@ -7598,6 +7515,7 @@ async fn main() -> Result<()> {
                                                 spawn_refresh_active_tab(
                                                     &client,
                                                     &app.scope,
+                                                    app.requested_state_queries(),
                                                     app.active_tab,
                                                     app.scoped_sender(events.sender()),
                                                 );
@@ -7740,6 +7658,7 @@ async fn main() -> Result<()> {
                                     spawn_refresh_active_tab(
                                         &client,
                                         &app.scope,
+                                        app.requested_state_queries(),
                                         app.active_tab,
                                         app.scoped_sender(events.sender()),
                                     );
@@ -7801,6 +7720,7 @@ async fn main() -> Result<()> {
                                         spawn_refresh_active_tab(
                                             &client,
                                             &app.scope,
+                                            app.requested_state_queries(),
                                             app.active_tab,
                                             app.scoped_sender(events.sender()),
                                         );
@@ -7813,6 +7733,7 @@ async fn main() -> Result<()> {
                                         spawn_refresh_active_tab(
                                             &client,
                                             &app.scope,
+                                            app.requested_state_queries(),
                                             app.active_tab,
                                             app.scoped_sender(events.sender()),
                                         );

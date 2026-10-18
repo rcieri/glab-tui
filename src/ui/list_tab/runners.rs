@@ -69,7 +69,7 @@ impl ColumnDef for RunnerColumn {
                 Cow::Borrowed(row.description.as_deref().unwrap_or("No description"))
             }
             Self::Status => Cow::Borrowed(runner_status_display(&row.status)),
-            Self::Active => Cow::Borrowed(if row.active { "true" } else { "false" }),
+            Self::Active => Cow::Borrowed(crate::app::runner_active_display(row.active)),
         }
     }
 
@@ -114,11 +114,28 @@ impl ColumnDef for RunnerColumn {
                     Alignment::Center,
                 )
             }
-            Self::Active => fuzzy(
-                &self.text(row),
-                Style::default().fg(if row.active { theme.green } else { theme.red }),
-                Alignment::Left,
-            ),
+            Self::Active => {
+                let active_text = crate::app::runner_active_display(row.active);
+                let (active_text, active_style) = if row.active {
+                    (
+                        format!("{} {}", ctx.icons.check_on, active_text),
+                        Style::default()
+                            .fg(theme.green)
+                            .bg(if ctx.is_highlighted {
+                                theme.highlight_bg
+                            } else {
+                                theme.green_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    (
+                        active_text.to_string(),
+                        Style::default().fg(theme.text_muted),
+                    )
+                };
+                fuzzy(&active_text, active_style, Alignment::Center)
+            }
         }
     }
 
@@ -127,6 +144,19 @@ impl ColumnDef for RunnerColumn {
             Self::Id => SortKey::Number(row.id),
             Self::Description | Self::Status | Self::Active => {
                 SortKey::Text(self.text(row).into_owned())
+            }
+        }
+    }
+
+    fn matches_filter(self, row: &Runner, selected: &std::collections::HashSet<String>) -> bool {
+        match self {
+            Self::Active => {
+                let legacy = if row.active { "true" } else { "false" };
+                selected.contains(crate::app::runner_active_display(row.active))
+                    || selected.contains(legacy)
+            }
+            Self::Id | Self::Description | Self::Status => {
+                crate::app::column_filter_matches(self.label(), &self.filter_values(row), selected)
             }
         }
     }

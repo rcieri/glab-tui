@@ -7,7 +7,14 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct ProjectCache {
     pub issues: Vec<crate::domain::issues::Issue>,
+    /// The states `issues` were listed for. Caches written before this field
+    /// existed always listed every state.
+    #[serde(default)]
+    pub issues_state_query: crate::domain::state_query::StateQuery,
     pub mrs: Vec<crate::domain::mr::MergeRequest>,
+    /// The states `mrs` were listed for.
+    #[serde(default)]
+    pub mrs_state_query: crate::domain::state_query::StateQuery,
     pub pipelines: Vec<crate::domain::pipelines::Pipeline>,
     pub runners: Vec<crate::domain::runners::Runner>,
     pub releases: Vec<crate::domain::releases::Release>,
@@ -496,6 +503,28 @@ mod tests {
 
         assert_eq!(deserialized.labels[0], "bug");
         assert_eq!(deserialized.members[1], "@user2");
+    }
+
+    #[test]
+    fn listed_state_queries_survive_a_save_and_old_caches_read_as_every_state() {
+        use crate::domain::state_query::StateQuery;
+
+        let cache = ProjectCache {
+            issues_state_query: StateQuery::Closed,
+            mrs_state_query: StateQuery::Merged,
+            ..ProjectCache::default()
+        };
+        let reloaded: ProjectCache =
+            serde_json::from_str(&serde_json::to_string(&cache).unwrap()).unwrap();
+        assert_eq!(reloaded.issues_state_query, StateQuery::Closed);
+        assert_eq!(reloaded.mrs_state_query, StateQuery::Merged);
+
+        let before_state_queries = r#"{"issues":[],"mrs":[],"pipelines":[],"runners":[],
+            "releases":[],"todos":[],"milestones":[],"pipeline_jobs":{},"branches":[],
+            "environments":[]}"#;
+        let old: ProjectCache = serde_json::from_str(before_state_queries).unwrap();
+        assert_eq!(old.issues_state_query, StateQuery::All);
+        assert_eq!(old.mrs_state_query, StateQuery::All);
     }
 
     #[test]

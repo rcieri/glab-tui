@@ -391,6 +391,206 @@ fn trace_editor_key_hands_the_fetched_trace_to_a_multi_word_non_blocking_editor(
     );
 }
 
+fn checked_out_branch(session: &TestSession) -> String {
+    let output = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .current_dir(&session.sandbox.repo_dir)
+        .output()
+        .expect("git runs in the sandbox repository");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Opens the Jobs tab once the Pipelines tab has settled and returns the CLI
+/// log length before the switch, so a test can read only the Jobs fetch.
+fn open_jobs_tab(session: &mut TestSession) -> usize {
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 5000)
+        .expect("the pipeline list is loaded");
+    session.settle(500);
+    let calls_before = session.get_cli_calls().len();
+    session.send_input(b"l");
+    session.settle(1500);
+    calls_before
+}
+
+/// The Jobs tab finds the checked-out branch's pipeline with queries scoped
+/// to that branch. Listing every MR and every pipeline of the project to pick
+/// one out was the cost the Jobs tab paid on every open.
+#[test]
+fn test_jobs_tab_queries_only_the_branch_pipeline() {
+    let mut session = TestSession::new(false, 24, 100);
+    let calls_before = open_jobs_tab(&mut session);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the branch pipeline's jobs are listed");
+
+    let branch = checked_out_branch(&session);
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(&format!(
+            "glab ci list --output json -R test-owner/test-repo --ref {branch} --per-page 1"
+        )),
+        "the branch pipeline is looked up by ref:\n{calls}"
+    );
+    assert!(
+        calls.contains(&format!(
+            "glab mr list --output json -R test-owner/test-repo --source-branch {branch} --per-page 1"
+        )),
+        "the branch MR is looked up by source branch:\n{calls}"
+    );
+    assert!(
+        !calls.contains("/pipelines?per_page") && !calls.contains("--page "),
+        "no project-wide pipeline or MR listing:\n{calls}"
+    );
+}
+
+/// A branch with an open MR whose CI only runs merge-request pipelines has
+/// its newest pipeline on `refs/merge-requests/<iid>/head`. The Jobs tab
+/// loads that one when it is newer than the branch pipeline.
+#[test]
+fn test_jobs_tab_loads_the_newer_merge_request_pipeline() {
+    let mut session = TestSession::new(false, 24, 100);
+    let calls_before = open_jobs_tab(&mut session);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the MR pipeline's jobs are listed");
+
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(
+            "glab ci list --output json -R test-owner/test-repo --ref refs/merge-requests/2/head --per-page 1"
+        ),
+        "the open MR's head pipeline is looked up:\n{calls}"
+    );
+    assert!(
+        calls.contains("/pipelines/99999/jobs"),
+        "the newer MR pipeline's jobs are fetched:\n{calls}"
+    );
+    assert!(
+        !calls.contains("/pipelines/12345/jobs"),
+        "the older branch pipeline is not loaded:\n{calls}"
+    );
+}
+
+/// Selecting a stage confirms on screen how many jobs it took. The message
+/// used to be written to a field nothing rendered. Clearing the selection
+/// clears it too, so the header never claims a selection the table lacks.
+#[test]
+fn test_select_stage_shows_confirmation_until_the_selection_is_cleared() {
+    let mut session = TestSession::new(false, 24, 100);
+    open_jobs_tab(&mut session);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the branch pipeline's jobs are listed");
+
+    session.send_input(b"s");
+    session
+        .wait_for_screen_contains("Selected all jobs in stage 'test'", 3000)
+        .expect("select-stage feedback is visible");
+
+    session.send_input(b"\x1b");
+    session.settle(1000);
+    assert!(
+        !session
+            .emulator
+            .get_text()
+            .contains("Selected all jobs in stage"),
+        "Esc clears the selection and its message:\n{}",
+        session.emulator.get_text()
+    );
+}
+
+/// GitHub has no way to start a manual job, so the help does not offer the
+/// key there. GitHub finds the branch run with one `gh run list --branch`.
+#[test]
+fn test_github_jobs_tab_does_not_offer_start_job() {
+    let mut session = TestSession::new(true, 60, 100);
+    let calls_before = open_jobs_tab(&mut session);
+
+    let branch = checked_out_branch(&session);
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(&format!(
+            "gh run list -R test-owner/test-repo --branch {branch} --limit 1 --json databaseId"
+        )),
+        "the branch run is looked up by branch:\n{calls}"
+    );
+
+    session.send_input(b"?");
+    session
+        .wait_for_screen_contains("Select all jobs in stage", 3000)
+        .expect("the Jobs help is shown");
+    assert!(
+        !session.emulator.get_text().contains("Start manual job"),
+        "start job is not offered on GitHub"
+    );
+}
+
+#[test]
+fn test_gitlab_jobs_help_offers_start_job() {
+    let mut session = TestSession::new(false, 60, 100);
+    open_jobs_tab(&mut session);
+
+    session.send_input(b"?");
+    session
+        .wait_for_screen_contains("Start manual job", 3000)
+        .expect("start job is offered on GitLab");
+}
+
+/// The Terminal tab's log is narrowed by the standard search bar and emptied
+/// by the clear key. The log otherwise grows for the whole session with no
+/// way to find one command in it or start over.
+#[test]
+fn test_terminal_log_filters_with_search_and_clears() {
+    let mut session = TestSession::new(false, 30, 160);
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+
+    // Visiting Merge Requests logs a second command next to the issues fetch.
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("glab mr list", 5000)
+        .expect("the MR fetch is logged");
+
+    // Merge Requests -> Issues -> wraps back to the last tab, Terminal.
+    session.send_input(b"hh");
+    session
+        .wait_for_screen_contains("┌ Terminal ─", 5000)
+        .expect("the Terminal tab opens");
+    session
+        .wait_for_screen_contains("glab issue list", 5000)
+        .expect("the issues fetch is in the log");
+
+    session.send_input(b"/mr list\r");
+    session
+        .wait_for_screen_contains("┌ Terminal [", 5000)
+        .expect("the title counts the entries the search keeps");
+    session.settle(300);
+    let text = session.emulator.get_text();
+    assert!(text.contains("glab mr list"), "{text}");
+    assert!(
+        !text.contains("glab issue list"),
+        "the search drops entries that do not match: {text}"
+    );
+
+    session.send_input(b"\x1b");
+    session
+        .wait_for_screen_contains("glab issue list", 5000)
+        .expect("Esc clears the search and brings the full log back");
+
+    session.send_input(b"C");
+    session.settle(500);
+    let text = session.emulator.get_text();
+    assert!(
+        !text.contains("glab issue list") && !text.contains("glab mr list"),
+        "the clear key empties the log: {text}"
+    );
+}
 // --- Tier 1: Feature Coverage (5 cases) ---
 
 #[test]

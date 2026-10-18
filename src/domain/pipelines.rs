@@ -272,6 +272,17 @@ pub async fn list_pipelines(
         .await
 }
 
+pub async fn find_branch_pipeline_id(
+    client: &GitlabClient,
+    project_path: &str,
+    branch: &str,
+) -> Result<Option<u64>> {
+    client
+        .backend
+        .find_branch_pipeline_id(project_path, branch)
+        .await
+}
+
 pub async fn list_pipeline_jobs(
     client: &GitlabClient,
     project_path: &str,

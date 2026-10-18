@@ -29,6 +29,21 @@ impl Scope {
         matches!(self, Scope::Repository(_))
     }
 
+    /// Whether `project` is the repository in scope, or a project inside the
+    /// group in scope (subgroups included). Paths compare case-insensitively,
+    /// as GitLab and GitHub both treat them.
+    pub fn contains_project(&self, project: &str) -> bool {
+        match self {
+            Scope::Repository(repo) => repo.eq_ignore_ascii_case(project),
+            Scope::Group(group) => {
+                project
+                    .get(..group.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(group))
+                    && project[group.len()..].starts_with('/')
+            }
+        }
+    }
+
     pub fn cli_repo_arg(&self) -> Option<(&str, &str)> {
         match self {
             Scope::Repository(s) => Some(("-R", s.as_str())),
@@ -67,5 +82,28 @@ impl Default for Scope {
 impl std::fmt::Display for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Scope;
+
+    #[test]
+    fn repository_scope_contains_only_its_own_project() {
+        let scope = Scope::Repository("Owner/Repo".to_string());
+        assert!(scope.contains_project("owner/repo"));
+        assert!(!scope.contains_project("owner/repo-fork"));
+        assert!(!scope.contains_project("other/repo"));
+    }
+
+    #[test]
+    fn group_scope_contains_projects_of_the_group_and_its_subgroups() {
+        let scope = Scope::Group("acme".to_string());
+        assert!(scope.contains_project("acme/api"));
+        assert!(scope.contains_project("ACME/platform/api"));
+        assert!(!scope.contains_project("acme"));
+        assert!(!scope.contains_project("acme-labs/api"));
+        assert!(!scope.contains_project("other/acme/api"));
     }
 }

@@ -27,8 +27,16 @@ pub enum Event {
         scope: crate::scope::Scope,
         result: Result<crate::domain::client::GitlabClient, String>,
     },
-    IssuesFetched(Vec<crate::domain::issues::Issue>),
-    MrsFetched(Vec<crate::domain::mr::MergeRequest>),
+    /// Issues listed with the given state query.
+    IssuesFetched(
+        crate::domain::state_query::StateQuery,
+        Vec<crate::domain::issues::Issue>,
+    ),
+    /// MRs/PRs listed with the given state query.
+    MrsFetched(
+        crate::domain::state_query::StateQuery,
+        Vec<crate::domain::mr::MergeRequest>,
+    ),
     PipelinesFetched(Vec<crate::domain::pipelines::Pipeline>),
     RunnersFetched(Vec<crate::domain::runners::Runner>),
     ReleasesFetched(Vec<crate::domain::releases::Release>),
@@ -54,7 +62,13 @@ pub enum Event {
         comments: Vec<crate::domain::mr::DiscussionNote>,
     },
     DiffFetchFailed(String),
-    TodosFetched(Vec<crate::domain::notifications::Notification>),
+    /// `show_read` is the filter the list was requested with. A result for a
+    /// filter the user has since toggled away from is stale.
+    TodosFetched {
+        notifications: Vec<crate::domain::notifications::Notification>,
+        show_read: bool,
+    },
+    TodoChanged(crate::domain::notifications::TodoChange, Result<(), String>),
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),
     CommandCompleted(crate::app::Tab, Result<(), String>),
@@ -133,8 +147,6 @@ pub enum Event {
         job_id: u64,
         status: String,
     },
-    /// The backend confirmed the todo/notification with this id as read.
-    TodoMarkedRead(String),
     /// A background fetch result, tagged with the scope generation that was
     /// current when the fetch started. Built only by `ScopedSender`.
     Scoped(ScopeGeneration, Box<Event>),
@@ -274,7 +286,10 @@ mod tests {
         let mut app = crate::app::App::default();
         let (tx, mut rx) = mpsc::unbounded_channel();
         app.scoped_sender(tx)
-            .send(Event::IssuesFetched(Vec::new()))
+            .send(Event::IssuesFetched(
+                crate::domain::state_query::StateQuery::All,
+                Vec::new(),
+            ))
             .expect("receiver is open");
 
         app.reset_on_scope_change();

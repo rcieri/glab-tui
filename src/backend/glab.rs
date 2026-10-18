@@ -7,11 +7,12 @@ use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, Trace
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, ensure_complete_diff};
-use crate::domain::notifications::Notification;
+use crate::domain::notifications::{Notification, NotificationTarget};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -313,8 +314,8 @@ async fn run_glab_command_inner(
             if let Some(tx) = &tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", e),
+                    command: format!("{label}: {cmd_str}"),
+                    status: format!("Failed: {e}"),
                 });
             }
             return Err(e.into());
@@ -442,6 +443,17 @@ fn merge_tolerating_partial_failure(
     Ok(merged)
 }
 
+/// First element of the JSON array a `glab … --output json` list printed.
+/// `glab` is written in Go, where an empty nil slice marshals to `null`.
+fn first_listed<T: serde::de::DeserializeOwned>(raw: &str) -> Result<Option<T>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let items: Option<Vec<T>> = serde_json::from_str(raw)?;
+    Ok(items.and_then(|items| items.into_iter().next()))
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -519,6 +531,61 @@ impl GlabBackend {
             desc.to_string(),
         )
         .await
+    }
+
+    /// Newest pipeline built for `git_ref`. `glab ci list` orders by id,
+    /// newest first, so the first row is the one wanted.
+    async fn find_latest_pipeline_id(&self, project: &str, git_ref: &str) -> Result<Option<u64>> {
+        #[derive(Deserialize)]
+        struct ListedPipeline {
+            id: u64,
+        }
+        let raw = self
+            .run_glab(
+                &[
+                    "ci",
+                    "list",
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                    "--ref",
+                    git_ref,
+                    "--per-page",
+                    "1",
+                ],
+                "Finding Branch Pipeline",
+            )
+            .await?;
+        let pipeline: Option<ListedPipeline> =
+            first_listed(&raw).context("parsing `glab ci list` output")?;
+        Ok(pipeline.map(|p| p.id))
+    }
+
+    async fn find_open_mr_iid(&self, project: &str, source_branch: &str) -> Result<Option<u64>> {
+        #[derive(Deserialize)]
+        struct ListedMr {
+            iid: u64,
+        }
+        let raw = self
+            .run_glab(
+                &[
+                    "mr",
+                    "list",
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                    "--source-branch",
+                    source_branch,
+                    "--per-page",
+                    "1",
+                ],
+                "Finding Branch MR",
+            )
+            .await?;
+        let mr: Option<ListedMr> = first_listed(&raw).context("parsing `glab mr list` output")?;
+        Ok(mr.map(|m| m.iid))
     }
 
     async fn run_glab_capped(
@@ -795,10 +862,13 @@ impl Backend for GlabBackend {
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>> {
+        // Only open-only listings are narrowed here. Closed and merged rows
+        // come with every state and the State column filter hides the rest.
+        let show_closed = state != StateQuery::Open;
         match scope {
             Scope::Repository(project) => {
                 let pages = page_count(page_size, per_request);
@@ -1054,10 +1124,13 @@ impl Backend for GlabBackend {
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
+        // Only open-only listings are narrowed here. Closed and merged rows
+        // come with every state and the State column filter hides the rest.
+        let show_closed = state != StateQuery::Open;
         match scope {
             Scope::Repository(project) => {
                 let pages = page_count(page_size, per_request);
@@ -1959,6 +2032,21 @@ impl Backend for GlabBackend {
         }
     }
 
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>> {
+        let (branch_pipeline, mr_iid) = tokio::try_join!(
+            self.find_latest_pipeline_id(project, branch),
+            self.find_open_mr_iid(project, branch),
+        )?;
+        let mr_pipeline = match mr_iid {
+            Some(iid) => {
+                let mr_head_ref = format!("refs/merge-requests/{iid}/head");
+                self.find_latest_pipeline_id(project, &mr_head_ref).await?
+            }
+            None => None,
+        };
+        Ok(branch_pipeline.max(mr_pipeline))
+    }
+
     async fn list_pipeline_jobs(
         &self,
         project: &str,
@@ -2277,6 +2365,7 @@ impl Backend for GlabBackend {
                     commit_id,
                     commit_title,
                     assets_link: r.assets_link,
+                    project_path: project.clone(),
                 }
             })
             .collect())
@@ -2629,6 +2718,40 @@ impl Backend for GlabBackend {
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         self.run_glab(&["todo", "done", id], "Marking Todo Done")
             .await?;
+        Ok(())
+    }
+
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()> {
+        self.mark_notification_as_read(id).await
+    }
+
+    async fn mark_all_notifications_as_read(&self) -> Result<()> {
+        self.run_glab(&["todo", "done", "--all"], "Marking All Todos Done")
+            .await?;
+        Ok(())
+    }
+
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()> {
+        let entity = match notification.target() {
+            Some(NotificationTarget::Issue) => "issue",
+            Some(NotificationTarget::MergeRequest) => "mr",
+            None => anyhow::bail!(
+                "unsubscribing from a {} todo is not supported on GitLab",
+                notification.target_type
+            ),
+        };
+        let iid = notification.target_iid.to_string();
+        self.run_glab(
+            &[
+                entity,
+                "unsubscribe",
+                &iid,
+                "-R",
+                &notification.project_path,
+            ],
+            "Unsubscribing",
+        )
+        .await?;
         Ok(())
     }
 

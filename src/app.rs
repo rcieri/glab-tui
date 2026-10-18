@@ -1,8 +1,10 @@
 use crate::backend::BackendKind;
+use crate::command_log::{CommandLog, LogRow, TerminalCommand};
 use crate::config::{Config, KeybindingConfig, THEME, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
+use crate::domain::state_query::{StateQueries, StateQuery};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::ui::list_tab::branches::BranchColumn;
 use crate::ui::list_tab::environments::EnvironmentColumn;
@@ -291,6 +293,16 @@ impl Tab {
             | Tab::Branches
             | Tab::Environments
             | Tab::Terminal => false,
+        }
+    }
+
+    /// Whether this tab's list can be fetched in `scope`. Runners are listed
+    /// per repository only, so in group scope the fetch could only fail on
+    /// every refresh.
+    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope) -> bool {
+        match self {
+            Tab::Runners => scope.is_repository(),
+            _ => true,
         }
     }
 
@@ -2781,7 +2793,6 @@ pub enum TextInputAction {
         end_old_line_num: Option<u32>,
     },
     EnterPipelineId,
-    CreateRelease,
     CreateMilestone,
     SubmitReviewFinal {
         mr_iid: u64,
@@ -3012,13 +3023,6 @@ impl DatePicker {
 /// Prefix of every terminal-log entry written for a custom keybinding.
 pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 
-#[derive(Debug, Clone)]
-pub struct TerminalCommand {
-    pub timestamp: String,
-    pub command: String,
-    pub status: String,
-}
-
 #[derive(Debug)]
 pub enum GroupItem {
     Header(String),
@@ -3067,7 +3071,8 @@ pub enum ConfirmAction {
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
     SubmitReview(u64),                // mr iid
-    CancelPipeline(u64),              // pipeline id
+    MarkAllTodosRead,
+    CancelPipeline(u64), // pipeline id
     CancelJobs { pipeline_id: u64, job_ids: Vec<u64> },
 }
 
@@ -3087,6 +3092,7 @@ impl ConfirmAction {
                 | Self::ReopenMr(_)
                 | Self::ReopenMilestone(_)
                 | Self::RevokeMr(_)
+                | Self::MarkAllTodosRead
                 | Self::CancelPipeline(_)
                 | Self::CancelJobs { .. }
         )
@@ -3342,9 +3348,9 @@ impl SubmitDialog {
     }
 
     /// Build the dialog for an action whose target carries no project of
-    /// its own (a release, a branch, a bulk merge whose items each name
-    /// theirs): it acts on the current scope. Actions on a listed issue, MR
-    /// or milestone go through [`Self::build_with_project`] instead.
+    /// its own (a branch, a bulk merge whose items each name theirs): it
+    /// acts on the current scope. Actions on a listed issue, MR, milestone
+    /// or release go through [`Self::build_with_project`] instead.
     pub fn build(action: ConfirmAction, app: &App) -> Self {
         Self::build_with_project(action, app.scope.as_str().to_string(), app)
     }
@@ -3592,6 +3598,22 @@ impl SubmitDialog {
                     true,
                 )
             }
+            ConfirmAction::MarkAllTodosRead => {
+                let todos = kind.term("todo_plural");
+                let body = if kind.is_github() {
+                    "Mark every notification in your inbox as read, across all repositories?"
+                        .to_string()
+                } else {
+                    "Mark every pending todo as done, across all projects?".to_string()
+                };
+                (
+                    format!("Mark All {todos} Read"),
+                    body,
+                    "Mark All".to_string(),
+                    vec![],
+                    true,
+                )
+            }
         };
         let extra_buttons = match &action {
             ConfirmAction::SubmitReview(_) => {
@@ -3763,7 +3785,7 @@ pub struct App {
     pub group_repos: Vec<String>,
     pub project_cache: crate::utils::cache::ProjectCache,
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
-    pub terminal_commands: Vec<TerminalCommand>,
+    pub terminal_commands: CommandLog,
     pub terminal_wrap: bool,
     pub issues: StatefulTable<crate::domain::issues::Issue>,
     pub mrs: StatefulTable<crate::domain::mr::MergeRequest>,
@@ -3828,6 +3850,9 @@ pub struct App {
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
+    /// The server state queries in effect when `take_state_query_refetches`
+    /// last ran; `None` until it first runs for the current scope.
+    pub observed_state_queries: Option<StateQueries>,
     pub edit_menu: Option<EditMenu>,
     pub selector: Option<Selector>,
     /// Mapping from the `all_items` display strings to the absolute on-disk
@@ -3949,7 +3974,8 @@ pub struct App {
     pub last_attr_refresh: std::time::Instant,
     /// (project path, iid) of the milestone whose deletion is in flight.
     pub pending_delete_milestone: Option<(String, u64)>,
-    pub pending_delete_release_tag: Option<String>,
+    /// (project path, tag) of the release whose deletion is in flight.
+    pub pending_delete_release: Option<(String, String)>,
 }
 
 impl Default for App {
@@ -3970,7 +3996,7 @@ impl Default for App {
             group_repos: vec![],
             project_cache: crate::utils::cache::ProjectCache::default(),
             gitlab_client: None,
-            terminal_commands: vec![],
+            terminal_commands: CommandLog::default(),
             terminal_wrap: false,
             issues: StatefulTable::with_items(vec![]),
             mrs: StatefulTable::with_items(vec![]),
@@ -4004,6 +4030,7 @@ impl Default for App {
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
+            observed_state_queries: None,
             edit_menu: None,
             selector: None,
             switch_repo_paths: std::collections::HashMap::new(),
@@ -4094,7 +4121,7 @@ impl Default for App {
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
             pending_delete_milestone: None,
-            pending_delete_release_tag: None,
+            pending_delete_release: None,
         }
     }
 }
@@ -4157,6 +4184,13 @@ pub(crate) fn column_filter_matches(
     }
 }
 
+/// The Runners `Active` cell text, matching the `YES`/`NO` of the Branches
+/// boolean columns. The column filter picker, search, group-by and the
+/// inspector all read it so they agree with what the table shows.
+pub(crate) fn runner_active_display(active: bool) -> &'static str {
+    if active { "YES" } else { "NO" }
+}
+
 /// Build the zero-padded percent string used as the sort/group key for the
 /// Milestones "Progress" column. Prefers the cheap aggregate derived from
 /// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
@@ -4211,16 +4245,6 @@ impl App {
         self.scope.display()
     }
 
-    pub fn tab_supported_in_scope(&self, tab: &Tab) -> bool {
-        if self.scope.is_repository() {
-            return true;
-        }
-        matches!(
-            tab,
-            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Milestones
-        )
-    }
-
     /// The sender for a background fetch started now: its results are dropped
     /// if the scope changes before they arrive.
     pub fn scoped_sender(
@@ -4256,6 +4280,7 @@ impl App {
         self.loaded_tabs.clear();
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
+        self.observed_state_queries = None;
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
         self.fetching_related_mrs.clear();
@@ -4358,7 +4383,7 @@ impl App {
 
     /// Whether a row listed with `row_project` belongs to `project`; `None`
     /// accepts every project.
-    fn is_listed_in(&self, row_project: &str, project: Option<&str>) -> bool {
+    pub fn is_listed_in(&self, row_project: &str, project: Option<&str>) -> bool {
         // GitHub and GitLab resolve project paths case-insensitively, so the
         // remote URL's spelling may differ from the one the API returns.
         project.is_none_or(|project| {
@@ -4543,10 +4568,6 @@ impl App {
     /// their own: they all belong to the active pipeline.
     pub fn project_path_for_jobs(&self) -> String {
         self.project_path_for_pipeline(self.active_pipeline_id.unwrap_or(0))
-    }
-
-    pub fn project_path_for_release(&self, _tag_name: &str) -> String {
-        self.scope.as_str().to_string()
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -4934,10 +4955,9 @@ impl App {
     pub fn show_error(&mut self, msg: String) {
         let failed_status = format!("Failed: {msg}");
         self.raise_error_toast(msg);
-        let pos = self
+        let row = self
             .terminal_commands
-            .iter()
-            .rposition(|cmd| {
+            .find_latest(|cmd| {
                 (cmd.command.contains("glab")
                     || cmd.command.contains("gh")
                     || cmd.command.contains("submit")
@@ -4946,8 +4966,8 @@ impl App {
                     && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
             })
             .or_else(|| self.latest_running_cli_command());
-        if let Some(pos) = pos {
-            self.terminal_commands[pos].status = failed_status;
+        if let Some(row) = row {
+            self.terminal_commands.set_status(row, failed_status);
         }
     }
 
@@ -4975,33 +4995,77 @@ impl App {
     }
 
     /// Appends a command still running to the terminal log and returns its
-    /// row for `settle_command`. The log is append-only, so the row stays valid.
-    pub fn start_command(&mut self, command: String) -> usize {
+    /// row for `settle_command`. The row stays valid when older entries are
+    /// dropped; it stops resolving once its own entry is dropped or cleared.
+    pub fn start_command(&mut self, command: String) -> LogRow {
         self.terminal_commands.push(TerminalCommand {
             timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
             command,
             status: "Running".to_string(),
-        });
-        self.terminal_commands.len() - 1
+        })
     }
 
     /// Stamps the outcome on a row returned by `start_command`.
-    pub fn settle_command(&mut self, row: usize, outcome: &Result<(), String>) {
-        if let Some(entry) = self.terminal_commands.get_mut(row) {
-            entry.status = match outcome {
-                Ok(()) => "Success".to_string(),
-                Err(error) => format!("Failed: {error}"),
-            };
-        }
+    pub fn settle_command(&mut self, row: LogRow, outcome: &Result<(), String>) {
+        let status = match outcome {
+            Ok(()) => "Success".to_string(),
+            Err(error) => format!("Failed: {error}"),
+        };
+        self.terminal_commands.set_status(row, status);
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands are skipped: they settle their own row by index, and
+    /// Custom commands are skipped: they settle their own row, and
     /// an unrelated completion must not stamp a background command finished.
-    pub fn latest_running_cli_command(&self) -> Option<usize> {
-        self.terminal_commands.iter().rposition(|cmd| {
+    pub fn latest_running_cli_command(&self) -> Option<LogRow> {
+        self.terminal_commands.find_latest(|cmd| {
             cmd.status == "Running" && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
         })
+    }
+
+    /// Terminal-log entries matching the search bar, oldest first.
+    pub fn filtered_terminal_commands(&self) -> Vec<&TerminalCommand> {
+        let query = self.search_query.trim();
+        if query.is_empty() {
+            return self.terminal_commands.iter().collect();
+        }
+        let matcher = &*FUZZY_MATCHER;
+        self.terminal_commands
+            .iter()
+            .filter(|cmd| {
+                matcher.fuzzy_match(&cmd.command, query).is_some()
+                    || matcher.fuzzy_match(&cmd.status, query).is_some()
+            })
+            .collect()
+    }
+
+    /// Position, within `filtered_terminal_commands`, of the entry the copy
+    /// key acts on: the bottom row of the unwrapped view, which is the newest
+    /// entry unless the log is scrolled back. Wrapped mode scrolls by screen
+    /// line rather than by entry, so there it is always the newest entry.
+    pub fn terminal_cursor(&self, filtered_len: usize) -> Option<usize> {
+        let scrolled_back = if self.terminal_wrap {
+            0
+        } else {
+            self.terminal_scroll
+        };
+        filtered_len.checked_sub(scrolled_back + 1)
+    }
+
+    pub fn copy_terminal_command(&mut self) -> anyhow::Result<()> {
+        let entries = self.filtered_terminal_commands();
+        let line = self
+            .terminal_cursor(entries.len())
+            .and_then(|index| entries.get(index))
+            .map(|cmd| cmd.command_line().to_string())
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to copy"))?;
+        self.clipboard.set_text(line)?;
+        Ok(())
+    }
+
+    pub fn clear_terminal_log(&mut self) {
+        self.terminal_commands.clear();
+        self.terminal_scroll = 0;
     }
 
     /// Rebuilds `custom_commands` from the current config, logging every
@@ -5273,6 +5337,103 @@ impl App {
                 self.column_filters.remove(&tab);
             }
         }
+    }
+
+    /// The narrowest state query whose rows contain everything `tab`'s State
+    /// column filter shows. Several states, an unknown value or no filter
+    /// need every state.
+    pub fn state_filter_query(&self, tab: Tab) -> StateQuery {
+        let Some(selected) = self.get_column_filter(tab, "State") else {
+            return StateQuery::All;
+        };
+        let mut queries = selected
+            .iter()
+            .map(|value| match Self::normalize_filter_value(value) {
+                "OPEN" => StateQuery::Open,
+                "CLOSED" => StateQuery::Closed,
+                "MERGED" => StateQuery::Merged,
+                _ => StateQuery::All,
+            });
+        let Some(first) = queries.next() else {
+            return StateQuery::All;
+        };
+        if queries.all(|query| query == first) {
+            first
+        } else {
+            StateQuery::All
+        }
+    }
+
+    /// Whether rows listed with `listed` contain every row `tab`'s State
+    /// column filter shows.
+    pub fn covers_state_filter(&self, tab: Tab, listed: StateQuery) -> bool {
+        listed.includes(self.state_filter_query(tab))
+    }
+
+    /// The states to list from the server for `tab`.
+    pub fn requested_state_query(&self, tab: Tab) -> StateQuery {
+        let filtered = self.state_filter_query(tab);
+        self.gitlab_client
+            .as_ref()
+            .map_or(StateQuery::All, |client| {
+                client.backend.server_state_query(&self.scope, filtered)
+            })
+    }
+
+    pub fn requested_state_queries(&self) -> StateQueries {
+        StateQueries {
+            issues: self.requested_state_query(Tab::Issues),
+            mrs: self.requested_state_query(Tab::MergeRequests),
+        }
+    }
+
+    /// List tabs whose server state query changed since the last call and
+    /// that show or are loading rows listed for the previous query. The first
+    /// call for a scope only records the queries: the scope's first fetch
+    /// already used them.
+    pub fn take_state_query_refetches(&mut self) -> Vec<Tab> {
+        let requested = self.requested_state_queries();
+        let Some(observed) = self.observed_state_queries.replace(requested) else {
+            return Vec::new();
+        };
+        [
+            (Tab::Issues, observed.issues, requested.issues),
+            (Tab::MergeRequests, observed.mrs, requested.mrs),
+        ]
+        .into_iter()
+        .filter(|(tab, before, now)| {
+            before != now && (self.loaded_tabs.contains(tab) || self.loading_tabs.contains(tab))
+        })
+        .map(|(tab, ..)| tab)
+        .collect()
+    }
+
+    /// Show cached issues, unless they were listed for fewer states than the
+    /// State column filter shows: the tab's fetch fills it instead.
+    pub fn restore_cached_issues(
+        &mut self,
+        issues: Vec<crate::domain::issues::Issue>,
+        listed: StateQuery,
+    ) {
+        self.issues.items = if self.covers_state_filter(Tab::Issues, listed) {
+            issues
+        } else {
+            Vec::new()
+        };
+    }
+
+    /// Show cached MRs/PRs, unless they were listed for fewer states than the
+    /// State column filter shows: the tab's fetch fills it instead.
+    pub fn restore_cached_mrs(
+        &mut self,
+        mrs: Vec<crate::domain::mr::MergeRequest>,
+        listed: StateQuery,
+    ) {
+        self.mrs.items = if self.covers_state_filter(Tab::MergeRequests, listed) {
+            mrs
+        } else {
+            Vec::new()
+        };
     }
 
     /// How many levels down the pipeline descent currently is.
@@ -6534,6 +6695,73 @@ impl App {
         list
     }
 
+    pub fn selected_todo(&self) -> Option<&crate::domain::notifications::Notification> {
+        let idx = self.todos.state.selected()?;
+        self.filtered_todos().get(idx).copied()
+    }
+
+    /// Whether the Todos tab lists read (GitHub) or done (GitLab) items too.
+    pub fn shows_read_todos(&self) -> bool {
+        self.gitlab_client
+            .as_ref()
+            .is_some_and(|client| client.show_read_notifications)
+    }
+
+    /// Flips the Todos tab between unread-only and everything. The list
+    /// follows on the next fetch, which the caller starts.
+    pub fn toggle_show_read_todos(&mut self) {
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.show_read_notifications = !client.show_read_notifications;
+        }
+    }
+
+    /// Applies a todo mutation the server accepted to the local list. Read
+    /// and done items stay listed only while the tab shows them. GitHub's
+    /// done notifications leave the inbox whatever the filter.
+    pub fn apply_todo_change(&mut self, change: &crate::domain::notifications::TodoChange) {
+        use crate::domain::notifications::TodoChange;
+        let kind = self.kind();
+        let shows_read = self.shows_read_todos();
+        let read_state = crate::domain::notifications::read_state(kind);
+        match change {
+            TodoChange::MarkedRead(id) => self.settle_todo(id, shows_read.then_some(read_state)),
+            TodoChange::MarkedDone(id) => {
+                let stays_listed = shows_read && kind.is_gitlab();
+                self.settle_todo(id, stays_listed.then_some(read_state));
+            }
+            TodoChange::MarkedAllRead if shows_read => {
+                for todo in self.todos.items.iter_mut().filter(|t| t.is_unread()) {
+                    todo.state = read_state.to_string();
+                }
+            }
+            TodoChange::MarkedAllRead => self.todos.items.clear(),
+            TodoChange::Unsubscribed(_) => {}
+        }
+        self.clamp_todo_selection();
+    }
+
+    /// Restates the todo `id` as `state`, or drops it from the list for `None`.
+    fn settle_todo(&mut self, id: &str, state: Option<&str>) {
+        match state {
+            Some(state) => {
+                if let Some(todo) = self.todos.items.iter_mut().find(|t| t.id == id) {
+                    todo.state = state.to_string();
+                }
+            }
+            None => self.todos.items.retain(|t| t.id != id),
+        }
+    }
+
+    fn clamp_todo_selection(&mut self) {
+        let len = self.filtered_todos().len();
+        let selected = match (len, self.todos.state.selected()) {
+            (0, _) => None,
+            (_, Some(idx)) => Some(idx.min(len - 1)),
+            (_, None) => Some(0),
+        };
+        self.todos.state.select(selected);
+    }
+
     pub fn filter_milestones_list<'a>(
         items: &'a [crate::domain::milestones::Milestone],
         query: &str,
@@ -6829,6 +7057,9 @@ impl App {
                 // but normalize maps them too for saved-filter compat
                 if v == "unread" { "NEW" } else { "READ" }
             }
+            // Runners Active: bool strings saved before the YES/NO cell text
+            "true" => "YES",
+            "false" => "NO",
             other => other,
         }
     }
@@ -6859,6 +7090,16 @@ impl App {
             return list.distinct_filter_values(col);
         }
         let mut values: BTreeSet<String> = BTreeSet::new();
+        // Rows listed for one state cannot offer the others, so every state
+        // stays selectable while the server narrows the list.
+        if col == "State" && self.requested_state_query(tab) != StateQuery::All {
+            let states: &[&str] = match tab {
+                Tab::Issues => &["OPEN", "CLOSED"],
+                Tab::MergeRequests => &["OPEN", "MERGED", "CLOSED"],
+                _ => &[],
+            };
+            values.extend(states.iter().map(|state| state.to_string()));
+        }
         match tab {
             Tab::Issues => {
                 let is_gh = self.is_github();
@@ -7460,6 +7701,163 @@ mod tests {
         assert_eq!(runner_status_display("not_a_state"), "UNKNOWN");
     }
 
+    fn runner(
+        id: u64,
+        description: &str,
+        status: &str,
+        active: bool,
+    ) -> crate::domain::runners::Runner {
+        crate::domain::runners::Runner {
+            id,
+            description: Some(description.to_string()),
+            status: status.to_string(),
+            active,
+        }
+    }
+
+    fn runner_ids<'a>(
+        list: impl IntoIterator<Item = &'a crate::domain::runners::Runner>,
+    ) -> Vec<u64> {
+        list.into_iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn runner_search_ranks_the_closer_match_first() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(
+                1,
+                "dedicated orchestrator cache keeper extra runner",
+                "online",
+                true,
+            ),
+            runner(2, "docker", "online", true),
+            runner(3, "shell", "online", true),
+        ];
+        let enabled: std::collections::HashSet<String> = Tab::Runners
+            .default_columns(BackendKind::GitLab, false)
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let mut list = ListTab::<RunnerColumn>::default();
+        list.set_items(runners);
+        list.refresh(ViewInputs {
+            query: "docker",
+            enabled_columns: Some(&enabled),
+            column_filters: None,
+            sort: None,
+        });
+
+        assert_eq!(runner_ids(list.view_rows()), vec![2, 1]);
+    }
+
+    #[test]
+    fn runner_search_matches_the_displayed_active_text() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(1, "a", "online", true),
+            runner(2, "b", "paused", false),
+        ];
+        let enabled: std::collections::HashSet<String> = ["Active".to_string()].into();
+
+        let mut list1 = ListTab::<RunnerColumn>::default();
+        list1.set_items(runners.clone());
+        list1.refresh(ViewInputs {
+            query: "YES",
+            enabled_columns: Some(&enabled),
+            column_filters: None,
+            sort: None,
+        });
+        assert_eq!(runner_ids(list1.view_rows()), vec![1]);
+
+        let mut list2 = ListTab::<RunnerColumn>::default();
+        list2.set_items(runners);
+        list2.refresh(ViewInputs {
+            query: "NO",
+            enabled_columns: Some(&enabled),
+            column_filters: None,
+            sort: None,
+        });
+        assert_eq!(runner_ids(list2.view_rows()), vec![2]);
+    }
+
+    #[test]
+    fn runners_group_by_status_orders_by_displayed_status() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(1, "a", "paused", false),
+            runner(2, "b", "online", true),
+            runner(3, "c", "offline", true),
+            runner(4, "d", "online", true),
+            runner(5, "e", "never_contacted", false),
+        ];
+
+        let mut list_asc = ListTab::<RunnerColumn>::default();
+        list_asc.set_items(runners.clone());
+        list_asc.refresh(ViewInputs {
+            query: "",
+            enabled_columns: None,
+            column_filters: None,
+            sort: Some(("Status", true)),
+        });
+
+        let mut list_desc = ListTab::<RunnerColumn>::default();
+        list_desc.set_items(runners);
+        list_desc.refresh(ViewInputs {
+            query: "",
+            enabled_columns: None,
+            column_filters: None,
+            sort: Some(("Status", false)),
+        });
+
+        assert_eq!(runner_ids(list_asc.view_rows()), vec![3, 2, 4, 1, 5]);
+        assert_eq!(runner_ids(list_desc.view_rows()), vec![5, 1, 2, 4, 3]);
+    }
+
+    #[test]
+    fn runners_group_by_id_sorts_numerically() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(10, "a", "online", true),
+            runner(9, "b", "online", true),
+        ];
+
+        let mut list = ListTab::<RunnerColumn>::default();
+        list.set_items(runners);
+        list.refresh(ViewInputs {
+            query: "",
+            enabled_columns: None,
+            column_filters: None,
+            sort: Some(("ID", true)),
+        });
+
+        assert_eq!(runner_ids(list.view_rows()), vec![9, 10]);
+    }
+
+    #[test]
+    fn runner_active_filter_values_match_the_yes_no_cell() {
+        use crate::ui::list_tab::ColumnDef;
+        use crate::ui::list_tab::runners::RunnerColumn;
+
+        assert_eq!(
+            RunnerColumn::Active.filter_values(&runner(1, "a", "online", true)),
+            vec!["YES".to_string()]
+        );
+        assert_eq!(
+            RunnerColumn::Active.filter_values(&runner(2, "b", "paused", false)),
+            vec!["NO".to_string()]
+        );
+    }
+
     #[test]
     fn milestone_filter_values_returns_display_state_not_raw() {
         let m = Milestone {
@@ -7482,6 +7880,19 @@ mod tests {
         };
         let values = App::milestone_filter_values(&closed, "State");
         assert_eq!(values, vec!["CLOSED".to_string()]);
+    }
+
+    #[test]
+    fn release_project_is_its_own_and_falls_back_to_scope_when_unknown() {
+        let scope = crate::scope::Scope::Group("group".to_string());
+        let listed = crate::domain::releases::Release {
+            project_path: "group/repo-a".to_string(),
+            ..release_fixture("v1.0.0", "")
+        };
+        let cached_without_project = release_fixture("v1.0.0", "");
+
+        assert_eq!(listed.project_or(&scope), "group/repo-a");
+        assert_eq!(cached_without_project.project_or(&scope), "group");
     }
 
     fn release_fixture(tag: &str, notes: &str) -> crate::domain::releases::Release {
@@ -8657,8 +9068,10 @@ mod tests {
 
     #[test]
     fn pipeline_project_prefers_the_listed_row_over_an_older_jobs_tab_project() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("acme".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
         let mut in_project_b = nav_pipe(7);
         in_project_b.project_path = "acme/project-b".to_string();
         app.pipelines.items = vec![nav_pipe(5), in_project_b];
@@ -11004,7 +11417,7 @@ index 123456..789012 100644
 
         assert_eq!(app.error_message, Some("boom".to_string()));
         assert!(app.error_message_at.is_some());
-        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
     #[test]
@@ -11023,8 +11436,7 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Running");
-        assert_eq!(app.terminal_commands[1].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Running", "Failed: boom"]);
     }
 
     #[test]
@@ -11038,7 +11450,7 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
     #[test]
@@ -11052,7 +11464,123 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Success");
+        assert_eq!(terminal_statuses(&app), ["Success"]);
+    }
+
+    fn terminal_statuses(app: &App) -> Vec<&str> {
+        app.terminal_commands
+            .iter()
+            .map(|cmd| cmd.status.as_str())
+            .collect()
+    }
+
+    fn log_entry(command: &str, status: &str) -> TerminalCommand {
+        TerminalCommand {
+            timestamp: String::new(),
+            command: command.to_string(),
+            status: status.to_string(),
+        }
+    }
+
+    fn app_with_recording_clipboard() -> (App, std::rc::Rc<std::cell::RefCell<Option<String>>>) {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..Default::default()
+        };
+        (app, copied)
+    }
+
+    #[test]
+    fn search_query_filters_terminal_log_by_command_and_status() {
+        let mut app = App::default();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Failed: HTTP 502"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Running"));
+
+        app.search_query = "glab".to_string();
+        let commands: Vec<&str> = app
+            .filtered_terminal_commands()
+            .iter()
+            .map(|cmd| cmd.command.as_str())
+            .collect();
+        assert_eq!(
+            commands,
+            ["Fetch issues: glab issue list", "Fetch MRs: glab mr list"]
+        );
+
+        app.search_query = "502".to_string();
+        let commands: Vec<&str> = app
+            .filtered_terminal_commands()
+            .iter()
+            .map(|cmd| cmd.command.as_str())
+            .collect();
+        assert_eq!(commands, ["Fetch PRs: gh pr list"]);
+    }
+
+    #[test]
+    fn copy_terminal_command_copies_the_newest_command_line() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list -R a/b", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list -R a/b", "Success"));
+
+        app.copy_terminal_command().unwrap();
+
+        assert_eq!(copied.borrow().as_deref(), Some("glab mr list -R a/b"));
+    }
+
+    #[test]
+    fn copy_terminal_command_follows_scroll_within_the_filtered_log() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Success"));
+        app.search_query = "glab".to_string();
+        app.terminal_scroll = 1;
+
+        app.copy_terminal_command().unwrap();
+
+        assert_eq!(copied.borrow().as_deref(), Some("glab issue list"));
+    }
+
+    #[test]
+    fn copy_terminal_command_on_an_empty_log_is_an_error() {
+        let (mut app, copied) = app_with_recording_clipboard();
+
+        let error = app.copy_terminal_command().unwrap_err();
+
+        assert_eq!(error.to_string(), "no terminal log entry to copy");
+        assert_eq!(*copied.borrow(), None);
+    }
+
+    #[test]
+    fn clearing_the_terminal_log_stops_a_running_row_from_being_settled() {
+        let mut app = App::default();
+        let row = app.start_command("Custom command: sleep 5".to_string());
+        app.terminal_scroll = 3;
+
+        app.clear_terminal_log();
+        app.settle_command(row, &Ok(()));
+
+        assert!(app.terminal_commands.is_empty());
+        assert_eq!(app.terminal_scroll, 0);
     }
 
     #[test]
@@ -11570,12 +12098,13 @@ index 123456..789012 100644
         // keybinding_matches), not two literal characters. It must not
         // register 'U' as a sequence-prefix char.
         let mut keybindings = crate::config::KeybindingConfig::default();
+        let (_, default_standalone) = keybinding_char_sets(&keybindings);
         keybindings.global.scroll_top = "Up".to_string();
 
         let (prefixes, standalone) = keybinding_char_sets(&keybindings);
 
         assert!(!prefixes.contains(&'U'));
-        assert!(!standalone.contains(&'U'));
+        assert_eq!(standalone, default_standalone);
     }
 
     #[test]
@@ -12088,6 +12617,263 @@ index 123456..789012 100644
         assert!(mr_headers.iter().any(|h| h.contains("No Issues")));
     }
 
+    /// An app on the Todos tab holding todo `1` (unread), `2` (unread) and
+    /// `3` (already read), with the highlight on todo `2`.
+    fn app_with_todos(kind: BackendKind, shows_read: bool) -> App {
+        let mut app = App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: kind.is_github(),
+                backend: crate::backend::create_backend(kind.is_github()),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: shows_read,
+            }),
+            active_tab: Tab::Todos,
+            ..Default::default()
+        };
+        let read_state = crate::domain::notifications::read_state(kind);
+        app.todos.items = serde_json::from_value(serde_json::json!([
+            {"id": "1", "project_path": "acme/api", "title": "One", "target_type": "Issue",
+             "target_iid": 1, "state": "pending", "updated_at": ""},
+            {"id": "2", "project_path": "acme/api", "title": "Two", "target_type": "MergeRequest",
+             "target_iid": 2, "state": "pending", "updated_at": ""},
+            {"id": "3", "project_path": "acme/api", "title": "Three", "target_type": "Issue",
+             "target_iid": 3, "state": read_state, "updated_at": ""},
+        ]))
+        .unwrap();
+        app.todos.state.select(Some(1));
+        app
+    }
+
+    fn todo_states(app: &App) -> Vec<(&str, &str)> {
+        app.todos
+            .items
+            .iter()
+            .map(|t| (t.id.as_str(), t.state.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn marking_a_todo_read_drops_it_while_only_unread_todos_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitHub, false);
+        app.todos.state.select(Some(2));
+
+        app.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
+
+        assert_eq!(todo_states(&app), vec![("2", "pending"), ("3", "read")]);
+        assert_eq!(app.todos.state.selected(), Some(1));
+    }
+
+    #[test]
+    fn marking_a_todo_read_keeps_it_as_read_while_read_todos_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut github = app_with_todos(BackendKind::GitHub, true);
+        github.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
+        assert_eq!(
+            todo_states(&github),
+            vec![("1", "read"), ("2", "pending"), ("3", "read")]
+        );
+
+        let mut gitlab = app_with_todos(BackendKind::GitLab, true);
+        gitlab.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
+        assert_eq!(
+            todo_states(&gitlab),
+            vec![("1", "done"), ("2", "pending"), ("3", "done")]
+        );
+    }
+
+    fn app_on(is_github: bool, scope: crate::scope::Scope) -> App {
+        App {
+            scope,
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github,
+                backend: crate::backend::create_backend(is_github),
+                tx: None,
+                page_size: 100,
+                api_per_page: 100,
+                show_read_notifications: false,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn github_repo_app() -> App {
+        app_on(true, crate::scope::Scope::Repository("o/r".to_string()))
+    }
+
+    fn filter_state(app: &mut App, tab: Tab, values: &[&str]) {
+        app.set_column_filter(tab, "State", values.iter().map(|v| v.to_string()).collect());
+    }
+
+    #[test]
+    fn state_filter_query_is_the_single_selected_state_and_all_otherwise() {
+        let cases: &[(&[&str], StateQuery)] = &[
+            (&["OPEN"], StateQuery::Open),
+            (&["opened"], StateQuery::Open),
+            (&["OPEN", "opened"], StateQuery::Open),
+            (&["CLOSED"], StateQuery::Closed),
+            (&["merged"], StateQuery::Merged),
+            (&["OPEN", "MERGED"], StateQuery::All),
+            (&["OPEN", "CLOSED", "MERGED"], StateQuery::All),
+            (&["LOCKED"], StateQuery::All),
+            (&[], StateQuery::All),
+        ];
+        for (values, expected) in cases {
+            let mut app = App::default();
+            filter_state(&mut app, Tab::MergeRequests, values);
+            assert_eq!(
+                app.state_filter_query(Tab::MergeRequests),
+                *expected,
+                "{values:?}"
+            );
+        }
+        assert_eq!(
+            App::default().state_filter_query(Tab::MergeRequests),
+            StateQuery::All
+        );
+    }
+
+    #[test]
+    fn a_done_github_notification_leaves_the_list_even_while_read_ones_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut github = app_with_todos(BackendKind::GitHub, true);
+        github.apply_todo_change(&TodoChange::MarkedDone("2".to_string()));
+        assert_eq!(todo_states(&github), vec![("1", "pending"), ("3", "read")]);
+
+        let mut gitlab = app_with_todos(BackendKind::GitLab, true);
+        gitlab.apply_todo_change(&TodoChange::MarkedDone("2".to_string()));
+        assert_eq!(
+            todo_states(&gitlab),
+            vec![("1", "pending"), ("2", "done"), ("3", "done")]
+        );
+    }
+
+    #[test]
+    fn only_a_github_repository_asks_the_server_for_the_filtered_state() {
+        let backends = [
+            (
+                true,
+                crate::scope::Scope::Repository("o/r".to_string()),
+                StateQuery::Merged,
+            ),
+            (
+                true,
+                crate::scope::Scope::Group("o".to_string()),
+                StateQuery::All,
+            ),
+            (
+                false,
+                crate::scope::Scope::Repository("g/r".to_string()),
+                StateQuery::All,
+            ),
+            (
+                false,
+                crate::scope::Scope::Group("g".to_string()),
+                StateQuery::All,
+            ),
+        ];
+        for (is_github, scope, expected) in backends {
+            let mut app = app_on(is_github, scope.clone());
+            filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+            assert_eq!(
+                app.requested_state_query(Tab::MergeRequests),
+                expected,
+                "github={is_github} scope={scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_the_state_filter_refetches_a_loaded_tab_once() {
+        let mut app = github_repo_app();
+        app.loaded_tabs.insert(Tab::Issues);
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+
+        filter_state(&mut app, Tab::Issues, &["CLOSED"]);
+        assert_eq!(app.take_state_query_refetches(), vec![Tab::Issues]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+
+        app.remove_column_filter(Tab::Issues, "State");
+        filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+        assert_eq!(
+            app.take_state_query_refetches(),
+            vec![Tab::Issues, Tab::MergeRequests]
+        );
+    }
+
+    #[test]
+    fn marking_all_read_clears_an_unread_only_list_and_restates_a_full_one() {
+        use crate::domain::notifications::TodoChange;
+        let mut unread_only = app_with_todos(BackendKind::GitLab, false);
+        unread_only.apply_todo_change(&TodoChange::MarkedAllRead);
+        assert_eq!(todo_states(&unread_only), vec![]);
+        assert_eq!(unread_only.todos.state.selected(), None);
+
+        let mut full = app_with_todos(BackendKind::GitHub, true);
+        full.apply_todo_change(&TodoChange::MarkedAllRead);
+        assert_eq!(
+            todo_states(&full),
+            vec![("1", "read"), ("2", "read"), ("3", "read")]
+        );
+    }
+
+    #[test]
+    fn unsubscribing_leaves_the_todo_listed_and_unread() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.apply_todo_change(&TodoChange::Unsubscribed("1".to_string()));
+        assert_eq!(
+            todo_states(&app),
+            vec![("1", "pending"), ("2", "pending"), ("3", "done")]
+        );
+        assert_eq!(app.todos.state.selected(), Some(1));
+    }
+
+    #[test]
+    fn toggling_show_read_flips_the_filter_the_todos_fetch_uses() {
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.toggle_show_read_todos();
+        assert!(app.shows_read_todos());
+        assert!(app.gitlab_client.as_ref().unwrap().show_read_notifications);
+        app.toggle_show_read_todos();
+        assert!(!app.shows_read_todos());
+    }
+
+    #[test]
+    fn focusing_an_issue_in_a_project_skips_the_same_number_in_another_project() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
+        let mut web = issue_with_milestone(5, "opened", 1);
+        web.project_path = "acme/web".to_string();
+        let mut api = issue_with_milestone(5, "opened", 1);
+        api.project_path = "acme/api".to_string();
+        app.issues.items = vec![web, api];
+
+        assert!(app.focus_issue(Some("acme/api"), 5));
+        assert_eq!(app.active_tab, Tab::Issues);
+        let selected = app.filtered_issues()[app.issues.state.selected().unwrap()];
+        assert_eq!(selected.project_path, "acme/api");
+
+        assert!(!app.focus_issue(Some("acme/docs"), 5));
+    }
+
+    #[test]
+    fn rows_without_a_project_belong_to_the_repository_in_scope() {
+        let app = App {
+            scope: crate::scope::Scope::Repository("acme/api".to_string()),
+            ..Default::default()
+        };
+        assert!(app.is_listed_in("", Some("ACME/api")));
+        assert!(!app.is_listed_in("", Some("acme/web")));
+        assert!(app.is_listed_in("acme/web", Some("acme/web")));
+    }
+
     fn app_showing_deployments_for(environment: &str) -> App {
         let mut app = App::new();
         app.active_tab = Tab::Environments;
@@ -12163,5 +12949,92 @@ index 123456..789012 100644
         app.active_tab = Tab::Environments;
         app.discard_stale_deployments();
         assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    #[test]
+    fn a_state_filter_change_refetches_a_tab_still_loading_but_not_an_unvisited_one() {
+        let mut app = github_repo_app();
+        app.loading_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), vec![Tab::MergeRequests]);
+    }
+
+    #[test]
+    fn changing_the_state_filter_on_gitlab_never_refetches() {
+        let mut app = app_on(false, crate::scope::Scope::Repository("g/r".to_string()));
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+    }
+
+    #[test]
+    fn a_scope_change_lets_its_first_fetch_use_the_current_filter_without_a_refetch() {
+        let mut app = github_repo_app();
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        app.reset_on_scope_change();
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+    }
+
+    #[test]
+    fn cached_rows_listed_for_fewer_states_than_the_filter_shows_are_not_restored() {
+        let open = || vec![mr_fixture(1, "opened", "a", false, "open")];
+        let cases = [
+            (StateQuery::Open, None, false),
+            (StateQuery::Open, Some("MERGED"), false),
+            (StateQuery::Open, Some("OPEN"), true),
+            (StateQuery::All, Some("OPEN"), true),
+            (StateQuery::All, None, true),
+        ];
+        for (listed, filter, restored) in cases {
+            let mut app = App::default();
+            if let Some(value) = filter {
+                filter_state(&mut app, Tab::MergeRequests, &[value]);
+            }
+            app.restore_cached_mrs(open(), listed);
+            assert_eq!(
+                app.mrs.items.len(),
+                usize::from(restored),
+                "listed={listed:?} filter={filter:?}"
+            );
+        }
+
+        let mut app = App::default();
+        app.restore_cached_issues(vec![issue_with_no_milestone("opened")], StateQuery::Open);
+        assert!(app.issues.items.is_empty());
+    }
+
+    #[test]
+    fn state_picker_offers_every_state_while_the_server_lists_one() {
+        let mut app = github_repo_app();
+        app.mrs.items = vec![mr_fixture(1, "opened", "a", false, "open")];
+        app.issues.items = vec![issue_with_no_milestone("opened")];
+        assert_eq!(
+            app.collect_unique_column_values(Tab::MergeRequests, "State"),
+            vec!["OPEN".to_string()]
+        );
+
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        assert_eq!(
+            app.collect_unique_column_values(Tab::MergeRequests, "State"),
+            vec![
+                "CLOSED".to_string(),
+                "MERGED".to_string(),
+                "OPEN".to_string()
+            ]
+        );
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Issues, "State"),
+            vec!["CLOSED".to_string(), "OPEN".to_string()]
+        );
     }
 }

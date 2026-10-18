@@ -5,8 +5,8 @@
       "path_with_namespace": "test-owner/test-repo"
     },
     "target": {
-      "title": "Todo Item 1",
-      "iid": 1
+      "title": "Ship worktree eight",
+      "iid": 8
     },
     "target_type": "Issue",
     "state": "pending",
@@ -14,6 +14,19 @@
   },
   {
     "id": 2,
+    "project": {
+      "path_with_namespace": "other-group/other-repo"
+    },
+    "target": {
+      "title": "Foreign seven",
+      "iid": 7
+    },
+    "target_type": "Issue",
+    "state": "pending",
+    "updated_at": "2026-07-05T12:00:00Z"
+  },
+  {
+    "id": 3,
     "project": {
       "path_with_namespace": "test-owner/test-repo"
     },
@@ -23,6 +36,6 @@
     },
     "target_type": "MergeRequest",
     "state": "pending",
-    "updated_at": "2026-07-05T12:00:00Z"
+    "updated_at": "2026-07-04T12:00:00Z"
   }
 ]

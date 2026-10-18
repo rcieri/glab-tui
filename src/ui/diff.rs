@@ -455,13 +455,7 @@ mod tests {
             start_old: None,
             end_old: None,
         };
-        let formatted = format_comment_with_suggestions(
-            body,
-            &anchor,
-            &[],
-            "",
-            Style::default(),
-        );
+        let formatted = format_comment_with_suggestions(body, &anchor, &[], "", Style::default());
 
         let suggested: Vec<String> = formatted[1..4]
             .iter()

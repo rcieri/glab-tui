@@ -352,23 +352,35 @@ fn build_view<C: ColumnDef>(items: &[C::Row], spec: &ViewSpec) -> Vec<usize> {
         .filter_map(|(label, selected)| C::from_label(label).map(|col| (col, selected)))
         .collect();
     let matcher = &*crate::app::FUZZY_MATCHER;
-    let mut view: Vec<usize> = items
+    let mut scored: Vec<(usize, Option<i64>)> = items
         .iter()
         .enumerate()
-        .filter(|(_, row)| {
-            query.is_empty()
-                || searchable.iter().any(|col| {
-                    fuzzy_matcher::FuzzyMatcher::fuzzy_match(matcher, &col.text(row), query)
-                        .is_some()
-                })
+        .filter_map(|(idx, row)| {
+            if query.is_empty() {
+                Some((idx, None))
+            } else {
+                let mut best: Option<i64> = None;
+                for col in &searchable {
+                    if let Some(score) =
+                        fuzzy_matcher::FuzzyMatcher::fuzzy_match(matcher, &col.text(row), query)
+                    {
+                        best = Some(best.map_or(score, |b| b.max(score)));
+                    }
+                }
+                best.map(|score| (idx, Some(score)))
+            }
         })
-        .filter(|(_, row)| {
+        .filter(|(idx, _)| {
+            let row = &items[*idx];
             filters
                 .iter()
                 .all(|(col, selected)| col.matches_filter(row, selected))
         })
-        .map(|(idx, _)| idx)
         .collect();
+    if spec.sort.is_none() && !query.is_empty() {
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+    }
+    let mut view: Vec<usize> = scored.into_iter().map(|(idx, _)| idx).collect();
     let sort = spec
         .sort
         .as_ref()

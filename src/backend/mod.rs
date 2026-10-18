@@ -15,6 +15,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::Result;
@@ -36,6 +37,12 @@ impl BackendKind {
 
     pub fn is_gitlab(self) -> bool {
         matches!(self, BackendKind::GitLab)
+    }
+
+    /// Pausing, resuming and renaming runners. GitHub's runner API has no
+    /// pause, resume or description endpoint, so only GitLab can do it.
+    pub fn supports_runner_management(self) -> bool {
+        self.is_gitlab()
     }
 
     pub fn term(self, key: &str) -> &'static str {
@@ -169,14 +176,21 @@ pub trait Backend: Send + Sync {
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
 
+    /// The states to list from the server for a tab whose State column
+    /// filter shows `filtered`. Rows of other states are filtered out on the
+    /// client, so a backend that cannot narrow lists every state.
+    fn server_state_query(&self, _scope: &Scope, _filtered: StateQuery) -> StateQuery {
+        StateQuery::All
+    }
+
     // ── Issues ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
-    /// in the group/org.
+    /// in the group/org. A backend may return more states than `state` asks for.
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>>;
@@ -312,11 +326,11 @@ pub trait Backend: Send + Sync {
     // ── Merge Requests ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
-    /// in the group/org.
+    /// in the group/org. A backend may return more states than `state` asks for.
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>>;
@@ -500,6 +514,11 @@ pub trait Backend: Send + Sync {
         per_request: usize,
     ) -> Result<Vec<Pipeline>>;
 
+    /// Id of the newest pipeline built for `branch`, counting GitLab's
+    /// merge-request pipelines (`refs/merge-requests/<iid>/head`) of the open
+    /// MR whose source branch it is. `Ok(None)` when no pipeline exists.
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>>;
+
     async fn list_pipeline_jobs(
         &self,
         project: &str,
@@ -642,7 +661,13 @@ pub trait Backend: Send + Sync {
 
     // ── Notifications ──
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>>;
+    /// GitLab todos have no read state, so on GitLab this marks the todo done.
     async fn mark_notification_as_read(&self, id: &str) -> Result<()>;
+    /// Removes the notification from the inbox (GitHub "done", GitLab todo done).
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()>;
+    async fn mark_all_notifications_as_read(&self) -> Result<()>;
+    /// Stops further notifications about the notification's issue, MR/PR or thread.
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()>;
 
     // ── Branches ──
     async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;

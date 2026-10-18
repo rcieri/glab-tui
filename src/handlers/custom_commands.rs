@@ -55,7 +55,7 @@ pub struct RunReport {
     runs: Vec<(String, Result<(), String>)>,
     /// Terminal-log rows shown as running while a background run works,
     /// one per run in the same order; empty for terminal runs.
-    log_rows: Vec<usize>,
+    log_rows: Vec<crate::command_log::LogRow>,
 }
 
 /// Where a command's stderr goes while it runs.

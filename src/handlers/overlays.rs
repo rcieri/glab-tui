@@ -273,7 +273,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteRelease(tag_name) => {
-            app.pending_delete_release_tag = Some(tag_name.clone());
+            app.pending_delete_release = Some((project_path.clone(), tag_name.clone()));
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res =
@@ -620,6 +620,9 @@ fn run_submit_action(
                 state: ListState::default(),
             });
         }
+        crate::app::ConfirmAction::MarkAllTodosRead => {
+            crate::handlers::todos::mark_all_read(app, &tx);
+        }
         crate::app::ConfirmAction::CancelPipeline(pipeline_id) => {
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -627,6 +630,7 @@ fn run_submit_action(
             let rows = flip_pipeline_statuses(app, &[pipeline_id], "canceled");
             let scope = app.scope.clone();
             let active_tab = app.active_tab;
+            let states = app.requested_state_queries();
             let tx = app.scoped_sender(tx);
             tokio::spawn(async move {
                 run_optimistic_mutation(
@@ -638,7 +642,7 @@ fn run_submit_action(
                 )
                 .await;
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                spawn_refresh_active_tab(&client, &scope, active_tab, tx);
+                spawn_refresh_active_tab(&client, &scope, states, active_tab, tx);
             });
         }
         crate::app::ConfirmAction::CancelJobs {
@@ -650,6 +654,7 @@ fn run_submit_action(
             };
             let rows = flip_job_statuses(app, &job_ids, "canceled");
             app.selected_jobs.clear();
+            app.status_message = None;
             spawn_cancel_jobs(
                 client,
                 app.scoped_sender(tx),
@@ -888,7 +893,13 @@ pub fn handle_refresh(
             let tx = app.scoped_sender(tx);
             if !app.loading_tabs.contains(&app.active_tab) {
                 app.start_loading_tab(app.active_tab);
-                spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+                spawn_refresh_active_tab(
+                    &client,
+                    &app.scope,
+                    app.requested_state_queries(),
+                    app.active_tab,
+                    tx.clone(),
+                );
             }
             if let Some(parent_id) = app.current_parent_id() {
                 crate::fetch::spawn_refresh_child_level(
@@ -1680,6 +1691,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             tx: None,
             page_size: 10,
             api_per_page: 10,
+            show_read_notifications: false,
         });
 
         press_in_submit_dialog(&mut app, KeyCode::Left);

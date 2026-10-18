@@ -6,7 +6,7 @@
 //! for `release list`, `todos.json` for `todo list`, `milestones.json` for
 //! `milestone list`, `branches.json` for the branches endpoint and
 //! `environments.json` / `deployments.json` for the environment endpoints.
-//! Every tab-list fixture holds two rows, so a search that matches one of
+//! Every tab-list fixture holds at least two rows, so a search that matches one of
 //! them is visible on screen. `deployments.json` holds one: the test only
 //! checks that its endpoint is called.
 
@@ -132,15 +132,18 @@ fn releases_tab_lists_filters_and_deletes_the_matching_release() {
 
 #[test]
 fn todos_tab_lists_filters_and_marks_the_matching_todo_done() {
-    let mut session = session_on_tab(6, "Todo Item 1");
-    assert_lists(&mut session, &["Todo Item 1", "Review pagination"]);
+    let mut session = session_on_tab(6, "Ship worktree eight");
+    assert_lists(
+        &mut session,
+        &["Ship worktree eight", "Foreign seven", "Review pagination"],
+    );
 
     search(&mut session, "Review");
-    assert_hides(&session, "Todo Item 1");
+    assert_hides(&session, "Ship worktree eight");
 
     session.press_keys(b"\r");
     session
-        .wait_for_cli_call("glab todo done 2", 5000)
+        .wait_for_cli_call("glab todo done 3", 5000)
         .expect("Enter should mark the todo the search selected as done");
     session
         .wait_for_screen_contains(" MRs ", 5000)

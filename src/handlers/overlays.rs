@@ -312,6 +312,31 @@ fn run_submit_action(
                 }
             });
         }
+        crate::app::ConfirmAction::BulkDeleteBranches(branch_names) => {
+            app.selected_branches.clear();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut errors = Vec::new();
+                for branch_name in branch_names {
+                    if let Err(e) =
+                        crate::domain::branches::delete_branch(&client, &project_path, &branch_name)
+                            .await
+                    {
+                        errors.push(format!("{branch_name}: {e}"));
+                    }
+                }
+                if errors.is_empty() {
+                    let _ = tx.send(Event::CommandCompleted(crate::app::Tab::Branches, Ok(())));
+                } else {
+                    let _ = tx.send(Event::CommandCompleted(
+                        crate::app::Tab::Branches,
+                        Err(format!("Failed to delete branches: {}", errors.join("; "))),
+                    ));
+                }
+            });
+        }
         crate::app::ConfirmAction::CloseIssue(iid) => {
             if let Some(pos) = app.issue_index(&project_path, iid) {
                 app.issues.items.remove(pos);

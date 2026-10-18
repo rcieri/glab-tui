@@ -2007,6 +2007,7 @@ async fn main() -> Result<()> {
                                 web_url: String::new(),
                                 can_push: false,
                                 commit_sha: String::new(),
+                                ..Default::default()
                             })
                             .collect();
                         cache_updated = true;

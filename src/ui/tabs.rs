@@ -2154,6 +2154,7 @@ pub(crate) fn render_tab_runners(
                 theme: &theme,
                 icons: &icons,
                 query: &app.search_query,
+                is_checked: None,
             },
         );
         let doc = app
@@ -2212,6 +2213,7 @@ pub(crate) fn render_tab_releases(
                 theme: &theme,
                 icons: &icons,
                 query: &app.search_query,
+                is_checked: None,
             },
         );
         let doc = app
@@ -2777,6 +2779,7 @@ pub(crate) fn render_tab_branches(
                 theme: &theme,
                 icons: &icons,
                 query: &app.search_query,
+                is_checked: Some(&|branch| app.selected_branches.contains(&branch.name)),
             },
         );
         let doc = app
@@ -2826,6 +2829,7 @@ pub(crate) fn render_tab_environments(
                 theme: &theme,
                 icons: &icons,
                 query: &app.search_query,
+                is_checked: None,
             },
         );
         let shown_deployments = app

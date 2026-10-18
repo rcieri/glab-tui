@@ -764,6 +764,74 @@ pub fn build_todo_document(
 pub fn build_branch_document(
     branch: &crate::domain::branches::Branch,
 ) -> crate::app::EntityDocument {
+    let local_info = if branch.author_name.is_none() || branch.commit_message.is_none() {
+        let rev = if !branch.commit_sha.is_empty() {
+            &branch.commit_sha
+        } else {
+            &branch.name
+        };
+        crate::git_helpers::get_commit_info(rev)
+    } else {
+        None
+    };
+
+    let author = branch
+        .author_name
+        .clone()
+        .or_else(|| local_info.as_ref().map(|i| i.author_name.clone()));
+    let author_email = branch
+        .author_email
+        .clone()
+        .or_else(|| local_info.as_ref().map(|i| i.author_email.clone()));
+    let author_display = author.map(|name| {
+        if let Some(email) = author_email.filter(|e| !e.is_empty()) {
+            format!("{name} <{email}>")
+        } else {
+            name
+        }
+    });
+
+    let date = branch
+        .commit_date
+        .clone()
+        .or_else(|| local_info.as_ref().map(|i| i.date.clone()));
+    let date_display = date.map(|d| {
+        let ago = crate::utils::format::time_ago(&d);
+        if ago == d {
+            d
+        } else {
+            format!("{ago} ({d})")
+        }
+    });
+
+    let ahead_behind = branch.ahead_behind.or_else(|| {
+        if branch.default {
+            Some((0, 0))
+        } else if let Some(base) = crate::git_helpers::get_default_branch() {
+            let target = if !branch.name.is_empty() {
+                &branch.name
+            } else {
+                &branch.commit_sha
+            };
+            crate::git_helpers::get_ahead_behind(&base, target)
+        } else {
+            None
+        }
+    });
+    let ahead_behind_display = ahead_behind.map(|(ahead, behind)| {
+        if ahead == 0 && behind == 0 && branch.default {
+            "Default branch".to_string()
+        } else {
+            format!("{ahead} ahead, {behind} behind")
+        }
+    });
+
+    let commit_msg = branch
+        .commit_message
+        .clone()
+        .or_else(|| local_info.map(|i| i.message))
+        .filter(|m| !m.trim().is_empty());
+
     let mut fields = vec![
         crate::app::Field::read_only("Branch", branch.name.clone()),
         crate::app::Field::read_only(
@@ -799,13 +867,29 @@ pub fn build_branch_document(
             },
         ),
     ];
+    if let Some(auth) = author_display {
+        fields.push(crate::app::Field::read_only("Author", auth));
+    }
+    if let Some(dt) = date_display {
+        fields.push(crate::app::Field::read_only("Date", dt));
+    }
+    if let Some(ab) = ahead_behind_display {
+        fields.push(crate::app::Field::read_only("Ahead/Behind", ab));
+    }
     if !branch.web_url.is_empty() {
         fields.push(crate::app::Field::read_only("URL", branch.web_url.clone()));
     }
+
+    let content = if let Some(msg) = commit_msg {
+        crate::app::InspectorContent::Markdown(msg)
+    } else {
+        crate::app::InspectorContent::Empty("Branch details")
+    };
+
     crate::app::EntityDocument {
         title: format!("Branch {}", branch.name),
         fields,
-        content: crate::app::InspectorContent::Empty("Branch details"),
+        content,
     }
 }
 
@@ -2112,5 +2196,41 @@ mod tests {
             .map(|f| f.value.as_str());
         assert_eq!(menu.entity_project, "group/b");
         assert_eq!(notes, Some("notes for group/b"));
+    }
+
+    #[test]
+    fn test_build_branch_document() {
+        let branch = crate::domain::branches::Branch {
+            name: "feature/awesome".to_string(),
+            default: false,
+            protected: true,
+            web_url: "https://gitlab.com/test/repo/-/tree/feature/awesome".to_string(),
+            can_push: true,
+            commit_sha: "abcdef1234567890".to_string(),
+            commit_message: Some("feat: add cool feature\n\nMore details".to_string()),
+            author_name: Some("Alice Developer".to_string()),
+            author_email: Some("alice@example.com".to_string()),
+            commit_date: Some("2026-10-18T10:00:00Z".to_string()),
+            ahead_behind: Some((3, 1)),
+        };
+
+        let doc = build_branch_document(&branch);
+        assert_eq!(doc.title, "Branch feature/awesome");
+
+        let author_field = doc.fields.iter().find(|f| f.label == "Author").expect("Author field");
+        assert_eq!(author_field.value, "Alice Developer <alice@example.com>");
+
+        let ahead_field = doc.fields.iter().find(|f| f.label == "Ahead/Behind").expect("Ahead/Behind field");
+        assert_eq!(ahead_field.value, "3 ahead, 1 behind");
+
+        let date_field = doc.fields.iter().find(|f| f.label == "Date").expect("Date field");
+        assert!(date_field.value.contains("2026-10-18T10:00:00Z"));
+
+        if let crate::app::InspectorContent::Markdown(ref msg) = doc.content {
+            assert!(msg.contains("feat: add cool feature"));
+            assert!(msg.contains("More details"));
+        } else {
+            panic!("Expected Markdown content for commit message");
+        }
     }
 }

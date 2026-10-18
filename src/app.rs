@@ -2994,6 +2994,7 @@ pub enum ConfirmAction {
     MergeMr(u64),                     // mr iid
     MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
+    BulkDeleteBranches(Vec<String>),
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
     SubmitReview(u64),                // mr iid
@@ -3009,6 +3010,7 @@ impl ConfirmAction {
             Self::DeleteMilestone(_)
                 | Self::DeleteRelease(_)
                 | Self::DeleteBranch(_)
+                | Self::BulkDeleteBranches(_)
                 | Self::DeleteIssue(_)
                 | Self::DeleteMr(_)
                 | Self::CloseIssue(_)
@@ -3315,6 +3317,17 @@ impl SubmitDialog {
                 format!("Delete Branch '{branch_name}'"),
                 format!("Are you sure you want to delete branch \'{branch_name}\'?"),
                 "Delete".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::BulkDeleteBranches(branch_names) => (
+                format!("Delete {} Branches", branch_names.len()),
+                format!(
+                    "Are you sure you want to delete {} selected branches?\n{}",
+                    branch_names.len(),
+                    branch_names.join(", ")
+                ),
+                "Delete All".to_string(),
                 vec![],
                 true,
             ),
@@ -3805,6 +3818,7 @@ pub struct App {
     pub selected_jobs: std::collections::HashSet<u64>,
     pub selected_issues: std::collections::HashSet<(String, u64)>,
     pub selected_mrs: std::collections::HashSet<(String, u64)>,
+    pub selected_branches: std::collections::HashSet<String>,
     /// When true, moving the cursor through Issues/MRs marks each visited
     /// item into the selection set (yazi-style "select mode"). `Space` still
     /// toggles the current item individually regardless of this flag.
@@ -3971,6 +3985,7 @@ impl Default for App {
             selected_jobs: std::collections::HashSet::new(),
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
+            selected_branches: std::collections::HashSet::new(),
             select_mode: false,
             select_anchor: None,
             details_zoomed: false,
@@ -4587,6 +4602,18 @@ impl App {
                 }
                 self.selected_jobs.len().saturating_sub(before)
             }
+            Tab::Branches => {
+                let keys: Vec<String> = self
+                    .branches
+                    .view_rows()
+                    .map(|b| b.name.clone())
+                    .collect();
+                let before = self.selected_branches.len();
+                for key in keys {
+                    self.selected_branches.insert(key);
+                }
+                self.selected_branches.len().saturating_sub(before)
+            }
             _ => 0,
         }
     }
@@ -4598,11 +4625,13 @@ impl App {
         let cleared = !self.selected_issues.is_empty()
             || !self.selected_mrs.is_empty()
             || !self.selected_pipelines.is_empty()
-            || !self.selected_jobs.is_empty();
+            || !self.selected_jobs.is_empty()
+            || !self.selected_branches.is_empty();
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
+        self.selected_branches.clear();
         self.select_mode = false;
         self.select_anchor = None;
         cleared
@@ -4618,6 +4647,7 @@ impl App {
                 Tab::MergeRequests => self.mrs.state.selected(),
                 Tab::Pipelines => self.pipelines.state.selected(),
                 Tab::Jobs => self.jobs.state.selected(),
+                Tab::Branches => self.branches.cursor_pos(),
                 _ => None,
             };
             self.select_anchor = curr;
@@ -4691,6 +4721,20 @@ impl App {
                         if start <= end {
                             self.selected_jobs =
                                 filtered[start..=end].iter().map(|j| j.id()).collect();
+                        }
+                    }
+                }
+            }
+            Tab::Branches => {
+                if let Some(curr) = self.branches.cursor_pos() {
+                    let rows: Vec<&crate::domain::branches::Branch> =
+                        self.branches.view_rows().collect();
+                    if !rows.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(rows.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_branches =
+                                rows[start..=end].iter().map(|b| b.name.clone()).collect();
                         }
                     }
                 }
@@ -5620,6 +5664,7 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.selected_branches.clear();
         self.select_mode = false;
         self.select_anchor = None;
         self.details_zoomed = false;
@@ -5643,6 +5688,7 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.selected_branches.clear();
         self.select_mode = false;
         self.select_anchor = None;
         self.details_zoomed = false;
@@ -8453,6 +8499,7 @@ mod tests {
                 can_push: true,
                 commit_sha: "abc1234".to_string(),
                 web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
+                ..Default::default()
             }]);
         app.sync_list_views();
 
@@ -8473,6 +8520,7 @@ mod tests {
             can_push: true,
             commit_sha: "abc1234".to_string(),
             web_url: String::new(),
+            ..Default::default()
         };
         let mut app = App {
             active_tab: Tab::Branches,

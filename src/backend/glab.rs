@@ -2781,17 +2781,44 @@ impl Backend for GlabBackend {
         #[derive(Deserialize)]
         struct GiBrCommit {
             id: String,
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            message: Option<String>,
+            #[serde(default)]
+            author_name: Option<String>,
+            #[serde(default)]
+            author_email: Option<String>,
+            #[serde(default)]
+            authored_date: Option<String>,
+            #[serde(default)]
+            committed_date: Option<String>,
         }
         let gl_branches: Vec<GiBr> = serde_json::from_str(&raw)?;
         Ok(gl_branches
             .into_iter()
-            .map(|b| Branch {
-                name: b.name,
-                default: b.default.unwrap_or(false),
-                protected: b.protected.unwrap_or(false),
-                web_url: b.web_url.unwrap_or_default(),
-                can_push: b.can_push.unwrap_or(false),
-                commit_sha: b.commit.as_ref().map(|c| c.id.clone()).unwrap_or_default(),
+            .map(|b| {
+                let (commit_sha, commit_message, author_name, author_email, commit_date) =
+                    if let Some(c) = b.commit {
+                        let msg = c.message.filter(|m| !m.is_empty()).or(c.title);
+                        let date = c.committed_date.or(c.authored_date);
+                        (c.id, msg, c.author_name, c.author_email, date)
+                    } else {
+                        (String::new(), None, None, None, None)
+                    };
+                Branch {
+                    name: b.name,
+                    default: b.default.unwrap_or(false),
+                    protected: b.protected.unwrap_or(false),
+                    web_url: b.web_url.unwrap_or_default(),
+                    can_push: b.can_push.unwrap_or(false),
+                    commit_sha,
+                    commit_message,
+                    author_name,
+                    author_email,
+                    commit_date,
+                    ahead_behind: None,
+                }
             })
             .collect())
     }

@@ -1252,6 +1252,16 @@ pub struct KeybindingBranches {
     pub open_in_browser: String,
     #[serde(default = "def_copy_branch")]
     pub copy_branch: String,
+    #[serde(default = "def_checkout_branch")]
+    pub checkout_branch: String,
+    #[serde(default = "def_create_mr_branch")]
+    pub create_mr: String,
+    #[serde(default = "def_select_branch")]
+    pub select_branch: String,
+    #[serde(default = "def_selection_toggle")]
+    pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1328,6 +1338,7 @@ pub struct CustomKeybindingConfig {
     pub mrs: Vec<CustomKeybinding>,
     /// Run from the MR/PR diff view, with the file and line under the cursor.
     pub diff: Vec<CustomKeybinding>,
+    pub branches: Vec<CustomKeybinding>,
     /// Panes that take no custom keybindings, kept only to report them.
     #[serde(flatten, skip_serializing)]
     pub unsupported_panes: std::collections::BTreeMap<String, toml::Value>,
@@ -1419,6 +1430,9 @@ keybind_defaults! {
     def_toggle_show_read = "r",
     def_create_branch = "n",
     def_delete_branch = "d",
+    def_checkout_branch = "C",
+    def_create_mr_branch = "m",
+    def_select_branch = "Space",
     def_view_deployments = "Enter",
     def_toggle_terminal_wrap = "w",
     def_clear_terminal_log = "C",
@@ -1599,6 +1613,11 @@ impl Default for KeybindingBranches {
             delete_branch: def_delete_branch(),
             open_in_browser: def_open_in_browser(),
             copy_branch: def_copy_branch(),
+            checkout_branch: def_checkout_branch(),
+            create_mr: def_create_mr_branch(),
+            select_branch: def_select_branch(),
+            selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
         }
     }
 }
@@ -1960,6 +1979,11 @@ toggle_show_read = "r"
 [keybindings.branches]
 create_branch = "n"
 delete_branch = "d"
+checkout_branch = "C"
+create_mr = "m"
+select_branch = "Space"
+selection_toggle = "v"
+select_all = "Ctrl+a"
 
 [keybindings.environments]
 view_deployments = "Enter"
@@ -2542,6 +2566,29 @@ page_size = 250
             if let Some(other_field) = seen.insert(binding, field) {
                 panic!(
                     "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn branches_keybindings_do_not_collide() {
+        let cfg = Config::default();
+        let value =
+            serde_json::to_value(&cfg.keybindings.branches).expect("serialize KeybindingBranches");
+        let fields = value
+            .as_object()
+            .expect("KeybindingBranches serializes to a JSON object");
+        assert!(!fields.is_empty(), "KeybindingBranches serialized to no fields");
+
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for (field, binding) in fields {
+            let binding = binding
+                .as_str()
+                .expect("every KeybindingBranches field is a string");
+            if let Some(other_field) = seen.insert(binding, field) {
+                panic!(
+                    "duplicate Branches keybinding {binding:?}: used by both `{other_field}` and `{field}`"
                 );
             }
         }

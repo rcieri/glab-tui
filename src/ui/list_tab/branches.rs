@@ -31,6 +31,9 @@ pub enum BranchColumn {
     Default,
     Protected,
     Sha,
+    Author,
+    Date,
+    AheadBehind,
 }
 
 impl BranchColumn {
@@ -38,7 +41,7 @@ impl BranchColumn {
         match self {
             Self::Default => row.default,
             Self::Protected => row.protected,
-            Self::Name | Self::Sha => false,
+            Self::Name | Self::Sha | Self::Author | Self::Date | Self::AheadBehind => false,
         }
     }
 }
@@ -64,7 +67,15 @@ fn badge(text: String, color: Color, bg: Color, ctx: &CellContext) -> Cell<'stat
 impl ColumnDef for BranchColumn {
     type Row = Branch;
 
-    const ALL: &'static [Self] = &[Self::Name, Self::Default, Self::Protected, Self::Sha];
+    const ALL: &'static [Self] = &[
+        Self::Name,
+        Self::Default,
+        Self::Protected,
+        Self::Sha,
+        Self::Author,
+        Self::Date,
+        Self::AheadBehind,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -72,11 +83,17 @@ impl ColumnDef for BranchColumn {
             Self::Default => "Default",
             Self::Protected => "Protected",
             Self::Sha => "SHA",
+            Self::Author => "Author",
+            Self::Date => "Date",
+            Self::AheadBehind => "Ahead/Behind",
         }
     }
 
     fn is_default(self) -> bool {
-        !matches!(self, Self::Sha)
+        matches!(
+            self,
+            Self::Name | Self::Default | Self::Protected | Self::Author | Self::Date
+        )
     }
 
     fn width(self) -> Constraint {
@@ -85,6 +102,9 @@ impl ColumnDef for BranchColumn {
             Self::Default => Constraint::Length(12),
             Self::Protected => Constraint::Length(14),
             Self::Sha => Constraint::Length(12),
+            Self::Author => Constraint::Length(16),
+            Self::Date => Constraint::Length(14),
+            Self::AheadBehind => Constraint::Length(14),
         }
     }
 
@@ -93,6 +113,16 @@ impl ColumnDef for BranchColumn {
             Self::Name => Cow::Borrowed(&row.name),
             Self::Default | Self::Protected => Cow::Borrowed(yes_no(self.flag(row))),
             Self::Sha => Cow::Borrowed(&row.commit_sha),
+            Self::Author => Cow::Borrowed(row.author_name.as_deref().unwrap_or("--")),
+            Self::Date => row
+                .commit_date
+                .as_deref()
+                .map(|d| Cow::Owned(crate::utils::format::time_ago(d)))
+                .unwrap_or(Cow::Borrowed("--")),
+            Self::AheadBehind => match row.ahead_behind {
+                Some((a, b)) => Cow::Owned(format!("+{a} / -{b}")),
+                None => Cow::Borrowed("--"),
+            },
         }
     }
 
@@ -128,11 +158,24 @@ impl ColumnDef for BranchColumn {
             }
             Self::Sha if row.commit_sha.is_empty() => fuzzy("--"),
             Self::Sha => fuzzy(&truncate(&row.commit_sha, SHA_SHOWN_CHARS)),
+            Self::Author => fuzzy(row.author_name.as_deref().unwrap_or("--")),
+            Self::Date => {
+                let text = row
+                    .commit_date
+                    .as_deref()
+                    .map(crate::utils::format::time_ago)
+                    .unwrap_or_else(|| "--".to_string());
+                fuzzy(&text)
+            }
+            Self::AheadBehind => match row.ahead_behind {
+                Some((ahead, behind)) => fuzzy(&format!("+{ahead} / -{behind}")),
+                None => fuzzy("--"),
+            },
         }
     }
 
     fn searchable(self) -> bool {
-        matches!(self, Self::Name | Self::Sha)
+        matches!(self, Self::Name | Self::Sha | Self::Author)
     }
 
     fn matches_filter(self, row: &Branch, selected: &HashSet<String>) -> bool {
@@ -144,7 +187,7 @@ impl ColumnDef for BranchColumn {
                 let legacy = if flag { "true" } else { "false" };
                 selected.contains(yes_no(flag)) || selected.contains(legacy)
             }
-            Self::Name | Self::Sha => {
+            Self::Name | Self::Sha | Self::Author | Self::Date | Self::AheadBehind => {
                 crate::app::column_filter_matches(self.label(), &self.filter_values(row), selected)
             }
         }

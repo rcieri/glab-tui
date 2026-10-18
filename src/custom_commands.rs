@@ -225,6 +225,7 @@ pub enum CommandPane {
     Universal,
     Issues,
     MergeRequests,
+    Branches,
     /// The MR/PR diff view, which is not a tab.
     Diff,
 }
@@ -232,9 +233,10 @@ pub enum CommandPane {
 impl CommandPane {
     /// Pane-specific tables first: on a shared key the more specific binding
     /// wins over a universal one.
-    const LOOKUP_ORDER: [CommandPane; 4] = [
+    const LOOKUP_ORDER: [CommandPane; 5] = [
         CommandPane::Issues,
         CommandPane::MergeRequests,
+        CommandPane::Branches,
         CommandPane::Diff,
         CommandPane::Universal,
     ];
@@ -244,6 +246,7 @@ impl CommandPane {
             CommandPane::Universal => "custom_keybindings.universal",
             CommandPane::Issues => "custom_keybindings.issues",
             CommandPane::MergeRequests => "custom_keybindings.mrs",
+            CommandPane::Branches => "custom_keybindings.branches",
             CommandPane::Diff => "custom_keybindings.diff",
         }
     }
@@ -267,6 +270,12 @@ impl CommandPane {
                 "BaseRefName",
                 "Author",
             ],
+            CommandPane::Branches => &[
+                "RepoName",
+                "RepoPath",
+                "BranchName",
+                "CommitSha",
+            ],
             CommandPane::Diff => &[
                 "RepoName",
                 "RepoPath",
@@ -286,6 +295,7 @@ impl CommandPane {
             CommandPane::Universal => true,
             CommandPane::Issues => tab == Tab::Issues,
             CommandPane::MergeRequests => tab == Tab::MergeRequests,
+            CommandPane::Branches => tab == Tab::Branches,
             CommandPane::Diff => false,
         }
     }
@@ -296,6 +306,7 @@ impl CommandPane {
             CommandPane::Universal => &tables.universal,
             CommandPane::Issues => &tables.issues,
             CommandPane::MergeRequests => &tables.mrs,
+            CommandPane::Branches => &tables.branches,
             CommandPane::Diff => &tables.diff,
         }
     }

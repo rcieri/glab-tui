@@ -1,8 +1,11 @@
-use crate::AppTerminal;
-use crate::app::App;
+use crate::app::{App, ConfirmAction, DialogChoice};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
+use crate::handlers::tabs::{
+    OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
+    spawn_cancel_jobs,
+};
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
@@ -20,10 +23,11 @@ pub fn handle_submit_dialog(
 
     let mut submit = false;
     let mut cancel = false;
+    let mut choice = None;
 
     match key_event.code {
         KeyCode::Up | KeyCode::Char('k') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
+            if dialog.is_on_button() {
                 if !dialog.options.is_empty() {
                     dialog.cursor_idx = dialog.options.len(); // jump up to last option
                 }
@@ -34,7 +38,7 @@ pub fn handle_submit_dialog(
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
+            if dialog.is_on_button() {
                 if !dialog.options.is_empty() {
                     dialog.cursor_idx = 1; // wrap around to first option
                 }
@@ -45,14 +49,10 @@ pub fn handle_submit_dialog(
             }
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
-                dialog.cursor_idx = crate::app::SubmitDialog::SUBMIT_IDX; // Submit is left
-            }
+            dialog.move_between_buttons(-1);
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
-                dialog.cursor_idx = dialog.cancel_idx(); // Cancel is right
-            }
+            dialog.move_between_buttons(1);
         }
         KeyCode::Tab => {
             dialog.move_next();
@@ -68,6 +68,8 @@ pub fn handle_submit_dialog(
                 submit = true;
             } else if dialog.is_on_cancel() {
                 cancel = true;
+            } else if let Some(focused) = dialog.focused_choice() {
+                choice = Some(focused);
             } else {
                 dialog.toggle_focused_option();
             }
@@ -88,21 +90,48 @@ pub fn handle_submit_dialog(
         // Drain the dialog so we can inspect option toggles before
         // dispatching the API call.
         let action = dialog.action.clone();
+        let project_path = std::mem::take(&mut dialog.project_path);
         let options = std::mem::take(&mut dialog.options);
-        run_submit_action(app, action, options, tx);
-    } else if cancel {
-        if matches!(dialog.action, crate::app::ConfirmAction::SubmitReview(_)) {
-            app.draft_comments.clear();
-            app.in_review_mode = false;
-            app.diff_view = None;
-        }
-    } else {
+        run_submit_action(app, action, project_path, options, tx);
+    } else if let Some(choice) = choice {
+        run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
+    } else if !cancel {
         // Either the user navigated or toggled an option — keep the
         // dialog open.
         app.submit_dialog = Some(dialog);
     }
 
     true
+}
+
+fn run_dialog_choice(
+    app: &mut App,
+    action: &ConfirmAction,
+    project_path: &str,
+    choice: DialogChoice,
+) {
+    let ConfirmAction::SubmitReview(mr_iid) = *action else {
+        return;
+    };
+    let count = app.draft_comments.len() + app.stale_draft_comments.len();
+    let noun = if count == 1 { "comment" } else { "comments" };
+    match choice {
+        DialogChoice::KeepDrafts => {
+            // The project cache already holds them, and opening this diff
+            // again restores them from there.
+            app.draft_comments.clear();
+            app.stale_draft_comments.clear();
+            app.show_notice(format!("Kept {count} draft {noun} for later"));
+        }
+        DialogChoice::DiscardDrafts => {
+            app.draft_comments.clear();
+            app.stale_draft_comments.clear();
+            app.persist_draft_comments(project_path, mr_iid);
+            app.in_review_mode = false;
+            app.show_notice(format!("Discarded {count} draft {noun}"));
+        }
+    }
+    app.diff_view = None;
 }
 
 fn merge_options_from(
@@ -156,17 +185,18 @@ async fn stacked_prs(
     }
     stacked
 }
-
+/// Runs `confirm_action` against `project_path`, the project the dialog was
+/// opened for, never one re-resolved from the iid.
 fn run_submit_action(
     app: &mut App,
     confirm_action: crate::app::ConfirmAction,
+    project_path: String,
     options: Vec<crate::app::SubmitOption>,
     tx: UnboundedSender<Event>,
 ) {
     match confirm_action {
         crate::app::ConfirmAction::DeleteMilestone(iid) => {
-            let project_path = app.project_path_for_milestone(iid);
-            app.pending_delete_milestone_iid = Some(iid);
+            app.pending_delete_milestone = Some((project_path.clone(), iid));
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res =
@@ -187,9 +217,8 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::CloseMilestone(iid) => {
-            let project_path = app.project_path_for_milestone(iid);
-            if let Some(m) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
-                m.state = "closed".to_string();
+            if let Some(pos) = app.milestone_index(&project_path, iid) {
+                app.milestones.items[pos].state = "closed".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
@@ -216,9 +245,8 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::ReopenMilestone(iid) => {
-            let project_path = app.project_path_for_milestone(iid);
-            if let Some(m) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
-                m.state = "active".to_string();
+            if let Some(pos) = app.milestone_index(&project_path, iid) {
+                app.milestones.items[pos].state = "active".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
@@ -244,7 +272,7 @@ fn run_submit_action(
                 }
             });
         }
-        crate::app::ConfirmAction::DeleteRelease(project_path, tag_name) => {
+        crate::app::ConfirmAction::DeleteRelease(tag_name) => {
             app.pending_delete_release = Some((project_path.clone(), tag_name.clone()));
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
@@ -267,7 +295,6 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::DeleteBranch(branch_name) => {
             let client = app.gitlab_client.clone().unwrap();
-            let project_path = app.scope.as_str().to_string();
             tokio::spawn(async move {
                 let res =
                     crate::domain::branches::delete_branch(&client, &project_path, &branch_name)
@@ -279,15 +306,14 @@ fn run_submit_action(
                     Err(e) => {
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::Branches,
-                            Err(format!("Failed to delete branch: {}", e)),
+                            Err(format!("Failed to delete branch: {e}")),
                         ));
                     }
                 }
             });
         }
         crate::app::ConfirmAction::CloseIssue(iid) => {
-            let project_path = app.project_path_for_issue(iid);
-            if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
+            if let Some(pos) = app.issue_index(&project_path, iid) {
                 app.issues.items.remove(pos);
             }
             app.update_filter_selection();
@@ -304,7 +330,6 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteIssue(iid) => {
-            let project_path = app.project_path_for_issue(iid);
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res = client.delete_issue(&project_path, iid).await;
@@ -316,16 +341,15 @@ fn run_submit_action(
                     Err(e) => {
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::Issues,
-                            Err(format!("Failed to delete issue: {}", e)),
+                            Err(format!("Failed to delete issue: {e}")),
                         ));
                     }
                 }
             });
         }
         crate::app::ConfirmAction::ReopenIssue(iid) => {
-            let project_path = app.project_path_for_issue(iid);
-            if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                item.state = "opened".to_string();
+            if let Some(pos) = app.issue_index(&project_path, iid) {
+                app.issues.items[pos].state = "opened".to_string();
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -340,8 +364,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::CloseMr(iid) => {
-            let project_path = app.project_path_for_mr(iid);
-            if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
+            if let Some(pos) = app.mr_index(&project_path, iid) {
                 app.mrs.items.remove(pos);
             }
             app.update_filter_selection();
@@ -358,7 +381,6 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteMr(iid) => {
-            let project_path = app.project_path_for_mr(iid);
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res = client.delete_mr(&project_path, iid).await;
@@ -373,16 +395,15 @@ fn run_submit_action(
                     Err(e) => {
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::MergeRequests,
-                            Err(format!("Failed to delete merge request: {}", e)),
+                            Err(format!("Failed to delete merge request: {e}")),
                         ));
                     }
                 }
             });
         }
         crate::app::ConfirmAction::ReopenMr(iid) => {
-            let project_path = app.project_path_for_mr(iid);
-            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                item.state = "opened".to_string();
+            if let Some(pos) = app.mr_index(&project_path, iid) {
+                app.mrs.items[pos].state = "opened".to_string();
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -398,20 +419,13 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
-            let project_path = app.project_path_for_mr(iid);
             // Capture the source-branch head SHA before removing the row so
             // `glab mr merge --sha=<sha>` can satisfy GitLab 19.2+ merge
             // requirements (#470). Pre-19.2 instances ignore it; GitHub's
             // `GhBackend::merge_mr` also ignores it.
             let mr_sha = app
-                .mrs
-                .items
-                .iter()
-                .find(|m| m.iid == iid)
-                .and_then(|m| m.sha.clone());
-            if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
-                app.mrs.items.remove(pos);
-            }
+                .mr_index(&project_path, iid)
+                .and_then(|pos| app.mrs.items.remove(pos).sha);
             app.update_filter_selection();
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -422,11 +436,13 @@ fn run_submit_action(
                     .merge_mr(
                         &project_path,
                         iid,
-                        squash,
-                        delete_branch,
-                        merge_strategy,
-                        auto_merge,
-                        mr_sha.as_deref(),
+                        &crate::backend::MergeOptions {
+                            squash,
+                            delete_branch,
+                            strategy: merge_strategy,
+                            auto_merge,
+                            sha: mr_sha.as_deref(),
+                        },
                     )
                     .await;
                 let _ = tx2.send(Event::CommandCompleted(
@@ -445,7 +461,6 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::MergeStack(pr_number) => {
             let method = merge_method_from(&options);
-            let project_path = app.project_path_for_mr(pr_number);
             let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
                 Some(crate::domain::mr::StackLookup::Full(stack)) => {
                     stack.downstack_open_entries().map(|e| e.number).collect()
@@ -516,11 +531,13 @@ fn run_submit_action(
                             .merge_mr(
                                 &proj,
                                 mr_iid,
-                                squash,
-                                delete_branch,
-                                merge_strategy,
-                                auto_merge,
-                                sha.as_deref(),
+                                &crate::backend::MergeOptions {
+                                    squash,
+                                    delete_branch,
+                                    strategy: merge_strategy,
+                                    auto_merge,
+                                    sha: sha.as_deref(),
+                                },
                             )
                             .await
                     };
@@ -558,7 +575,6 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::RevokeMr(iid) => {
-            let project_path = app.project_path_for_mr(iid);
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
@@ -572,7 +588,6 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::RebaseMr(iid) => {
-            let project_path = app.project_path_for_mr(iid);
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
@@ -605,6 +620,45 @@ fn run_submit_action(
                 state: ListState::default(),
             });
         }
+        crate::app::ConfirmAction::CancelPipeline(pipeline_id) => {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let rows = flip_pipeline_statuses(app, &[pipeline_id], "canceled");
+            let scope = app.scope.clone();
+            let active_tab = app.active_tab;
+            let tx = app.scoped_sender(tx);
+            tokio::spawn(async move {
+                run_optimistic_mutation(
+                    OptimisticTable::Pipelines,
+                    "cancel pipeline",
+                    rows,
+                    &tx,
+                    |id| client.cancel_pipeline(&project_path, id),
+                )
+                .await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                spawn_refresh_active_tab(&client, &scope, active_tab, tx);
+            });
+        }
+        crate::app::ConfirmAction::CancelJobs {
+            pipeline_id,
+            job_ids,
+        } => {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let rows = flip_job_statuses(app, &job_ids, "canceled");
+            app.selected_jobs.clear();
+            app.status_message = None;
+            spawn_cancel_jobs(
+                client,
+                app.scoped_sender(tx),
+                project_path,
+                pipeline_id,
+                rows,
+            );
+        }
     }
 }
 
@@ -625,9 +679,9 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
     let is_typing_text = app.text_input.is_some()
         || app.is_typing_search
         || app.job_trace_searching
-        || app.edit_menu.as_ref().map_or(false, |m| m.editing)
-        || app.diff_view.as_ref().map_or(false, |d| d.search_active)
-        || app.selector.as_ref().map_or(false, |s| s.is_filtering);
+        || app.edit_menu.as_ref().is_some_and(|m| m.editing)
+        || app.diff_view.as_ref().is_some_and(|d| d.search_active)
+        || app.selector.as_ref().is_some_and(|s| s.is_filtering);
 
     if is_typing_text && !is_f1 {
         return false;
@@ -832,6 +886,7 @@ pub fn handle_refresh(
         *last_refresh = Instant::now();
         app.last_attr_refresh = Instant::now();
         if let Some(client) = app.gitlab_client.clone() {
+            let tx = app.scoped_sender(tx);
             if !app.loading_tabs.contains(&app.active_tab) {
                 app.start_loading_tab(app.active_tab);
                 spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
@@ -851,12 +906,7 @@ pub fn handle_refresh(
     false
 }
 
-pub fn handle_date_picker(
-    app: &mut App,
-    key_event: &KeyEvent,
-    terminal: &mut AppTerminal,
-    tx: UnboundedSender<Event>,
-) -> bool {
+pub fn handle_date_picker(app: &mut App, key_event: &KeyEvent, tx: UnboundedSender<Event>) -> bool {
     if let Some(mut date_picker) = app.date_picker.take() {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => {}
@@ -899,7 +949,6 @@ pub fn handle_date_picker(
                             entity_iid,
                             &field_type,
                             selected_val,
-                            terminal,
                             tx,
                             active_tab,
                         );
@@ -973,7 +1022,7 @@ fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOver
     if diff_view.jump_to_anchor(position) {
         if was_hiding_reviewed && !diff_view.hide_reviewed {
             app.hide_reviewed_files = false;
-            app.status_message = Some("Showing reviewed files to reach the thread".to_string());
+            app.show_notice("Showing reviewed files to reach the thread");
         }
         return true;
     }
@@ -1009,8 +1058,13 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_help_keybinding, handle_help_overlay, handle_review_threads};
-    use crate::app::{App, DiffView, EditEntityKind, EditMenu, Selector};
+    use super::{
+        handle_help_keybinding, handle_help_overlay, handle_review_threads, handle_submit_dialog,
+    };
+    use crate::app::{
+        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, StatusMessage,
+        SubmitDialog,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -1360,5 +1414,288 @@ diff --git a/src/lib.rs b/src/lib.rs
             "keys belong to the selector on top"
         );
         assert!(app.review_threads.is_some());
+    }
+
+    /// Holds the env lock and points the cache dir at a tempdir, because the
+    /// submit-review dialog writes drafts to the project cache.
+    struct IsolatedCache {
+        _env: crate::config::EnvGuard,
+        _home: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn isolate_cache() -> IsolatedCache {
+        let lock = crate::config::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let env = crate::config::EnvGuard::isolate_home(home.path());
+        IsolatedCache {
+            _env: env,
+            _home: home,
+            _lock: lock,
+        }
+    }
+
+    fn draft(body: &str) -> crate::domain::review::DraftComment {
+        crate::domain::review::DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: Some(2),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: body.to_string(),
+        }
+    }
+
+    fn bodies(drafts: &[crate::domain::review::DraftComment]) -> Vec<&str> {
+        drafts.iter().map(|d| d.body.as_str()).collect()
+    }
+
+    const PROJECT: &str = "acme/widget";
+
+    /// Diff view of MR 7 in review mode with two saved drafts, and the
+    /// submit-review dialog that leaving it raises.
+    fn app_leaving_the_diff_with_drafts() -> App {
+        let mut app = App::default();
+        app.diff_view = Some(DiffView::new(
+            7,
+            PROJECT.to_string(),
+            REVIEW_DIFF.to_string(),
+        ));
+        app.in_review_mode = true;
+        app.draft_comments = vec![draft("nit"), draft("typo")];
+        app.persist_draft_comments(PROJECT, 7);
+        app.submit_dialog = Some(SubmitDialog::build_with_project(
+            ConfirmAction::SubmitReview(7),
+            PROJECT.to_string(),
+            &app,
+        ));
+        app
+    }
+
+    fn press_in_dialog(app: &mut App, codes: &[KeyCode]) {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        for &code in codes {
+            assert!(handle_submit_dialog(
+                app,
+                &KeyEvent::new(code, KeyModifiers::NONE),
+                tx.clone()
+            ));
+        }
+    }
+
+    fn saved_drafts(app: &App, project_path: &str, mr_iid: u64) -> Vec<String> {
+        crate::utils::cache::load_cache(app.scope.as_str())
+            .draft_comments
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
+            .map(|drafts| drafts.iter().map(|d| d.body.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn esc_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Esc]);
+
+        assert!(app.submit_dialog.is_none());
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
+    fn cancel_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Right; 3]);
+        assert!(app.submit_dialog.as_ref().is_some_and(|d| d.is_on_cancel()));
+        press_in_dialog(&mut app, &[KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+    }
+
+    #[test]
+    fn keep_drafts_closes_the_diff_and_reopening_or_restarting_restores_them() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        assert!(app.diff_view.is_none());
+        assert_eq!(
+            app.status_message.as_ref().map(StatusMessage::text),
+            Some("Kept 2 draft comments for later")
+        );
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
+    fn discard_drops_the_drafts_and_their_saved_copy_and_closes_the_diff() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        assert!(app.diff_view.is_none());
+        assert!(app.draft_comments.is_empty());
+        assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(
+            app.status_message.as_ref().map(StatusMessage::text),
+            Some("Discarded 2 draft comments")
+        );
+    }
+
+    #[test]
+    fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        app.draft_comments = vec![draft("other project")];
+        app.persist_draft_comments("acme/gadget", 7);
+
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr("acme/gadget", 7)),
+            ["other project"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(saved_drafts(&app, "acme/gadget", 7), ["other project"]);
+    }
+
+    #[test]
+    fn drafts_whose_lines_left_the_diff_are_held_back_but_kept_until_discarded() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        let moved = crate::domain::review::DraftComment {
+            line_num: Some(9),
+            ..draft("moved")
+        };
+        let range_end_moved = crate::domain::review::DraftComment {
+            end_line_num: Some(9),
+            ..draft("range")
+        };
+        app.draft_comments = vec![draft("nit"), moved, range_end_moved];
+        app.persist_draft_comments(PROJECT, 7);
+
+        let diff_view = app.diff_view.take().expect("fixture opens a diff");
+        assert_eq!(app.restore_draft_comments(&diff_view), 2);
+        app.diff_view = Some(diff_view);
+        assert_eq!(bodies(&app.draft_comments), ["nit"]);
+
+        app.draft_comments.push(draft("new"));
+        app.persist_draft_comments(PROJECT, 7);
+        assert_eq!(
+            saved_drafts(&app, PROJECT, 7),
+            ["nit", "new", "moved", "range"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.stale_draft_comments.is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(
+            app.status_message.as_ref().map(StatusMessage::text),
+            Some("Discarded 4 draft comments")
+        );
+    }
+
+    fn app_with_cancel_jobs_dialog() -> App {
+        let job = |id| crate::domain::pipelines::Job {
+            id,
+            status: "running".to_string(),
+            stage: "test".to_string(),
+            name: format!("job-{id}"),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: Vec::new(),
+        };
+        let mut app = App::default();
+        app.active_pipeline_id = Some(7);
+        app.jobs.items = vec![job(1), job(2), job(3)];
+        app.selected_jobs.extend([1, 3]);
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::CancelJobs {
+                pipeline_id: 7,
+                job_ids: vec![1, 3],
+            },
+            &app,
+        ));
+        app
+    }
+
+    fn press_in_submit_dialog(app: &mut App, code: KeyCode) {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        super::handle_submit_dialog(app, &KeyEvent::new(code, KeyModifiers::NONE), tx);
+    }
+
+    #[test]
+    fn dismissing_the_cancel_jobs_dialog_cancels_nothing() {
+        let mut app = app_with_cancel_jobs_dialog();
+
+        press_in_submit_dialog(&mut app, KeyCode::Esc);
+
+        assert!(app.submit_dialog.is_none());
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[test]
+    fn confirming_the_cancel_jobs_dialog_without_a_backend_cancels_nothing() {
+        let mut app = app_with_cancel_jobs_dialog();
+
+        press_in_submit_dialog(&mut app, KeyCode::Left);
+        press_in_submit_dialog(&mut app, KeyCode::Enter);
+
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn confirming_the_cancel_jobs_dialog_cancels_only_the_selected_jobs() {
+        let mut app = app_with_cancel_jobs_dialog();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+        });
+
+        press_in_submit_dialog(&mut app, KeyCode::Left);
+        press_in_submit_dialog(&mut app, KeyCode::Enter);
+
+        let statuses: Vec<(u64, &str)> = app
+            .jobs
+            .items
+            .iter()
+            .map(|j| (j.id, j.status.as_str()))
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![(1, "canceled"), (2, "running"), (3, "canceled")]
+        );
+        assert!(app.selected_jobs.is_empty());
     }
 }

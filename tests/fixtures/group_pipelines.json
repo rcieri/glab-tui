@@ -1,0 +1,9 @@
+[
+  {
+    "id": 7002,
+    "status": "failed",
+    "ref": "main",
+    "updated_at": "2026-07-06T12:00:00Z",
+    "web_url": "https://gitlab.com/test-group/beta/-/pipelines/7002"
+  }
+]

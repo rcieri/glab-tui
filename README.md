@@ -83,7 +83,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
-- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
+- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates. Needs `curl` (not `gh`), and the download is checked against the release's published SHA-256 before it replaces the binary
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories), `review` (read threads and post review comments as JSON, for scripts and agents)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 38 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
@@ -191,7 +191,7 @@ Or with `wget`:
 wget -qO- https://raw.githubusercontent.com/rcieri/glab-tui/main/install.sh | sh
 ```
 
-The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable).
+The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable). The script verifies the archive against the release's published `.sha256` before installing and aborts on a mismatch; it needs `sha256sum` or `shasum`.
 
 ### Install script (Windows)
 
@@ -199,7 +199,7 @@ The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environmen
 iwr -useb https://raw.githubusercontent.com/rcieri/glab-tui/main/install.ps1 | iex
 ```
 
-The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter).
+The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter). The script verifies the archive against the release's published `.sha256` before installing and aborts on a mismatch.
 
 ### Docker
 
@@ -277,6 +277,10 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # Items per API request (1-100) — lower this if your GitLab instance truncates
 # large JSON response bodies. GitLab-only; GitHub paginates with --limit.
 # api_per_page = 100
+
+# Seconds one gh/glab call may run before it is killed and shown as an error.
+# Raise it for a slow self-hosted instance.
+# command_timeout_seconds = 120
 
 # Label colors: use the real colors from `label list` (GitLab/GitHub) when
 # available, falling back to the theme palette. Set to false to always use the
@@ -376,7 +380,7 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 - `background = true` runs the command without handing over the terminal: the TUI stays on screen, the command gets no input, its output is not shown, and the Terminal tab logs it when it finishes; a failure toasts its last stderr line (e.g. `lazyworktree` refusing a closed issue). Use it for commands that open their own window or pane, such as `tmux new-window` or `herdr pane split`. Background commands run in their own session without a controlling terminal, so tools that query the terminal through `/dev/tty` (lazyworktree, gh) cannot inject the reply into glab-tui as keypresses. Place new herdr panes with `--pane "$HERDR_PANE_ID"` (glab-tui's own pane): `--current` follows whichever pane is focused in the herdr UI.
 - **Bulk runs:** with issues or MRs/PRs selected (`Space`, or `v` select mode), an `issues`/`mrs` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
 - Row arguments come from the highlighted issue or MR/PR. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project.
-- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`. A `{{.Arg}}` whose value contains a shell metacharacter (`` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` or a control character) is refused rather than spliced into the command; quote the variable instead, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"`.
+- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
 - Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
 - Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
@@ -611,7 +615,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 | Key | Action |
 |---|---|
-| `q` / `Esc` | Exit diff view (or cancel current selection / search) |
+| `q` / `Esc` | Exit diff view (or cancel current selection / search). With draft comments pending, asks to **Submit**, **Keep drafts** (close, keep them for later), **Discard** them, or **Cancel** (`Esc`, back to the diff) |
 | `Tab` | Toggle focus between file tree and diff pane |
 | `h` / `←` | In file tree: collapse directory; in diff: focus file tree |
 | `l` / `→` | In file tree: expand directory / open file |
@@ -678,6 +682,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `p` | Switch to pipeline selector | `enter_pipeline` |
 | `s` | Select all jobs in the current stage | `select_stage` |
 | `w` | Toggle trace word wrap | `toggle_trace_wrap` |
+| `f` | Follow the trace of a running job: every 5 seconds, append what the log gained (GitLab asks only for the new bytes) | `toggle_trace_follow` |
 | `m` | Collapse / expand matrix jobs | — |
 | `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
 | `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
@@ -686,6 +691,8 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `PageDown` / `PageUp` | (in trace view) page down / up | — |
 | `Ctrl+d` / `Ctrl+u` | (in trace view) scroll half page down / up | — |
 | `Home` / `End` | (in trace view) jump to top / bottom | — |
+
+glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[TRUNCATED: first 16 MiB]` in the pane title (press `o` to open the full log in the browser). A diff larger than 32 MiB is refused with an error rather than shown in part.
 
 ---
 
@@ -813,7 +820,7 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`anyhow`](https://crates.io/crates/anyhow) | 1.0 | Ergonomic error handling |
 | [`async-trait`](https://crates.io/crates/async-trait) | 0.1.92 | Async trait support for Backend trait |
 | [`clap`](https://crates.io/crates/clap) | 4 (derive) | CLI argument parsing for subcommands |
-| [`serde_yaml`](https://crates.io/crates/serde_yaml) | 0.9 | YAML output for `doctor` diagnostics |
+| [`serde-saphyr`](https://crates.io/crates/serde-saphyr) | 1.1 (deserialize) | Parsing `workflow_dispatch` inputs from GitHub workflow files |
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
@@ -877,7 +884,7 @@ src/
     ├── format.rs    # Time formatting, tab expansion, text wrapping
     ├── markdown.rs  # CommonMark and GFM Markdown rendering
     ├── ui.rs        # StatefulTable generic helper
-    └── update.rs    # GitHub releases self-updater with multi-target Linux selection
+    └── update.rs    # GitHub releases self-updater (curl, checksum-verified) with multi-target Linux selection
 ```
 
 ---
@@ -914,7 +921,7 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant (run unit tests with `cargo test --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
 
 ### Development & Tasks (`just`)
 
@@ -929,8 +936,10 @@ just check      # runs fmt check, clippy, unit tests, and single-threaded e2e te
 Available recipes:
 - `just fmt` / `just fmt-check` — format code or verify formatting
 - `just lint` — run Clippy with `-Dwarnings`
-- `just test` — run unit tests (`cargo test --bin glab-tui`)
+- `just test` — run unit tests (`cargo test --lib --bin glab-tui`)
 - `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
+- `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
+- `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
 - `just check` — run the full CI check matrix locally
 - `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 

@@ -1,0 +1,8 @@
+[
+  {"iid": 5, "title": "Alpha crash", "state": "opened", "updated_at": "2026-07-06T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [],
+   "web_url": "https://gitlab.com/test-group/alpha/-/issues/5"},
+  {"iid": 5, "title": "Beta crash", "state": "opened", "updated_at": "2026-07-05T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [],
+   "web_url": "https://gitlab.com/test-group/beta/-/issues/5"}
+]

@@ -19,7 +19,7 @@ impl Row for Environment {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EnvironmentColumn {
+pub enum EnvironmentColumn {
     Name,
     State,
     DeploymentStatus,

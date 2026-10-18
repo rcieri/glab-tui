@@ -10,6 +10,11 @@ if [[ -n "$TEST_GH_FAIL_MATCH" && "$*" == *"$TEST_GH_FAIL_MATCH"* ]]; then
     exit 1
 fi
 
+# Hang injection: never answer a call whose arguments contain the value.
+if [[ -n "$TEST_GH_HANG_MATCH" && "$*" == *"$TEST_GH_HANG_MATCH"* ]]; then
+    exec sleep 300
+fi
+
 # Request bodies piped with `--input -`, one per line, for payload assertions.
 if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"
@@ -18,6 +23,16 @@ fi
 # Match arguments to determine response
 if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     echo "mock github job trace output"
+    exit 0
+fi
+
+# `pr list --state merged` serves only merged PRs, so a test can tell a list
+# refetched for that state from one that was not.
+if [[ "$*" == "pr list"* && " $* " == *" --state merged "* ]]; then
+    cat "$FIXTURES_DIR/gh_prs_merged.json"
+    exit 0
+elif [[ "$*" == "run list"* ]]; then
+    echo '[{"databaseId": 12345}]'
     exit 0
 fi
 
@@ -103,8 +118,6 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
-    elif [[ "$*" == *"/commits"* ]]; then
-        cat "$FIXTURES_DIR/commits.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
     elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
@@ -117,7 +130,7 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
         # For Github runners, we wrap runners.json into GithubRunners
         echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online"}]}'
-    elif [[ "$*" == *"/notifications"* ]]; then
+    elif [[ "$*" == *"notifications"* ]]; then
         # GitHub notifications:
         echo '[{
             "id": "1",

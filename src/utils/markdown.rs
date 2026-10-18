@@ -83,7 +83,7 @@ fn truncate_url(url: &str) -> String {
         url.to_string()
     } else {
         let truncated: String = url.chars().take(MAX_URL_LEN - 1).collect();
-        format!("{}…", truncated)
+        format!("{truncated}…")
     }
 }
 
@@ -227,7 +227,7 @@ impl<'a> MarkdownRenderer<'a> {
                 }
                 Event::FootnoteReference(label) => {
                     self.push_span(
-                        format!("[{}]", label),
+                        format!("[{label}]"),
                         Style::default()
                             .fg(self.theme.text_muted)
                             .add_modifier(Modifier::ITALIC),
@@ -244,8 +244,8 @@ impl<'a> MarkdownRenderer<'a> {
                         }),
                     );
                 }
-                Event::InlineMath(math) => self.push_text(&format!("${}$", math)),
-                Event::DisplayMath(math) => self.push_text(&format!("$${}$$", math)),
+                Event::InlineMath(math) => self.push_text(&format!("${math}$")),
+                Event::DisplayMath(math) => self.push_text(&format!("$${math}$$")),
             }
         }
         self.finish_line();
@@ -325,7 +325,7 @@ impl<'a> MarkdownRenderer<'a> {
                     })
                     .unwrap_or_else(|| "• ".to_string());
                 self.push_span(
-                    format!("{}{}", indent, marker),
+                    format!("{indent}{marker}"),
                     Style::default()
                         .fg(self.theme.purple)
                         .add_modifier(Modifier::BOLD),
@@ -480,7 +480,7 @@ impl<'a> MarkdownRenderer<'a> {
         let mut opening = vec![Span::styled("┌─".to_string(), border_style)];
         if let Some(language) = &code_block.language {
             opening.push(Span::styled(
-                format!(" {}", language),
+                format!(" {language}"),
                 Style::default()
                     .fg(self.theme.purple)
                     .bg(self.theme.inactive_bg)
@@ -503,7 +503,7 @@ impl<'a> MarkdownRenderer<'a> {
                 .and_then(|lines| lines.get(index))
                 .and_then(Option::as_deref);
             let content_spans: Vec<Span<'static>> = match tokens {
-                Some(tokens) => styled_tokens(tokens, code_line, &self.theme)
+                Some(tokens) => styled_tokens(tokens, code_line, self.theme)
                     .map(|(style, text)| {
                         Span::styled(text.to_string(), style.bg(self.theme.inactive_bg))
                     })
@@ -608,7 +608,7 @@ impl<'a> MarkdownRenderer<'a> {
                 .unwrap_or_default();
             let display_text = if cell_text.chars().count() > *width {
                 let truncated: String = cell_text.chars().take(*width - 1).collect();
-                format!("{}…", truncated)
+                format!("{truncated}…")
             } else {
                 cell_text
             };
@@ -852,6 +852,18 @@ mod tests {
             text,
             "┌─ rust\n│ fn main() {\n│     println!(\"hello\");\n│ }\n└─"
         );
+    }
+
+    #[test]
+    fn fenced_code_lines_starting_with_a_diff_marker_character_render_whole() {
+        let md = "```yaml\n- item\n+ plus\n  nested: true\n```";
+        let text = render_markdown_for_test(md)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(text, "┌─ yaml\n│ - item\n│ + plus\n│   nested: true\n└─");
     }
 
     #[test]

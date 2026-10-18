@@ -55,7 +55,7 @@ pub struct RunReport {
     runs: Vec<(String, Result<(), String>)>,
     /// Terminal-log rows shown as running while a background run works,
     /// one per run in the same order; empty for terminal runs.
-    log_rows: Vec<usize>,
+    log_rows: Vec<crate::command_log::LogRow>,
 }
 
 /// Where a command's stderr goes while it runs.
@@ -432,10 +432,7 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
     })
 }
 
-fn sorted_by_project_and_number<'a, T>(
-    mut rows: Vec<&'a T>,
-    key: impl Fn(&T) -> (&str, u64),
-) -> Vec<&'a T> {
+fn sorted_by_project_and_number<T>(mut rows: Vec<&T>, key: impl Fn(&T) -> (&str, u64)) -> Vec<&T> {
     rows.sort_by(|a, b| key(a).cmp(&key(b)));
     rows
 }

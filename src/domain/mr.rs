@@ -250,11 +250,11 @@ pub struct DiscussionNote {
 pub async fn list_mrs(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
-    show_closed: bool,
+    state: crate::domain::state_query::StateQuery,
 ) -> Result<Vec<MergeRequest>> {
     client
         .backend
-        .list_mrs(scope, show_closed, client.page_size, client.api_per_page)
+        .list_mrs(scope, state, client.page_size, client.api_per_page)
         .await
 }
 
@@ -265,6 +265,21 @@ pub async fn get_mr(client: &GitlabClient, project_path: &str, iid: u64) -> Resu
 
 pub async fn get_mr_diff(client: &GitlabClient, project_path: &str, mr_iid: u64) -> Result<String> {
     client.backend.get_mr_diff(project_path, mr_iid).await
+}
+
+/// Most bytes of one diff glab-tui reads.
+pub const MR_DIFF_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Refuses a diff read that stopped at `MR_DIFF_MAX_BYTES`: a diff cut short
+/// would let a review look complete when files are missing from it.
+pub fn ensure_complete_diff(is_truncated: bool, subject: &str) -> Result<()> {
+    if is_truncated {
+        anyhow::bail!(
+            "the diff of {subject} is larger than {} MiB, the most glab-tui reads of a diff",
+            MR_DIFF_MAX_BYTES / (1024 * 1024)
+        );
+    }
+    Ok(())
 }
 
 pub async fn list_mr_notes(
@@ -374,8 +389,7 @@ mod tests {
         let serialized = serde_json::to_string(&mr).unwrap();
         assert!(
             serialized.contains("related_issues"),
-            "related_issues must be serialized with cache: {}",
-            serialized
+            "related_issues must be serialized with cache: {serialized}"
         );
 
         let round_trip: MergeRequest = serde_json::from_str(&serialized).unwrap();

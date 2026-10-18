@@ -7,10 +7,10 @@
 //! filters, sort) change, so renderers and handlers read it instead of
 //! re-running the pipeline.
 
-pub(crate) mod branches;
-pub(crate) mod environments;
-pub(crate) mod releases;
-pub(crate) mod runners;
+pub mod branches;
+pub mod environments;
+pub mod releases;
+pub mod runners;
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -25,7 +25,7 @@ use ratatui::widgets::{Block, Cell, Row as TableRow, Table, TableState};
 use crate::config::{Icons, Theme};
 
 /// A row with a natural key that survives refreshes, sorts and filters.
-pub(crate) trait Row {
+pub trait Row {
     type Key: Eq + Hash + Clone + std::fmt::Debug;
 
     fn key(&self) -> Self::Key;
@@ -37,13 +37,13 @@ pub(crate) trait Row {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum SortKey {
+pub enum SortKey {
     Number(u64),
     Text(String),
 }
 
 /// What a column cell needs from the frame being drawn.
-pub(crate) struct CellContext<'a> {
+pub struct CellContext<'a> {
     pub theme: &'a Theme,
     pub icons: &'a Icons,
     pub query: &'a str,
@@ -54,7 +54,7 @@ pub(crate) struct CellContext<'a> {
 
 /// One column of a list tab: its header, cell, search text, filter values
 /// and sort key, defined once.
-pub(crate) trait ColumnDef: Copy + Eq + 'static {
+pub trait ColumnDef: Copy + Eq + 'static {
     type Row: Row;
 
     /// Every column the tab can show, in display order.
@@ -106,7 +106,7 @@ pub(crate) trait ColumnDef: Copy + Eq + 'static {
 
 /// The inputs a view is computed from, borrowed from the app state.
 #[derive(Clone, Copy)]
-pub(crate) struct ViewInputs<'a> {
+pub struct ViewInputs<'a> {
     pub query: &'a str,
     /// `None` shows every column.
     pub enabled_columns: Option<&'a HashSet<String>>,
@@ -151,7 +151,7 @@ impl ViewSpec {
     }
 }
 
-pub(crate) struct ListTab<C: ColumnDef> {
+pub struct ListTab<C: ColumnDef> {
     items: Vec<C::Row>,
     /// Indices into `items`, filtered and sorted.
     view: Vec<usize>,
@@ -179,22 +179,18 @@ impl<C: ColumnDef> Default for ListTab<C> {
 }
 
 impl<C: ColumnDef> ListTab<C> {
-    pub(crate) fn items(&self) -> &[C::Row] {
+    pub fn items(&self) -> &[C::Row] {
         &self.items
     }
 
-    pub(crate) fn set_items(&mut self, items: Vec<C::Row>) {
+    pub fn set_items(&mut self, items: Vec<C::Row>) {
         self.items = items;
         self.view.clear();
         self.spec = None;
     }
 
     /// Apply `update` to the row with `key`; false when no row has it.
-    pub(crate) fn update(
-        &mut self,
-        key: &<C::Row as Row>::Key,
-        update: impl FnOnce(&mut C::Row),
-    ) -> bool {
+    pub fn update(&mut self, key: &<C::Row as Row>::Key, update: impl FnOnce(&mut C::Row)) -> bool {
         let Some(row) = self.items.iter_mut().find(|r| r.has_key(key)) else {
             return false;
         };
@@ -203,18 +199,18 @@ impl<C: ColumnDef> ListTab<C> {
         true
     }
 
-    pub(crate) fn retain(&mut self, keep: impl FnMut(&C::Row) -> bool) {
+    pub fn retain(&mut self, keep: impl FnMut(&C::Row) -> bool) {
         self.items.retain(keep);
         self.view.clear();
         self.spec = None;
     }
 
-    pub(crate) fn get(&self, key: &<C::Row as Row>::Key) -> Option<&C::Row> {
+    pub fn get(&self, key: &<C::Row as Row>::Key) -> Option<&C::Row> {
         self.items.iter().find(|r| r.has_key(key))
     }
 
     /// Rebuild the view if the rows or `inputs` changed since the last build.
-    pub(crate) fn refresh(&mut self, inputs: ViewInputs) {
+    pub fn refresh(&mut self, inputs: ViewInputs) {
         if self.spec.as_ref().is_some_and(|spec| spec.matches(inputs)) {
             return;
         }
@@ -244,23 +240,23 @@ impl<C: ColumnDef> ListTab<C> {
     }
 
     /// Forget the selection; the next refresh selects the first row.
-    pub(crate) fn reset_cursor(&mut self) {
+    pub fn reset_cursor(&mut self) {
         self.cursor = None;
         self.cursor_pos = None;
         self.spec = None;
         self.table_state = TableState::default();
     }
 
-    pub(crate) fn cursor_row(&self) -> Option<&C::Row> {
+    pub fn cursor_row(&self) -> Option<&C::Row> {
         self.cursor.as_ref().and_then(|key| self.get(key))
     }
 
-    pub(crate) fn view_rows(&self) -> impl Iterator<Item = &C::Row> + '_ {
+    pub fn view_rows(&self) -> impl Iterator<Item = &C::Row> + '_ {
         self.view.iter().map(|&idx| &self.items[idx])
     }
 
     /// Columns shown by the last refresh, in display order.
-    pub(crate) fn visible_columns(&self) -> impl Iterator<Item = C> + '_ {
+    pub fn visible_columns(&self) -> impl Iterator<Item = C> + '_ {
         C::ALL.iter().copied().filter(|col| {
             self.spec
                 .as_ref()
@@ -278,7 +274,7 @@ impl<C: ColumnDef> ListTab<C> {
 
     /// Distinct column-filter values over every row, not just the view, so
     /// a value that the current filter hides can still be picked.
-    pub(crate) fn distinct_filter_values(&self, column: &str) -> Vec<String> {
+    pub fn distinct_filter_values(&self, column: &str) -> Vec<String> {
         let Some(col) = C::from_label(column) else {
             return Vec::new();
         };
@@ -290,7 +286,7 @@ impl<C: ColumnDef> ListTab<C> {
         values.into_iter().collect()
     }
 
-    pub(crate) fn render(&mut self, f: &mut Frame, area: Rect, table: TableContext) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect, table: TableContext) {
         let columns: Vec<C> = self.visible_columns().collect();
         let rows = self.view.iter().enumerate().map(|(pos, &idx)| {
             let is_highlighted = self.cursor_pos == Some(pos);
@@ -333,7 +329,7 @@ impl<C: ColumnDef> ListTab<C> {
 }
 
 /// Everything a list-tab table needs from the frame being drawn.
-pub(crate) struct TableContext<'a> {
+pub struct TableContext<'a> {
     pub block: Block<'a>,
     pub header_style: Style,
     pub highlight_style: Style,
@@ -356,23 +352,35 @@ fn build_view<C: ColumnDef>(items: &[C::Row], spec: &ViewSpec) -> Vec<usize> {
         .filter_map(|(label, selected)| C::from_label(label).map(|col| (col, selected)))
         .collect();
     let matcher = &*crate::app::FUZZY_MATCHER;
-    let mut view: Vec<usize> = items
+    let mut scored: Vec<(usize, Option<i64>)> = items
         .iter()
         .enumerate()
-        .filter(|(_, row)| {
-            query.is_empty()
-                || searchable.iter().any(|col| {
-                    fuzzy_matcher::FuzzyMatcher::fuzzy_match(matcher, &col.text(row), query)
-                        .is_some()
-                })
+        .filter_map(|(idx, row)| {
+            if query.is_empty() {
+                Some((idx, None))
+            } else {
+                let mut best: Option<i64> = None;
+                for col in &searchable {
+                    if let Some(score) =
+                        fuzzy_matcher::FuzzyMatcher::fuzzy_match(matcher, &col.text(row), query)
+                    {
+                        best = Some(best.map_or(score, |b| b.max(score)));
+                    }
+                }
+                best.map(|score| (idx, Some(score)))
+            }
         })
-        .filter(|(_, row)| {
+        .filter(|(idx, _)| {
+            let row = &items[*idx];
             filters
                 .iter()
                 .all(|(col, selected)| col.matches_filter(row, selected))
         })
-        .map(|(idx, _)| idx)
         .collect();
+    if spec.sort.is_none() && !query.is_empty() {
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+    }
+    let mut view: Vec<usize> = scored.into_iter().map(|(idx, _)| idx).collect();
     let sort = spec
         .sort
         .as_ref()
@@ -393,7 +401,7 @@ fn build_view<C: ColumnDef>(items: &[C::Row], spec: &ViewSpec) -> Vec<usize> {
 
 /// Navigation and column-filter lookups shared by every list tab, so the
 /// app can dispatch on the active tab without knowing its row type.
-pub(crate) trait ListNavigation {
+pub trait ListNavigation {
     fn next(&mut self);
     fn previous(&mut self);
     fn first(&mut self);
@@ -464,12 +472,12 @@ impl<C: ColumnDef> ListNavigation for ListTab<C> {
 }
 
 /// Column labels in display order, for `Tab::columns`.
-pub(crate) fn column_labels<C: ColumnDef>() -> Vec<&'static str> {
+pub fn column_labels<C: ColumnDef>() -> Vec<&'static str> {
     C::ALL.iter().map(|col| col.label()).collect()
 }
 
 /// Labels of the columns shown before the user configures any.
-pub(crate) fn default_column_labels<C: ColumnDef>() -> Vec<&'static str> {
+pub fn default_column_labels<C: ColumnDef>() -> Vec<&'static str> {
     C::ALL
         .iter()
         .filter(|col| col.is_default())

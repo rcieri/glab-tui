@@ -12,6 +12,20 @@ pub struct Release {
     pub commit_id: Option<String>,
     pub commit_title: Option<String>,
     pub assets_link: Option<String>,
+    #[serde(default)]
+    pub project_path: String,
+}
+
+impl Release {
+    /// The project this release belongs to, or the repository in scope when
+    /// the listing left it empty (caches written before the field existed).
+    pub fn project_or<'a>(&'a self, scope: &'a crate::scope::Scope) -> &'a str {
+        if self.project_path.is_empty() {
+            scope.as_str()
+        } else {
+            &self.project_path
+        }
+    }
 }
 
 pub async fn list_releases(

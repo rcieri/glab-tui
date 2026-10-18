@@ -1,9 +1,12 @@
+use crate::utils::private_fs;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Serializes tests that mutate process-global environment variables
 /// (config paths, cache dirs). Env vars are visible to every test thread,
@@ -497,7 +500,7 @@ pub enum SaveMenu {
     Cancel,
 }
 
-pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
+pub fn hex_to_color(s: &str) -> Option<Color> {
     let s = s.trim();
     // An empty color string maps to Color::Reset, which lets the terminal's
     // own (possibly transparent) background show through instead of painting
@@ -519,7 +522,7 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
 fn color_to_hex(c: Color) -> String {
     match c {
         Color::Reset => String::new(),
-        Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
         _ => String::new(),
     }
 }
@@ -813,11 +816,18 @@ pub fn use_config_file(file: PathBuf) {
 }
 
 fn config_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("GLAB_TUI_CONFIG") {
-        let mut p = PathBuf::from(path);
-        p.pop();
-        return p;
-    }
+    user_chosen_config_dir().unwrap_or_else(default_config_dir)
+}
+
+/// The parent of a `GLAB_TUI_CONFIG` file: a directory the user picked, whose
+/// mode glab-tui must not change.
+fn user_chosen_config_dir() -> Option<PathBuf> {
+    let mut dir = PathBuf::from(std::env::var("GLAB_TUI_CONFIG").ok()?);
+    dir.pop();
+    Some(dir)
+}
+
+fn default_config_dir() -> PathBuf {
     let xdg_config = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| home_dir().join(".config"));
@@ -832,14 +842,14 @@ fn themes_dir() -> PathBuf {
 
 fn ensure_themes() {
     let dir = themes_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = private_fs::create_dir_all(&dir);
     // Always overwrite bundled themes so users receive fixes and new tokens
     // (e.g. diff_gutter_bg) on upgrade without deleting the themes dir.
     // User-created themes use filenames not present in BUNDLED_THEMES and are
     // never touched here.
     for (name, toml_str) in BUNDLED_THEMES {
-        let theme_path = dir.join(format!("{}.toml", name));
-        let _ = std::fs::write(&theme_path, toml_str);
+        let theme_path = dir.join(format!("{name}.toml"));
+        let _ = private_fs::write(&theme_path, toml_str);
     }
 }
 
@@ -859,7 +869,7 @@ impl Theme {
 
     pub fn preset(name: &str) -> Option<Self> {
         // Check user's themes directory first
-        let theme_path = themes_dir().join(format!("{}.toml", name));
+        let theme_path = themes_dir().join(format!("{name}.toml"));
         if theme_path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
@@ -1222,6 +1232,14 @@ pub struct KeybindingTodos {
     pub mark_as_read: String,
     #[serde(default)]
     pub open_in_browser: String,
+    #[serde(default = "def_mark_as_done")]
+    pub mark_as_done: String,
+    #[serde(default = "def_mark_all_as_read")]
+    pub mark_all_as_read: String,
+    #[serde(default = "def_unsubscribe")]
+    pub unsubscribe: String,
+    #[serde(default = "def_toggle_show_read")]
+    pub toggle_show_read: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1248,9 +1266,13 @@ pub struct KeybindingEnvironments {
 pub struct KeybindingTerminal {
     #[serde(default)]
     pub toggle_wrap: String,
+    #[serde(default = "def_clear_terminal_log")]
+    pub clear_log: String,
+    #[serde(default = "def_copy_terminal_command")]
+    pub copy_command: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingConfig {
     #[serde(default)]
     pub global: KeybindingGlobal,
@@ -1391,10 +1413,16 @@ keybind_defaults! {
     def_edit_description = "e",
     def_mark_as_read = "Enter",
     def_open_in_browser_todo = "o",
+    def_mark_as_done = "d",
+    def_mark_all_as_read = "A",
+    def_unsubscribe = "U",
+    def_toggle_show_read = "r",
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
     def_toggle_terminal_wrap = "w",
+    def_clear_terminal_log = "C",
+    def_copy_terminal_command = "y",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
@@ -1556,6 +1584,10 @@ impl Default for KeybindingTodos {
         Self {
             mark_as_read: def_mark_as_read(),
             open_in_browser: def_open_in_browser_todo(),
+            mark_as_done: def_mark_as_done(),
+            mark_all_as_read: def_mark_all_as_read(),
+            unsubscribe: def_unsubscribe(),
+            toggle_show_read: def_toggle_show_read(),
         }
     }
 }
@@ -1584,25 +1616,8 @@ impl Default for KeybindingTerminal {
     fn default() -> Self {
         Self {
             toggle_wrap: def_toggle_terminal_wrap(),
-        }
-    }
-}
-
-impl Default for KeybindingConfig {
-    fn default() -> Self {
-        Self {
-            global: KeybindingGlobal::default(),
-            issues: KeybindingIssues::default(),
-            mrs: KeybindingMrs::default(),
-            pipelines: KeybindingPipelines::default(),
-            releases: KeybindingReleases::default(),
-            milestones: KeybindingMilestones::default(),
-            jobs: KeybindingJobs::default(),
-            runners: KeybindingRunners::default(),
-            todos: KeybindingTodos::default(),
-            branches: KeybindingBranches::default(),
-            environments: KeybindingEnvironments::default(),
-            terminal: KeybindingTerminal::default(),
+            clear_log: def_clear_terminal_log(),
+            copy_command: def_copy_terminal_command(),
         }
     }
 }
@@ -1649,6 +1664,10 @@ fn def_prefetch_tabs() -> bool {
     false
 }
 
+fn def_command_timeout_seconds() -> u64 {
+    120
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1693,6 +1712,10 @@ pub struct Config {
     /// startup and repository switches. Off by default to conserve API quota.
     #[serde(default = "def_prefetch_tabs")]
     pub prefetch_tabs: bool,
+    /// How long one `gh`/`glab` call may run before it is killed and reported
+    /// as an error. Zero is read as one second.
+    #[serde(default = "def_command_timeout_seconds")]
+    pub command_timeout_seconds: u64,
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
@@ -1724,6 +1747,7 @@ impl Default for Config {
             keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
             prefetch_tabs: def_prefetch_tabs(),
+            command_timeout_seconds: def_command_timeout_seconds(),
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
@@ -1747,8 +1771,17 @@ impl Config {
         if let Some(file) = CONFIG_FILE_OVERRIDE.get() {
             return file.clone();
         }
-        let mut path = config_dir();
-        let _ = std::fs::create_dir_all(&path);
+        let mut path = match user_chosen_config_dir() {
+            Some(dir) => {
+                let _ = private_fs::create_dir_all(&dir);
+                dir
+            }
+            None => {
+                let dir = default_config_dir();
+                let _ = private_fs::create_owned_dir(&dir);
+                dir
+            }
+        };
         path.push("config.toml");
         path
     }
@@ -1756,6 +1789,10 @@ impl Config {
     /// Per-request page size, clamped to GitLab's accepted `per_page` range.
     pub fn api_per_page_clamped(&self) -> usize {
         self.api_per_page.clamp(1, 100)
+    }
+
+    pub fn command_timeout(&self) -> Duration {
+        Duration::from_secs(self.command_timeout_seconds.max(1))
     }
 
     fn generate_default_toml() -> String {
@@ -1787,6 +1824,9 @@ page_size = 100
 
 # Eagerly prefetch data for all enabled tabs in the background on startup / repo switch.
 # prefetch_tabs = false
+
+# Seconds one gh/glab call may run before it is killed and shown as an error.
+# command_timeout_seconds = 120
 
 # Icon glyphs: "nerd" needs a Nerd Font (https://www.nerdfonts.com) in the terminal.
 # Use "ascii" when boxes and columns are misaligned because no Nerd Font is installed.
@@ -1912,6 +1952,10 @@ edit_description = "e"
 [keybindings.todos]
 mark_as_read = "Enter"
 open_in_browser = "o"
+mark_as_done = "d"
+mark_all_as_read = "A"
+unsubscribe = "U"
+toggle_show_read = "r"
 
 [keybindings.branches]
 create_branch = "n"
@@ -1922,6 +1966,8 @@ view_deployments = "Enter"
 
 [keybindings.terminal]
 toggle_wrap = "w"
+clear_log = "C"
+copy_command = "y"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:
@@ -2022,7 +2068,7 @@ toggle_wrap = "w"
         match Config::deserialize(merged_value) {
             Ok(cfg) => cfg,
             Err(e) => {
-                eprintln!("Error deserializing merged config: {}. Using defaults.", e);
+                eprintln!("Error deserializing merged config: {e}. Using defaults.");
                 Config::default()
             }
         }
@@ -2032,10 +2078,10 @@ toggle_wrap = "w"
         let path = Self::config_path();
         match toml::to_string(self) {
             Ok(toml_str) => {
-                let _ = std::fs::write(&path, &toml_str);
+                let _ = private_fs::write(&path, &toml_str);
             }
             Err(e) => {
-                eprintln!("Error serializing config: {}", e);
+                eprintln!("Error serializing config: {e}");
             }
         }
     }
@@ -2053,6 +2099,13 @@ toggle_wrap = "w"
 
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
 pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().icons.icons()));
+static COMMAND_TIMEOUT_SECONDS: Lazy<AtomicU64> =
+    Lazy::new(|| AtomicU64::new(Config::load().command_timeout().as_secs()));
+
+/// The `command_timeout_seconds` every `gh`/`glab` subprocess runs under.
+pub fn command_timeout() -> Duration {
+    Duration::from_secs(COMMAND_TIMEOUT_SECONDS.load(Ordering::Relaxed))
+}
 
 pub fn all_theme_presets() -> Vec<String> {
     let mut presets: Vec<String> = BUNDLED_THEMES
@@ -2124,7 +2177,7 @@ impl Config {
             SaveMenu::Local => {
                 if let Some(root) = find_git_root() {
                     let repo_config_dir = root.join(".glab-tui");
-                    let _ = std::fs::create_dir_all(&repo_config_dir);
+                    let _ = private_fs::create_dir_all(&repo_config_dir);
                     repo_config_dir.join("config.toml")
                 } else {
                     actual_target = SaveMenu::Global;
@@ -2245,7 +2298,7 @@ impl Config {
         ] {
             if pane != base_pane {
                 let val = pane_to_value(pane);
-                if val.as_table().map_or(false, |t| !t.is_empty()) {
+                if val.as_table().is_some_and(|t| !t.is_empty()) {
                     table.insert(tab_name.to_string(), val);
                 } else {
                     table.remove(*tab_name);
@@ -2256,7 +2309,7 @@ impl Config {
         }
 
         let toml_str = toml::to_string_pretty(&merged_value)?;
-        std::fs::write(&target_path, &toml_str)?;
+        private_fs::write(&target_path, &toml_str)?;
 
         Ok(())
     }
@@ -2272,6 +2325,13 @@ pub fn reload_icons() {
     if let Ok(mut icons) = ICONS.write() {
         *icons = Config::load().icons.icons();
     }
+}
+
+pub fn reload_command_timeout() {
+    COMMAND_TIMEOUT_SECONDS.store(
+        Config::load().command_timeout().as_secs(),
+        Ordering::Relaxed,
+    );
 }
 
 pub fn set_theme_preset(name: &str) {
@@ -2325,9 +2385,10 @@ mod tests {
 
     #[test]
     fn api_per_page_clamped_bounds_to_gitlab_range() {
-        let mut cfg = Config::default();
-
-        cfg.api_per_page = 0;
+        let mut cfg = Config {
+            api_per_page: 0,
+            ..Config::default()
+        };
         assert_eq!(cfg.api_per_page_clamped(), 1);
 
         cfg.api_per_page = 250;
@@ -2620,8 +2681,10 @@ page_size = 250
         let temp_dir = tempfile::tempdir().unwrap();
         let guard = EnvGuard::isolate_home(temp_dir.path());
 
-        let mut config = Config::default();
-        config.prefetch_tabs = true;
+        let mut config = Config {
+            prefetch_tabs: true,
+            ..Config::default()
+        };
         config.save_layout(SaveMenu::Global).unwrap();
 
         let loaded = Config::load();
@@ -2634,6 +2697,62 @@ page_size = 250
         assert!(!reloaded.prefetch_tabs);
 
         drop(guard);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_dir_and_files_are_owner_only() {
+        use crate::utils::private_fs::mode_of;
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+
+        Config::load();
+        Config::default().save_layout(SaveMenu::Global).unwrap();
+
+        let config_dir = temp_dir.path().join(".config").join("glab-tui");
+        assert_eq!(mode_of(&config_dir), 0o700);
+        assert_eq!(mode_of(&config_dir.join("config.toml")), 0o600);
+        assert_eq!(mode_of(&config_dir.join("themes")), 0o700);
+        assert_eq!(
+            mode_of(&config_dir.join("themes").join("default.toml")),
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_dir_left_world_readable_is_tightened_on_load() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let config_dir = temp_dir.path().join(".config").join("glab-tui");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        Config::load();
+
+        assert_eq!(mode_of(&config_dir), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn glab_tui_config_parent_keeps_its_mode() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let chosen = temp_dir.path().join("dotfiles");
+        std::fs::create_dir_all(&chosen).unwrap();
+        std::fs::set_permissions(&chosen, std::fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe { std::env::set_var("GLAB_TUI_CONFIG", chosen.join("glab-tui.toml")) };
+
+        Config::load();
+
+        assert_eq!(mode_of(&chosen), 0o755);
     }
 
     #[test]

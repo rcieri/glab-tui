@@ -91,11 +91,11 @@ impl Issue {
 pub async fn list_issues(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
-    show_closed: bool,
+    state: crate::domain::state_query::StateQuery,
 ) -> Result<Vec<Issue>> {
     client
         .backend
-        .list_issues(scope, show_closed, client.page_size, client.api_per_page)
+        .list_issues(scope, state, client.page_size, client.api_per_page)
         .await
 }
 
@@ -225,8 +225,7 @@ mod tests {
         let serialized = serde_json::to_string(&issue).unwrap();
         assert!(
             serialized.contains("related_mrs"),
-            "related_mrs must be serialized with cache: {}",
-            serialized
+            "related_mrs must be serialized with cache: {serialized}"
         );
 
         let round_trip: Issue = serde_json::from_str(&serialized).unwrap();

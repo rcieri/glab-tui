@@ -459,9 +459,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Main Area Title
     // Inside a pipeline descent the tab name alone no longer says where you
     // are, so the path down is appended. Jobs is the deepest level of the same
-    // descent and needs it just as much.
+    // descent and needs it just as much. The Todos tab shows which items its
+    // read filter lets through.
     let breadcrumb = match app.active_tab {
         Tab::Pipelines | Tab::Jobs => app.nav_breadcrumb(),
+        Tab::Todos if app.shows_read_todos() => "All".to_string(),
+        Tab::Todos => "Unread".to_string(),
         _ => String::new(),
     };
     let tab_title = if breadcrumb.is_empty() {
@@ -571,7 +574,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             highlight_style,
             header_style,
         ),
-        Tab::Terminal => tabs::render_tab_terminal(f, app, content_area),
+        Tab::Terminal => tabs::render_tab_terminal(f, app, content_area, highlight_style),
     }
 
     // Compact terminal pane at bottom of the middle column
@@ -602,10 +605,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
             }
 
-            for i in start_idx..num_cmds {
-                if let Some(cmd) = app.terminal_commands.get(i) {
-                    log_lines.push(build_log_line(cmd, bottom_inner.width as usize));
-                }
+            for cmd in app.terminal_commands.iter().skip(start_idx) {
+                log_lines.push(build_log_line(cmd, bottom_inner.width as usize));
             }
 
             f.render_widget(Paragraph::new(log_lines), bottom_inner);

@@ -250,11 +250,11 @@ pub struct DiscussionNote {
 pub async fn list_mrs(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
-    show_closed: bool,
+    state: crate::domain::state_query::StateQuery,
 ) -> Result<Vec<MergeRequest>> {
     client
         .backend
-        .list_mrs(scope, show_closed, client.page_size, client.api_per_page)
+        .list_mrs(scope, state, client.page_size, client.api_per_page)
         .await
 }
 

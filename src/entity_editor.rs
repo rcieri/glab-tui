@@ -724,11 +724,7 @@ pub fn build_runner_document(
         crate::app::Field::read_only("Status", runner.status.to_uppercase()),
         crate::app::Field::read_only(
             "Active",
-            if runner.active {
-                "YES".to_string()
-            } else {
-                "NO".to_string()
-            },
+            crate::app::runner_active_display(runner.active).to_string(),
         ),
     ];
     crate::app::EntityDocument {
@@ -1549,6 +1545,11 @@ pub fn release_edit_menu(
     }
 }
 
+pub fn open_release_edit_menu(app: &mut App, release: &crate::domain::releases::Release) {
+    let menu = release_edit_menu(release, release.project_or(&app.scope));
+    app.open_edit_menu(menu);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2080,5 +2081,36 @@ mod tests {
         } else {
             panic!("Expected Markdown content");
         }
+    }
+
+    #[test]
+    fn release_edit_form_targets_the_selected_row_project_when_tags_repeat() {
+        let release = |project: &str| crate::domain::releases::Release {
+            name: format!("Release in {project}"),
+            tag_name: "v1.0.0".to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(format!("notes for {project}")),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        };
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.releases
+            .set_items(vec![release("group/a"), release("group/b")]);
+
+        let selected = app.releases.items()[1].clone();
+        open_release_edit_menu(&mut app, &selected);
+
+        let menu = app.edit_menu.as_ref().expect("release edit form opens");
+        let notes = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Release Notes")
+            .map(|f| f.value.as_str());
+        assert_eq!(menu.entity_project, "group/b");
+        assert_eq!(notes, Some("notes for group/b"));
     }
 }

@@ -1,0 +1,13 @@
+[
+  {
+    "number": 20,
+    "title": "Merged change",
+    "state": "MERGED",
+    "author": {"login": "test-user"},
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-02T00:00:00Z",
+    "headRefName": "merged",
+    "baseRefName": "main",
+    "isDraft": false
+  }
+]

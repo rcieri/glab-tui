@@ -1,5 +1,6 @@
 use crate::app;
 use crate::domain;
+use crate::domain::state_query::StateQueries;
 use crate::event::{Event, ScopedSender};
 use crate::git_helpers::get_current_branch;
 
@@ -360,31 +361,81 @@ pub fn spawn_refresh_child_level(
     });
 }
 
+/// Jobs of the newest pipeline for the checked-out branch.
+async fn fetch_current_branch_jobs(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+) -> Result<(u64, Vec<domain::pipelines::Job>), String> {
+    let branch = get_current_branch()
+        .await
+        .ok_or_else(|| "Not on a git branch, so there is no pipeline to show.".to_string())?;
+    let pipeline_id = domain::pipelines::find_branch_pipeline_id(client, project_path, &branch)
+        .await
+        .map_err(|e| format!("Failed to find the pipeline for branch '{branch}': {e}"))?
+        .ok_or_else(|| "No pipeline found for the current branch/MR.".to_string())?;
+    let jobs = domain::pipelines::list_pipeline_jobs(client, project_path, pipeline_id)
+        .await
+        .map_err(|e| format!("Failed to fetch jobs for pipeline {pipeline_id}: {e}"))?;
+    Ok((pipeline_id, jobs))
+}
+
+/// Refetch Issues and MRs/PRs whose State column filter now asks the server
+/// for different states. Called from `Event::Tick`, so every path that edits a
+/// filter (the picker, jumping to an item, a scope switch) refetches without
+/// each one having to remember to.
+pub fn dispatch_state_query_refetch(
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let tabs = app.take_state_query_refetches();
+    if tabs.is_empty() {
+        return;
+    }
+    let states = app.requested_state_queries();
+    for tab in tabs {
+        app.start_loading_tab(tab);
+        spawn_refresh_active_tab(
+            client,
+            &app.scope,
+            states,
+            tab,
+            app.scoped_sender(tx.clone()),
+        );
+    }
+}
+
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
+    states: StateQueries,
     tab: app::Tab,
     tx: ScopedSender,
 ) {
+    if !tab.is_fetchable_in(scope) {
+        return;
+    }
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
     let scope = scope.clone();
     tokio::spawn(async move {
         let repo_path = scope.as_str().to_string();
         match tab {
-            app::Tab::Issues => match domain::issues::list_issues(&client, &scope, true).await {
-                Ok(issues) => {
-                    let _ = tx.send(Event::IssuesFetched(issues));
+            app::Tab::Issues => {
+                match domain::issues::list_issues(&client, &scope, states.issues).await {
+                    Ok(issues) => {
+                        let _ = tx.send(Event::IssuesFetched(states.issues, issues));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::FetchFailed(
+                            tab,
+                            format!("Failed to fetch issues: {e}"),
+                        ));
+                    }
                 }
-                Err(e) => {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        format!("Failed to fetch issues: {e}"),
-                    ));
-                }
-            },
+            }
             app::Tab::MergeRequests => {
-                match domain::mr::list_mrs(&client, &scope, true).await {
+                match domain::mr::list_mrs(&client, &scope, states.mrs).await {
                     Ok(mut mrs) => {
                         // GitHub already populated both axes during list_mrs.
                         // GitLab needs one bulk GraphQL call for the same iids.
@@ -432,7 +483,7 @@ pub fn spawn_refresh_active_tab(
                         // Derive the workflow status once the approval state
                         // is merged, since the cascade reads from it.
                         derive_workflow(&mut mrs);
-                        let _ = tx.send(Event::MrsFetched(mrs));
+                        let _ = tx.send(Event::MrsFetched(states.mrs, mrs));
                     }
                     Err(e) => {
                         let _ =
@@ -474,9 +525,13 @@ pub fn spawn_refresh_active_tab(
                 }
             },
             app::Tab::Todos => {
-                match domain::notifications::list_notifications(&client, true).await {
-                    Ok(notifs) => {
-                        let _ = tx.send(Event::TodosFetched(notifs));
+                let show_read = client.show_read_notifications;
+                match domain::notifications::list_notifications(&client, show_read).await {
+                    Ok(notifications) => {
+                        let _ = tx.send(Event::TodosFetched {
+                            notifications,
+                            show_read,
+                        });
                     }
                     Err(e) => {
                         let _ = tx.send(Event::FetchFailed(
@@ -486,53 +541,14 @@ pub fn spawn_refresh_active_tab(
                     }
                 }
             }
-            app::Tab::Jobs => {
-                let branch_name = get_current_branch().await;
-                let mut found_pipeline_id = None;
-
-                if let Some(branch) = &branch_name {
-                    let mr_iid = match domain::mr::list_mrs(&client, &scope, false).await {
-                        Ok(mrs) => mrs
-                            .into_iter()
-                            .find(|m| &m.source_branch == branch)
-                            .map(|m| m.iid),
-                        Err(_) => None,
-                    };
-
-                    if let Ok(pipelines) = domain::pipelines::list_pipelines(&client, &scope).await
-                    {
-                        let target_ref =
-                            mr_iid.map(|iid| format!("refs/merge-requests/{iid}/head"));
-                        if let Some(pipeline) = pipelines.into_iter().find(|p| {
-                            p.ref_branch() == branch
-                                || target_ref.as_ref().is_some_and(|tr| p.ref_branch() == tr)
-                        }) {
-                            found_pipeline_id = Some(pipeline.id());
-                        }
-                    }
+            app::Tab::Jobs => match fetch_current_branch_jobs(&client, &repo_path).await {
+                Ok((pipeline_id, jobs)) => {
+                    let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
                 }
-
-                if let Some(pipeline_id) = found_pipeline_id {
-                    match domain::pipelines::list_pipeline_jobs(&client, &repo_path, pipeline_id)
-                        .await
-                    {
-                        Ok(jobs) => {
-                            let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                tab,
-                                format!("Failed to fetch jobs for pipeline {pipeline_id}: {e}"),
-                            ));
-                        }
-                    }
-                } else {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        "No pipeline found for the current branch/MR.".to_string(),
-                    ));
+                Err(message) => {
+                    let _ = tx.send(Event::FetchFailed(tab, message));
                 }
-            }
+            },
             app::Tab::Milestones => {
                 match domain::milestones::list_milestones(&client, &scope).await {
                     Ok(milestones) => {
@@ -756,6 +772,7 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
 pub fn spawn_refresh_all_tabs(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
+    states: StateQueries,
     active_tab: app::Tab,
     available_tabs: Vec<app::Tab>,
     already_loaded: std::collections::HashSet<app::Tab>,
@@ -769,7 +786,7 @@ pub fn spawn_refresh_all_tabs(
                 continue;
             }
             crate::backend::rate_limit::pace_bulk_operation().await;
-            spawn_refresh_active_tab(&client, &scope, tab, tx.clone());
+            spawn_refresh_active_tab(&client, &scope, states, tab, tx.clone());
         }
     });
 }
@@ -849,6 +866,7 @@ mod tests {
             tx: None,
             page_size: 100,
             api_per_page: 100,
+            show_read_notifications: false,
         }
     }
 
@@ -929,6 +947,7 @@ mod tests {
             tx: None,
             page_size: 100,
             api_per_page: 100,
+            show_read_notifications: false,
         });
         app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
         app.active_tab = app::Tab::MergeRequests;

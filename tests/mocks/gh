@@ -26,6 +26,16 @@ if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     exit 0
 fi
 
+# `pr list --state merged` serves only merged PRs, so a test can tell a list
+# refetched for that state from one that was not.
+if [[ "$*" == "pr list"* && " $* " == *" --state merged "* ]]; then
+    cat "$FIXTURES_DIR/gh_prs_merged.json"
+    exit 0
+elif [[ "$*" == "run list"* ]]; then
+    echo '[{"databaseId": 12345}]'
+    exit 0
+fi
+
 # Stacked PRs merge through the asynchronous merge endpoint: the request is
 # accepted as pending, and polling its uuid reports the merge done.
 if [[ "$*" == *"/merge-async"* ]]; then
@@ -120,7 +130,7 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
         # For Github runners, we wrap runners.json into GithubRunners
         echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online"}]}'
-    elif [[ "$*" == *"/notifications"* ]]; then
+    elif [[ "$*" == *"notifications"* ]]; then
         # GitHub notifications:
         echo '[{
             "id": "1",

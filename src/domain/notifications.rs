@@ -1,3 +1,4 @@
+use crate::backend::BackendKind;
 use crate::domain::client::GitlabClient;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -13,28 +14,58 @@ pub struct Notification {
     pub updated_at: String,
 }
 
+/// The issue or MR/PR a notification points at. Other targets (commits,
+/// releases, epics, discussions) have no view in glab-tui.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotificationTarget {
+    Issue,
+    MergeRequest,
+}
+
 impl Notification {
-    /// GitLab todos go from `pending` to `done`, GitHub notifications from
-    /// `unread` to `read`. Anything else is already read.
-    fn read_state(&self) -> Option<&'static str> {
-        match self.state.as_str() {
-            "pending" => Some("done"),
-            "unread" => Some("read"),
-            _ => None,
-        }
-    }
-
     pub fn is_unread(&self) -> bool {
-        self.read_state().is_some()
+        self.state == "unread" || self.state == "pending"
     }
 
-    pub fn mark_read(&mut self) {
-        if let Some(read) = self.read_state() {
-            self.state = read.to_string();
+    pub fn target(&self) -> Option<NotificationTarget> {
+        match self.target_type.as_str() {
+            "Issue" => Some(NotificationTarget::Issue),
+            "MergeRequest" => Some(NotificationTarget::MergeRequest),
+            _ => None,
         }
     }
 }
 
+/// A notification mutation, carried back to the event loop so the local list
+/// follows the server without a refetch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TodoChange {
+    MarkedRead(String),
+    MarkedDone(String),
+    MarkedAllRead,
+    Unsubscribed(String),
+}
+
+impl TodoChange {
+    pub fn failure_message(&self, kind: BackendKind, error: &str) -> String {
+        let todo = kind.term("todo").to_lowercase();
+        match self {
+            TodoChange::MarkedRead(_) => format!("Failed to mark {todo} as read: {error}"),
+            TodoChange::MarkedDone(_) => format!("Failed to mark {todo} as done: {error}"),
+            TodoChange::MarkedAllRead => format!(
+                "Failed to mark all {} as read: {error}",
+                kind.term("todo_plural").to_lowercase()
+            ),
+            TodoChange::Unsubscribed(_) => format!("Failed to unsubscribe: {error}"),
+        }
+    }
+}
+
+/// The state a notification reports once read. GitLab todos only know
+/// `pending` and `done`.
+pub fn read_state(kind: BackendKind) -> &'static str {
+    if kind.is_github() { "read" } else { "done" }
+}
 pub async fn list_notifications(
     client: &GitlabClient,
     show_read: bool,
@@ -46,35 +77,20 @@ pub async fn mark_notification_as_read(client: &GitlabClient, id: &str) -> Resul
     client.backend.mark_notification_as_read(id).await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub async fn mark_notification_as_done(client: &GitlabClient, id: &str) -> Result<()> {
+    client.backend.mark_notification_as_done(id).await
+}
 
-    fn todo(state: &str) -> Notification {
-        Notification {
-            id: "1".to_string(),
-            project_path: "org/repo".to_string(),
-            title: "t".to_string(),
-            target_type: "Issue".to_string(),
-            target_iid: 1,
-            state: state.to_string(),
-            updated_at: String::new(),
-        }
-    }
+pub async fn mark_all_notifications_as_read(client: &GitlabClient) -> Result<()> {
+    client.backend.mark_all_notifications_as_read().await
+}
 
-    #[test]
-    fn mark_read_moves_each_backend_to_its_read_state() {
-        for (before, unread, after) in [
-            ("pending", true, "done"),
-            ("unread", true, "read"),
-            ("done", false, "done"),
-            ("read", false, "read"),
-        ] {
-            let mut n = todo(before);
-            assert_eq!(n.is_unread(), unread, "is_unread for {before}");
-            n.mark_read();
-            assert_eq!(n.state, after, "from {before}");
-            assert!(!n.is_unread(), "still unread after mark_read from {before}");
-        }
-    }
+pub async fn unsubscribe_from_notification(
+    client: &GitlabClient,
+    notification: &Notification,
+) -> Result<()> {
+    client
+        .backend
+        .unsubscribe_from_notification(notification)
+        .await
 }

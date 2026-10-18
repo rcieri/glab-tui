@@ -67,7 +67,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Code Reviews & Diff View** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, mark files as reviewed (`m`/`M`), and atomic review submission
 - **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with theme-aware syntax highlighting and tab-stop expansion
 - **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces; trigger pipelines with `workflow_dispatch` input prompts
-- **Runners** — list runners with structured details panel; pause/resume, edit descriptions, and monitor live runner status
+- **Runners** — list runners with structured details panel and monitor live runner status; pause/resume and edit descriptions (GitLab)
 - **Releases** — browse, create, and edit project releases directly in the terminal
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
@@ -310,7 +310,10 @@ edit_entity = "e"
 copy_reference = "y"
 # ...
 
-# Persist default column visibility / grouping / filters per pane
+# Persist default column visibility / grouping / filters per pane.
+# On a GitHub repository, a State filter with a single state also makes
+# `gh issue list` / `gh pr list` fetch only that state (`--state open`).
+# For PRs, `--state closed` also returns merged PRs, which the State filter hides.
 # [issues]
 # columns = ["ID", "State", "Title", "Labels"]
 # group_by_column = "State"
@@ -673,7 +676,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 |---|---|---|
 | `Enter` | Fetch and display job trace (toggle zoom when trace is open) | `view_trace` |
 | `r` | Retry selected job (or all checked jobs) | `retry` |
-| `S` | Start manual (blocked) GitLab CI job | `start_job` |
+| `S` | Start manual (blocked) job. GitLab only: hidden on GitHub | `start_job` |
 | `c` | Cancel selected job (or all checked jobs) | `cancel` |
 | `d` | Download job artifact | `download_artifact` |
 | `y` | Copy pipeline commit SHA | `copy_sha` |
@@ -698,7 +701,7 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 
 ### Runners tab
 
-> Remappable via `[keybindings.runners]` in `config.toml`.
+> Remappable via `[keybindings.runners]` in `config.toml`. Pause, resume and edit are GitLab-only: GitHub's runner API has no pause, resume or description endpoint, so on GitHub these keys do nothing. The tab lists a single repository's runners, so it is unavailable in group scope.
 
 | Key | Action | Config |
 |---|---|---|
@@ -739,13 +742,17 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 
 ### Todos tab
 
-On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
+On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lists unread items only until `r` toggles read (GitHub) or done (GitLab) items on, and the tab title shows the active filter (`Unread` / `All`). Every action updates the list as soon as the CLI call succeeds, and a failed call raises an error toast.
 
 > Remappable via `[keybindings.todos]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Mark item as read and jump to its target (issue / MR) | `mark_as_read` |
+| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`) | `mark_as_read` |
+| `d` | Mark item as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
+| `A` | Mark all items as read (with confirmation) | `mark_all_as_read` |
+| `U` | Unsubscribe from the item's thread (GitLab: issues and MRs only) | `unsubscribe` |
+| `r` | Toggle showing read / done items | `toggle_show_read` |
 | `o` | Open item in browser | `open_in_browser` |
 
 ---
@@ -775,7 +782,7 @@ On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 
 ### Terminal tab
 
-Logs every `glab` / `gh` command the TUI executes, with success/failure status.
+Logs every `glab` / `gh` command the TUI executes, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status. The bottom row of the view is highlighted, and it is the entry the copy key acts on.
 
 > Remappable via `[keybindings.terminal]` in `config.toml`.
 
@@ -784,6 +791,8 @@ Logs every `glab` / `gh` command the TUI executes, with success/failure status.
 | `j` / `↓` | Scroll log down | — |
 | `k` / `↑` | Scroll log up | — |
 | `w` | Toggle line wrapping | `toggle_wrap` |
+| `y` | Copy the highlighted entry's command line to the clipboard (the newest entry while wrapping) | `copy_command` |
+| `C` | Clear the log | `clear_log` |
 
 ---
 

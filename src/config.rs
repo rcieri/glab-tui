@@ -1232,6 +1232,14 @@ pub struct KeybindingTodos {
     pub mark_as_read: String,
     #[serde(default)]
     pub open_in_browser: String,
+    #[serde(default = "def_mark_as_done")]
+    pub mark_as_done: String,
+    #[serde(default = "def_mark_all_as_read")]
+    pub mark_all_as_read: String,
+    #[serde(default = "def_unsubscribe")]
+    pub unsubscribe: String,
+    #[serde(default = "def_toggle_show_read")]
+    pub toggle_show_read: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1258,6 +1266,10 @@ pub struct KeybindingEnvironments {
 pub struct KeybindingTerminal {
     #[serde(default)]
     pub toggle_wrap: String,
+    #[serde(default = "def_clear_terminal_log")]
+    pub clear_log: String,
+    #[serde(default = "def_copy_terminal_command")]
+    pub copy_command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1401,10 +1413,16 @@ keybind_defaults! {
     def_edit_description = "e",
     def_mark_as_read = "Enter",
     def_open_in_browser_todo = "o",
+    def_mark_as_done = "d",
+    def_mark_all_as_read = "A",
+    def_unsubscribe = "U",
+    def_toggle_show_read = "r",
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
     def_toggle_terminal_wrap = "w",
+    def_clear_terminal_log = "C",
+    def_copy_terminal_command = "y",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
@@ -1566,6 +1584,10 @@ impl Default for KeybindingTodos {
         Self {
             mark_as_read: def_mark_as_read(),
             open_in_browser: def_open_in_browser_todo(),
+            mark_as_done: def_mark_as_done(),
+            mark_all_as_read: def_mark_all_as_read(),
+            unsubscribe: def_unsubscribe(),
+            toggle_show_read: def_toggle_show_read(),
         }
     }
 }
@@ -1594,6 +1616,8 @@ impl Default for KeybindingTerminal {
     fn default() -> Self {
         Self {
             toggle_wrap: def_toggle_terminal_wrap(),
+            clear_log: def_clear_terminal_log(),
+            copy_command: def_copy_terminal_command(),
         }
     }
 }
@@ -1928,6 +1952,10 @@ edit_description = "e"
 [keybindings.todos]
 mark_as_read = "Enter"
 open_in_browser = "o"
+mark_as_done = "d"
+mark_all_as_read = "A"
+unsubscribe = "U"
+toggle_show_read = "r"
 
 [keybindings.branches]
 create_branch = "n"
@@ -1938,6 +1966,8 @@ view_deployments = "Enter"
 
 [keybindings.terminal]
 toggle_wrap = "w"
+clear_log = "C"
+copy_command = "y"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

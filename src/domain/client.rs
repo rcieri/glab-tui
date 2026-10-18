@@ -10,6 +10,8 @@ pub struct GitlabClient {
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub page_size: usize,
     pub api_per_page: usize,
+    /// Whether the Todos tab lists read (GitHub) or done (GitLab) items too.
+    pub show_read_notifications: bool,
 }
 
 impl GitlabClient {
@@ -40,6 +42,7 @@ impl GitlabClient {
             tx: None,
             page_size: config.page_size,
             api_per_page: config.api_per_page_clamped(),
+            show_read_notifications: false,
         })
     }
 
@@ -709,6 +712,7 @@ impl Clone for GitlabClient {
             tx: self.tx.clone(),
             page_size: self.page_size,
             api_per_page: self.api_per_page,
+            show_read_notifications: self.show_read_notifications,
         }
     }
 }

@@ -1,10 +1,12 @@
 use super::Backend;
+use super::bounded_output::{CapturedStdout, output_bounded};
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
+use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
-use crate::domain::mr::{DiscussionNote, MergeRequest};
+use crate::domain::mr::{DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, ensure_complete_diff};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
@@ -15,10 +17,14 @@ use crate::scope::Scope;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
+
+/// GitLab rejects a job log `byte_limit` above 500 KiB.
+const GITLAB_TRACE_RANGE_MAX_BYTES: usize = 500 * 1024;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -80,14 +86,11 @@ pub fn validate_project_path(path: &str) -> anyhow::Result<()> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'));
     if !ok {
-        anyhow::bail!("project path contains unsupported characters: {}", path);
+        anyhow::bail!("project path contains unsupported characters: {path}");
     }
     let segments: Vec<&str> = path.split('/').collect();
     if segments.len() < 2 || segments.iter().any(|s| s.is_empty()) {
-        anyhow::bail!(
-            "expected a project path of the form owner/project: {}",
-            path
-        );
+        anyhow::bail!("expected a project path of the form owner/project: {path}");
     }
     Ok(())
 }
@@ -123,7 +126,7 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
             .unwrap_or("unknown GraphQL error");
-        anyhow::bail!("GraphQL error: {}", first);
+        anyhow::bail!("GraphQL error: {first}");
     }
 
     let data = root
@@ -194,13 +197,12 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
             })
             .unwrap_or(false);
 
-        let you_approved =
-            !current_user.is_empty() && approved_by.iter().any(|u| *u == current_user);
+        let you_approved = !current_user.is_empty() && approved_by.contains(&current_user);
 
         // Your own review state, matched by username. Someone else having
         // reviewed must not set this.
         let you_reviewed = !current_user.is_empty()
-            && (approved_by.iter().any(|u| *u == current_user)
+            && (approved_by.contains(&current_user)
                 || node
                     .get("reviewers")
                     .and_then(|r| r.get("nodes"))
@@ -276,11 +278,22 @@ async fn run_glab_command(
     args: Vec<String>,
     desc: String,
 ) -> Result<String> {
+    let stdout = run_glab_bounded(tx, args, desc, None).await?;
+    Ok(String::from_utf8(stdout.bytes)?)
+}
+
+/// `run_glab_command` keeping at most `max_stdout_bytes` of its output.
+async fn run_glab_bounded(
+    tx: Option<UnboundedSender<Event>>,
+    args: Vec<String>,
+    desc: String,
+    max_stdout_bytes: Option<usize>,
+) -> Result<CapturedStdout> {
     super::rate_limit::execute_with_retry(|| {
         let tx = tx.clone();
         let args = args.clone();
         let desc = desc.clone();
-        async move { run_glab_command_inner(tx, args, desc).await }
+        async move { run_glab_command_inner(tx, args, desc, max_stdout_bytes).await }
     })
     .await
 }
@@ -289,37 +302,45 @@ async fn run_glab_command_inner(
     tx: Option<UnboundedSender<Event>>,
     args: Vec<String>,
     desc: String,
-) -> Result<String> {
+    max_stdout_bytes: Option<usize>,
+) -> Result<CapturedStdout> {
     let label = desc.to_uppercase();
     let cmd_str = format!("glab {}", args.join(" "));
 
-    let output = Command::new("glab")
-        .args(&args)
-        .output()
-        .await
-        .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
+    let output = match output_bounded(Command::new("glab").args(&args), max_stdout_bytes).await {
+        Ok(output) => output,
+        Err(e) => {
+            if let Some(tx) = &tx {
+                let _ = tx.send(Event::TerminalCommandLogged {
+                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    command: format!("{}: {}", label, cmd_str),
+                    status: format!("Failed: {}", e),
+                });
+            }
+            return Err(e.into());
+        }
+    };
 
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    if output.status.success() {
-        let s = String::from_utf8(output.stdout)?;
-        if let Some(ref tx) = tx {
+    if output.succeeded() {
+        if let Some(tx) = &tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp,
-                command: format!("{}: {}", label, cmd_str),
+                command: format!("{label}: {cmd_str}"),
                 status: "Success".to_string(),
             });
         }
-        Ok(s)
+        Ok(output.stdout)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if let Some(ref tx) = tx {
+        if let Some(tx) = &tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status: format!("Failed: {}", err_msg),
+                command: format!("{label}: {cmd_str}"),
+                status: format!("Failed: {err_msg}"),
             });
         }
-        anyhow::bail!("glab command failed: {}", err_msg)
+        anyhow::bail!("glab command failed: {err_msg}")
     }
 }
 
@@ -425,6 +446,63 @@ pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
 
+/// Projects whose GitLab answered a ranged job log read with the whole log:
+/// it predates `byte_offset`/`byte_limit` and ignores them. Process-wide
+/// because every `GitlabClient` clone builds a fresh backend.
+static PROJECTS_IGNORING_TRACE_RANGES: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(Mutex::default);
+
+fn ignores_trace_ranges(project: &str) -> bool {
+    PROJECTS_IGNORING_TRACE_RANGES
+        .lock()
+        .is_ok_and(|projects| projects.contains(project))
+}
+
+fn remember_ignored_trace_ranges(project: &str) {
+    if let Ok(mut projects) = PROJECTS_IGNORING_TRACE_RANGES.lock() {
+        projects.insert(project.to_string());
+    }
+}
+
+/// How one reply to a ranged job log read relates to the part already read.
+#[derive(Debug, PartialEq)]
+enum RangedReply<'a> {
+    /// The requested range, filling `byte_limit`: the log may hold more.
+    Chunk(&'a [u8]),
+    /// The requested range, ending before `byte_limit`.
+    Last(&'a [u8]),
+    /// The whole log, which the server sent ignoring the range: what follows
+    /// the read part.
+    WholeLog(&'a [u8]),
+    /// More than `byte_limit`, which a server honouring it never sends.
+    Oversized,
+    /// Lines up with the read part neither way: the log was rewritten.
+    Misaligned,
+}
+
+/// Classifies `reply` to a read of at most `limit` bytes from
+/// `read_to.resume_offset()`.
+fn classify_ranged_reply<'a>(
+    read_to: &TraceCursor,
+    reply: &'a CapturedStdout,
+    limit: usize,
+) -> RangedReply<'a> {
+    if reply.is_truncated {
+        return RangedReply::Oversized;
+    }
+    if let Some(chunk) = read_to.new_bytes_in_resumed_read(&reply.bytes) {
+        return if reply.bytes.len() < limit {
+            RangedReply::Last(chunk)
+        } else {
+            RangedReply::Chunk(chunk)
+        };
+    }
+    match read_to.new_bytes_in_full_read(&reply.bytes) {
+        Some(rest) => RangedReply::WholeLog(rest),
+        None => RangedReply::Misaligned,
+    }
+}
+
 impl GlabBackend {
     pub fn new() -> Self {
         Self { tx: None }
@@ -443,6 +521,83 @@ impl GlabBackend {
         .await
     }
 
+    async fn run_glab_capped(
+        &self,
+        args: &[&str],
+        desc: &str,
+        max_stdout_bytes: usize,
+    ) -> Result<CapturedStdout> {
+        run_glab_bounded(
+            self.tx.clone(),
+            args.iter().map(|a| (*a).to_string()).collect(),
+            desc.to_string(),
+            Some(max_stdout_bytes),
+        )
+        .await
+    }
+
+    fn job_trace_endpoint(project: &str, job_id: u64) -> String {
+        format!(
+            "/projects/{}/jobs/{}/trace",
+            Self::encode_path(project),
+            job_id
+        )
+    }
+
+    async fn read_job_trace(&self, endpoint: &str) -> Result<CapturedStdout> {
+        self.run_glab_capped(&["api", endpoint], "Fetching Job Log", JOB_TRACE_MAX_BYTES)
+            .await
+    }
+
+    /// Reads what the log gained since `cursor` with `byte_offset` and
+    /// `byte_limit`, one chunk of at most `GITLAB_TRACE_RANGE_MAX_BYTES` per
+    /// request. `None` when the replies do not line up with `cursor` and a full
+    /// read has to settle it: the log was rewritten, or the server ignores the
+    /// range and its whole log did not fit in one reply.
+    async fn read_job_trace_ranges(
+        &self,
+        project: &str,
+        endpoint: &str,
+        cursor: &TraceCursor,
+    ) -> Result<Option<TraceUpdate>> {
+        let mut read_to = cursor.clone();
+        let mut new_bytes = Vec::new();
+        loop {
+            let remaining = read_to.remaining_bytes();
+            if remaining == 0 {
+                return Ok(Some(cursor.append_update(new_bytes, true)));
+            }
+            let limit = (read_to.overlap_len() + remaining).min(GITLAB_TRACE_RANGE_MAX_BYTES);
+            let ranged = format!(
+                "{endpoint}?byte_offset={}&byte_limit={limit}",
+                read_to.resume_offset()
+            );
+            let reply = self
+                .run_glab_capped(&["api", &ranged], "Following Job Log", limit)
+                .await?;
+            match classify_ranged_reply(&read_to, &reply, limit) {
+                RangedReply::Chunk(chunk) => {
+                    new_bytes.extend_from_slice(chunk);
+                    read_to.advance(chunk);
+                }
+                RangedReply::Last(chunk) => {
+                    new_bytes.extend_from_slice(chunk);
+                    return Ok(Some(cursor.append_update(new_bytes, false)));
+                }
+                RangedReply::WholeLog(rest) => {
+                    remember_ignored_trace_ranges(project);
+                    new_bytes.extend_from_slice(rest);
+                    return Ok(Some(cursor.append_update(new_bytes, false)));
+                }
+                RangedReply::Oversized => {
+                    remember_ignored_trace_ranges(project);
+                    return Ok(None);
+                }
+                RangedReply::Misaligned => return Ok(None),
+            }
+        }
+    }
+
     /// Build the `glab` arguments that fetch approval/mergeability state for
     /// one batch of iids (at most `MR_STATE_QUERY_BATCH_SIZE`, to stay under
     /// GitLab's 100-node connection cap — see `list_mr_state`).
@@ -450,7 +605,7 @@ impl GlabBackend {
         // Query the exact iids the list returned, so there is no pagination drift.
         let iid_list = iids
             .iter()
-            .map(|i| format!("\"{}\"", i))
+            .map(|i| format!("\"{i}\""))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -458,15 +613,14 @@ impl GlabBackend {
         // all-or-nothing: one unknown field blanks both axes.
         let query = format!(
             "query {{ currentUser {{ username }} \
-             project(fullPath: \"{}\") {{ \
-             mergeRequests(iids: [{}]) {{ nodes {{ \
+             project(fullPath: \"{project}\") {{ \
+             mergeRequests(iids: [{iid_list}]) {{ nodes {{ \
              iid approved approvalsLeft approvalsRequired \
              userPermissions {{ canApprove }} \
              approvedBy {{ nodes {{ username }} }} \
              reviewers {{ nodes {{ username mergeRequestInteraction {{ reviewState }} }} }} \
              conflicts shouldBeRebased detailedMergeStatus \
-             }} }} }} }}",
-            project, iid_list
+             }} }} }} }}"
         );
 
         vec![
@@ -529,6 +683,21 @@ impl GlabBackend {
         args
     }
 
+    /// Ref and job names come from pipeline data anyone who can push a branch
+    /// or edit `.gitlab-ci.yml` controls, so they follow `--` and a name like
+    /// `--help` or `-R` stays a positional argument instead of a glab flag.
+    fn download_artifact_args(project: &str, ref_name: &str, job_name: &str) -> Vec<String> {
+        let mut args: Vec<String> = vec!["job".into(), "artifact".into()];
+        if !project.is_empty() {
+            args.push("-R".into());
+            args.push(project.into());
+        }
+        args.push("--".into());
+        args.push(ref_name.into());
+        args.push(job_name.into());
+        args
+    }
+
     async fn mr_diff_refs(&self, project: &str, iid: u64) -> Result<GiDiffRefs> {
         #[derive(Deserialize)]
         struct GiMr {
@@ -551,7 +720,7 @@ impl GlabBackend {
         serde_json::from_str::<GiMr>(&raw)
             .context("Failed to parse glab mr view output")?
             .diff_refs
-            .with_context(|| format!("!{} has no diff refs to anchor comments on", iid))
+            .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
     }
 }
 
@@ -756,10 +925,8 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<RelatedMrRef>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/issues/{}/closed_by?per_page={}",
-            encoded, issue_iid, page_size
-        );
+        let endpoint =
+            format!("/projects/{encoded}/issues/{issue_iid}/closed_by?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Related MRs")
             .await?;
@@ -775,17 +942,16 @@ impl Backend for GlabBackend {
             .collect())
     }
 
-    async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()> {
+    async fn create_issue(&self, project: &str, issue: &super::NewIssue<'_>) -> Result<()> {
+        let super::NewIssue {
+            title,
+            description,
+            labels,
+            assignees,
+            milestone,
+            due_date,
+            weight,
+        } = *issue;
         let mut args: Vec<String> = vec!["issue".into(), "create".into(), "-y".into()];
         if !project.is_empty() {
             args.push("-R".into());
@@ -798,11 +964,11 @@ impl Backend for GlabBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1213,11 +1379,15 @@ impl Backend for GlabBackend {
     }
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
-        self.run_glab(
-            &["mr", "diff", &iid.to_string(), "-R", project],
-            "Fetching MR Diff",
-        )
-        .await
+        let diff = self
+            .run_glab_capped(
+                &["mr", "diff", &iid.to_string(), "-R", project],
+                "Fetching MR Diff",
+                MR_DIFF_MAX_BYTES,
+            )
+            .await?;
+        ensure_complete_diff(diff.is_truncated, &format!("MR !{iid}"))?;
+        Ok(String::from_utf8(diff.bytes)?)
     }
 
     async fn list_mr_notes(
@@ -1355,8 +1525,7 @@ impl Backend for GlabBackend {
     ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
         let encoded = Self::encode_path(project);
         let endpoint = format!(
-            "/projects/{}/merge_requests/{}/closes_issues?per_page={}",
-            encoded, mr_iid, page_size
+            "/projects/{encoded}/merge_requests/{mr_iid}/closes_issues?per_page={page_size}"
         );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Related Issues")
@@ -1415,12 +1584,15 @@ impl Backend for GlabBackend {
         &self,
         project: &str,
         iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
-        sha: Option<&str>,
+        options: &super::MergeOptions<'_>,
     ) -> Result<()> {
+        let super::MergeOptions {
+            squash,
+            delete_branch,
+            strategy,
+            auto_merge,
+            sha,
+        } = *options;
         let args = Self::merge_args(
             project,
             iid,
@@ -1452,19 +1624,18 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()> {
+    async fn create_mr(&self, project: &str, mr: &super::NewMr<'_>) -> Result<()> {
+        let super::NewMr {
+            title,
+            description,
+            source_branch,
+            target_branch,
+            labels,
+            assignees,
+            reviewers,
+            milestone,
+            issue_iid,
+        } = *mr;
         let mut args: Vec<String> = vec!["mr".into(), "create".into(), "-y".into()];
         if !project.is_empty() {
             args.push("-R".into());
@@ -1485,15 +1656,15 @@ impl Backend for GlabBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !reviewers.is_empty() {
             args.push("--reviewer".into());
-            args.push(strip_ats(reviewers).into());
+            args.push(strip_ats(reviewers));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1535,7 +1706,7 @@ impl Backend for GlabBackend {
                     })?;
             }
             self.raw_api(
-                &format!("{}/bulk_publish", endpoint),
+                &format!("{endpoint}/bulk_publish"),
                 "POST",
                 None,
                 "PUBLISHING DRAFT NOTES",
@@ -1795,10 +1966,8 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<Job>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/pipelines/{}/jobs?per_page={}",
-            encoded, pipeline_id, page_size
-        );
+        let endpoint =
+            format!("/projects/{encoded}/pipelines/{pipeline_id}/jobs?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Jobs")
             .await?;
@@ -1833,26 +2002,46 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<crate::domain::pipelines::Bridge>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/pipelines/{}/bridges?per_page={}",
-            encoded, pipeline_id, page_size
-        );
+        let endpoint =
+            format!("/projects/{encoded}/pipelines/{pipeline_id}/bridges?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Bridges")
             .await?;
         Ok(serde_json::from_str(&raw)?)
     }
 
-    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
-        let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/jobs/{}/trace", encoded, job_id);
-        self.raw_api(&endpoint, "GET", None, "Fetching Job Log")
-            .await
+    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<JobTrace> {
+        let log = self
+            .read_job_trace(&Self::job_trace_endpoint(project, job_id))
+            .await?;
+        Ok(JobTrace::from_read(&log.bytes, log.is_truncated))
+    }
+
+    async fn get_job_trace_since(
+        &self,
+        project: &str,
+        job_id: u64,
+        cursor: &TraceCursor,
+    ) -> Result<TraceUpdate> {
+        let endpoint = Self::job_trace_endpoint(project, job_id);
+        if !ignores_trace_ranges(project) {
+            if let Some(update) = self
+                .read_job_trace_ranges(project, &endpoint, cursor)
+                .await?
+            {
+                return Ok(update);
+            }
+        }
+        let log = self.read_job_trace(&endpoint).await?;
+        Ok(match cursor.new_bytes_in_full_read(&log.bytes) {
+            Some(new_bytes) => cursor.append_update(new_bytes.to_vec(), log.is_truncated),
+            None => cursor.restart_update(JobTrace::from_read(&log.bytes, log.is_truncated)),
+        })
     }
 
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/pipelines/{}/retry", encoded, pipeline_id);
+        let endpoint = format!("/projects/{encoded}/pipelines/{pipeline_id}/retry");
         self.raw_api(&endpoint, "POST", None, "Retrying Pipeline")
             .await?;
         Ok(())
@@ -1894,7 +2083,7 @@ impl Backend for GlabBackend {
 
     async fn start_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/jobs/{}/play", encoded, job_id);
+        let endpoint = format!("/projects/{encoded}/jobs/{job_id}/play");
         self.raw_api(&endpoint, "POST", None, "Starting Job")
             .await?;
         Ok(())
@@ -1923,11 +2112,11 @@ impl Backend for GlabBackend {
         }
         for (k, v) in variables {
             args.push("--variables".into());
-            args.push(format!("{}:{}", k, v));
+            args.push(format!("{k}:{v}"));
         }
         for (k, v) in inputs {
             args.push("--input".into());
-            args.push(format!("{}:{}", k, v));
+            args.push(format!("{k}:{v}"));
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "RUNNING PIPELINE").await?;
@@ -1935,13 +2124,7 @@ impl Backend for GlabBackend {
     }
 
     async fn download_artifact(&self, project: &str, ref_name: &str, job_name: &str) -> Result<()> {
-        let mut args: Vec<String> = vec!["job".into(), "artifact".into()];
-        if !project.is_empty() {
-            args.push("-R".into());
-            args.push(project.into());
-        }
-        args.push(ref_name.into());
-        args.push(job_name.into());
+        let args = Self::download_artifact_args(project, ref_name, job_name);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "DOWNLOADING ARTIFACT").await?;
         Ok(())
@@ -2025,7 +2208,7 @@ impl Backend for GlabBackend {
         runner_id: u64,
         description: &str,
     ) -> Result<()> {
-        let endpoint = format!("runners/{}", runner_id);
+        let endpoint = format!("runners/{runner_id}");
         let body = serde_json::json!({ "description": description }).to_string();
         self.raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
             .await?;
@@ -2183,7 +2366,7 @@ impl Backend for GlabBackend {
                 self.run_glab(
                     &[
                         "api",
-                        &format!("groups/{}/milestones?per_page={}", encoded_group, page_size),
+                        &format!("groups/{encoded_group}/milestones?per_page={page_size}"),
                     ],
                     "Fetching Group Milestones",
                 )
@@ -2230,7 +2413,7 @@ impl Backend for GlabBackend {
     async fn list_milestone_issues(
         &self,
         project: &str,
-        milestone_iid: u64,
+        _milestone_iid: u64,
         milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
@@ -2268,7 +2451,7 @@ impl Backend for GlabBackend {
         due_date: Option<&str>,
     ) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("projects/{}/milestones", encoded);
+        let endpoint = format!("projects/{encoded}/milestones");
         let mut body_val = serde_json::json!({
             "title": title,
         });
@@ -2455,10 +2638,7 @@ impl Backend for GlabBackend {
             Scope::Group(_) => return Err(anyhow::anyhow!("Group-level branches not supported")),
         };
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/repository/branches?per_page={}",
-            encoded, page_size
-        );
+        let endpoint = format!("/projects/{encoded}/repository/branches?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
             .await?;
@@ -2501,8 +2681,7 @@ impl Backend for GlabBackend {
     ) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!(
-            "/projects/{}/repository/branches?branch={}&ref={}",
-            encoded, branch_name, ref_branch
+            "/projects/{encoded}/repository/branches?branch={branch_name}&ref={ref_branch}"
         );
         self.raw_api(&endpoint, "POST", None, "Creating Branch")
             .await?;
@@ -2511,7 +2690,7 @@ impl Backend for GlabBackend {
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/repository/branches/{}", encoded, branch_name);
+        let endpoint = format!("/projects/{encoded}/repository/branches/{branch_name}");
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
@@ -2527,7 +2706,7 @@ impl Backend for GlabBackend {
             }
         };
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/environments?per_page={}", encoded, page_size);
+        let endpoint = format!("/projects/{encoded}/environments?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Environments")
             .await?;
@@ -2600,9 +2779,9 @@ impl Backend for GlabBackend {
             }
         };
         let encoded = Self::encode_path(project);
-        let mut endpoint = format!("/projects/{}/deployments?per_page={}", encoded, page_size);
+        let mut endpoint = format!("/projects/{encoded}/deployments?per_page={page_size}");
         if let Some(env) = environment {
-            endpoint.push_str(&format!("&environment={}", env));
+            endpoint.push_str(&format!("&environment={env}"));
         }
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Deployments")
@@ -2672,7 +2851,7 @@ impl Backend for GlabBackend {
                 self.run_glab(
                     &[
                         "api",
-                        &format!("groups/{}/labels?per_page={}", encoded, per_request),
+                        &format!("groups/{encoded}/labels?per_page={per_request}"),
                     ],
                     "Fetching Group Labels",
                 )
@@ -2698,11 +2877,11 @@ impl Backend for GlabBackend {
         let endpoint = match scope {
             Scope::Repository(project) => {
                 let encoded = Self::encode_path(project);
-                format!("/projects/{}/members/all?per_page=100", encoded)
+                format!("/projects/{encoded}/members/all?per_page=100")
             }
             Scope::Group(group) => {
                 let encoded = Self::encode_path(group);
-                format!("/groups/{}/members/all?per_page=100", encoded)
+                format!("/groups/{encoded}/members/all?per_page=100")
             }
         };
         let raw = self
@@ -2731,8 +2910,7 @@ impl Backend for GlabBackend {
         let mut out = Vec::new();
         for page in 1..=pages {
             let endpoint = format!(
-                "groups/{}/projects?include_subgroups=true&per_page={per}&page={page}&archived=false",
-                encoded
+                "groups/{encoded}/projects?include_subgroups=true&per_page={per}&page={page}&archived=false"
             );
             let raw = self
                 .raw_api(&endpoint, "GET", None, "Fetching Group Projects")
@@ -2814,7 +2992,7 @@ impl Backend for GlabBackend {
             Scope::Repository(p) => p.replace('/', "%2F"),
             Scope::Group(p) => format!("groups/{}", p.replace('/', "%2F")),
         };
-        let url = format!("https://{}/{}/-/runners/{}", host, path, runner_id);
+        let url = format!("https://{host}/{path}/-/runners/{runner_id}");
         open_in_web_browser(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
@@ -2893,35 +3071,14 @@ async fn run_glab_raw_api(
         cmd.arg("-X");
         cmd.arg(method);
     }
-    if let Some(b) = body {
-        if !b.is_empty() {
-            cmd.arg("--input");
-            cmd.arg("-");
-            // Pipe all three streams: inherited stdout/stderr is a TTY under the
-            // ratatui alternate screen, which lets the CLI page JSON through
-            // $PAGER and corrupt the TUI after POSTs like create_branch.
-            cmd.stdin(std::process::Stdio::piped());
-            cmd.stdout(std::process::Stdio::piped());
-            cmd.stderr(std::process::Stdio::piped());
-        }
+    let input = body.filter(|b| !b.is_empty());
+    if input.is_some() {
+        cmd.arg("--input");
+        cmd.arg("-");
     }
     cmd.arg(endpoint);
 
-    let output = if let Some(b) = body {
-        if !b.is_empty() {
-            let mut child = cmd.spawn().context("Failed to spawn glab api command")?;
-            use tokio::io::AsyncWriteExt;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(b.as_bytes()).await?;
-                stdin.flush().await?;
-            }
-            child.wait_with_output().await
-        } else {
-            cmd.output().await
-        }
-    } else {
-        cmd.output().await
-    };
+    let output = super::subprocess::output(&mut cmd, input.map(str::as_bytes)).await;
 
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     match output {
@@ -2931,7 +3088,7 @@ async fn run_glab_raw_api(
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{}: {}", label, cmd_str),
+                        command: format!("{label}: {cmd_str}"),
                         status: "Success".to_string(),
                     });
                 }
@@ -2941,23 +3098,23 @@ async fn run_glab_raw_api(
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: format!("Failed: {}", err_msg),
+                        command: format!("{label}: {cmd_str}"),
+                        status: format!("Failed: {err_msg}"),
                     });
                 }
-                anyhow::bail!("glab api failed: {}", err_msg)
+                anyhow::bail!("glab api failed: {err_msg}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{}", e);
+            let err_msg = format!("{e}");
             if let Some(ref tx) = tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
+                    command: format!("{label}: {cmd_str}"),
+                    status: format!("Failed: {err_msg}"),
                 });
             }
-            Err(e.into())
+            Err(e)
         }
     }
 }
@@ -3010,7 +3167,7 @@ async fn open_in_web_browser(
     if let Some(ref tx) = tx {
         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
             timestamp,
-            command: format!("{}: git web--browse {}", label, url),
+            command: format!("{label}: git web--browse {url}"),
             status,
         });
     }
@@ -3286,6 +3443,32 @@ mod tests {
         // and let glab behave as it did pre-19.2.
         let args = GlabBackend::merge_args("group/project", 42, false, false, None, false, None);
         assert!(!args.iter().any(|a| a.starts_with("--sha")));
+    }
+
+    #[test]
+    fn download_artifact_args_keep_dash_prefixed_ref_and_job_names_positional() {
+        let args = GlabBackend::download_artifact_args("group/project", "-R", "--help");
+        assert_eq!(
+            args,
+            vec![
+                "job",
+                "artifact",
+                "-R",
+                "group/project",
+                "--",
+                "-R",
+                "--help"
+            ]
+        );
+    }
+
+    #[test]
+    fn download_artifact_args_without_project_still_end_options_before_names() {
+        let args = GlabBackend::download_artifact_args("", "--repo=evil/project", "-p");
+        assert_eq!(
+            args,
+            vec!["job", "artifact", "--", "--repo=evil/project", "-p"]
+        );
     }
 
     // ── iid batching (GraphQL 100-node connection cap) ──
@@ -3771,5 +3954,105 @@ mod tests {
 
         // Malformed / missing field
         assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
+    }
+
+    /// `len` bytes of numbered lines, so no two stretches of it are equal.
+    fn log_of(len: usize) -> Vec<u8> {
+        (0..)
+            .flat_map(|line: usize| format!("{line:07}\n").into_bytes())
+            .take(len)
+            .collect()
+    }
+
+    fn reply(bytes: &[u8], is_truncated: bool) -> CapturedStdout {
+        CapturedStdout {
+            bytes: bytes.to_vec(),
+            is_truncated,
+        }
+    }
+
+    /// A 5000-byte log, read up to byte 3000, and where a resumed read starts.
+    fn log_read_to_3000() -> (Vec<u8>, TraceCursor, usize) {
+        let log = log_of(5000);
+        let cursor = JobTrace::from_read(&log[..3000], false).cursor().clone();
+        let resume = cursor.resume_offset();
+        (log, cursor, resume)
+    }
+
+    #[test]
+    fn honoured_reply_filling_the_limit_is_a_chunk_with_more_to_follow() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..resume + 1500], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, 1500),
+            RangedReply::Chunk(&log[3000..resume + 1500])
+        );
+    }
+
+    #[test]
+    fn honoured_reply_short_of_the_limit_is_the_last_chunk() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Last(&log[3000..])
+        );
+    }
+
+    #[test]
+    fn honoured_reply_holding_only_the_overlap_is_an_empty_last_chunk() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..3000], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Last(&[])
+        );
+    }
+
+    #[test]
+    fn whole_log_sent_for_a_ranged_read_yields_what_follows_the_read_part() {
+        let (log, cursor, _) = log_read_to_3000();
+        let reply = reply(&log, false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::WholeLog(&log[3000..])
+        );
+    }
+
+    #[test]
+    fn reply_over_the_limit_is_oversized_even_when_it_lines_up() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..resume + 1500], true);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, 1500),
+            RangedReply::Oversized
+        );
+    }
+
+    #[test]
+    fn reply_matching_neither_read_is_misaligned() {
+        let (_, cursor, _) = log_read_to_3000();
+        let reply = reply(&[b'z'; 5000], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Misaligned
+        );
+    }
+
+    #[test]
+    fn empty_reply_after_the_log_shrank_is_misaligned() {
+        let (_, cursor, _) = log_read_to_3000();
+        let reply = reply(b"", false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Misaligned
+        );
     }
 }

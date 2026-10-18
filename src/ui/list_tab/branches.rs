@@ -26,7 +26,7 @@ impl Row for Branch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BranchColumn {
+pub enum BranchColumn {
     Name,
     Default,
     Protected,

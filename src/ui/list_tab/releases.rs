@@ -27,7 +27,7 @@ impl Row for Release {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReleaseColumn {
+pub enum ReleaseColumn {
     Tag,
     Name,
     Date,

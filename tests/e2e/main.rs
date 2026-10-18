@@ -3,9 +3,11 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-mod combinations;
 mod config;
 mod custom_keybindings;
+mod environments;
+mod group_scope_actions;
+mod job_trace;
 mod keybindings;
 mod layout;
 mod list_tab;
@@ -14,6 +16,7 @@ mod pr_diff_fallback;
 mod review_cli;
 mod review_threads;
 mod scenarios;
+mod secondary_tabs;
 mod stacked_prs;
 mod tabs;
 mod workspace;
@@ -502,6 +505,17 @@ impl TestSession {
     /// Launch in a sandbox the test has already prepared (e.g. committed to
     /// its repository), with extra environment variables for the CLI mocks.
     pub fn launch(sandbox: Sandbox, rows: u16, cols: u16, extra: &[(&str, &str)]) -> Self {
+        Self::launch_with_args(sandbox, rows, cols, &[], extra)
+    }
+
+    /// Like `launch`, with command-line arguments for glab-tui (e.g. `-g`).
+    pub fn launch_with_args(
+        sandbox: Sandbox,
+        rows: u16,
+        cols: u16,
+        args: &[&str],
+        extra: &[(&str, &str)],
+    ) -> Self {
         let bin_path = find_glab_tui_binary();
         let mut envs_vec = sandbox.envs();
         for (k, v) in extra {
@@ -514,7 +528,7 @@ impl TestSession {
 
         let pty = Pty::spawn(
             bin_path.to_str().unwrap(),
-            &[],
+            args,
             &envs_ref,
             rows,
             cols,
@@ -626,8 +640,34 @@ impl TestSession {
         }
     }
 
+    /// Sends keys one at a time, feeding the output in between: the app reads
+    /// a burst of bytes as one key sequence.
+    pub fn press_keys(&mut self, keys: &[u8]) {
+        for key in keys {
+            self.send_input(&[*key]);
+            self.settle(150);
+        }
+    }
+
     pub fn get_cli_calls(&self) -> String {
         std::fs::read_to_string(&self.sandbox.log_path).unwrap_or_default()
+    }
+
+    /// Feeds output to the emulator until the CLI mocks have logged a call
+    /// containing `expected`.
+    pub fn wait_for_cli_call(&mut self, expected: &str, timeout_ms: u64) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if self.get_cli_calls().contains(expected) {
+                return Ok(());
+            }
+            self.settle(10);
+        }
+        Err(format!(
+            "Timeout waiting for a CLI call containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
+            self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
     }
 }
 

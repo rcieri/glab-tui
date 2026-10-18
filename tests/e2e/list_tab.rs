@@ -45,15 +45,15 @@ fn releases_search_matches_the_release_notes_column() {
     let config = "active_tab = \"releases\"\n[releases]\ncolumns = [\"Tag\", \"Release Notes\"]\n";
     let mut session = TestSession::with_config(false, 24, 100, Some(config));
     session
-        .wait_for_screen_contains("v2.0.0", 8000)
+        .wait_for_screen_contains("v1.1.0", 8000)
         .expect("the releases fixture loads");
 
     session.send_input(b"/");
-    session.send_input(b"first cut");
+    session.send_input(b"pagination");
     settle(&mut session);
     let screen = session.emulator.get_text();
     assert!(
-        screen.contains("v1.0.0") && !screen.contains("v2.0.0"),
+        screen.contains("v1.1.0") && !screen.contains("v1.0.0"),
         "search must match the Release Notes column: {screen}"
     );
 }

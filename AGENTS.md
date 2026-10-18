@@ -17,7 +17,7 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Clipboard:** `arboard` (v3.6)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
-* **YAML:** `serde_yaml` (v0.9) — diagnostics output
+* **YAML:** `serde-saphyr` (v1.1, `deserialize` only) — parses `workflow_dispatch` inputs from GitHub workflow files. It replaced the deprecated `serde_yaml`. serde-saphyr 1.2+ needs Rust 1.89, so the MSRV-aware resolver holds it at 1.1.
 * **Process & Session Handling:** `libc` (v0.2) — Unix setsid for background commands & signal masking during terminal handoff
 * **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.3`)
 
@@ -34,18 +34,22 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ## 2. Directory Structure
 
-* [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
+* [src/lib.rs](src/lib.rs): Library crate root (`glab_tui_crate`). Declares every module and the crate-root re-exports (`AppTerminal`, `keybinding_matches`, `spawn_refresh_active_tab`, the `git_helpers`/`templates`/`editor`/`entity_editor` globs). The binary and the fuzz targets both link it, so anything `main.rs` calls must be `pub`. Module unit tests run with `cargo test --lib`.
+* [src/main.rs](src/main.rs): Binary entry point (`use glab_tui_crate::*`). Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
 * [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `SubmitDialog`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic.
 * [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/backend/](src/backend/): CLI backend layer.
+    * [bounded_output.rs](src/backend/bounded_output.rs): `output_bounded`, the subprocess reader behind the command runners. Keeps at most a given number of stdout bytes and kills a child that writes more.
     * [rate_limit.rs](src/backend/rate_limit.rs): `ApiRateLimiter` — automatic 429/graphql rate-limit detection and retry with exponential backoff plus bulk-operation pacing (`pace_bulk_operation`).
-    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits.
+    * [subprocess.rs](src/backend/subprocess.rs): `subprocess::output(&mut Command, input)` — the one way to run a `gh`/`glab` call: pipes stdout/stderr, writes `input` to stdin, and kills the child once it outlives `command_timeout_seconds` (`config::command_timeout()`), returning an error that names the command.
+    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits and `NewIssue`/`NewMr`/`MergeOptions` for creation and merge calls.
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
     * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
+    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode.
     * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
@@ -72,7 +76,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
-    * [update.rs](src/utils/update.rs): GitHub releases self-updater with multi-target Linux asset selection.
+    * [private_fs.rs](src/utils/private_fs.rs): Owner-only `create_dir_all` (`0700`), `create_owned_dir` (`0700`, also tightening an existing directory) and `write` (`0600`, also tightening an existing file) for everything glab-tui persists; plain `std::fs` off Unix.
+    * [update.rs](src/utils/update.rs): GitHub releases self-updater with multi-target Linux asset selection. Talks to GitHub through `curl` (never `gh`, so GitLab-only installs can update) and verifies the archive against the release's `<asset>.sha256` before extracting or replacing the running binary.
 * [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`, `cache`, `open`, `repos`, `review`), flags (`--config` sets `config::use_config_file`, which `Config::config_path()` honours before `GLAB_TUI_CONFIG`/XDG; `-r/--repo` and `-d/--dir` are global, and `--dir` is applied before any subcommand runs) and ANSI-styled diagnostic output.
     * [cli/review.rs](src/cli/review.rs): `glab-tui review threads|comment|submit|reply|resolve` — non-interactive review for scripts and agents. JSON on stdout, errors on stderr with a non-zero exit. `--input` is a JSON array of `{ file, line, end_line?, side?: "old"|"new", body }`; anchors are checked against the diff (`DiffView::new` + `DiffView::contains_anchor`, same classification as the review threads overlay) before anything is posted. E2E coverage in `tests/e2e/review_cli.rs`; the `gh`/`glab` mocks append `--input -` request bodies to `<TEST_LOG_PATH>.stdin` and fail any call matching `TEST_GH_FAIL_MATCH` / `TEST_GLAB_FAIL_MATCH`.
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
@@ -81,6 +86,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/ui/](src/ui/): Ratatui render functions.
     * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
     * [inspector.rs](src/ui/inspector.rs): Unified entity inspector component (`render_entity_inspector`, `EntityDocument`, `InspectorMode`). Drives both read-only detail previews and interactive edit/create forms in a single-column layout.
+    * [job_trace.rs](src/ui/job_trace.rs): `JobTraceView`, the Jobs pane's job log with its lines parsed incrementally and only the visible ones handed to the renderer.
     * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
     * [overlays.rs](src/ui/overlays.rs): Overlay render functions (`SubmitDialog`, selectors, date picker, help).
     * [review_threads.rs](src/ui/review_threads.rs): Review threads overlay (thread list + full-thread preview) opened with `T` from the diff view.
@@ -89,6 +95,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [modal.rs](src/ui/modal.rs): Unified modal component.
     * [list_tab/](src/ui/list_tab/): `ListTab<C: ColumnDef>` — rows, a cached filtered/sorted view, and a cursor keyed by `Row::key()` (not a view index). Each `ColumnDef` enum (`RunnerColumn`, `ReleaseColumn`, `BranchColumn`, `EnvironmentColumn`) defines label, width, cell, search text, filter values and sort key once; `Tab::columns()` reads its labels. `App::sync_list_views()` rebuilds the active tab's view only when its rows or inputs (search, enabled columns, column filters, group-by sort) change; it runs before each draw and in `update_filter_selection`. Hidden tabs are not rebuilt, because the search query is shared by every tab and a hidden view rebuilt with it would move that tab's cursor. Mutate rows only through `set_items` / `update` / `retain` so the view invalidates; navigate through `App::list_navigation_mut`. Runners, Releases, Branches and Environments use it; the other tabs still use `StatefulTable`.
 * [src/themes/](src/themes/): 38 bundled theme TOML files (default, clean, tokyo-night, tokyo-night-storm, oled, github-dark-hc, gruvbox, gruvbox-material, nord, nord-light, catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, dracula, dracula-light, deep-space, solarized-dark, solarized-light, monokai, one-dark, synthwave-84, everforest-dark, rose-pine, rose-pine-moon, rose-pine-dawn, kanagawa, cyberpunk, ayu-dark, ayu-mirage, ayu-light, night-owl, poimandres, vesper, sonokai, pop-dark, adwaita-dark, adwaita-light).
+* [fuzz/](fuzz/): `cargo-fuzz` targets (own workspace, nightly only) for the parsers that take untrusted input: `diff_parser` (`DiffView::new`), `markdown` (`render_markdown`, with a fuzzed width) and `ansi_trace` (`parse_ansi_trace`). `.github/workflows/fuzz.yml` runs each for 60 seconds, seeded from `tests/fixtures/mr_diff.txt`, `README.md`/`CHANGELOG.md` and `fuzz/seeds/ansi_trace.log`. Run one locally with `just fuzz <target>`.
+* [deny.toml](deny.toml) / [.cargo/audit.toml](.cargo/audit.toml): supply-chain policy for `cargo deny check` and `cargo audit` (`.github/workflows/audit.yml`). `cargo audit` only reads `.cargo/audit.toml`, never a root `audit.toml`. Every advisory ignore and duplicate-version skip carries the reason it is allowed. Re-check the syntect-only ignores (`bincode`, `yaml-rust`) whenever syntect is upgraded.
 
 ## 3. Core Architectural Patterns
 
@@ -101,18 +109,22 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * **Adding an API Call:** When adding a new API call:
     1. Spawn a `tokio::spawn` task in [src/main.rs](src/main.rs) (on keypress) or [src/app.rs](src/app.rs).
     2. Make the API call using `app.gitlab_client`.
-    3. Send an `Event` back to the main thread (e.g., `tx.send(Event::MyDataFetched(data))`).
+    3. Send an `Event` back to the main thread (e.g., `tx.send(Event::MyDataFetched(data))`). Fetches whose result belongs to the current repo/group send through `app.scoped_sender(events.sender())` (an `event::ScopedSender`): it tags the event with `app.scope_generation`, which `reset_on_scope_change` bumps, and the event loop drops results from an older generation before any handler runs, so a fetch that outlives a scope switch never writes into the new scope's tabs or cache.
     4. Handle the event in the [src/main.rs](src/main.rs) event loop to update `app` state.
+* **Never await a remote CLI call inside a key handler.** `handle_active_tab_key` runs on the main loop, so an inline `.await` on `glab`/`gh` freezes rendering and input until it returns. Spawn it and apply the result from an `Event` (e.g. `spawn_open_pipeline` → `Event::PipelineOpened` → `apply_opened_pipeline`, which drops replies for a pipeline no longer listed). Local-only `git` reads that [src/git_helpers.rs](src/git_helpers.rs) documents as safe on the UI thread (`get_current_branch`, `get_default_branch`, `repo_root`) may run inline. A `git` call that can reach the network, such as `git fetch`, is spawned like a remote call.
+* **Input runs on a dedicated OS thread** (`EventHandler::new` in [src/event.rs](src/event.rs)): crossterm's `poll`/`read` block and must never occupy a tokio worker.
+* **Scope switches build the client off the loop.** `spawn_client_for_scope` clears `app.gitlab_client` and runs `GitlabClient::new` (`git remote` + `gh`/`glab auth status`) in a task. Its `Event::ClientReady { scope, result }` goes through `app.scoped_sender`, so a build that a later switch superseded is dropped by generation, even one for the same scope. `apply_client_ready` installs the client that survives and starts the refresh.
 
 ### External Editor Integration
 * The application pauses the UI to open an external `$EDITOR` (or `$VISUAL`, defaulting to `helix`).
-* This is done using `crossterm::terminal::LeaveAlternateScreen` inside `editor::suspend_and_run` ([src/editor.rs](src/editor.rs)), which `edit_in_editor` and custom commands (via `suspend_while`) share. It also holds off SIGINT/SIGQUIT in glab-tui while the child owns the terminal, so Ctrl+C stops the child only. Any other foreground child process must go through it too. Do not reinvent this wheel.
+* This is done using `crossterm::terminal::LeaveAlternateScreen` inside `editor::suspend_and_run` ([src/editor.rs](src/editor.rs)), which `edit_in_editor`, `view_in_editor` (read-only display, e.g. the Jobs tab's job trace) and custom commands (via `suspend_while`) share. It also holds off SIGINT/SIGQUIT in glab-tui while the child owns the terminal, so Ctrl+C stops the child only. Any other foreground child process must go through it too. Do not reinvent this wheel.
+* Always build the editor process with `editor::editor_command`, which runs `$EDITOR` through the shell so values with arguments (`code --wait`) work. The job-trace editor key fetches the trace first when it is not loaded (`App::pending_job_trace_editor`, consumed on `JobTraceFetched`).
 
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
 * `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
-* **Theme-safe:** `highlight_line_syntax` builds highlighting tokens dynamically derived from the active `THEME`'s semantic tokens (mapped from syntect scope names) while reusing syntect's resolved font modifiers (bold/italic/underline). Highlighting remains theme-safe (no hardcoded palette) while fuzzy search match highlights (`yellow_bg`) are preserved.
-* The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
+* **Theme-safe:** `highlight_code` builds highlighting tokens dynamically derived from the active `THEME`'s semantic tokens (mapped from syntect scope names) while reusing syntect's resolved font modifiers (bold/italic/underline). Highlighting remains theme-safe (no hardcoded palette) while fuzzy search match highlights (`yellow_bg`) are preserved.
+* `highlight_code(file_path, code, ext)` highlights a line exactly as given and returns `Option<Vec<(ratatui::style::Style, String)>>`. Markdown fenced code blocks and suggestion bodies use it. Only diff hunk lines go through `highlight_diff_line(file_path, line)`, which drops the leading `+`/`-`/space marker with `strip_diff_marker` first. Never pass non-diff text to `highlight_diff_line`: a YAML `- item` or an indented line would lose its first character.
 * `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
 
 ### Entity Inspector & Form Architecture (`src/ui/inspector.rs`)
@@ -132,25 +144,36 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.
 * Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
 * Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
+* Non-error feedback goes through `App::show_notice(text)`, the only way to set `App::status_message` (`StatusMessage` in [src/app.rs](src/app.rs)), rendered muted in the header bar until `STATUS_NOTICE_LIFETIME` passes. Stale data is tracked per tab in `App::stale_tabs` (`Tab → StaleData`) and drawn as a red badge next to the notice only while that tab is active: `App::mark_cached_tabs_stale` flags every tab filled from the offline cache, a `FetchFailed` over cached rows flags its tab `RefreshFailed` instead of toasting, and only that tab's own `*Fetched` arm clears it. Because of that, only list refreshes send `FetchFailed`: other background failures send `CommandCompleted(Err)`, and background successes send `Event::Notice`.
+* Background mutations never discard their `Result`. Optimistic pipeline/job status flips go through `run_optimistic_mutation` ([src/handlers/tabs.rs](src/handlers/tabs.rs)): failed rows are restored via `PipelineStatusRevert`/`JobStatusRevert`, and all failures surface as one `CommandCompleted(Err)` toast. A failed fetch sends exactly one error event.
 
 ### Rate Limiting (`src/backend/rate_limit.rs`)
 * `ApiRateLimiter` is a global (`RATE_LIMITER`) that shields every `glab`/`gh` CLI call from HTTP 429 and GitLab GraphQL rate-limit errors.
 * Backend command execution delegates to `rate_limit::execute_with_retry` (used by both `GlabBackend` and `GhBackend`), which:
-  - acquires a concurrency slot via `RATE_LIMITER.pace_request()` (bounds concurrent subprocesses to `MAX_CONCURRENT_REQUESTS` and enforces a minimum inter-request burst delay),
-  - retries failures that `is_rate_limit_error()` recognizes (429, `rate_limit`, abuse-detection, `retry-after`) with exponential backoff plus per-thread jitter up to `MAX_RATE_LIMIT_RETRIES`,
+  - acquires a concurrency slot via `RATE_LIMITER.pace_request()` (bounds concurrent subprocesses to `MAX_CONCURRENT_REQUESTS` and enforces a minimum inter-request burst delay) for the duration of one attempt only; the slot is released before any backoff sleep,
+  - retries failures that `is_rate_limit_error()` recognizes (`429` as an HTTP status such as `HTTP 429` or `GET <url>: 429`, never bare digits like `#429`; `rate_limit`, abuse-detection, `retry-after`) with exponential backoff plus per-thread jitter up to `MAX_RATE_LIMIT_RETRIES`,
   - bubbles up immediately on non-rate-limit errors so the UI shows the real failure.
+* Every `gh`/`glab` API call (the four backend runners, the diff view's comment edit/delete and release creation) runs through `subprocess::output`, so a hung CLI (e.g. a credential helper waiting on a prompt) is killed after `command_timeout_seconds` (config, default 120, reloaded with `config::reload_command_timeout()` on repo switch) instead of holding its slot forever. New API calls must use it too, never `.output()` on a `gh`/`glab` `Command`. Not covered: the self-updater (`perform_self_update`: its `gh release view` calls and the large `gh release download`), the `auth status` probes in `git_helpers` (blocking `std::process` in `spawn_blocking`) and `web--browse`.
 * Bulk operations (merging, editing many MRs/issues, etc.) call `pace_bulk_operation()` before each item to avoid tripping secondary rate limits during batch loops.
+
+### Bounded CLI Output, Job Logs & Follow Mode
+* The command runners (`run_glab_command`, `run_gh`, `run_git_command`) read output through `bounded_output::output_bounded` ([src/backend/bounded_output.rs](src/backend/bounded_output.rs)). With `Some(limit)` it keeps the first `limit` bytes of stdout and kills the child once it writes more (`CapturedStdout::is_truncated`). Stderr is capped at 64 KiB and drained past that. Plain `run_glab_command` / `run_gh` pass `None` (read everything). Output whose size a third party controls (job logs, diffs) goes through `run_glab_capped` / `run_gh_bounded` with a limit. Only capped reads are killed when their future is dropped: an uncapped run (every mutation, e.g. merge) finishes even if glab-tui quits first.
+* Job logs are read up to `JOB_TRACE_MAX_BYTES` (16 MiB) into a `JobTrace` ([src/domain/job_trace.rs](src/domain/job_trace.rs)). It tracks the bytes read (`TraceCursor`), holds a UTF-8 character split across reads until it completes, and records truncation. A truncated log shows `[TRUNCATED: first 16 MiB]` in the Jobs pane title, and follow mode stops polling it.
+* Follow mode (`f`) polls `Backend::get_job_trace_since(cursor)` every 5 seconds (`Event::JobTraceFollowed`). `app.job_trace_poll_in_flight` keeps the log on screen meanwhile. A poll moves the pane to the bottom only when it brought text (`TraceUpdate::has_new_text`), so a quiet log can be read further up with follow on. GitLab reads `?byte_offset=&byte_limit=` starting 1 KiB before the end of what was read, checks that the reply starts with those bytes, and loops in chunks of at most 500 KiB (GitLab's `byte_limit` maximum). Each reply is sorted by `classify_ranged_reply` (a pure function with unit tests, so new reply cases go there). A server that ignores the parameters (it predates them) is detected from the reply, remembered per project in `PROJECTS_IGNORING_TRACE_RANGES` (process-wide, since every `GitlabClient` clone builds a fresh backend), and polled with full bounded reads. A log that no longer starts with what was read is replaced (`TraceUpdate::Restart`). GitHub returns nothing new without a CLI call: `gh run view --log` serves only completed jobs, whose logs never change.
+* `app.job_trace` is a `JobTraceView` ([src/ui/job_trace.rs](src/ui/job_trace.rs)). It parses only text added since the last frame (plus the still incomplete last line), keeps the wrapped row offset of every line per width, re-parses everything only after a theme change or a restart, and gives the renderer only the visible lines. Never call `parse_ansi_trace` on the whole log from render code.
+* Diffs (`get_mr_diff`, `diff_pr_in_checkout`) are read up to `MR_DIFF_MAX_BYTES` (32 MiB). A larger diff fails with an error (`ensure_complete_diff`) instead of showing a partial diff that a review could be submitted against.
 
 ### Code Review & Diff System
 * **Diff view** supports inline comments, code suggestions, draft reviews, dynamic gutter sizing, and tab expansion:
   - `DiscussionNote` / `NotePosition` structs in [src/domain/mr.rs](src/domain/mr.rs).
   - `list_mr_notes()` fetches notes for an MR via the API.
-  - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` (`DraftComment` / `ReviewEvent` live in [src/domain/review.rs](src/domain/review.rs)) and submitted atomically.
+  - Draft comments are the open diff's working copy in `app.draft_comments: Vec<DraftComment>` (`DraftComment` / `ReviewEvent` live in [src/domain/review.rs](src/domain/review.rs)) and are submitted atomically. Every add, edit, delete, discard and submit calls `App::persist_draft_comments(project_path, mr_iid)` with the open diff's `DiffView::project_path`, which mirrors them into `ProjectCache::draft_comments` (`project_path → mr_iid → Vec<DraftComment>`) and saves the cache, so drafts survive closing the diff and restarting. The project is part of the key because a group-scope cache is shared by every project in the group and the same iid recurs across them.
+  - `DiffFetched` restores drafts through `App::restore_draft_comments`, which checks each one with `DiffView::contains_draft_anchor` (its first and, for a range, last line through `contains_anchor`). Drafts whose lines left the diff go to `app.stale_draft_comments` with a toast giving the count: they are never shown or submitted, `persist_draft_comments` writes them back with the rest, and they load again once their lines are back. `Keep drafts` and `Discard` treat them like the other drafts.
   - Every review mutation goes through `Backend::submit_review` / `reply_to_thread` / `set_thread_resolved`; the diff view and the `glab-tui review` subcommand share them. A comment posted outside review mode is a one-comment `submit_review`. Do not shell out to `gh api` / `glab api` for reviews from the event loop.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
   - Diffs load through `fetch::fetch_diff_view`, which builds the `DiffView` on a blocking thread (parsing and highlighting a large diff takes seconds) and sends `DiffFetched { diff_view, comments }`; the "Fetching Diff" overlay stays up until it arrives. `D` is ignored while `app.diff_loading` is set, so a second press cannot start a second fetch.
   - The parser in `DiffView::new` follows each hunk's `@@` line counts: while a hunk still owes lines, every line is content, so a removed `-- comment` (`--- comment`) or added `++ x` is never read as a file header. `\ No newline at end of file` is a `Meta` row with no line numbers. Paths are read with `parse_diff_git_paths` / `parse_patch_header_path`, which keep spaces and decode git's C-style quoting.
-  - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`).
+  - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`) with `Submit`, `Keep drafts`, `Discard` and `Cancel`. `Esc`/`Cancel` only close the dialog and return to the diff with drafts and `in_review_mode` untouched. `Keep drafts` closes the diff and leaves the drafts in the cache. `Discard` deletes them (memory and cache) and closes the diff.
   - Open diff key is `D` (remappable via `keybindings.mrs.view_diff`).
 * **GitHub diffs over 20,000 lines:** GitHub refuses to serve them (`gh pr diff` fails with HTTP 406 `PullRequest.diff too_large`). `GhBackend::get_mr_diff` then builds the diff with git in the clone `cache::find_local_checkout` finds for the PR's repository (`diff_pr_locally` / `diff_pr_in_checkout` in [src/backend/gh.rs](src/backend/gh.rs)). It only fetches (skipped when both commits are already local) and diffs — no checkout, no branch, no index or working-tree change. Without a known clone the error says a local clone is needed; every other `gh pr diff` error is returned unchanged. Review comments and review submission are unaffected: they go through the API with the same path/line anchors. E2E coverage: `tests/e2e/pr_diff_fallback.rs`.
 * **Dynamic line numbers & tab expansion:** Gutter width is dynamically calculated in `DiffView::new` from the widest line number in the diff (floored at 4). Tabs are expanded to spaces at tab stops at diff parse time (`expand_tabs`) so Go/Makefiles maintain indentation without breaking syntax highlighting or search indices.
@@ -174,8 +197,9 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
-* `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, and `reviewed_files` in addition to API data.
+* `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, `reviewed_files`, and `draft_comments` in addition to API data.
 * Cache is written on every successful data fetch; read on startup.
+* **Rule:** cache and config files carry private repository data and custom shell-command bindings, so every write under the cache or config directories (cache JSON, `recent_repos.json`, `recent_groups.json`, `config.toml`, themes, repo-local `.glab-tui/`) goes through `utils::private_fs`, never plain `std::fs::write` / `create_dir_all`, which would inherit the umask (`0644`/`0755` under `022`). Directories glab-tui owns outright (`~/.cache/glab-tui`, and the default `$XDG_CONFIG_HOME/glab-tui` or `~/.config/glab-tui`) go through `private_fs::create_owned_dir`, which also tightens one an older version left at `0755`: the cache path helpers (`prepare_cache_dir`) and `Config::config_path()` run on every startup, so upgraded installs are fixed on first launch. Any other directory goes through `private_fs::create_dir_all` and keeps its mode if it already exists, since the parent of a `GLAB_TUI_CONFIG` file may be user-chosen.
 
 ### Config & Theme System
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.
@@ -206,7 +230,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * A non-empty `selected_issues` / `selected_mrs` turns an `issues` / `mrs` command into a bulk run: `targets()` yields one `Target` per selected item (sorted by project and number), and all renderable runs execute inside one `editor::suspend_while` handoff. Each run is logged with `App::record_command_outcome`; failures raise a single summary toast via `App::raise_error_toast`.
 * `background = true` entries skip the handoff: `execute()` runs them on a thread with stdin/stdout detached (`Handoff::Background`) and sends `Event::CustomCommandFinished(RunReport)`; the main loop logs it through `report_runs()`, the same path terminal runs use. Stderr is always collected so a failure names its cause; it is only echoed to the screen for terminal runs. `detach_from_terminal()` starts background runs with `setsid(2)` (Unix): Go/termenv tools open `/dev/tty` and query the background colour even with stdio redirected, and the terminal's reply would otherwise arrive as keypresses. `tests/e2e/custom_keybindings.rs` guards this.
 * Feedback while a command works: a background run logs each rendered command as `Running` up front (`App::start_command`) and `report_runs()` settles those rows by index (`RunReport::log_rows`, `App::settle_command`); a terminal run prints `glab-tui: running "<label>": <command>` to stderr before starting, so a silent command does not leave a blank screen. Custom-command log rows start with `CUSTOM_COMMAND_LOG_PREFIX`, and the generic "most recent `Running` entry" fallbacks (`show_error`, `CommandCompleted`, `TerminalCommandLogged`) go through `App::latest_running_cli_command()`, which skips them so an unrelated completion cannot stamp a background command finished.
-* Values containing shell metacharacters are refused by `render()` instead of being spliced into `sh -c`; every value is also exported as `GLAB_TUI_<NAME>` so commands can quote it safely. Keep that guard when adding arguments.
+* `render()` splices a value into `sh -c` only when it is a single plain word: it refuses values starting with `-` or `+` (vim/nvim/less run `+cmd` as a command, and `FilePath` comes from the PR diff) and values containing whitespace, control characters or a `SHELL_SIGNIFICANT_CHARACTERS` entry (quoting, substitution, separators, redirection, glob, brace/tilde expansion, `#`, `=`). Every value is also exported as `GLAB_TUI_<NAME>`, the only safe way to pass free text such as titles. Keep that guard when adding arguments.
 * Keys are parsed with `keybinding::binding_key_event`, the inverse of `keybinding_matches`; a key it rejects is reported as unbindable.
 
 ### DatePicker
@@ -215,10 +239,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
 ### Submit Dialog & Confirmations (`SubmitDialog`)
-* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review) open a `SubmitDialog` ([src/app.rs](src/app.rs)).
-* Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons.
-* Navigation: `h`/`l` / Left/Right for horizontal button jumping, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel.
-* Destructive actions (close, delete, revoke) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
+* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review, cancel pipeline, bulk job cancel) open a `SubmitDialog` ([src/app.rs](src/app.rs)). Confirmed bulk job cancels are paced with `pace_bulk_operation()`.
+* Pipeline and job actions resolve their project through `App::project_path_for_pipeline(id)` (the listed row's `project_path`, then `active_pipeline_project` for the active pipeline, then the scope) or `App::project_path_for_jobs()` for the Jobs tab. Never pass `app.scope.as_str()` as a pipeline/job project: in group scope it is the group path.
+* Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons. `SubmitDialog::extra_buttons` (`DialogChoice`) adds buttons between them; the submit-review dialog uses it for `Keep drafts` / `Discard`.
+* Navigation: `h`/`l` / Left/Right move to the neighbouring button, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel. Cancel never has side effects.
+* Destructive actions (close, delete, revoke, cancel pipeline/jobs) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
 * Mouse clicks on button boxes or option rows are supported.
 
 ### Mouse Support
@@ -307,7 +332,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Operation | Endpoint | Why raw API |
 |---|---|---|
 | List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
-| Get job trace | `GET /projects/{}/jobs/{}/trace` | `glab ci trace` is interactive/streaming; we need programmatic text output |
+| Get job trace | `GET /projects/{}/jobs/{}/trace` (read up to `JOB_TRACE_MAX_BYTES`) | `glab ci trace` is interactive/streaming; we need programmatic text output |
+| Follow job trace (follow mode poll) | `GET /projects/{}/jobs/{}/trace?byte_offset=<N>&byte_limit=<≤500 KiB>` | Only the bytes after what is shown; a server that ignores the parameters is detected and polled with full (bounded) reads |
 | List done todos | `GET todos?state=done` | `glab todo list` only shows pending |
 | List branches | `GET /projects/{}/repository/branches?per_page=<N>` | No `glab branch` command |
 | Create branch | `POST /projects/{}/repository/branches?branch=...&ref=...` | No `glab branch` command |
@@ -6340,8 +6366,11 @@ Below is the complete reference of all available `glab` and `gh` subcommands and
 
 * **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `App::show_error(msg)`. Do not `unwrap()` or `panic!()` in UI or event handling code.
 * **Test env isolation:** Unit tests that mutate process-global environment variables (config paths via `GLAB_TUI_CONFIG`/`XDG_CONFIG_HOME`, cache dirs) must acquire `config::TEST_ENV_MUTEX` first — env vars are visible to every test thread, and overlapping mutations caused an intermittent Windows CI failure. Never introduce a second ad-hoc mutex for env mutation; reuse the crate-wide one.
+* **Secondary-tab smoke matrix:** `tests/e2e/secondary_tabs.rs` drives Runners, Releases, Todos, Milestones, Branches and Environments on GitLab: list every fixture row, filter to one with `/`, run one action on it. The `glab` mock serves `runner list` / `release list` / `todo list` / `milestone list` and the branches / environments / deployments endpoints from `tests/fixtures/{runners,releases,todos,milestones,branches,environments,deployments}.json`. Every list fixture holds two rows so a search visibly narrows the list. `TestSession::press_keys` sends keys one at a time and `TestSession::wait_for_cli_call` waits for a mocked call.
+* **Overlay snapshots:** `ui::overlays::tests` renders the merge `SubmitDialog` on a `TestBackend` at 60, 80 and 120 columns and compares it with `src/ui/snapshots/*.txt` (icons normalized to the ASCII set, so the developer's icon config cannot change the result). After an intended layout change, regenerate with `GLAB_TUI_UPDATE_SNAPSHOTS=1 cargo test --bin glab-tui merge_dialog` and review the diff.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
+* **Tests:** Unit tests live in the library: run `cargo test --lib --bin glab-tui` (`just test`). Running `--bin glab-tui` alone only covers the tests in `main.rs`.
 * **MSRV:** The Minimum Supported Rust Version is `1.88`. Edition 2024
   requires Rust 1.85+, but current transitive dependencies raise the floor
   to 1.88 (see `.github/workflows/msrv.yml`). Ensure code is compatible.
@@ -6385,8 +6414,10 @@ The asset-suffix table in `release.yml` is the single source of truth — `linux
 Three places pick the right asset for the running host:
 
 - **`install.sh`** (`linux_asset_candidates`) — builds a candidate list from `/etc/os-release`. On Ubuntu it tries the local version first, then walks down through `ubuntu-24.04` → `ubuntu-22.04`, then falls back to `musl`. Non-Ubuntu Linux distros try `ubuntu-22.04` → `ubuntu-24.04` → `musl` directly. Override with `GLAB_TUI_ASSET=glab-tui-linux-amd64-musl.tar.gz` for testing.
-- **`src/utils/update.rs`** (`linux_asset_candidates`) — mirrors `install.sh` for the in-app self-updater; queries the GitHub release's asset list and picks the first match.
+- **`src/utils/update.rs`** (`linux_asset_candidates`) — mirrors `install.sh` for the in-app self-updater; queries the GitHub release's asset list through `curl` and picks the first match.
 - **Homebrew formula** (`update_homebrew` in `release.sh`) — pins the fully static musl builds for Linux (x86_64 and arm64), which run on any Linux distro regardless of glibc version, and native macOS binaries.
+
+Every install path verifies the downloaded archive against the release's `<asset>.sha256` (generated by `release.yml`) before extracting it, and refuses to install when the checksum asset is missing or does not match: `install.sh` (`verify_checksum`, via `sha256sum` or `shasum`), `install.ps1` (`Get-FileHash`) and the self-updater (`verify_archive_checksum`). Checksum lines are `<hex>  <name>`, or `<hex> *<name>` for the Windows zip.
 
 Scoop's manifest (`rcieri/scoop-glab-tui`) is unaffected — Windows keeps the fixed `glab-tui-windows-amd64.zip` name.
 

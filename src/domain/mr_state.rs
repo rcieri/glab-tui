@@ -255,7 +255,7 @@ fn is_attributably_approved(s: &ApprovalState) -> bool {
 fn format_counts(s: &ApprovalState) -> String {
     let given = s.approved_by.len();
     match s.approvals_required {
-        Some(req) if req > 0 => format!("{}/{}", given, req),
+        Some(req) if req > 0 => format!("{given}/{req}"),
         _ => given.to_string(),
     }
 }
@@ -263,11 +263,8 @@ fn format_counts(s: &ApprovalState) -> String {
 /// Repeat the pending icon once per approval still needed (capped at 5).
 /// Falls back to a single icon when `approvals_left` is unknown.
 fn pending_icons(s: &ApprovalState, icon: &str) -> String {
-    let n = s.approvals_left.unwrap_or(1).min(5).max(1) as usize;
-    std::iter::repeat(icon)
-        .take(n)
-        .collect::<Vec<_>>()
-        .join(" ")
+    let n = s.approvals_left.unwrap_or(1).clamp(1, 5) as usize;
+    std::iter::repeat_n(icon, n).collect::<Vec<_>>().join(" ")
 }
 
 /// First-match-wins cascade. See the precedence flowchart in the design spec.
@@ -540,23 +537,21 @@ mod tests {
     /// Builds the expected awaiting-you string: n icons + " AWAITING".
     fn expect_awaiting_you(approvals_left: u32) -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        let n = approvals_left.min(5).max(1) as usize;
-        let dots = std::iter::repeat(icons.approval_pending.as_str())
-            .take(n)
+        let n = approvals_left.clamp(1, 5) as usize;
+        let dots = std::iter::repeat_n(icons.approval_pending.as_str(), n)
             .collect::<Vec<_>>()
             .join(" ");
-        format!("{} AWAITING", dots)
+        format!("{dots} AWAITING")
     }
 
     /// Builds the expected pending string: n icons + " " + counts.
     fn expect_pending(approvals_left: u32, counts: &str) -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        let n = approvals_left.min(5).max(1) as usize;
-        let dots = std::iter::repeat(icons.approval_pending.as_str())
-            .take(n)
+        let n = approvals_left.clamp(1, 5) as usize;
+        let dots = std::iter::repeat_n(icons.approval_pending.as_str(), n)
             .collect::<Vec<_>>()
             .join(" ");
-        format!("{} {}", dots, counts)
+        format!("{dots} {counts}")
     }
 
     fn expect_github_pending() -> String {

@@ -2,7 +2,8 @@
 //!
 //! The mock `glab` serves `tests/fixtures/todos.json` for `todo list` (todo 1
 //! for issue #8 of `test-owner/test-repo`, todo 2 for issue #7 of
-//! `other-group/other-repo`) and `todos_done.json` for `api todos?state=done`.
+//! `other-group/other-repo`, todo 3 for MR !2 of `test-owner/test-repo`) and
+//! `todos_done.json` for `api todos?state=done`.
 //! The Issues tab lists `custom_command_issues.json`: issues #7 and #8 of the
 //! repository in scope.
 

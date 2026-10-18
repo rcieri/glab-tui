@@ -16,6 +16,11 @@ if [[ -n "$TEST_GLAB_FAIL_MATCH" && "$*" == *"$TEST_GLAB_FAIL_MATCH"* ]]; then
     exit 1
 fi
 
+# Hang injection: never answer a call whose arguments contain the value.
+if [[ -n "$TEST_GLAB_HANG_MATCH" && "$*" == *"$TEST_GLAB_HANG_MATCH"* ]]; then
+    exec sleep 300
+fi
+
 # Request bodies piped with `--input -`, one per line, for payload assertions.
 if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"
@@ -27,22 +32,57 @@ if [[ "$*" == *"api"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
+    elif [[ "$*" == *"groups/test-group/issues"* ]]; then
+        # Pages are requested concurrently; only the first carries the fixture.
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_issues.json"
+        else
+            echo "[]"
+        fi
+    elif [[ "$*" == *"groups/test-group/merge_requests"* ]]; then
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_mrs.json"
+        else
+            echo "[]"
+        fi
+    elif [[ "$*" == *"groups/test-group/pipelines"* ]]; then
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_pipelines.json"
+        else
+            echo "[]"
+        fi
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
-    elif [[ "$*" == *"/commits"* ]]; then
-        cat "$FIXTURES_DIR/commits.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
-    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
+    elif [[ "$*" == *"/environments"* ]]; then
+        cat "$FIXTURES_DIR/environments.json"
+    elif [[ "$*" == *"/deployments"* ]]; then
         cat "$FIXTURES_DIR/deployments.json"
     elif [[ "$*" == *"/bridges"* ]]; then
         # Must precede /pipelines: a bridges URL contains it.
         cat "$FIXTURES_DIR/bridges.json"
     elif [[ "$*" == *"/trace"* ]]; then
         # Must precede /jobs: a trace URL contains it.
-        echo "mock gitlab job trace output"
+        if [[ -n "$TEST_GLAB_TRACE_FILE" ]]; then
+            # A running job: serve the log, honouring byte_offset/byte_limit
+            # unless TEST_GLAB_TRACE_IGNORES_RANGES plays a GitLab that
+            # predates them, then write one more line so the next read has
+            # something new.
+            offset=$(sed -n 's/.*[?&]byte_offset=\([0-9]*\).*/\1/p' <<< "$*")
+            limit=$(sed -n 's/.*[?&]byte_limit=\([0-9]*\).*/\1/p' <<< "$*")
+            if [[ -n "$offset" && -z "$TEST_GLAB_TRACE_IGNORES_RANGES" ]]; then
+                tail -c "+$((offset + 1))" "$TEST_GLAB_TRACE_FILE" | head -c "$limit"
+            else
+                cat "$TEST_GLAB_TRACE_FILE"
+            fi
+            reads=$(grep -c "/trace" "$LOG_FILE")
+            echo "follow line $reads" >> "$TEST_GLAB_TRACE_FILE"
+        else
+            echo "mock gitlab job trace output"
+        fi
     elif [[ "$*" == *"/jobs"* ]]; then
         # Must precede /pipelines: /pipelines/:id/jobs contains it.
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
@@ -50,6 +90,8 @@ if [[ "$*" == *"api"* ]]; then
         else
             echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
         fi
+    elif [[ "$*" == *"groups/"*"/pipelines"* ]]; then
+        echo '[{"id": 777, "status": "running", "ref": "main", "updated_at": "2026-07-06T12:00:00Z", "web_url": "https://gitlab.com/acme/project-b/-/pipelines/777"}]'
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
@@ -92,6 +134,14 @@ elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then
     cat "$FIXTURES_DIR/mr_notes.json"
+elif [[ "$*" == *"runner list"* ]]; then
+    cat "$FIXTURES_DIR/runners.json"
+elif [[ "$*" == *"release list"* ]]; then
+    cat "$FIXTURES_DIR/releases.json"
+elif [[ "$*" == *"todo list"* ]]; then
+    cat "$FIXTURES_DIR/todos.json"
+elif [[ "$*" == *"milestone list"* ]]; then
+    cat "$FIXTURES_DIR/milestones.json"
 else
     echo "[]"
 fi

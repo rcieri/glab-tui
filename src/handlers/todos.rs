@@ -106,7 +106,7 @@ pub fn toggle_show_read(app: &mut App, tx: &UnboundedSender<Event>) {
         &app.scope,
         app.requested_state_queries(),
         Tab::Todos,
-        tx.clone(),
+        app.scoped_sender(tx.clone()),
     );
 }
 
@@ -164,18 +164,18 @@ fn jump_to_target(
         return false;
     }
     let is_loaded = match target {
-        NotificationTarget::Issue => app.focus_issue_in(project, iid),
-        NotificationTarget::MergeRequest => app.focus_mr_in(project, iid),
+        NotificationTarget::Issue => app.focus_issue(Some(project), iid),
+        NotificationTarget::MergeRequest => app.focus_mr(Some(project), iid),
     };
     if is_loaded {
         return true;
     }
     match target {
         NotificationTarget::Issue => {
-            crate::fetch::spawn_fetch_issue(client, project, iid, tx.clone());
+            crate::fetch::spawn_fetch_issue(client, project, iid, app.scoped_sender(tx.clone()));
         }
         NotificationTarget::MergeRequest => {
-            crate::fetch::spawn_fetch_mr(client, project, iid, tx.clone());
+            crate::fetch::spawn_fetch_mr(client, project, iid, app.scoped_sender(tx.clone()));
         }
     }
     true

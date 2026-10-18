@@ -18,11 +18,19 @@ lint:
 
 # Run unit tests
 test:
-    cargo test --bin glab-tui
+    cargo test --lib --bin glab-tui
 
 # Run end-to-end tests (single-threaded)
 e2e:
     cargo test --test e2e -- --test-threads=1
+
+# Check advisories, licenses, duplicate versions and sources (requires cargo-deny)
+deny:
+    cargo deny check
+
+# Fuzz one parser: diff_parser, markdown or ansi_trace (requires nightly and cargo-fuzz)
+fuzz target seconds="60":
+    cargo +nightly fuzz run {{target}} -- -max_total_time={{seconds}}
 
 # Run all CI checks locally (fmt check, clippy, unit tests, e2e tests)
 check: fmt-check lint test e2e

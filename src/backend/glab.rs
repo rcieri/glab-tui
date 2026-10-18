@@ -313,8 +313,8 @@ async fn run_glab_command_inner(
             if let Some(tx) = &tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", e),
+                    command: format!("{label}: {cmd_str}"),
+                    status: format!("Failed: {e}"),
                 });
             }
             return Err(e.into());

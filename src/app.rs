@@ -9055,8 +9055,10 @@ mod tests {
 
     #[test]
     fn pipeline_project_prefers_the_listed_row_over_an_older_jobs_tab_project() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("acme".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
         let mut in_project_b = nav_pipe(7);
         in_project_b.project_path = "acme/project-b".to_string();
         app.pipelines.items = vec![nav_pipe(5), in_project_b];

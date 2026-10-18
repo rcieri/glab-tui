@@ -54,9 +54,9 @@ pub(crate) async fn output_bounded_within(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(max_stdout_bytes.is_some());
-    let mut child = command.spawn().map_err(|e| {
-        io::Error::other(format!("Failed to execute: {invocation}: {e}"))
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| io::Error::other(format!("Failed to execute: {invocation}: {e}")))?;
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err(io::Error::other(
             "child process has no stdout or stderr pipe",

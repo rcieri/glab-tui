@@ -422,33 +422,34 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
                 .collect()
         }
         CommandPane::Branches => {
-            let branches: Vec<&crate::domain::branches::Branch> = if app.selected_branches.is_empty() {
-                let branch = app
-                    .branches
-                    .cursor_row()
-                    .ok_or_else(|| "no branch is selected".to_string())?;
-                vec![branch]
-            } else {
-                let loaded: Vec<_> = app
-                    .branches
-                    .items()
-                    .iter()
-                    .filter(|b| app.selected_branches.contains(&b.name))
-                    .collect();
-                let loaded_names: std::collections::HashSet<&str> =
-                    loaded.iter().map(|b| b.name.as_str()).collect();
-                let mut missing: Vec<String> = app
-                    .selected_branches
-                    .iter()
-                    .filter(|name| !loaded_names.contains(name.as_str()))
-                    .cloned()
-                    .collect();
-                missing.sort();
-                missing_rows = missing;
-                let mut sorted = loaded;
-                sorted.sort_by(|a, b| a.name.cmp(&b.name));
-                sorted
-            };
+            let branches: Vec<&crate::domain::branches::Branch> =
+                if app.selected_branches.is_empty() {
+                    let branch = app
+                        .branches
+                        .cursor_row()
+                        .ok_or_else(|| "no branch is selected".to_string())?;
+                    vec![branch]
+                } else {
+                    let loaded: Vec<_> = app
+                        .branches
+                        .items()
+                        .iter()
+                        .filter(|b| app.selected_branches.contains(&b.name))
+                        .collect();
+                    let loaded_names: std::collections::HashSet<&str> =
+                        loaded.iter().map(|b| b.name.as_str()).collect();
+                    let mut missing: Vec<String> = app
+                        .selected_branches
+                        .iter()
+                        .filter(|name| !loaded_names.contains(name.as_str()))
+                        .cloned()
+                        .collect();
+                    missing.sort();
+                    missing_rows = missing;
+                    let mut sorted = loaded;
+                    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+                    sorted
+                };
             if branches.is_empty() {
                 return Err("the selected branches are no longer loaded".to_string());
             }

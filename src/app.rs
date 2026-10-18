@@ -2995,9 +2995,9 @@ pub enum ConfirmAction {
     MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
     BulkDeleteBranches(Vec<String>),
-    RevokeMr(u64),                    // mr iid
-    RebaseMr(u64),                    // mr iid
-    SubmitReview(u64),                // mr iid
+    RevokeMr(u64),     // mr iid
+    RebaseMr(u64),     // mr iid
+    SubmitReview(u64), // mr iid
     MarkAllTodosRead,
     CancelPipeline(u64), // pipeline id
     CancelJobs { pipeline_id: u64, job_ids: Vec<u64> },
@@ -4603,11 +4603,7 @@ impl App {
                 self.selected_jobs.len().saturating_sub(before)
             }
             Tab::Branches => {
-                let keys: Vec<String> = self
-                    .branches
-                    .view_rows()
-                    .map(|b| b.name.clone())
-                    .collect();
+                let keys: Vec<String> = self.branches.view_rows().map(|b| b.name.clone()).collect();
                 let before = self.selected_branches.len();
                 for key in keys {
                     self.selected_branches.insert(key);

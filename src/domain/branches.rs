@@ -73,7 +73,10 @@ pub async fn list_branches(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
 ) -> Result<Vec<Branch>> {
-    let mut branches = client.backend.list_branches(scope, client.page_size).await?;
+    let mut branches = client
+        .backend
+        .list_branches(scope, client.page_size)
+        .await?;
     enrich_branches(&mut branches);
     Ok(branches)
 }

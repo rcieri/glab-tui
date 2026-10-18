@@ -797,11 +797,7 @@ pub fn build_branch_document(
         .or_else(|| local_info.as_ref().map(|i| i.date.clone()));
     let date_display = date.map(|d| {
         let ago = crate::utils::format::time_ago(&d);
-        if ago == d {
-            d
-        } else {
-            format!("{ago} ({d})")
-        }
+        if ago == d { d } else { format!("{ago} ({d})") }
     });
 
     let ahead_behind = branch.ahead_behind.or_else(|| {
@@ -833,29 +829,44 @@ pub fn build_branch_document(
         .filter(|m| !m.trim().is_empty());
 
     let mut fields = vec![
-        crate::app::Field::read_only("Branch", branch.name.clone()),
-        crate::app::Field::read_only(
+        crate::app::Field::ref_field("Branch", branch.name.clone()),
+        crate::app::Field::read_only_toned(
             "Default",
             if branch.default {
                 "YES".to_string()
             } else {
                 "NO".to_string()
             },
+            if branch.default {
+                crate::app::FieldTone::Green
+            } else {
+                crate::app::FieldTone::Muted
+            },
         ),
-        crate::app::Field::read_only(
+        crate::app::Field::read_only_toned(
             "Protected",
             if branch.protected {
                 "YES".to_string()
             } else {
                 "NO".to_string()
             },
+            if branch.protected {
+                crate::app::FieldTone::Yellow
+            } else {
+                crate::app::FieldTone::Muted
+            },
         ),
-        crate::app::Field::read_only(
+        crate::app::Field::read_only_toned(
             "Can Push",
             if branch.can_push {
                 "YES".to_string()
             } else {
                 "NO".to_string()
+            },
+            if branch.can_push {
+                crate::app::FieldTone::Green
+            } else {
+                crate::app::FieldTone::Muted
             },
         ),
         crate::app::Field::read_only(
@@ -871,7 +882,7 @@ pub fn build_branch_document(
         fields.push(crate::app::Field::read_only("Author", auth));
     }
     if let Some(dt) = date_display {
-        fields.push(crate::app::Field::read_only("Date", dt));
+        fields.push(crate::app::Field::date("Date", dt));
     }
     if let Some(ab) = ahead_behind_display {
         fields.push(crate::app::Field::read_only("Ahead/Behind", ab));
@@ -2217,13 +2228,25 @@ mod tests {
         let doc = build_branch_document(&branch);
         assert_eq!(doc.title, "Branch feature/awesome");
 
-        let author_field = doc.fields.iter().find(|f| f.label == "Author").expect("Author field");
+        let author_field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Author")
+            .expect("Author field");
         assert_eq!(author_field.value, "Alice Developer <alice@example.com>");
 
-        let ahead_field = doc.fields.iter().find(|f| f.label == "Ahead/Behind").expect("Ahead/Behind field");
+        let ahead_field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Ahead/Behind")
+            .expect("Ahead/Behind field");
         assert_eq!(ahead_field.value, "3 ahead, 1 behind");
 
-        let date_field = doc.fields.iter().find(|f| f.label == "Date").expect("Date field");
+        let date_field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Date")
+            .expect("Date field");
         assert!(date_field.value.contains("2026-10-18T10:00:00Z"));
 
         if let crate::app::InspectorContent::Markdown(ref msg) = doc.content {

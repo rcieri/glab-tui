@@ -2379,7 +2379,8 @@ pub async fn handle_active_tab_key(
             } else if keybinding_matches(&app.config.keybindings.branches.select_all, key_event) {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
-            } else if keybinding_matches(&app.config.keybindings.branches.select_branch, key_event) {
+            } else if keybinding_matches(&app.config.keybindings.branches.select_branch, key_event)
+            {
                 if let Some(branch) = app.branches.cursor_row() {
                     let name = branch.name.clone();
                     if app.selected_branches.contains(&name) {
@@ -2388,14 +2389,13 @@ pub async fn handle_active_tab_key(
                         app.selected_branches.insert(name);
                     }
                 }
-            } else if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event) {
+            } else if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event)
+            {
                 let create_from = app
                     .branches
                     .cursor_row()
                     .map(|b| b.name.clone())
-                    .unwrap_or_else(|| {
-                        get_default_branch().unwrap_or_else(|| "main".to_string())
-                    });
+                    .unwrap_or_else(|| get_default_branch().unwrap_or_else(|| "main".to_string()));
                 let fields = crate::entity_editor::branch_fields(
                     String::new(),
                     create_from,
@@ -2427,7 +2427,8 @@ pub async fn handle_active_tab_key(
                     editing: false,
                     desc_scroll: 0,
                 });
-            } else if keybinding_matches(&app.config.keybindings.branches.delete_branch, key_event) {
+            } else if keybinding_matches(&app.config.keybindings.branches.delete_branch, key_event)
+            {
                 if app.selected_branches.len() > 1 {
                     let mut names: Vec<String> = app.selected_branches.iter().cloned().collect();
                     names.sort();
@@ -2452,7 +2453,8 @@ pub async fn handle_active_tab_key(
                             app.show_error(err.to_string());
                         }
                     }
-                } else if keybinding_matches(&app.config.keybindings.branches.create_mr, key_event) {
+                } else if keybinding_matches(&app.config.keybindings.branches.create_mr, key_event)
+                {
                     let is_github = app.is_github();
                     let pr_suffix = if is_github {
                         "Pull Request"
@@ -2496,7 +2498,10 @@ pub async fn handle_active_tab_key(
                         editing: false,
                         desc_scroll: 0,
                     });
-                } else if keybinding_matches(&app.config.keybindings.branches.open_in_browser, key_event) {
+                } else if keybinding_matches(
+                    &app.config.keybindings.branches.open_in_browser,
+                    key_event,
+                ) {
                     let branch_local = branch_name.clone();
                     let client = app.gitlab_client.clone();
                     let project_path = app.scope.as_str().to_string();
@@ -2513,7 +2518,10 @@ pub async fn handle_active_tab_key(
                             result.map_err(|e| e.to_string()),
                         ));
                     });
-                } else if keybinding_matches(&app.config.keybindings.branches.copy_branch, key_event) {
+                } else if keybinding_matches(
+                    &app.config.keybindings.branches.copy_branch,
+                    key_event,
+                ) {
                     if let Err(error) = app.copy_selected_branch_name() {
                         app.show_error(format!("Failed to copy branch name: {error}"));
                     }
@@ -4463,7 +4471,11 @@ mod tests {
     #[tokio::test]
     async fn branches_tab_create_mr_prefills_source_branch() {
         let mut app = app_with_branches(2);
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
+        )
+        .await;
         let menu = app.edit_menu.as_ref().expect("MR creation form opened");
         let source_field = menu.fields.iter().find(|f| f.label == "Source Branch");
         assert_eq!(source_field.map(|f| f.value.as_str()), Some("branch-00"));
@@ -4474,28 +4486,54 @@ mod tests {
         let mut app = app_with_branches(3);
 
         // Space selects the cursor branch
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        )
+        .await;
         assert!(app.selected_branches.contains("branch-00"));
 
         // Move to next branch and select it
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)).await;
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        )
+        .await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        )
+        .await;
         assert_eq!(app.selected_branches.len(), 2);
         assert!(app.selected_branches.contains("branch-01"));
 
         // Delete key 'd' triggers bulk delete dialog when > 1 branch selected
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)).await;
-        let dialog = app.submit_dialog.as_ref().expect("Bulk delete dialog shown");
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        )
+        .await;
+        let dialog = app
+            .submit_dialog
+            .as_ref()
+            .expect("Bulk delete dialog shown");
         assert_eq!(dialog.title, "Delete 2 Branches");
         if let crate::app::ConfirmAction::BulkDeleteBranches(names) = &dialog.action {
-            assert_eq!(names, &vec!["branch-00".to_string(), "branch-01".to_string()]);
+            assert_eq!(
+                names,
+                &vec!["branch-00".to_string(), "branch-01".to_string()]
+            );
         } else {
             panic!("Expected ConfirmAction::BulkDeleteBranches");
         }
 
         // Ctrl+a selects all branches
         app.submit_dialog = None;
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        )
+        .await;
         assert_eq!(app.selected_branches.len(), 3);
 
         // Clear selections
@@ -4503,16 +4541,28 @@ mod tests {
         assert!(app.selected_branches.is_empty());
 
         // Visual select toggle 'v'
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        )
+        .await;
         assert!(app.select_mode);
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        )
+        .await;
         assert_eq!(app.selected_branches.len(), 2);
     }
 
     #[tokio::test]
     async fn branches_tab_checkout_branch() {
         let mut app = app_with_branches(1);
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT),
+        )
+        .await;
         // Either notice or error toast is set
         assert!(app.status_message.is_some() || app.error_message.is_some());
     }

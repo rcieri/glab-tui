@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use ratatui::layout::{Alignment, Constraint};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Cell;
 
 use super::{CellContext, ColumnDef, Row};
@@ -50,20 +50,6 @@ fn yes_no(flag: bool) -> &'static str {
     if flag { "YES" } else { "NO" }
 }
 
-fn badge(text: String, color: Color, bg: Color, ctx: &CellContext) -> Cell<'static> {
-    Cell::from(Span::styled(
-        text,
-        Style::default()
-            .fg(color)
-            .bg(if ctx.is_highlighted {
-                ctx.theme.highlight_bg
-            } else {
-                bg
-            })
-            .add_modifier(Modifier::BOLD),
-    ))
-}
-
 impl ColumnDef for BranchColumn {
     type Row = Branch;
 
@@ -108,6 +94,13 @@ impl ColumnDef for BranchColumn {
         }
     }
 
+    fn header_alignment(self) -> Alignment {
+        match self {
+            Self::Default | Self::Protected | Self::AheadBehind => Alignment::Center,
+            Self::Name | Self::Sha | Self::Author | Self::Date => Alignment::Left,
+        }
+    }
+
     fn text(self, row: &Branch) -> Cow<'_, str> {
         match self {
             Self::Name => Cow::Borrowed(&row.name),
@@ -129,47 +122,124 @@ impl ColumnDef for BranchColumn {
     fn cell(self, row: &Branch, ctx: &CellContext) -> Cell<'static> {
         let theme = ctx.theme;
         let icons = ctx.icons;
-        let fuzzy = |text: &str| {
-            render_fuzzy_cell(
-                text,
-                ctx.query,
-                ctx.is_highlighted,
-                false,
-                ctx.row_style,
-                Alignment::Left,
-            )
+        let fuzzy = |text: &str, style: Style, alignment: Alignment| {
+            render_fuzzy_cell(text, ctx.query, ctx.is_highlighted, false, style, alignment)
         };
         match self {
-            Self::Name => fuzzy(&format!("{} {}", icons.label_branch, row.name)),
-            Self::Default if row.default => badge(
-                format!(" {} YES ", icons.radio_on),
-                theme.green,
-                theme.green_bg,
-                ctx,
-            ),
-            Self::Protected if row.protected => badge(
-                format!(" {} YES ", icons.lock),
-                theme.yellow,
-                theme.yellow_bg,
-                ctx,
-            ),
-            Self::Default | Self::Protected => {
-                Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
+            Self::Name => {
+                let mut style = Style::default().fg(theme.purple);
+                if row.default {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                fuzzy(
+                    &format!("{} {}", icons.label_branch, row.name),
+                    style,
+                    Alignment::Left,
+                )
             }
-            Self::Sha if row.commit_sha.is_empty() => fuzzy("--"),
-            Self::Sha => fuzzy(&truncate(&row.commit_sha, SHA_SHOWN_CHARS)),
-            Self::Author => fuzzy(row.author_name.as_deref().unwrap_or("--")),
+            Self::Default => {
+                if row.default {
+                    let text = format!(" {} YES ", icons.radio_on);
+                    let style = Style::default()
+                        .fg(theme.green)
+                        .bg(if ctx.is_highlighted {
+                            theme.highlight_bg
+                        } else {
+                            theme.green_bg
+                        })
+                        .add_modifier(Modifier::BOLD);
+                    fuzzy(&text, style, Alignment::Center)
+                } else {
+                    fuzzy(
+                        "NO",
+                        Style::default().fg(theme.text_muted),
+                        Alignment::Center,
+                    )
+                }
+            }
+            Self::Protected => {
+                if row.protected {
+                    let text = format!(" {} YES ", icons.lock);
+                    let style = Style::default()
+                        .fg(theme.yellow)
+                        .bg(if ctx.is_highlighted {
+                            theme.highlight_bg
+                        } else {
+                            theme.yellow_bg
+                        })
+                        .add_modifier(Modifier::BOLD);
+                    fuzzy(&text, style, Alignment::Center)
+                } else {
+                    fuzzy(
+                        "NO",
+                        Style::default().fg(theme.text_muted),
+                        Alignment::Center,
+                    )
+                }
+            }
+            Self::Sha => {
+                if row.commit_sha.is_empty() {
+                    fuzzy("--", Style::default().fg(theme.text_muted), Alignment::Left)
+                } else {
+                    fuzzy(
+                        &truncate(&row.commit_sha, SHA_SHOWN_CHARS),
+                        Style::default().fg(theme.text_muted),
+                        Alignment::Left,
+                    )
+                }
+            }
+            Self::Author => {
+                let (author, style) = match row.author_name.as_deref() {
+                    Some(name) => (name, Style::default().fg(theme.blue)),
+                    None => ("--", Style::default().fg(theme.text_muted)),
+                };
+                fuzzy(author, style, Alignment::Left)
+            }
             Self::Date => {
-                let text = row
-                    .commit_date
-                    .as_deref()
-                    .map(crate::utils::format::time_ago)
-                    .unwrap_or_else(|| "--".to_string());
-                fuzzy(&text)
+                let (date_text, style) = match row.commit_date.as_deref() {
+                    Some(d) => (
+                        crate::utils::format::time_ago(d),
+                        Style::default().fg(theme.yellow),
+                    ),
+                    None => ("--".to_string(), Style::default().fg(theme.text_muted)),
+                };
+                fuzzy(&date_text, style, Alignment::Left)
             }
             Self::AheadBehind => match row.ahead_behind {
-                Some((ahead, behind)) => fuzzy(&format!("+{ahead} / -{behind}")),
-                None => fuzzy("--"),
+                Some((ahead, behind)) => {
+                    let item_bg = if ctx.is_highlighted {
+                        theme.highlight_bg
+                    } else {
+                        Color::Reset
+                    };
+                    let ahead_style = if ahead > 0 {
+                        Style::default()
+                            .fg(theme.green)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_muted).bg(item_bg)
+                    };
+                    let behind_style = if behind > 0 {
+                        Style::default()
+                            .fg(theme.red)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_muted).bg(item_bg)
+                    };
+                    let spans = vec![
+                        Span::styled(format!("+{ahead}"), ahead_style),
+                        Span::styled(" / ", Style::default().fg(theme.text_muted).bg(item_bg)),
+                        Span::styled(format!("-{behind}"), behind_style),
+                    ];
+                    Cell::from(Line::from(spans).alignment(Alignment::Center))
+                }
+                None => fuzzy(
+                    "--",
+                    Style::default().fg(theme.text_muted),
+                    Alignment::Center,
+                ),
             },
         }
     }

@@ -270,12 +270,7 @@ impl CommandPane {
                 "BaseRefName",
                 "Author",
             ],
-            CommandPane::Branches => &[
-                "RepoName",
-                "RepoPath",
-                "BranchName",
-                "CommitSha",
-            ],
+            CommandPane::Branches => &["RepoName", "RepoPath", "BranchName", "CommitSha"],
             CommandPane::Diff => &[
                 "RepoName",
                 "RepoPath",

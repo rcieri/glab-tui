@@ -2579,7 +2579,10 @@ page_size = 250
         let fields = value
             .as_object()
             .expect("KeybindingBranches serializes to a JSON object");
-        assert!(!fields.is_empty(), "KeybindingBranches serialized to no fields");
+        assert!(
+            !fields.is_empty(),
+            "KeybindingBranches serialized to no fields"
+        );
 
         let mut seen: HashMap<&str, &str> = HashMap::new();
         for (field, binding) in fields {

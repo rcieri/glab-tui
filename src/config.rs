@@ -1206,8 +1206,6 @@ pub struct KeybindingJobs {
     pub trace_search: String,
     #[serde(default)]
     pub toggle_trace_follow: String,
-    /// Scroll the job log to the next line reporting a failure, fetching the
-    /// log first when it is not shown.
     #[serde(default = "def_jump_to_failure")]
     pub jump_to_failure: String,
     #[serde(default = "def_copy_job_url")]

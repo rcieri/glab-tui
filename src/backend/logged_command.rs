@@ -60,6 +60,30 @@ impl LoggedCommand {
         self.invocation.command_line()
     }
 
+    /// Why the call failed, for its `Failed:` status and its error: the
+    /// trimmed stderr, or how the command ended when it printed nothing.
+    pub(crate) fn failure_reason(&self, output: &ChildOutput<'_>) -> String {
+        let stderr = String::from_utf8_lossy(output.stderr);
+        let mut reason = match (stderr.trim(), output.exit_code) {
+            ("", Some(code)) => format!("{} exited with code {code}", self.command_line()),
+            ("", None) => format!("{} was killed by a signal", self.command_line()),
+            (stderr, _) => stderr.to_string(),
+        };
+        // `gh api` prints only the HTTP status on stderr; GitHub's reason
+        // (e.g. "Can not approve your own pull request") is in the body on stdout.
+        if self.is_gh_api()
+            && let Some(details) = github_error_details(output.stdout)
+        {
+            reason = format!("{reason}: {details}");
+        }
+        reason
+    }
+
+    fn is_gh_api(&self) -> bool {
+        self.invocation.program == Program::Gh
+            && self.invocation.args.first().is_some_and(|arg| arg == "api")
+    }
+
     pub(crate) fn finish(
         self,
         tx: Option<&UnboundedSender<Event>>,
@@ -91,6 +115,28 @@ impl LoggedCommand {
     }
 }
 
+fn github_error_details(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let details: Vec<String> = value
+        .get("errors")?
+        .as_array()?
+        .iter()
+        .filter_map(|e| {
+            let text = |key| e.get(key).and_then(serde_json::Value::as_str);
+            match (
+                e.as_str().or_else(|| text("message")),
+                text("field"),
+                text("code"),
+            ) {
+                (Some(message), _, _) => Some(message.to_string()),
+                (None, Some(field), Some(code)) => Some(format!("{field} {code}")),
+                _ => None,
+            }
+        })
+        .collect();
+    (!details.is_empty()).then(|| details.join("; "))
+}
+
 /// Runs a recorded call again with the same program, arguments and stdin,
 /// returning the status to log and how it ran.
 pub(crate) async fn rerun(invocation: Invocation) -> (String, Execution) {
@@ -106,17 +152,13 @@ pub(crate) async fn rerun(invocation: Invocation) -> (String, Execution) {
     let logged = LoggedCommand::start("", invocation);
     match super::subprocess::output(&mut command, stdin.as_deref().map(str::as_bytes)).await {
         Ok(output) => {
+            let child_output = ChildOutput::from(&output);
             let status = if output.status.success() {
                 "Success".to_string()
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let reason = match stderr.trim() {
-                    "" => format!("{} exited with {}", logged.command_line(), output.status),
-                    reason => reason.to_string(),
-                };
-                format!("Failed: {reason}")
+                format!("Failed: {}", logged.failure_reason(&child_output))
             };
-            (status, logged.into_execution(ChildOutput::from(&output)))
+            (status, logged.into_execution(child_output))
         }
         Err(error) => (
             format!("Failed: {error}"),
@@ -125,10 +167,70 @@ pub(crate) async fn rerun(invocation: Invocation) -> (String, Execution) {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    fn failed(
+        exit_code: Option<i32>,
+        stdout: &'static [u8],
+        stderr: &'static [u8],
+    ) -> ChildOutput<'static> {
+        ChildOutput {
+            exit_code,
+            stdout,
+            stderr,
+        }
+    }
+
+    #[test]
+    fn github_error_details_reads_string_and_object_errors() {
+        let body = br#"{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request",{"resource":"PullRequestReviewComment","code":"custom","message":"line must be part of the diff"},{"resource":"PullRequestReviewComment","field":"in_reply_to","code":"invalid"}],"status":"422"}"#;
+        assert_eq!(
+            github_error_details(body).as_deref(),
+            Some(
+                "Review Can not approve your own pull request; line must be part of the diff; in_reply_to invalid"
+            )
+        );
+        assert_eq!(github_error_details(br#"{"message":"Not Found"}"#), None);
+        assert_eq!(github_error_details(b"not json"), None);
+    }
+
+    #[test]
+    fn failure_reason_adds_github_error_details_to_gh_api_calls_only() {
+        let body = br#"{"errors":["Review Can not approve your own pull request"]}"#;
+        let output = failed(Some(1), body, b"gh: Unprocessable Entity (HTTP 422)\n");
+        let api = LoggedCommand::start(
+            "",
+            Invocation::new(Program::Gh, &["api", "repos/a/b/pulls/1/reviews"]),
+        );
+        let pr_view = LoggedCommand::start("", Invocation::new(Program::Gh, &["pr", "view", "1"]));
+
+        assert_eq!(
+            api.failure_reason(&output),
+            "gh: Unprocessable Entity (HTTP 422): Review Can not approve your own pull request"
+        );
+        assert_eq!(
+            pr_view.failure_reason(&output),
+            "gh: Unprocessable Entity (HTTP 422)"
+        );
+    }
+
+    #[test]
+    fn failure_reason_without_stderr_names_how_the_command_ended() {
+        let logged = LoggedCommand::start("", Invocation::new(Program::Glab, &["mr", "list"]));
+
+        assert_eq!(
+            logged.failure_reason(&failed(Some(2), b"", b"  \n")),
+            "glab mr list exited with code 2"
+        );
+        assert_eq!(
+            logged.failure_reason(&failed(None, b"", b"")),
+            "glab mr list was killed by a signal"
+        );
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn rerun_replays_arguments_and_stdin_and_records_the_output() {
         let invocation = Invocation {
@@ -148,6 +250,7 @@ mod tests {
         assert!(execution.duration.is_some());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rerun_of_a_failing_call_reports_its_stderr() {
         let invocation = Invocation::new(Program::Git, &["no-such-subcommand-for-glab-tui"]);

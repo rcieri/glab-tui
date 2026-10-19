@@ -325,13 +325,10 @@ async fn run_glab_command_inner(
         logged.finish(tx.as_ref(), "Success".to_string(), output.child_output());
         Ok(output.stdout)
     } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        logged.finish(
-            tx.as_ref(),
-            format!("Failed: {err_msg}"),
-            output.child_output(),
-        );
-        anyhow::bail!("glab command failed: {err_msg}")
+        let child_output = output.child_output();
+        let reason = logged.failure_reason(&child_output);
+        logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+        anyhow::bail!("glab command failed: {reason}")
     }
 }
 
@@ -3192,9 +3189,10 @@ async fn run_glab_raw_api(
                 logged.finish(tx.as_ref(), "Success".to_string(), (&out).into());
                 Ok(String::from_utf8(out.stdout)?)
             } else {
-                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                logged.finish(tx.as_ref(), format!("Failed: {err_msg}"), (&out).into());
-                anyhow::bail!("glab api failed: {err_msg}")
+                let child_output = ChildOutput::from(&out);
+                let reason = logged.failure_reason(&child_output);
+                logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+                anyhow::bail!("glab api failed: {reason}")
             }
         }
         Err(e) => {

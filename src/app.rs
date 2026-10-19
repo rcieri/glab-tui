@@ -3888,6 +3888,9 @@ pub struct App {
     pub job_trace_loading: bool,
     /// Job whose trace opens in the editor once its in-flight fetch lands.
     pub pending_job_trace_editor: Option<u64>,
+    /// Deployment whose job log opens in the editor once its in-flight fetch
+    /// lands.
+    pub pending_deployment_log: Option<u64>,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
@@ -4044,6 +4047,7 @@ impl Default for App {
             detail_scroll_to_bottom: false,
             job_trace_loading: false,
             pending_job_trace_editor: None,
+            pending_deployment_log: None,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),
             job_trace_searching: false,
@@ -4289,6 +4293,7 @@ impl App {
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;
         self.pending_job_trace_editor = None;
+        self.pending_deployment_log = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
@@ -7004,6 +7009,18 @@ impl App {
 
     pub fn selected_deployment(&self) -> Option<&crate::domain::deployments::Deployment> {
         self.environment_deployments.as_ref()?.selected()
+    }
+
+    /// Consumes the pending log request for `deployment_id` and says whether
+    /// its log should open, which it does only while that deployment is still
+    /// selected on the Environments tab.
+    pub fn take_pending_deployment_log(&mut self, deployment_id: u64) -> bool {
+        if self.pending_deployment_log != Some(deployment_id) {
+            return false;
+        }
+        self.pending_deployment_log = None;
+        self.active_tab == Tab::Environments
+            && self.selected_deployment().map(|d| d.id) == Some(deployment_id)
     }
 
     /// Whether `key` moves focus between the environment list and the shown
@@ -13274,6 +13291,41 @@ index 123456..789012 100644
         app.show_deployments("staging".to_string(), deployments(&[1]));
 
         assert_eq!(shown_deployments_environment(&app), Some("production"));
+    }
+
+    /// Production's deployments 11 (selected) and 10.
+    fn app_selecting_deployment_11() -> App {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[11, 10]));
+        app
+    }
+
+    #[test]
+    fn requested_deployment_log_opens_once() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+
+        assert!(app.take_pending_deployment_log(11));
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn deployment_log_for_a_deployment_no_longer_selected_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(10);
+
+        assert!(!app.take_pending_deployment_log(10));
+        assert_eq!(app.pending_deployment_log, None);
+    }
+
+    #[test]
+    fn deployment_log_landing_on_another_tab_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+        app.active_tab = Tab::Issues;
+
+        assert!(!app.take_pending_deployment_log(11));
     }
 
     #[test]

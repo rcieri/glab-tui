@@ -339,6 +339,9 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
         return;
     };
     let project = app.scope.as_str().to_string();
+    if app.pending_deployment_log.replace(deployment_id) == Some(deployment_id) {
+        return;
+    }
     let tx = app.scoped_sender(tx.clone());
     tokio::spawn(async move {
         let result = crate::domain::pipelines::get_job_trace(&client, &project, job_id).await;

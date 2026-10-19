@@ -2058,7 +2058,7 @@ async fn main() -> Result<()> {
                 Event::DeploymentLogFetched {
                     deployment_id,
                     result,
-                } => match result {
+                } if app.take_pending_deployment_log(deployment_id) => match result {
                     Ok(trace) => {
                         let prefix = format!("deployment_{deployment_id}_log_");
                         if let Err(error) =
@@ -2074,6 +2074,7 @@ async fn main() -> Result<()> {
                         app.error_has_cli_detail = true;
                     }
                 },
+                Event::DeploymentLogFetched { .. } => {}
                 Event::RelatedMrsFetched { issue_iid, result } => {
                     app.fetching_related_mrs.remove(&issue_iid);
                     let new_state = match result {

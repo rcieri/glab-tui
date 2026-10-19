@@ -202,7 +202,8 @@ const FAILURE_WORDS: &[&str] = &[
 ];
 
 fn is_failure_line(line: &str) -> bool {
-    let line = crate::utils::format::sanitize_untrusted(line);
+    let line =
+        crate::utils::format::sanitize_untrusted(crate::utils::format::trace_line_content(line));
     words(&line).any(|(start, word)| {
         FAILURE_WORDS
             .iter()
@@ -458,5 +459,12 @@ compiling more
         ] {
             assert!(!is_failure_line(line), "{line}");
         }
+    }
+
+    #[test]
+    fn github_step_names_are_not_searched() {
+        let step = "build\tUpload logs on failure\t2024-05-14T11:19:20.0000000Z";
+        assert!(!is_failure_line(&format!("{step} Uploading 3 files")));
+        assert!(is_failure_line(&format!("{step} Error: no such file")));
     }
 }

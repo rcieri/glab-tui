@@ -49,7 +49,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/domain/](src/domain/): Domain models and top-level API functions.
     * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
-    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode. `JobTrace::next_failure_line` finds the next line reporting a failure (`FAILURE_WORDS`, whole words that keep `-`, `.` and `/`, not next to a zero count) for the Jobs tab's `jump_to_failure` key.
+    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode. `JobTrace::next_failure_line` finds the next line reporting a failure (`FAILURE_WORDS` in the line's `trace_line_content`, whole words that keep `-`, `.` and `/`, not next to a zero count) for the Jobs tab's `jump_to_failure` key.
     * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
@@ -75,7 +75,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle). Every mutation goes through `spawn_todo_change`, which reports `Event::TodoChanged`.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
-    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
+    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`). `trace_line_content` is a job log line without the GitLab Runner timestamp or the `<job>\t<step>\t` prefix of `gh run view --log` (only split off when a GitHub timestamp follows it), the same split `parse_ansi_trace` renders.
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [private_fs.rs](src/utils/private_fs.rs): Owner-only `create_dir_all` (`0700`), `create_owned_dir` (`0700`, also tightening an existing directory) and `write` (`0600`, also tightening an existing file) for everything glab-tui persists; plain `std::fs` off Unix.

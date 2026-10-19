@@ -4,7 +4,7 @@ use ratatui::layout::{Alignment, Constraint};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Cell;
 
-use super::{CellContext, ColumnDef, Row, SortKey};
+use super::{CellContext, ColumnDef, Row, SortKey, cell_filter_values};
 use crate::domain::runners::Runner;
 use crate::ui::helpers::{badge_style_for, render_fuzzy_cell};
 use crate::utils::format::truncate;
@@ -186,14 +186,7 @@ impl ColumnDef for RunnerColumn {
     fn filter_values(self, row: &Runner) -> Vec<String> {
         match self {
             Self::Tags => row.tags.clone(),
-            _ => {
-                let text = self.text(row);
-                if text.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![text.into_owned()]
-                }
-            }
+            _ => cell_filter_values(self.text(row)),
         }
     }
 

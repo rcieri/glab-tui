@@ -109,6 +109,109 @@ pub fn parse_group_projects(raw: &str) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
+/// One runner's details from the bulk GraphQL query: its tags, when it was
+/// last contacted, and the version and IP of its most recently contacted
+/// manager. An absent manager value stays `None`, never `Some("")`.
+#[derive(Debug, Default, Deserialize, Clone)]
+struct GiRunnerDetails {
+    #[serde(default)]
+    tag_list: Vec<String>,
+    contacted_at: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    ip_address: Option<String>,
+}
+
+/// Parse the runner-details GraphQL response into runner id -> details.
+///
+/// GraphQL is all-or-nothing: a top-level `errors` array or a missing
+/// `data.project` shape yields `None`, and every runner keeps unknown
+/// details rather than a half-parsed set. A malformed runner id or a
+/// manager without a contact time drops only that runner's extras.
+fn parse_runner_details_response(json: &str) -> Option<HashMap<u64, GiRunnerDetails>> {
+    let root: serde_json::Value = serde_json::from_str(json).ok()?;
+    if root.get("errors").and_then(|e| e.as_array()).is_some() {
+        return None;
+    }
+    let nodes = root
+        .get("data")?
+        .get("project")?
+        .get("runners")?
+        .get("nodes")?
+        .as_array()?
+        .clone();
+
+    let mut details = HashMap::new();
+    for node in nodes {
+        let Some(id) = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .and_then(parse_runner_gid)
+        else {
+            continue;
+        };
+        let tag_list = node
+            .get("tagList")
+            .and_then(|t| t.as_array())
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| tag.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let contacted_at = node
+            .get("contactedAt")
+            .and_then(|c| c.as_str())
+            .filter(|c| !c.is_empty())
+            .map(String::from);
+
+        // The most recently contacted manager names the runner's version and
+        // IP; GitLab deprecated the runner's own fields in 17.0.
+        let newest_manager = node
+            .get("managers")
+            .and_then(|m| m.get("nodes"))
+            .and_then(|n| n.as_array())
+            .and_then(|managers| {
+                managers
+                    .iter()
+                    .filter_map(|m| {
+                        m.get("contactedAt")
+                            .and_then(|c| c.as_str())
+                            .map(|contacted_at| (contacted_at, m))
+                    })
+                    .max_by(|(left, _), (right, _)| left.cmp(right))
+                    .map(|(_, m)| m)
+            });
+        let version = newest_manager
+            .and_then(|m| m.get("version"))
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(String::from);
+        let ip_address = newest_manager
+            .and_then(|m| m.get("ipAddress"))
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(String::from);
+
+        details.insert(
+            id,
+            GiRunnerDetails {
+                tag_list,
+                contacted_at,
+                version,
+                ip_address,
+            },
+        );
+    }
+    Some(details)
+}
+
+/// The numeric id of a GraphQL runner global id
+/// (`gid://gitlab/Ci::Runner/9876` -> `9876`).
+fn parse_runner_gid(gid: &str) -> Option<u64> {
+    gid.rsplit('/').next()?.parse().ok()
+}
+
 /// Parse the bulk MR-state GraphQL response.
 ///
 /// A top-level `errors` array is a hard error: GraphQL is all-or-nothing, so a
@@ -531,6 +634,47 @@ impl GlabBackend {
             desc.to_string(),
         )
         .await
+    }
+
+    /// Fill tags, version, last contact and IP from one GraphQL query over the
+    /// project's runners, the same bulk read that fills the Approval and
+    /// Mergeable columns. A runner the query does not return (a group or
+    /// project runner the token cannot read details of, which needs
+    /// Maintainer on its owning group or project) still lists, with those
+    /// fields unknown. GitLab stopped reporting a runner's own `ip_address`
+    /// and deprecated its `version` in 17.0 in favour of the runner managers,
+    /// so both come from the most recently contacted manager.
+    async fn fill_runner_details(&self, project: &str, runners: &mut [Runner]) {
+        if runners.is_empty() || validate_project_path(project).is_err() {
+            return;
+        }
+        let first = runners.len().min(RUNNER_DETAILS_QUERY_MAX).to_string();
+        let query = format!(
+            "query {{ project(fullPath: \"{project}\") {{ runners(first: {first}) {{ nodes {{ \
+             id tagList contactedAt managers {{ nodes {{ version ipAddress contactedAt }} }} \
+             }} }} }} }}"
+        );
+        let raw = self
+            .run_glab(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching Runner Details",
+            )
+            .await;
+        let Ok(raw) = raw else {
+            return;
+        };
+        let Some(details) = parse_runner_details_response(&raw) else {
+            return;
+        };
+        for runner in runners.iter_mut() {
+            let Some(details) = details.get(&runner.id) else {
+                continue;
+            };
+            runner.tags = details.tag_list.clone();
+            runner.contacted_at = details.contacted_at.clone();
+            runner.version = details.version.clone();
+            runner.ip_address = details.ip_address.clone();
+        }
     }
 
     /// Newest pipeline built for `git_ref`. `glab ci list` orders by id,
@@ -2248,14 +2392,11 @@ impl Backend for GlabBackend {
             active: Option<bool>,
             paused: Option<bool>,
             runner_type: Option<RunnerType>,
-            ip_address: Option<String>,
         }
         let listed: Vec<GiRunner> = serde_json::from_str(&raw)?;
-        let host = tokio::task::spawn_blocking(gitlab_host)
+        let host = tokio::task::spawn_blocking(gitlab_host_or_default)
             .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "gitlab.com".to_string());
+            .unwrap_or_else(|_| DEFAULT_GITLAB_HOST.to_string());
         let mut runners: Vec<Runner> = listed
             .into_iter()
             .map(|r| Runner {
@@ -2264,44 +2405,11 @@ impl Backend for GlabBackend {
                 status: r.status,
                 active: r.paused.map(|paused| !paused).or(r.active).unwrap_or(true),
                 runner_type: r.runner_type,
-                ip_address: r.ip_address.filter(|ip| !ip.is_empty()),
                 web_url: Some(gitlab_runner_url(&host, scope, r.id)),
                 ..Runner::default()
             })
             .collect();
-
-        // Tags, version and last contact are only in the per-runner details.
-        // A runner whose details cannot be read (the token may not see an
-        // instance runner's) still lists, with those fields unknown.
-        #[derive(Deserialize)]
-        struct GiRunnerDetails {
-            #[serde(default)]
-            tag_list: Vec<String>,
-            version: Option<String>,
-            contacted_at: Option<String>,
-            ip_address: Option<String>,
-        }
-        let requests = runners
-            .iter()
-            .map(|r| vec!["api".to_string(), format!("runners/{}", r.id)])
-            .collect();
-        let details =
-            run_glab_concurrent(self.tx.clone(), requests, "Fetching Runner Details").await;
-        for (index, response) in details {
-            let Some(details) = response
-                .ok()
-                .and_then(|json| serde_json::from_str::<GiRunnerDetails>(&json).ok())
-            else {
-                continue;
-            };
-            let runner = &mut runners[index];
-            runner.tags = details.tag_list;
-            runner.version = details.version.filter(|v| !v.is_empty());
-            runner.contacted_at = details.contacted_at;
-            if runner.ip_address.is_none() {
-                runner.ip_address = details.ip_address.filter(|ip| !ip.is_empty());
-            }
-        }
+        self.fill_runner_details(project, &mut runners).await;
         Ok(runners)
     }
 
@@ -3155,7 +3263,7 @@ impl Backend for GlabBackend {
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
+        let host = gitlab_host_or_default();
         let url = gitlab_runner_url(&host, scope, runner_id);
         open_in_web_browser(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
@@ -3164,7 +3272,7 @@ impl Backend for GlabBackend {
         if project.is_empty() {
             anyhow::bail!("project path required to open branch in browser");
         }
-        let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
+        let host = gitlab_host_or_default();
         let url = format!(
             "https://{}/{}/-/tree/{}",
             host,
@@ -3178,7 +3286,7 @@ impl Backend for GlabBackend {
         if project.is_empty() {
             anyhow::bail!("project path required to open environment in browser");
         }
-        let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
+        let host = gitlab_host_or_default();
         let url = format!(
             "https://{}/{}/-/environments/{}",
             host,
@@ -3283,21 +3391,29 @@ async fn run_glab_raw_api(
     }
 }
 
+/// The GitLab instance assumed when `git remote get-url origin` cannot name
+/// one: no remote is configured, or its URL has no host.
+const DEFAULT_GITLAB_HOST: &str = "gitlab.com";
+
+/// At most this many runners per GraphQL details query, matching the single
+/// `glab runner list --per-page <page_size>` call it follows.
+const RUNNER_DETAILS_QUERY_MAX: usize = 100;
+
 /// Resolve the GitLab host (e.g. `gitlab.com`, `gitlab.example.com`) by
-/// reading `git remote get-url origin` and stripping the path. Used to
+/// reading `git remote get-url origin` and stripping the path, falling back
+/// to `DEFAULT_GITLAB_HOST` when there is no remote to read. Used to
 /// construct browser URLs for entities whose `glab` subcommand doesn't
-/// ship a `-w` flag (runners, branches, environments). Falls back to
-/// `gitlab.com` if no remote is configured.
-fn gitlab_host() -> Option<String> {
+/// ship a `-w` flag (runners, branches, environments).
+fn gitlab_host_or_default() -> String {
     let output = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let url = String::from_utf8(output.stdout).ok()?;
-    crate::git_helpers::parse_remote_host(&url)
+        .ok();
+    let host = output
+        .and_then(|out| out.status.success().then_some(out))
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|url| crate::git_helpers::parse_remote_host(&url));
+    host.unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }
 
 /// Percent-encode a branch or environment name for use in a GitLab URL
@@ -3410,11 +3526,11 @@ mod tests {
     }
 
     #[test]
-    fn gitlab_host_returns_none_without_origin_remote() {
+    fn gitlab_host_without_origin_remote_falls_back_to_gitlab_com() {
         // No upstream remote configured in CI/sandbox; assert graceful
         // fallback rather than a panic.
         std::env::set_current_dir("/").ok();
-        let _ = gitlab_host(); // any result is acceptable; we only assert no panic
+        assert_eq!(gitlab_host_or_default(), "gitlab.com");
     }
 
     #[test]
@@ -3986,6 +4102,50 @@ mod tests {
         // One unknown field fails the whole query; must not look like "no state".
         let body = r#"{"errors":[{"message":"Field 'x' doesn't exist on type 'MergeRequest'"}]}"#;
         assert!(parse_mr_state_response(body).is_err());
+    }
+
+    #[test]
+    fn runner_details_come_from_the_newest_manager() {
+        let body = r#"{"data":{"project":{"runners":{"nodes":[
+            {"id":"gid://gitlab/Ci::Runner/9876","tagList":["docker","linux"],
+             "contactedAt":"2026-01-02T03:04:05.000Z",
+             "managers":{"nodes":[
+                {"version":"17.3.1","ipAddress":"10.0.0.8","contactedAt":"2025-12-31T00:00:00.000Z"},
+                {"version":"17.4.0","ipAddress":"10.0.0.7","contactedAt":"2026-01-02T03:04:05.000Z"}]}},
+            {"id":"gid://gitlab/Ci::Runner/9877","tagList":["macos"],
+             "contactedAt":null,
+             "managers":{"nodes":[{"version":"","ipAddress":"","contactedAt":null}]}}
+        ]}}}}"#;
+        let details = parse_runner_details_response(body).unwrap();
+
+        let first = details.get(&9876).unwrap();
+        assert_eq!(first.tag_list, ["docker", "linux"]);
+        assert_eq!(
+            first.contacted_at.as_deref(),
+            Some("2026-01-02T03:04:05.000Z")
+        );
+        assert_eq!(first.version.as_deref(), Some("17.4.0"));
+        assert_eq!(first.ip_address.as_deref(), Some("10.0.0.7"));
+
+        let second = details.get(&9877).unwrap();
+        assert_eq!(second.tag_list, ["macos"]);
+        assert_eq!(second.contacted_at, None);
+        assert_eq!(second.version, None);
+        assert_eq!(second.ip_address, None);
+    }
+
+    #[test]
+    fn runner_details_graphql_errors_and_a_malformed_gid_yield_none_or_skip() {
+        let errors = r#"{"errors":[{"message":"Field 'managers' doesn't exist"}]}"#;
+        assert!(parse_runner_details_response(errors).is_none());
+
+        let malformed = r#"{"data":{"project":{"runners":{"nodes":[
+            {"id":"not-a-gid","tagList":[]},
+            {"id":"gid://gitlab/Ci::Runner/9876","tagList":["docker"]}
+        ]}}}}"#;
+        let details = parse_runner_details_response(malformed).unwrap();
+        assert!(!details.contains_key(&0));
+        assert_eq!(details.get(&9876).unwrap().tag_list, ["docker"]);
     }
 
     #[test]

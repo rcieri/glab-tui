@@ -1610,6 +1610,7 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Pipelines);
                     app.refreshed_tabs.insert(app::Tab::Pipelines);
                     app.stale_tabs.remove(&app::Tab::Pipelines);
+                    app.drop_jobs_of_changed_pipelines(&pipelines);
                     if app.nav_depth() > 0 {
                         // Inside a descent the visible list belongs to a child
                         // level. A freshly fetched top-level list belongs to

@@ -5442,6 +5442,29 @@ impl App {
         }
     }
 
+    /// Forgets the cached jobs of every listed pipeline whose status differs in
+    /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
+    pub fn drop_jobs_of_changed_pipelines(
+        &mut self,
+        fetched: &[crate::domain::pipelines::Pipeline],
+    ) {
+        let root = self
+            .pipeline_nav
+            .first()
+            .map_or(&self.pipelines.items, |frame| &frame.items);
+        let changed: Vec<u64> = fetched
+            .iter()
+            .filter(|new| {
+                root.iter()
+                    .any(|old| old.id() == new.id() && old.status() != new.status())
+            })
+            .map(|pipeline| pipeline.id())
+            .collect();
+        for id in changed {
+            self.pipeline_jobs.remove(&id);
+        }
+    }
+
     /// The descent path for the tab title, e.g. `#1002 › #2001`. Empty at the
     /// top level, where the plain tab name says everything.
     pub fn nav_breadcrumb(&self) -> String {
@@ -12509,6 +12532,33 @@ index 123456..789012 100644
             Some(1),
             "the cursor still points at the pipeline we descended from"
         );
+    }
+
+    #[test]
+    fn refetched_pipelines_drop_the_cached_jobs_of_those_whose_status_changed() {
+        let mut app = App::default();
+        app.pipelines.items = vec![nav_pipe(1001), nav_pipe(1002)];
+        app.pipelines.state.select(Some(1));
+        app.descend_into(
+            1002,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![nav_pipe(2001)],
+                pending: Vec::new(),
+            },
+        );
+        for id in [1001, 1002, 2001] {
+            app.pipeline_jobs.insert(id, Vec::new());
+        }
+        let failed = crate::domain::pipelines::Pipeline {
+            status: "failed".to_string(),
+            ..nav_pipe(1002)
+        };
+
+        app.drop_jobs_of_changed_pipelines(&[nav_pipe(1001), failed]);
+
+        let mut cached: Vec<u64> = app.pipeline_jobs.keys().copied().collect();
+        cached.sort_unstable();
+        assert_eq!(cached, vec![1001, 2001]);
     }
 
     #[test]

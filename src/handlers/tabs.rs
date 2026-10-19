@@ -179,6 +179,9 @@ fn spawn_pipeline_retry(
         .map(|&id| (id, app.project_path_for_pipeline(id)))
         .collect();
     let rows = flip_pipeline_statuses(app, &pipe_ids, "running");
+    for id in &pipe_ids {
+        app.pipeline_jobs.remove(id);
+    }
     tokio::spawn(async move {
         run_optimistic_mutation(
             OptimisticTable::Pipelines,

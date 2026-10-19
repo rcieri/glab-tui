@@ -843,6 +843,86 @@ fn gitlab_draft_note_payload(comment: &DraftComment, diff_refs: &GiDiffRefs) -> 
     serde_json::json!({ "note": comment.body, "position": position })
 }
 
+/// One element of `glab mr note list --output json`: a discussion with its
+/// notes. GitLab does not repeat the discussion id on its notes.
+#[derive(Deserialize)]
+struct GiDiscussion {
+    id: String,
+    notes: Vec<GiNote>,
+}
+
+#[derive(Deserialize)]
+struct GiNote {
+    id: u64,
+    body: String,
+    author: GiNoteAuthor,
+    created_at: String,
+    system: bool,
+    #[serde(default)]
+    position: Option<GiNotePosition>,
+    #[serde(default)]
+    resolved: Option<bool>,
+    #[serde(default)]
+    resolvable: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct GiNoteAuthor {
+    username: String,
+}
+
+#[derive(Deserialize)]
+struct GiNotePosition {
+    #[serde(default)]
+    new_path: Option<String>,
+    #[serde(default)]
+    old_path: Option<String>,
+    #[serde(default)]
+    new_line: Option<u64>,
+    #[serde(default)]
+    old_line: Option<u64>,
+    #[serde(default)]
+    start_line: Option<u64>,
+    #[serde(default)]
+    line_range: Option<serde_json::Value>,
+}
+
+/// Flattens the discussions `glab mr note list` prints into notes, each
+/// tagged with the id of the discussion it belongs to.
+fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
+    let discussions: Vec<GiDiscussion> =
+        serde_json::from_str(raw).context("parsing MR discussions")?;
+    Ok(discussions
+        .into_iter()
+        .flat_map(|discussion| {
+            let discussion_id = discussion.id;
+            discussion
+                .notes
+                .into_iter()
+                .map(move |note| DiscussionNote {
+                    id: note.id,
+                    body: note.body,
+                    author: crate::domain::mr::Author {
+                        username: note.author.username,
+                    },
+                    created_at: note.created_at,
+                    system: note.system,
+                    position: note.position.map(|p| crate::domain::mr::NotePosition {
+                        new_path: p.new_path,
+                        old_path: p.old_path,
+                        new_line: p.new_line,
+                        old_line: p.old_line,
+                        start_line: p.start_line,
+                        line_range: p.line_range,
+                    }),
+                    discussion_id: Some(discussion_id.clone()),
+                    resolved: note.resolved,
+                    resolvable: note.resolvable,
+                })
+        })
+        .collect())
+}
+
 #[async_trait]
 impl Backend for GlabBackend {
     fn kind(&self) -> super::BackendKind {
@@ -1463,12 +1543,7 @@ impl Backend for GlabBackend {
         Ok(String::from_utf8(diff.bytes)?)
     }
 
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        _page_size: usize,
-    ) -> Result<Vec<DiscussionNote>> {
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
         let raw = self
             .run_glab(
                 &[
@@ -1484,65 +1559,7 @@ impl Backend for GlabBackend {
                 "Fetching MR Notes",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GiNote {
-            id: u64,
-            body: String,
-            author: GiAuthor,
-            created_at: String,
-            system: bool,
-            #[serde(default)]
-            position: Option<GiPosition>,
-            #[serde(default)]
-            discussion_id: Option<String>,
-            #[serde(default)]
-            resolved: Option<bool>,
-            #[serde(default)]
-            resolvable: Option<bool>,
-        }
-        #[derive(Deserialize)]
-        struct GiAuthor {
-            username: String,
-        }
-        #[derive(Deserialize)]
-        struct GiPosition {
-            #[serde(default)]
-            new_path: Option<String>,
-            #[serde(default)]
-            old_path: Option<String>,
-            #[serde(default)]
-            new_line: Option<u64>,
-            #[serde(default)]
-            old_line: Option<u64>,
-            #[serde(default)]
-            start_line: Option<u64>,
-            #[serde(default)]
-            line_range: Option<serde_json::Value>,
-        }
-        let notes: Vec<GiNote> = serde_json::from_str(&raw)?;
-        Ok(notes
-            .into_iter()
-            .map(|n| DiscussionNote {
-                id: n.id,
-                body: n.body,
-                author: crate::domain::mr::Author {
-                    username: n.author.username,
-                },
-                created_at: n.created_at,
-                system: n.system,
-                position: n.position.map(|p| crate::domain::mr::NotePosition {
-                    new_path: p.new_path,
-                    old_path: p.old_path,
-                    new_line: p.new_line,
-                    old_line: p.old_line,
-                    start_line: p.start_line,
-                    line_range: p.line_range,
-                }),
-                discussion_id: n.discussion_id,
-                resolved: n.resolved,
-                resolvable: n.resolvable,
-            })
-            .collect())
+        parse_mr_discussions(&raw)
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -4176,6 +4193,49 @@ mod tests {
         assert_eq!(
             classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
             RangedReply::Misaligned
+        );
+    }
+
+    #[test]
+    fn mr_discussions_flatten_into_notes_tagged_with_their_discussion() {
+        let raw = r#"[
+            {"id":"6a9c1750","individual_note":false,"notes":[
+                {"id":1,"type":"DiffNote","body":"Rename this","author":{"id":7,"username":"alice"},
+                 "created_at":"2026-07-06T09:00:00.000Z","system":false,
+                 "position":{"position_type":"text","new_path":"src/a.rs","old_path":"src/a.rs","new_line":12},
+                 "resolvable":true,"resolved":true},
+                {"id":2,"type":"DiffNote","body":"Done","author":{"id":8,"username":"bob"},
+                 "created_at":"2026-07-06T10:00:00.000Z","system":false,
+                 "position":{"position_type":"text","new_path":"src/a.rs","old_path":"src/a.rs","new_line":12},
+                 "resolvable":true,"resolved":true}
+            ]},
+            {"id":"f00dfeed","individual_note":true,"notes":[
+                {"id":3,"type":null,"body":"added 1 commit","author":{"id":8,"username":"bob"},
+                 "created_at":"2026-07-06T11:00:00.000Z","system":true,"position":null,
+                 "resolvable":false,"resolved":false}
+            ]}
+        ]"#;
+        let notes = parse_mr_discussions(raw).unwrap();
+        let summary: Vec<_> = notes
+            .iter()
+            .map(|n| {
+                (
+                    n.id,
+                    n.discussion_id.as_deref(),
+                    n.author.username.as_str(),
+                    n.system,
+                    n.position.as_ref().and_then(|p| p.new_line),
+                    n.resolved,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (1, Some("6a9c1750"), "alice", false, Some(12), Some(true)),
+                (2, Some("6a9c1750"), "bob", false, Some(12), Some(true)),
+                (3, Some("f00dfeed"), "bob", true, None, Some(false)),
+            ]
         );
     }
 }

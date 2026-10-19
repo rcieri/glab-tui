@@ -1000,40 +1000,124 @@ mod related_issues_types {
 
 /// The REST review-comments endpoint carries no resolution state; only the
 /// GraphQL `reviewThreads` connection exposes `isResolved`. A comment's REST
-/// `id` is its GraphQL `databaseId`.
+/// `id` is its GraphQL `databaseId`, and every REST reply names its thread's
+/// first comment in `in_reply_to_id`, so that first comment is enough to
+/// resolve the whole thread. `gh api graphql --paginate` feeds `$endCursor`
+/// back in until `pageInfo.hasNextPage` is false.
 fn review_thread_resolution_graphql_query(owner: &str, repo: &str, pr_number: u64) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{pr_number}) {{ \
-         reviewThreads(first:100) {{ nodes {{ isResolved \
-         comments(first:100) {{ nodes {{ databaseId }} }} }} }} }} }} }}"
+        "query($endCursor: String) {{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
+         pullRequest(number:{pr_number}) {{ reviewThreads(first:100, after:$endCursor) {{ \
+         pageInfo {{ hasNextPage endCursor }} \
+         nodes {{ isResolved comments(first:1) {{ nodes {{ databaseId }} }} }} }} }} }} }}"
     )
 }
 
-/// Maps every review comment id to the resolution state of its thread.
+/// Maps the first comment of every review thread to the thread's resolution
+/// state, across every page `gh api graphql --paginate` printed (one JSON
+/// object per page, back to back).
 fn parse_review_thread_resolution(raw: &str) -> Result<HashMap<u64, bool>> {
     use review_threads_types::*;
-    let resp: GhResponse = serde_json::from_str(raw)?;
-    if let Some(error) = resp.errors.first() {
-        anyhow::bail!("GraphQL error: {}", error.message);
+    let mut resolution = HashMap::new();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
+        let page = page.context("parsing review threads")?;
+        if let Some(error) = page.errors.first() {
+            anyhow::bail!("GraphQL error: {}", error.message);
+        }
+        let threads = page
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .map(|pr| pr.review_threads.nodes)
+            .unwrap_or_default();
+        resolution.extend(threads.into_iter().filter_map(|thread| {
+            let first = thread.comments.nodes.first()?;
+            Some((first.database_id, thread.is_resolved))
+        }));
     }
-    let threads = resp
-        .data
-        .and_then(|d| d.repository)
-        .and_then(|r| r.pull_request)
-        .map(|pr| pr.review_threads.nodes)
-        .unwrap_or_default();
-    Ok(threads
-        .into_iter()
-        .flat_map(|thread| {
-            thread
-                .comments
-                .nodes
-                .into_iter()
-                .map(move |c| (c.database_id, thread.is_resolved))
-        })
-        .collect())
+    Ok(resolution)
+}
+
+#[derive(Deserialize)]
+struct GhReviewComment {
+    id: u64,
+    body: String,
+    user: Option<GhReviewCommentUser>,
+    created_at: String,
+    path: Option<String>,
+    line: Option<u64>,
+    #[serde(default = "default_review_comment_side")]
+    side: String,
+    start_line: Option<u64>,
+    in_reply_to_id: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct GhReviewCommentUser {
+    login: String,
+}
+
+fn default_review_comment_side() -> String {
+    "RIGHT".to_string()
+}
+
+/// Builds the notes of a PR from its REST review comments, reading every
+/// array `gh api --paginate` printed: it may print one array per page instead
+/// of a single merged one. A comment takes the resolution state of its
+/// thread, which `resolution` keys by the thread's first comment.
+fn parse_pr_review_comments(
+    raw: &str,
+    resolution: &HashMap<u64, bool>,
+) -> Result<Vec<DiscussionNote>> {
+    let mut notes = Vec::new();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<Vec<GhReviewComment>>() {
+        let page = page.context("parsing PR review comments")?;
+        notes.extend(
+            page.into_iter()
+                .map(|comment| review_comment_note(comment, resolution)),
+        );
+    }
+    Ok(notes)
+}
+
+fn review_comment_note(
+    comment: GhReviewComment,
+    resolution: &HashMap<u64, bool>,
+) -> DiscussionNote {
+    let position = comment.path.map(|path| {
+        let (new_line, old_line) = if comment.side == "LEFT" {
+            (None, comment.line)
+        } else {
+            (comment.line, None)
+        };
+        NotePosition {
+            new_path: Some(path.clone()),
+            old_path: Some(path),
+            new_line,
+            old_line,
+            start_line: comment.start_line,
+            line_range: None,
+        }
+    });
+    let thread_id = comment.in_reply_to_id.unwrap_or(comment.id);
+    let resolved = resolution.get(&thread_id).copied();
+    DiscussionNote {
+        id: comment.id,
+        body: comment.body,
+        author: crate::domain::mr::Author {
+            username: comment.user.map(|u| u.login).unwrap_or_default(),
+        },
+        created_at: comment.created_at,
+        system: false,
+        position,
+        discussion_id: Some(thread_id.to_string()),
+        resolved,
+        // A comment GraphQL does not list under any thread has no known
+        // state; it is shown as a plain note rather than as open.
+        resolvable: Some(resolved.is_some()),
+    }
 }
 
 mod review_threads_types {
@@ -2019,89 +2103,22 @@ impl Backend for GhBackend {
         }
     }
 
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        page_size: usize,
-    ) -> Result<Vec<DiscussionNote>> {
-        let endpoint = format!("/repos/{project}/pulls/{mr_iid}/comments?per_page={page_size}");
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
+        let endpoint = format!("/repos/{project}/pulls/{mr_iid}/comments?per_page=100");
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
         let query_arg = format!(
             "query={}",
             review_thread_resolution_graphql_query(owner, repo, mr_iid)
         );
-        let graphql_args = ["api", "graphql", "-f", query_arg.as_str()];
-        let (raw, raw_threads) = tokio::try_join!(
-            self.raw_api(&endpoint, "GET", None, "Fetching MR Notes"),
+        let comments_args = ["api", "--paginate", endpoint.as_str()];
+        let graphql_args = ["api", "graphql", "--paginate", "-f", query_arg.as_str()];
+        let (raw_comments, raw_threads) = tokio::try_join!(
+            self.run_gh(&comments_args, "Fetching MR Notes"),
             self.run_gh(&graphql_args, "Fetching Review Threads"),
         )?;
         let resolution = parse_review_thread_resolution(&raw_threads)?;
-
-        #[derive(Deserialize)]
-        struct GhComment {
-            id: u64,
-            body: String,
-            user: Option<GhLogin>,
-            created_at: String,
-            path: Option<String>,
-            line: Option<u64>,
-            #[serde(default = "default_side")]
-            side: String,
-            start_line: Option<u64>,
-            in_reply_to_id: Option<u64>,
-        }
-        fn default_side() -> String {
-            "RIGHT".to_string()
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-
-        let gh_comments: Vec<GhComment> = serde_json::from_str(&raw)?;
-        Ok(gh_comments
-            .into_iter()
-            .map(|gc| {
-                let username = gc.user.map(|u| u.login).unwrap_or_default();
-                let position = if let Some(p) = gc.path {
-                    let (new_line, old_line) = if gc.side == "LEFT" {
-                        (None, gc.line)
-                    } else {
-                        (gc.line, None)
-                    };
-                    Some(NotePosition {
-                        new_path: Some(p.clone()),
-                        old_path: Some(p),
-                        new_line,
-                        old_line,
-                        start_line: gc.start_line,
-                        line_range: None,
-                    })
-                } else {
-                    None
-                };
-                let disc_id = gc
-                    .in_reply_to_id
-                    .map(|rid| rid.to_string())
-                    .unwrap_or_else(|| gc.id.to_string());
-                let resolved = resolution.get(&gc.id).copied();
-                DiscussionNote {
-                    id: gc.id,
-                    body: gc.body,
-                    author: crate::domain::mr::Author { username },
-                    created_at: gc.created_at,
-                    system: false,
-                    position,
-                    discussion_id: Some(disc_id),
-                    resolved,
-                    // Past the first 100 threads the state is unknown; such a
-                    // comment is shown as a plain note rather than as open.
-                    resolvable: Some(resolved.is_some()),
-                }
-            })
-            .collect())
+        parse_pr_review_comments(&raw_comments, &resolution)
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -4660,16 +4677,64 @@ mod tests {
     }
 
     #[test]
-    fn review_thread_resolution_maps_every_comment_to_its_thread_state() {
-        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
-            {"isResolved":true,"comments":{"nodes":[{"databaseId":11},{"databaseId":12}]}},
+    fn review_thread_resolution_reads_every_page_gh_paginate_prints() {
+        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[
+            {"isResolved":true,"comments":{"nodes":[{"databaseId":11}]}},
             {"isResolved":false,"comments":{"nodes":[{"databaseId":21}]}}
+        ]}}}}}
+        {"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
+            {"isResolved":false,"comments":{"nodes":[{"databaseId":31}]}},
+            {"isResolved":true,"comments":{"nodes":[]}}
         ]}}}}}"#;
         let map = parse_review_thread_resolution(raw).unwrap();
-        assert_eq!(map.get(&11), Some(&true));
-        assert_eq!(map.get(&12), Some(&true));
-        assert_eq!(map.get(&21), Some(&false));
-        assert_eq!(map.get(&99), None);
+        assert_eq!(map, HashMap::from([(11, true), (21, false), (31, false)]));
+    }
+
+    #[test]
+    fn review_thread_resolution_graphql_error_on_a_later_page_is_an_error() {
+        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+            {"data":null,"errors":[{"message":"API rate limit exceeded"}]}"#;
+        let err = parse_review_thread_resolution(raw).unwrap_err();
+        assert_eq!(err.to_string(), "GraphQL error: API rate limit exceeded");
+    }
+
+    fn review_comment_json(id: u64, in_reply_to_id: Option<u64>) -> String {
+        let in_reply_to_id = in_reply_to_id.map_or("null".to_string(), |id| id.to_string());
+        format!(
+            r#"{{"id":{id},"body":"comment {id}","user":{{"login":"octo"}},
+            "created_at":"2026-07-06T09:00:00Z","path":"src/lib.rs","line":3,
+            "side":"RIGHT","start_line":null,"in_reply_to_id":{in_reply_to_id}}}"#
+        )
+    }
+
+    #[test]
+    fn review_comments_on_every_page_take_their_threads_resolution() {
+        let raw = format!(
+            "[{},{}]\n[{},{},{}]",
+            review_comment_json(11, None),
+            review_comment_json(21, None),
+            review_comment_json(12, Some(11)),
+            review_comment_json(31, None),
+            review_comment_json(41, None),
+        );
+        let resolution = HashMap::from([(11, true), (21, false), (31, false)]);
+        let notes = parse_pr_review_comments(&raw, &resolution).unwrap();
+        let states: Vec<_> = notes
+            .iter()
+            .map(|n| (n.id, n.discussion_id.as_deref(), n.resolvable, n.resolved))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                (11, Some("11"), Some(true), Some(true)),
+                (21, Some("21"), Some(true), Some(false)),
+                (12, Some("11"), Some(true), Some(true)),
+                (31, Some("31"), Some(true), Some(false)),
+                (41, Some("41"), Some(false), None),
+            ]
+        );
     }
 
     #[test]

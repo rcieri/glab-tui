@@ -124,13 +124,15 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
 
     assert_eq!(
         threads.as_array().map(Vec::len),
-        Some(4),
+        Some(5),
         "replies join their thread"
     );
 
     let anchored = thread(&threads, "201");
     assert_eq!(anchored["classification"], "in-diff");
     assert_eq!(anchored["notes"].as_array().map(Vec::len), Some(2));
+    assert_eq!(anchored["resolvable"], true);
+    assert_eq!(anchored["resolved"], false);
 
     let removed_line = thread(&threads, "203");
     assert_eq!(removed_line["classification"], "in-diff");
@@ -139,6 +141,28 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
     assert_eq!(removed_line["resolved"], true);
 
     assert_eq!(thread(&threads, "204")["classification"], "outdated");
+}
+
+#[test]
+fn test_review_threads_on_github_reads_every_page_of_comments_and_threads() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let threads = stdout_json(&run_review(&sandbox, &["threads", "2"], "", &[]));
+
+    let second_page = thread(&threads, "205");
+    assert_eq!(second_page["classification"], "in-diff");
+    assert_eq!(second_page["resolvable"], true);
+    assert_eq!(second_page["resolved"], false);
+    assert_eq!(
+        second_page["notes"][0]["body"],
+        "Open thread on the second page."
+    );
+
+    let resolved = thread(&threads, "203");
+    assert_eq!(resolved["notes"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        resolved["notes"][1]["body"],
+        "Late reply to the resolved thread."
+    );
 }
 
 #[test]

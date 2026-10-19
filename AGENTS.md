@@ -310,7 +310,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Get single MR | `glab mr view <iid> --output json -R <repo>` | N/A |
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
-| List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
+| List MR notes | `glab mr note list <iid> --output json -R <repo>` (prints discussions `{id, notes: [...]}`, which `parse_mr_discussions` flattens into notes tagged with their discussion id) | glab fetches every page itself |
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Current branch's pipeline (Jobs tab) | `glab ci list --output json -R <repo> --ref <branch> --per-page 1` and `glab mr list --output json -R <repo> --source-branch <branch> --per-page 1`, then `glab ci list … --ref refs/merge-requests/<iid>/head --per-page 1` when the branch has an open MR. Newest id wins | Single targeted calls, never a full MR or pipeline listing |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
@@ -408,7 +408,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Endpoint | Why raw API |
 |---|---|---|
-| List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
+| List PR review comments | `gh api --paginate /repos/{}/pulls/{}/comments?per_page=100`, plus `gh api graphql --paginate` over `reviewThreads(first:100, after:$endCursor) { pageInfo nodes { isResolved comments(first:1) } }` for the resolution state | `gh pr view --json comments` lacks inline line/position fields needed for diff review, and REST comments carry no resolution state. Every page is read: `page_size` does not bound them. A reply takes its thread's state through `in_reply_to_id`, which always names the thread's first comment |
 | Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
 | PR stack positions (Stack column) | `gh api graphql` with one aliased `pullRequest(number: N) { stack stackEntry }` per listed PR | `gh pr list --json` has no stack fields. Runs once per PR-list fetch, only while `App::is_stack_column_needed()` (Stack column shown or grouped by), via `spawn_fetch_pr_stack_summaries` after `MrsFetched` |
 | One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |

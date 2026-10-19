@@ -337,12 +337,7 @@ pub trait Backend: Send + Sync {
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        page_size: usize,
-    ) -> Result<Vec<DiscussionNote>>;
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;

@@ -2135,7 +2135,14 @@ async fn main() -> Result<()> {
                         });
                         app.error_has_cli_detail = false;
                     }
-                    app.current_comments = comments;
+                    match comments {
+                        Ok(comments) => app.current_comments = comments,
+                        Err(err) => {
+                            app.current_comments.clear();
+                            app.raise_error_toast(format!("Failed to load review comments: {err}"));
+                            app.error_has_cli_detail = true;
+                        }
+                    }
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())
                     {

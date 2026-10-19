@@ -12,8 +12,9 @@ pub struct Notification {
     pub target_iid: u64,
     pub state: String,
     pub updated_at: String,
-    /// Who triggered it. GitHub lists no author, so it stays empty there
-    /// until the detail fetch fills it.
+    /// On GitLab, whoever caused the todo. GitHub lists no author, so it
+    /// stays empty there until the detail fetch fills it with the author of
+    /// the latest comment, or of the target when there is none.
     #[serde(default)]
     pub author: String,
     /// Why it arrived (GitLab `action_name`, GitHub `reason`), e.g.

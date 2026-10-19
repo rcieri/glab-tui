@@ -18,6 +18,8 @@ pub struct JobTraceView {
     /// Line the last jump went to, while it is on screen. A jump near the end
     /// of the log is clamped to the last page, so it need not top the pane.
     jumped_to: Option<usize>,
+    /// Rows of the pane the last `visible_lines` filled, `0` before then.
+    viewport_height: usize,
 }
 
 /// What `JobTraceView::lines` holds.
@@ -97,6 +99,11 @@ impl JobTraceView {
         self.jumped_to.unwrap_or(self.top_line)
     }
 
+    /// Rows of the pane when it was last drawn, `0` before the first draw.
+    pub fn viewport_height(&self) -> usize {
+        self.viewport_height
+    }
+
     /// Row the pane scrolls to for a jump to `line`.
     pub fn jump_to_line(&mut self, theme: &Theme, wrap_width: Option<usize>, line: usize) -> usize {
         self.jumped_to = Some(line);
@@ -123,6 +130,7 @@ impl JobTraceView {
         height: usize,
     ) -> (Vec<Line<'static>>, usize) {
         self.parse_new_text(theme);
+        self.viewport_height = height;
         let bottom = scroll.saturating_add(height);
         let Some(width) = wrap_width else {
             let end = bottom.min(self.lines.len());

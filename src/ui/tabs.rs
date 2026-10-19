@@ -3403,6 +3403,8 @@ mod tests {
         );
         assert_eq!(rows[18], format!("┌ Trace {}┐", "─".repeat(91)));
         assert_eq!(rows[19], format!("│{:<98}│", "first part"));
+        // 30 rows less the 8-row header and the trace pane's two borders.
+        assert_eq!(app.job_trace.as_ref().unwrap().viewport_height(), 20);
     }
 
     #[test]

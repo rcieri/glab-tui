@@ -334,6 +334,8 @@ mod tests {
             duration_seconds: None,
             runner: None,
             needs: Vec::new(),
+            failure_reason: None,
+            commit: None,
         }
     }
 

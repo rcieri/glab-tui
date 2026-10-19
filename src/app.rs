@@ -4076,6 +4076,11 @@ pub(crate) fn runner_status_display(raw: &str) -> &'static str {
     }
 }
 
+const PIPELINE_STATUS_COLUMN: &str = "Status";
+
+/// The Status cell texts the pipeline status filter key steps through.
+const PIPELINE_STATUS_FILTER_CYCLE: [&str; 3] = ["RUNNING", "FAILED", "SUCCESS"];
+
 /// Whether a row whose `col` cell has `values` passes the column filter
 /// `selected`. Text columns match case-insensitive substrings; the rest
 /// match exactly, also accepting the raw API values older configs saved.
@@ -4778,11 +4783,13 @@ impl App {
         Ok(())
     }
 
+    fn cursor_pipeline(&self) -> Option<&crate::domain::pipelines::Pipeline> {
+        let index = self.pipelines.state.selected()?;
+        self.filtered_pipelines().get(index).copied()
+    }
+
     pub fn selected_pipeline_sha(&self) -> Option<String> {
-        self.pipelines
-            .state
-            .selected()
-            .and_then(|index| self.filtered_pipelines().get(index).copied())
+        self.cursor_pipeline()
             .map(|p| p.head_sha().to_string())
             .filter(|sha| !sha.is_empty())
     }
@@ -4793,6 +4800,59 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Pipelines tab"))?;
         self.clipboard.set_text(sha)?;
         Ok(())
+    }
+
+    pub fn copy_selected_pipeline_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .cursor_pipeline()
+            .and_then(|p| p.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Pipeline URL unavailable; refresh the Pipelines tab")
+            })?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_pipeline_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .cursor_pipeline()
+            .map(|p| format!("#{}", p.id()))
+            .ok_or_else(|| anyhow::anyhow!("No pipeline is selected"))?;
+        self.clipboard.set_text(id)?;
+        Ok(())
+    }
+
+    /// Moves the Pipelines Status filter to the next step of
+    /// `PIPELINE_STATUS_FILTER_CYCLE`, after its last step back to every
+    /// status. A filter set from the column picker that is not one of the
+    /// steps counts as every status. Returns the status now shown.
+    pub fn cycle_pipeline_status_filter(&mut self) -> Option<&'static str> {
+        let current = self
+            .get_column_filter(Tab::Pipelines, PIPELINE_STATUS_COLUMN)
+            .filter(|selected| selected.len() == 1)
+            .and_then(|selected| selected.iter().next())
+            .and_then(|value| {
+                let value = Self::normalize_filter_value(value);
+                PIPELINE_STATUS_FILTER_CYCLE
+                    .iter()
+                    .position(|status| *status == value)
+            });
+        let next = match current {
+            None => PIPELINE_STATUS_FILTER_CYCLE.first(),
+            Some(index) => PIPELINE_STATUS_FILTER_CYCLE.get(index + 1),
+        }
+        .copied();
+        match next {
+            Some(status) => self.set_column_filter(
+                Tab::Pipelines,
+                PIPELINE_STATUS_COLUMN,
+                std::collections::HashSet::from([status.to_string()]),
+            ),
+            None => self.remove_column_filter(Tab::Pipelines, PIPELINE_STATUS_COLUMN),
+        }
+        self.update_filter_selection();
+        next
     }
 
     /// The job a fetched log is shown for: the selected job of the Jobs tab,
@@ -8409,6 +8469,7 @@ mod tests {
             source: None,
             project_path: "acme/project".to_string(),
             web_url: None,
+            commit: None,
         }];
         app.pipelines.state.select(Some(0));
 
@@ -8796,6 +8857,8 @@ mod tests {
             duration_seconds: None,
             runner: None,
             needs: vec![],
+            failure_reason: None,
+            commit: None,
         };
         app.jobs.items = vec![job];
         app.active_tab = Tab::Jobs;
@@ -11265,6 +11328,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -11281,6 +11345,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -11476,6 +11541,7 @@ index 123456..789012 100644
                 source: Some("push".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -11492,6 +11558,7 @@ index 123456..789012 100644
                 source: Some("schedule".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             },
         ];
         app.column_filters
@@ -11716,6 +11783,7 @@ index 123456..789012 100644
             source: Some("merge_request_event".to_string()),
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -12013,6 +12081,7 @@ index 123456..789012 100644
             source: None,
             project_path: "owner/repo".to_string(),
             web_url: Some(String::new()),
+            commit: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -12040,6 +12109,101 @@ index 123456..789012 100644
             app.filtered_pipelines().len(),
             2,
             "removing the filter must restore every row"
+        );
+    }
+
+    fn pipeline_with_status(id: u64, status: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": status, "ref": "main", "updated_at": "",
+            "web_url": format!("https://gitlab.example.com/acme/app/-/pipelines/{id}")
+        }))
+        .expect("pipeline json")
+    }
+
+    fn visible_pipeline_ids(app: &App) -> Vec<u64> {
+        app.filtered_pipelines().iter().map(|p| p.id).collect()
+    }
+
+    #[test]
+    fn status_filter_cycles_running_failed_success_then_all() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            pipeline_with_status(1, "running"),
+            pipeline_with_status(2, "failed"),
+            pipeline_with_status(3, "success"),
+            pipeline_with_status(4, "canceled"),
+        ];
+
+        let mut steps = Vec::new();
+        for _ in 0..4 {
+            let shown = app.cycle_pipeline_status_filter();
+            steps.push((shown, visible_pipeline_ids(&app)));
+        }
+
+        assert_eq!(
+            steps,
+            vec![
+                (Some("RUNNING"), vec![1]),
+                (Some("FAILED"), vec![2]),
+                (Some("SUCCESS"), vec![3]),
+                (None, vec![1, 2, 3, 4]),
+            ]
+        );
+    }
+
+    #[test]
+    fn status_filter_cycle_restarts_from_a_picker_filter_it_does_not_step_through() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            pipeline_with_status(1, "running"),
+            pipeline_with_status(2, "canceled"),
+        ];
+        app.set_column_filter(
+            Tab::Pipelines,
+            "Status",
+            std::collections::HashSet::from(["CANCEL".to_string()]),
+        );
+
+        assert_eq!(app.cycle_pipeline_status_filter(), Some("RUNNING"));
+        assert_eq!(visible_pipeline_ids(&app), vec![1]);
+    }
+
+    #[test]
+    fn pipeline_url_and_id_are_copied_from_the_highlighted_row() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.pipelines.items = vec![pipeline_with_status(41, "success"), {
+            let mut no_url = pipeline_with_status(42, "failed");
+            no_url.web_url = None;
+            no_url
+        }];
+        app.pipelines.state.select(Some(0));
+
+        app.copy_selected_pipeline_url().unwrap();
+        app.copy_selected_pipeline_id().unwrap();
+        app.pipelines.state.select(Some(1));
+        let missing_url = app.copy_selected_pipeline_url().unwrap_err();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec![
+                "https://gitlab.example.com/acme/app/-/pipelines/41".to_string(),
+                "#41".to_string(),
+            ]
+        );
+        assert_eq!(
+            missing_url.to_string(),
+            "Pipeline URL unavailable; refresh the Pipelines tab"
         );
     }
 
@@ -12140,6 +12304,7 @@ index 123456..789012 100644
                 source: None,
                 project_path: "owner/repo".to_string(),
                 web_url: None,
+                commit: None,
             })
             .collect();
         app.pipelines.state.select(Some(2));
@@ -12257,6 +12422,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }
     }
 

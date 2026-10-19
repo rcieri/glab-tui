@@ -87,6 +87,14 @@ if [[ "$*" == *"api"* ]]; then
         # Must precede /pipelines: /pipelines/:id/jobs contains it.
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
             echo '[]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS" && "$*" == *"scope[]=failed"* ]]; then
+            echo '[{"id": 54322, "status": "failed", "stage": "test", "name": "rubocop"}]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS" ]]; then
+            # Jobs carry the pipeline's commit and, when failed, why.
+            commit='"commit": {"title": "Bump parser to 2.1", "author_name": "Grace Hopper"}'
+            echo "[{\"id\": 54321, \"status\": \"success\", \"stage\": \"test\", \"name\": \"rspec\", $commit},
+                   {\"id\": 54322, \"status\": \"failed\", \"stage\": \"test\", \"name\": \"rubocop\",
+                    \"failure_reason\": \"script_failure\", $commit}]"
         else
             echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
         fi

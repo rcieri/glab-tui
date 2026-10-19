@@ -1581,6 +1581,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.toggle_preview.clone()),
+            action: "Show / hide the pipeline inspector (commit, failed jobs)",
+        },
+        Shortcut {
+            category: "Pipelines",
             key: d(app.config.keybindings.pipelines.run_new.clone()),
             action: "Create pipeline with interactive form",
         },
@@ -1593,6 +1598,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Pipelines",
             key: d(app.config.keybindings.pipelines.retry.clone()),
             action: "Retry selected pipeline(s)",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.retry_failed.clone()),
+            action: "Retry only the failed jobs of the selected pipeline(s)",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.cycle_status_filter.clone()),
+            action: "Filter by status: All / Running / Failed / Success",
         },
         Shortcut {
             category: "Pipelines",
@@ -1623,6 +1638,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Pipelines",
             key: d(app.config.keybindings.pipelines.open_in_browser.clone()),
             action: "Open pipeline in browser",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.copy_url.clone()),
+            action: "Copy selected pipeline URL",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.copy_id.clone()),
+            action: "Copy selected pipeline ID (#123)",
         },
         Shortcut {
             category: "Pipelines",

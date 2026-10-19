@@ -10,7 +10,7 @@ use crate::domain::mr::{
     DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NotePosition, ensure_complete_diff,
 };
 use crate::domain::notifications::Notification;
-use crate::domain::pipelines::{Job, Pipeline};
+use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
@@ -2588,6 +2588,14 @@ impl Backend for GhBackend {
             completed_at: Option<String>,
             #[serde(default, deserialize_with = "deserialize_needs")]
             needs: Vec<String>,
+            #[serde(default)]
+            steps: Vec<GhStep>,
+        }
+
+        #[derive(Deserialize)]
+        struct GhStep {
+            name: String,
+            conclusion: Option<String>,
         }
 
         let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
@@ -2612,6 +2620,16 @@ impl Backend for GhBackend {
                     (Some(start), Some(end)) => chrono_duration(start, end),
                     _ => None,
                 };
+                let failure_reason = (status == "failed")
+                    .then(|| {
+                        github_job_failure_reason(
+                            j.conclusion.as_deref(),
+                            j.steps
+                                .iter()
+                                .map(|step| (step.name.as_str(), step.conclusion.as_deref())),
+                        )
+                    })
+                    .flatten();
                 Job {
                     id: j.id,
                     status,
@@ -2624,6 +2642,8 @@ impl Backend for GhBackend {
                     duration_seconds: duration,
                     runner: j.runner_name,
                     needs: j.needs,
+                    failure_reason,
+                    commit: None,
                 }
             })
             .collect();
@@ -2664,6 +2684,22 @@ impl Backend for GhBackend {
         self.run_gh(
             &["run", "rerun", &pipeline_id.to_string(), "-R", project],
             "Retrying Action",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()> {
+        self.run_gh(
+            &[
+                "run",
+                "rerun",
+                &pipeline_id.to_string(),
+                "--failed",
+                "-R",
+                project,
+            ],
+            "Retrying Failed Jobs",
         )
         .await?;
         Ok(())
@@ -3775,6 +3811,20 @@ async fn open_github_url(
     Ok(())
 }
 
+/// Why a failed GitHub job failed: its timeout, else the first failed step.
+/// A job that fails before any step runs (a bad runner label) has neither.
+fn github_job_failure_reason<'a>(
+    conclusion: Option<&str>,
+    mut steps: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Option<String> {
+    if conclusion.is_some_and(|c| c.eq_ignore_ascii_case("timed_out")) {
+        return Some("timed out".to_string());
+    }
+    steps
+        .find(|(_, conclusion)| conclusion.is_some_and(|c| c.eq_ignore_ascii_case("failure")))
+        .map(|(name, _)| format!("step \"{name}\" failed"))
+}
+
 /// Parse the JSON response from `gh api repos/{owner}/{repo}/actions/runs`.
 pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
     #[derive(Deserialize)]
@@ -3812,6 +3862,22 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
         html_url: Option<String>,
         #[serde(default)]
         repository: Option<GhRepo>,
+        #[serde(default)]
+        head_commit: Option<GhHeadCommit>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhHeadCommit {
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        author: Option<GhCommitAuthor>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhCommitAuthor {
+        #[serde(default)]
+        name: String,
     }
 
     #[derive(Deserialize)]
@@ -3857,6 +3923,15 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     .or_else(|| r.actor.and_then(|a| a.login))
                     .unwrap_or_default();
                 let project_path = r.repository.map(|repo| repo.full_name).unwrap_or_default();
+                let commit = r.head_commit.map(|commit| CommitSummary {
+                    title: commit
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_name: commit.author.map(|author| author.name).unwrap_or_default(),
+                });
                 Pipeline {
                     id: r.id,
                     status,
@@ -3872,6 +3947,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     source: r.event,
                     project_path,
                     web_url: r.html_url,
+                    commit,
                 }
             })
             .collect();
@@ -4593,6 +4669,47 @@ mod tests {
         assert_eq!(p.event, "push");
         assert_eq!(p.actor_login, "triggerer");
         assert_eq!(p.duration_seconds, Some(120));
+    }
+
+    #[test]
+    fn run_head_commit_becomes_the_pipeline_commit_headline_and_author() {
+        let json = r#"{"workflow_runs": [{
+            "id": 7, "status": "completed", "conclusion": "failure", "updated_at": "",
+            "head_commit": {
+                "message": "Fix flaky login test\n\nThe retry hid a race.",
+                "author": { "name": "Ada Lovelace", "email": "ada@example.com" }
+            }
+        }]}"#;
+
+        let pipelines = parse_github_actions_runs(json).unwrap();
+
+        assert_eq!(
+            pipelines[0].commit,
+            Some(CommitSummary {
+                title: "Fix flaky login test".to_string(),
+                author_name: "Ada Lovelace".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn failed_job_reason_names_its_timeout_or_its_first_failed_step() {
+        let steps = [
+            ("Checkout", Some("success")),
+            ("Run tests", Some("failure")),
+            ("Upload", Some("failure")),
+        ];
+        let reason = |conclusion| github_job_failure_reason(conclusion, steps.iter().copied());
+
+        assert_eq!(
+            reason(Some("failure")).as_deref(),
+            Some("step \"Run tests\" failed")
+        );
+        assert_eq!(reason(Some("timed_out")).as_deref(), Some("timed out"));
+        assert_eq!(
+            github_job_failure_reason(Some("failure"), std::iter::empty()),
+            None
+        );
     }
 
     #[test]

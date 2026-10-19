@@ -581,6 +581,8 @@ pub trait Backend: Send + Sync {
 
     // ── Pipeline / Job actions ──
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
+    /// Reruns only the jobs of `pipeline_id` that failed; errors when none did.
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()>;
     async fn start_job(&self, project: &str, job_id: u64) -> Result<()>;

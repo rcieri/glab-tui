@@ -59,6 +59,12 @@ impl GitlabClient {
         self.backend.retry_pipeline(project_path, pipeline_id).await
     }
 
+    pub async fn retry_failed_jobs(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
+        self.backend
+            .retry_failed_jobs(project_path, pipeline_id)
+            .await
+    }
+
     pub async fn cancel_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
         self.backend
             .cancel_pipeline(project_path, pipeline_id)

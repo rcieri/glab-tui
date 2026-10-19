@@ -137,6 +137,70 @@ pub(crate) async fn run_optimistic_mutation<F, Fut>(
     }
 }
 
+/// What a pipeline retry reruns.
+#[derive(Clone, Copy)]
+enum PipelineRetry {
+    /// GitLab reruns failed and canceled jobs, GitHub the whole run.
+    Pipeline,
+    FailedJobs,
+}
+
+impl PipelineRetry {
+    fn action(self) -> &'static str {
+        match self {
+            PipelineRetry::Pipeline => "retry pipeline",
+            PipelineRetry::FailedJobs => "retry failed jobs",
+        }
+    }
+}
+
+/// Retries every selected pipeline, or `pipe_id` when none is selected,
+/// showing them running until the refresh that follows.
+fn spawn_pipeline_retry(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
+    pipe_id: u64,
+    retry: PipelineRetry,
+) {
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    let scope = app.scope.clone();
+    let tx = app.scoped_sender(tx.clone());
+    let active_tab = app.active_tab;
+    let states = app.requested_state_queries();
+    let pipe_ids: Vec<u64> = if app.selected_pipelines.is_empty() {
+        vec![pipe_id]
+    } else {
+        app.selected_pipelines.drain().collect()
+    };
+    let projects: std::collections::HashMap<u64, String> = pipe_ids
+        .iter()
+        .map(|&id| (id, app.project_path_for_pipeline(id)))
+        .collect();
+    let rows = flip_pipeline_statuses(app, &pipe_ids, "running");
+    tokio::spawn(async move {
+        run_optimistic_mutation(
+            OptimisticTable::Pipelines,
+            retry.action(),
+            rows,
+            &tx,
+            |id| {
+                let (client, project) = (&client, projects[&id].as_str());
+                async move {
+                    match retry {
+                        PipelineRetry::Pipeline => client.retry_pipeline(project, id).await,
+                        PipelineRetry::FailedJobs => client.retry_failed_jobs(project, id).await,
+                    }
+                }
+            },
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        spawn_refresh_active_tab(&client, &scope, states, active_tab, tx);
+    });
+}
+
 /// Cancels `rows`' jobs, then refreshes the pipeline's job list.
 pub(crate) fn spawn_cancel_jobs(
     client: crate::domain::client::GitlabClient,
@@ -1500,6 +1564,18 @@ pub async fn handle_active_tab_key(
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
             } else if keybinding_matches(
+                &app.config.keybindings.pipelines.cycle_status_filter,
+                key_event,
+            ) {
+                let shown = app.cycle_pipeline_status_filter().unwrap_or("ALL");
+                app.show_notice(format!("Status filter: {shown}"));
+            } else if keybinding_matches(
+                &app.config.keybindings.pipelines.toggle_preview,
+                key_event,
+            ) {
+                app.detail_visible = !app.detail_visible;
+                app.details_zoomed = false;
+            } else if keybinding_matches(
                 &app.config.keybindings.pipelines.trigger_pipeline,
                 key_event,
             ) {
@@ -1541,41 +1617,14 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             )) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
-                                let client_clone = client.clone();
-                                let scope = app.scope.clone();
-                                let tx = app.scoped_sender(tx.clone());
-                                let active_tab = app.active_tab;
-                                let states = app.requested_state_queries();
-                                let pipe_ids: Vec<u64> = if app.selected_pipelines.is_empty() {
-                                    vec![pipe_id]
-                                } else {
-                                    app.selected_pipelines.drain().collect()
-                                };
-                                let projects: std::collections::HashMap<u64, String> = pipe_ids
-                                    .iter()
-                                    .map(|&id| (id, app.project_path_for_pipeline(id)))
-                                    .collect();
-                                let rows = flip_pipeline_statuses(app, &pipe_ids, "running");
-                                tokio::spawn(async move {
-                                    run_optimistic_mutation(
-                                        OptimisticTable::Pipelines,
-                                        "retry pipeline",
-                                        rows,
-                                        &tx,
-                                        |id| client_clone.retry_pipeline(&projects[&id], id),
-                                    )
-                                    .await;
-                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    spawn_refresh_active_tab(
-                                        &client_clone,
-                                        &scope,
-                                        states,
-                                        active_tab,
-                                        tx,
-                                    );
-                                });
-                            }
+                            spawn_pipeline_retry(app, &tx, pipe_id, PipelineRetry::Pipeline);
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.pipelines.retry_failed,
+                            key_event,
+                        ) =>
+                        {
+                            spawn_pipeline_retry(app, &tx, pipe_id, PipelineRetry::FailedJobs);
                         }
                         _ if ((key_event.code == KeyCode::Char('d')
                             && key_event.modifiers.is_empty())
@@ -1656,6 +1705,24 @@ pub async fn handle_active_tab_key(
                                     result.map_err(|e| e.to_string()),
                                 ));
                             });
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.pipelines.copy_url,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_pipeline_url() {
+                                app.show_error(format!("Failed to copy pipeline URL: {error}"));
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.pipelines.copy_id,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_pipeline_id() {
+                                app.show_error(format!("Failed to copy pipeline ID: {error}"));
+                            }
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.pipelines.copy_sha,
@@ -3372,6 +3439,7 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }];
 
         let first = flip_pipeline_statuses(&mut app, &[1], "running");
@@ -3660,6 +3728,7 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         app.pipelines.items = vec![pipe];
         app.pipelines.state.select(Some(0));
@@ -3697,6 +3766,7 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }];
         app.pipelines.state.select(Some(0));
 
@@ -3727,6 +3797,8 @@ mod tests {
             duration_seconds: None,
             runner: None,
             needs: Vec::new(),
+            failure_reason: None,
+            commit: None,
         };
         let mut app = App::default();
         app.active_tab = crate::app::Tab::Jobs;
@@ -4102,6 +4174,7 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }];
         app.pipelines.state.select(Some(0));
         app.detail_visible = true;

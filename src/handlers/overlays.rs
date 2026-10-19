@@ -1718,6 +1718,8 @@ diff --git a/src/lib.rs b/src/lib.rs
             duration_seconds: None,
             runner: None,
             needs: Vec::new(),
+            failure_reason: None,
+            commit: None,
         };
         let mut app = App::default();
         app.active_pipeline_id = Some(7);

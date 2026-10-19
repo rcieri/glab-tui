@@ -1301,6 +1301,7 @@ pub(crate) fn render_tab_pipelines(
                 source: Some("parent_pipeline".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             })
             .collect();
         filtered_pipelines.extend(pending_rows.iter());
@@ -3331,6 +3332,8 @@ mod tests {
             duration_seconds: None,
             runner: None,
             needs: vec![],
+            failure_reason: None,
+            commit: None,
         }];
         app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(trace));
         app
@@ -3422,6 +3425,8 @@ mod tests {
                 "\u{1b}[31mbuild\u{1b}[0m".to_string(),
                 "\u{9b}2Jlint".to_string(),
             ],
+            failure_reason: None,
+            commit: None,
         }];
         app.enabled_columns
             .entry(Tab::Jobs)

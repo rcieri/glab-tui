@@ -1301,12 +1301,22 @@ pub(crate) fn render_inspector_content(
         }
         InspectorContent::PipelineStages(jobs) => {
             let mut lines = Vec::new();
-            lines.push(Line::from(vec![Span::styled(
+            let header_style = Style::default()
+                .fg(theme.header_fg)
+                .add_modifier(Modifier::BOLD);
+            let mut failed_jobs = jobs.iter().filter(|job| job.is_failed()).peekable();
+            if failed_jobs.peek().is_some() {
+                lines.push(Line::from(Span::styled("Failed Jobs:", header_style)));
+                lines.push(Line::from(""));
+                for job in failed_jobs {
+                    lines.push(failed_job_line(job, &theme, &icons));
+                }
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(Span::styled(
                 "Pipeline Jobs & Stages:",
-                Style::default()
-                    .fg(theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )]));
+                header_style,
+            )));
             lines.push(Line::from(""));
             for job in jobs {
                 let (status_text, status_style) = match job.status.as_str() {
@@ -1388,6 +1398,42 @@ pub(crate) fn render_inspector_content(
             0
         }
     }
+}
+
+/// One row of the pipeline inspector's failure summary: stage, job and why
+/// it failed, all third-party text.
+fn failed_job_line(
+    job: &crate::domain::pipelines::Job,
+    theme: &Theme,
+    icons: &crate::config::Icons,
+) -> Line<'static> {
+    let failed_style = Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(
+        format!("{} ", icons.status_failed),
+        failed_style,
+    )];
+    if !job.stage.is_empty() {
+        spans.push(Span::styled(
+            format!("[{}] ", sanitize_untrusted(&job.stage)),
+            Style::default().fg(theme.purple),
+        ));
+    }
+    spans.push(Span::styled(
+        sanitize_untrusted(&job.name).into_owned(),
+        Style::default().fg(theme.text_normal),
+    ));
+    if let Some(matrix) = job.matrix() {
+        spans.push(Span::styled(
+            format!(" ({})", sanitize_untrusted(matrix)),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    let reason = job
+        .failure_reason
+        .as_deref()
+        .map_or(Cow::Borrowed("no reason reported"), sanitize_untrusted);
+    spans.push(Span::styled(format!(" — {reason}"), failed_style));
+    Line::from(spans)
 }
 
 #[cfg(test)]

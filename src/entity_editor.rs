@@ -552,35 +552,55 @@ pub fn build_pipeline_document(
     pipeline: &crate::domain::pipelines::Pipeline,
     jobs: &[crate::domain::pipelines::Job],
 ) -> crate::app::EntityDocument {
+    use crate::app::Field;
     let mut fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", pipeline.id)),
-        crate::app::Field::read_only("Status", pipeline.status.to_uppercase()),
-        crate::app::Field::read_only("Ref", pipeline.r#ref.clone()),
-        crate::app::Field::read_only("SHA", crate::utils::format::truncate(&pipeline.head_sha, 8)),
+        Field::read_only("ID", format!("#{}", pipeline.id)),
+        Field::read_only("Status", pipeline.status.to_uppercase()),
     ];
-    if !pipeline.project_path.is_empty() {
-        fields.push(crate::app::Field::read_only(
-            "Project",
-            pipeline.project_path.clone(),
+    let failed_jobs = jobs.iter().filter(|job| job.is_failed()).count();
+    if failed_jobs > 0 {
+        fields.push(Field::read_only_toned(
+            "Failed Jobs",
+            format!("{failed_jobs} of {}", jobs.len()),
+            crate::app::FieldTone::Red,
         ));
     }
+    fields.push(Field::read_only("Ref", pipeline.r#ref.clone()));
+    fields.push(Field::read_only(
+        "SHA",
+        crate::utils::format::truncate(&pipeline.head_sha, 8),
+    ));
+    let commit = crate::domain::pipelines::triggering_commit(pipeline, jobs);
+    if let Some(commit) = commit.filter(|commit| !commit.title.is_empty()) {
+        fields.push(Field::read_only("Commit", commit.title.clone()));
+    }
+    if let Some(commit) = commit.filter(|commit| !commit.author_name.is_empty()) {
+        fields.push(Field::read_only(
+            "Commit Author",
+            commit.author_name.clone(),
+        ));
+    }
+    let is_display_title_new = commit.is_none_or(|commit| commit.title != pipeline.display_title);
+    if !pipeline.display_title.is_empty() && is_display_title_new {
+        fields.push(Field::read_only("Title", pipeline.display_title.clone()));
+    }
+    if !pipeline.project_path.is_empty() {
+        fields.push(Field::read_only("Project", pipeline.project_path.clone()));
+    }
     if let Some(source) = &pipeline.source {
-        fields.push(crate::app::Field::read_only("Source", source.clone()));
+        fields.push(Field::read_only("Trigger", source.clone()));
     }
     if !pipeline.actor_login.is_empty() {
-        fields.push(crate::app::Field::read_only(
-            "Author",
+        fields.push(Field::read_only(
+            "Triggered By",
             format!("@{}", pipeline.actor_login),
         ));
     }
     if let Some(duration) = pipeline.duration_seconds {
-        fields.push(crate::app::Field::read_only(
-            "Duration",
-            format!("{duration}s"),
-        ));
+        fields.push(Field::read_only("Duration", format!("{duration}s")));
     }
     if let Some(created) = &pipeline.created_at {
-        fields.push(crate::app::Field::read_only(
+        fields.push(Field::read_only(
             "Created",
             crate::utils::format::time_ago(created),
         ));
@@ -1596,6 +1616,68 @@ mod tests {
             gh_doc.fields.iter().any(|f| f.label == "Pull Requests"),
             "GitHub issues must label the row 'Pull Requests'"
         );
+    }
+
+    fn field_values(doc: &crate::app::EntityDocument) -> Vec<(&str, &str)> {
+        doc.fields
+            .iter()
+            .map(|f| (f.label.as_str(), f.value.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn gitlab_pipeline_document_takes_the_commit_from_its_jobs_and_counts_failures() {
+        let pipeline: crate::domain::pipelines::Pipeline =
+            serde_json::from_value(serde_json::json!({
+                "id": 88, "status": "failed", "ref": "main", "updated_at": "",
+                "head_sha": "0123456789abcdef", "actor_login": "deployer", "source": "push"
+            }))
+            .unwrap();
+        let jobs: Vec<crate::domain::pipelines::Job> = serde_json::from_value(serde_json::json!([
+            {"id": 1, "status": "success", "stage": "build", "name": "compile",
+             "commit": {"title": "Bump parser", "author_name": "Grace Hopper"}},
+            {"id": 2, "status": "failed", "stage": "test", "name": "rspec",
+             "failure_reason": "script failure",
+             "commit": {"title": "Bump parser", "author_name": "Grace Hopper"}}
+        ]))
+        .unwrap();
+
+        let doc = build_pipeline_document(&pipeline, &jobs);
+
+        assert_eq!(
+            field_values(&doc),
+            vec![
+                ("ID", "#88"),
+                ("Status", "FAILED"),
+                ("Failed Jobs", "1 of 2"),
+                ("Ref", "main"),
+                ("SHA", "01234567..."),
+                ("Commit", "Bump parser"),
+                ("Commit Author", "Grace Hopper"),
+                ("Trigger", "push"),
+                ("Triggered By", "@deployer"),
+            ]
+        );
+    }
+
+    #[test]
+    fn github_run_title_is_shown_only_when_it_differs_from_the_commit() {
+        let run = |display_title: &str| -> crate::domain::pipelines::Pipeline {
+            serde_json::from_value(serde_json::json!({
+                "id": 5, "status": "success", "ref": "main", "updated_at": "",
+                "display_title": display_title,
+                "commit": {"title": "Fix login", "author_name": "Ada"}
+            }))
+            .unwrap()
+        };
+        let has_title =
+            |doc: &crate::app::EntityDocument| doc.fields.iter().any(|f| f.label == "Title");
+
+        assert!(!has_title(&build_pipeline_document(&run("Fix login"), &[])));
+        assert!(has_title(&build_pipeline_document(
+            &run("Release 2.0 (#40)"),
+            &[]
+        )));
     }
 
     #[test]

@@ -58,7 +58,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
 - **Bulk editing & Visual Select Mode** — select multiple issues or merge requests with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
-- **Custom commands** — bind a key to your own shell command with the highlighted issue or MR/PR as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
+- **Custom commands** — bind a key to your own shell command with the highlighted issue, MR/PR or pipeline as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.PipelineId}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
 - **Single-Column Inspector** — unified fullscreen details preview and inline editing with full-width markdown description on top and stacked metadata fields below
 - **Interactive Submit Dialogs** — explicit Submit/Cancel confirmations with configurable options (squash, delete source branch, auto-merge) for mutating actions
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description) with in-menu template selection
@@ -368,6 +368,7 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 |---|---|
 | `custom_keybindings.mrs` (alias `prs`) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author` |
 | `custom_keybindings.issues` | `RepoName`, `RepoPath`, `IssueNumber`, `IssueTitle`, `Author` |
+| `custom_keybindings.pipelines` | `RepoName`, `RepoPath`, `PipelineId`, `Ref`, `Sha` |
 | `custom_keybindings.universal` | `RepoName`, `RepoPath` |
 | `custom_keybindings.diff` (diff view) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author`, `FilePath`, `LineNumber` |
 
@@ -381,9 +382,9 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
   command = "lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec 'nvim +{{.LineNumber}} {{.FilePath}}'"
   ```
 - `background = true` runs the command without handing over the terminal: the TUI stays on screen, the command gets no input, its output is not shown, and the Terminal tab logs it when it finishes; a failure toasts its last stderr line (e.g. `lazyworktree` refusing a closed issue). Use it for commands that open their own window or pane, such as `tmux new-window` or `herdr pane split`. Background commands run in their own session without a controlling terminal, so tools that query the terminal through `/dev/tty` (lazyworktree, gh) cannot inject the reply into glab-tui as keypresses. Place new herdr panes with `--pane "$HERDR_PANE_ID"` (glab-tui's own pane): `--current` follows whichever pane is focused in the herdr UI.
-- **Bulk runs:** with issues or MRs/PRs selected (`Space`, or `v` select mode), an `issues`/`mrs` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
-- Row arguments come from the highlighted issue or MR/PR. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project.
-- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
+- **Bulk runs:** with issues, MRs/PRs or pipelines selected (`Space`, or `v` select mode), an `issues`/`mrs`/`pipelines` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
+- Row arguments come from the highlighted issue, MR/PR or pipeline. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project.
+- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_PIPELINE_ID`, `GLAB_TUI_REF`, `GLAB_TUI_SHA`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
 - Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
 - Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
@@ -661,9 +662,14 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | — |
 | `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | — |
 | `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
-| `r` | Retry selected pipeline (or all checked pipelines) | `retry` |
+| `r` | Retry selected pipeline (or all checked pipelines). GitLab reruns its failed and canceled jobs, GitHub the whole run | `retry` |
+| `R` | Retry only the failed jobs of the selected pipeline (or all checked pipelines) | `retry_failed` |
+| `s` | Filter by status: All → Running → Failed → Success → All | `cycle_status_filter` |
+| `i` | Show / hide the inspector: triggering commit, who triggered it, and each failed job with its failure reason | `toggle_preview` |
 | `d` | Cancel selected pipeline | `cancel` |
-| `y` | Copy selected pipeline commit SHA | `copy_sha` |
+| `y` | Copy selected pipeline URL | `copy_url` |
+| `Y` | Copy selected pipeline ID (`#123`) | `copy_id` |
+| `c` | Copy selected pipeline commit SHA | `copy_sha` |
 | `o` | Open pipeline in browser | `open_in_browser` |
 | `Space` | Check/uncheck pipeline for bulk retry | — |
 | `j` / `↓` | (in job view) move down | — |

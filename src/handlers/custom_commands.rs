@@ -335,9 +335,9 @@ struct Selection {
     missing_rows: Vec<String>,
 }
 
-/// What a command acts on: every selected issue or MR/PR when there is a
-/// selection (bulk run), otherwise the highlighted row, the diff cursor, or
-/// the repository for a universal command.
+/// What a command acts on: every selected issue, MR/PR or pipeline when there
+/// is a selection (bulk run), otherwise the highlighted row, the diff cursor,
+/// or the repository for a universal command.
 fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
     let mut checkouts = CheckoutCache::new();
     let mut missing_rows = Vec::new();
@@ -421,6 +421,41 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
                 .map(|mr| mr_target(app, mr, &mut checkouts))
                 .collect()
         }
+        CommandPane::Pipelines => {
+            let pipelines: Vec<&crate::domain::pipelines::Pipeline> =
+                if app.selected_pipelines.is_empty() {
+                    let pipeline = app
+                        .pipelines
+                        .state
+                        .selected()
+                        .and_then(|index| app.filtered_pipelines().get(index).copied())
+                        .ok_or_else(|| "no pipeline is selected".to_string())?;
+                    vec![pipeline]
+                } else {
+                    let loaded: Vec<_> = app
+                        .pipelines
+                        .items
+                        .iter()
+                        .filter(|p| app.selected_pipelines.contains(&p.id))
+                        .collect();
+                    let mut unloaded: Vec<u64> = app
+                        .selected_pipelines
+                        .iter()
+                        .copied()
+                        .filter(|id| !loaded.iter().any(|p| p.id == *id))
+                        .collect();
+                    unloaded.sort_unstable();
+                    missing_rows = unloaded.into_iter().map(|id| format!("#{id}")).collect();
+                    sorted_by_project_and_number(loaded, |p| (p.project_path.as_str(), p.id))
+                };
+            if pipelines.is_empty() {
+                return Err("the selected pipelines are no longer loaded".to_string());
+            }
+            pipelines
+                .into_iter()
+                .map(|pipeline| pipeline_target(app, pipeline, &mut checkouts))
+                .collect()
+        }
         CommandPane::Diff => vec![Target {
             row: String::new(),
             values: diff_values(app, &mut checkouts)?,
@@ -488,6 +523,27 @@ fn mr_target(
     insert_repo_values(&mut values, app, project, checkouts);
     Target {
         row: format!("{}{}", mr_row_prefix(app), mr.iid),
+        values,
+    }
+}
+
+fn pipeline_target(
+    app: &App,
+    pipeline: &crate::domain::pipelines::Pipeline,
+    checkouts: &mut CheckoutCache,
+) -> Target {
+    let mut values = TemplateValues::default();
+    values.insert("PipelineId", pipeline.id.to_string());
+    values.insert("Ref", pipeline.r#ref.clone());
+    values.insert("Sha", pipeline.head_sha.clone());
+    let project = row_project(
+        &pipeline.project_path,
+        pipeline.web_url.as_deref(),
+        &app.scope,
+    );
+    insert_repo_values(&mut values, app, project, checkouts);
+    Target {
+        row: format!("#{}", pipeline.id),
         values,
     }
 }
@@ -746,6 +802,51 @@ mod tests {
             vec!["#99"],
             "vanished rows are reported"
         );
+    }
+
+    fn pipeline(id: u64, project: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "failed", "ref": "release/1.2", "updated_at": "",
+            "head_sha": format!("abc{id}"), "project_path": project
+        }))
+        .expect("pipeline fixture")
+    }
+
+    #[test]
+    fn pipeline_command_gets_the_highlighted_pipeline_id_ref_and_sha() {
+        let mut app = App::default();
+        app.scope = Scope::Group("acme".to_string());
+        app.pipelines.items = vec![pipeline(7, "acme/api"), pipeline(9, "acme/web")];
+        app.pipelines.state.select(Some(1));
+
+        let values = single_values(&app, CommandPane::Pipelines).unwrap();
+
+        assert_eq!(
+            render("{{.RepoName}} {{.PipelineId}} {{.Ref}} {{.Sha}}", &values).as_deref(),
+            Ok("acme/web 9 release/1.2 abc9")
+        );
+    }
+
+    #[test]
+    fn selected_pipelines_each_get_a_run_and_unloaded_ones_are_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("acme/api".to_string());
+        app.pipelines.items = vec![pipeline(30, ""), pipeline(10, ""), pipeline(20, "")];
+        app.pipelines.state.select(Some(2));
+        app.selected_pipelines = [30, 10, 99].into_iter().collect();
+
+        let selection = targets(&app, CommandPane::Pipelines).unwrap();
+
+        assert_eq!(
+            selection
+                .targets
+                .iter()
+                .map(|target| target.row.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#10", "#30"],
+            "the selection wins over the highlighted #20"
+        );
+        assert_eq!(selection.missing_rows, vec!["#99"]);
     }
 
     #[test]

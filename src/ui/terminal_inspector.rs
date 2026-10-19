@@ -59,7 +59,7 @@ pub(crate) fn render_terminal_inspector(f: &mut Frame, app: &mut App, size: Rect
 
 fn key_hints(keys: &KeybindingTerminal) -> String {
     format!(
-        " j/k scroll · {} copy command · {} copy output · {} re-run · Esc close",
+        " Esc close · j/k scroll · {} copy command · {} copy output · {} re-run",
         keys.copy_command, keys.copy_output, keys.rerun_command
     )
 }

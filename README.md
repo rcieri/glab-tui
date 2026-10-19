@@ -669,7 +669,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `d` | Cancel selected pipeline | `cancel` |
 | `y` | Copy selected pipeline URL | `copy_url` |
 | `Y` | Copy selected pipeline ID (`#123`) | `copy_id` |
-| `c` | Copy selected pipeline commit SHA | `copy_sha` |
+| `C` | Copy selected pipeline commit SHA | `copy_sha` |
 | `o` | Open pipeline in browser | `open_in_browser` |
 | `Space` | Check/uncheck pipeline for bulk retry | — |
 | `j` / `↓` | (in job view) move down | — |

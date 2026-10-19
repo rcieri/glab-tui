@@ -1446,7 +1446,7 @@ keybind_defaults! {
     def_copy_branch = "y",
     def_copy_sha = "y",
     def_retry_failed = "R",
-    def_copy_pipeline_sha = "c",
+    def_copy_pipeline_sha = "C",
     def_copy_url = "y",
     def_copy_id = "Y",
     def_cycle_status_filter = "s",
@@ -1942,7 +1942,7 @@ cycle_status_filter = "s"
 toggle_preview = "i"
 copy_url = "y"
 copy_id = "Y"
-copy_sha = "c"
+copy_sha = "C"
 cancel = "d"
 open_workflow = "W"
 selection_toggle = "v"

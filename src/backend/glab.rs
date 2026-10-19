@@ -2152,21 +2152,30 @@ impl Backend for GlabBackend {
 
     /// Retries each failed job on its own: GitLab's pipeline retry endpoint
     /// also reruns canceled jobs. Without `include_retried` the listing holds
-    /// only the latest attempt of each job.
+    /// only the latest attempt of each job, so a retried job leaves it and
+    /// shifts the pages after it: every page is read before the first retry.
     async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{encoded}/pipelines/{pipeline_id}/jobs?scope[]=failed&per_page={GITLAB_MAX_PER_PAGE}"
-        );
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Failed Jobs")
-            .await?;
         #[derive(Deserialize)]
         struct FailedJob {
             id: u64,
         }
-        let failed: Vec<FailedJob> =
-            serde_json::from_str(&raw).context("parsing the failed jobs of a pipeline")?;
+        let encoded = Self::encode_path(project);
+        let mut failed: Vec<FailedJob> = Vec::new();
+        for page in 1.. {
+            let endpoint = format!(
+                "/projects/{encoded}/pipelines/{pipeline_id}/jobs?scope[]=failed&per_page={GITLAB_MAX_PER_PAGE}&page={page}"
+            );
+            let raw = self
+                .raw_api(&endpoint, "GET", None, "Fetching Failed Jobs")
+                .await?;
+            let batch: Vec<FailedJob> =
+                serde_json::from_str(&raw).context("parsing the failed jobs of a pipeline")?;
+            let is_last_page = batch.len() < GITLAB_MAX_PER_PAGE;
+            failed.extend(batch);
+            if is_last_page {
+                break;
+            }
+        }
         if failed.is_empty() {
             anyhow::bail!("pipeline #{pipeline_id} has no failed jobs to retry");
         }

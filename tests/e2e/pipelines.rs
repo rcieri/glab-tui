@@ -72,6 +72,28 @@ fn retry_failed_on_gitlab_keeps_going_past_a_refused_job_and_reports_it() {
         .expect("the error says how many jobs were retried");
 }
 
+/// A retried job leaves the failed-jobs listing and shifts the pages after
+/// it, so every page has to be read before the first retry.
+#[test]
+fn retry_failed_on_gitlab_reads_every_page_of_failed_jobs_before_retrying() {
+    let mut session = session_on_pipelines(&[("TEST_GLAB_FAILED_JOBS_PAGES", "1")]);
+
+    session.press_keys(b"R");
+    session
+        .wait_for_cli_call("ci retry 60001", 5000)
+        .expect("the first failed job is retried");
+
+    let calls = session.get_cli_calls();
+    let second_page = calls
+        .find("scope[]=failed&per_page=100&page=2")
+        .unwrap_or_else(|| panic!("the second page is read:\n{calls}"));
+    let first_retry = calls.find("ci retry").expect("a job was retried");
+    assert!(
+        second_page < first_retry,
+        "every page is read before the first retry:\n{calls}"
+    );
+}
+
 #[test]
 fn test_retry_failed_on_github_reruns_the_failed_jobs_of_the_run() {
     let mut session = TestSession::new(true, 40, 200);

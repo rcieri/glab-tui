@@ -87,6 +87,20 @@ if [[ "$*" == *"api"* ]]; then
         # Must precede /pipelines: /pipelines/:id/jobs contains it.
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
             echo '[]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS_PAGES" && "$*" == *"scope[]=failed"* ]]; then
+            # A full first page of 100 failed jobs, then one more on page 2.
+            if [[ "$*" =~ [?\&]page=1([^0-9]|$) ]]; then
+                printf '['
+                for id in $(seq 60001 60100); do
+                    [[ $id -gt 60001 ]] && printf ','
+                    printf '{"id": %s, "status": "failed"}' "$id"
+                done
+                printf ']\n'
+            elif [[ "$*" =~ [?\&]page=2([^0-9]|$) ]]; then
+                echo '[{"id": 60101, "status": "failed"}]'
+            else
+                echo '[]'
+            fi
         elif [[ -n "$TEST_GLAB_FAILED_JOBS" && "$*" == *"scope[]=failed"* ]]; then
             echo '[{"id": 54322, "status": "failed", "stage": "test", "name": "rubocop"},
                    {"id": 54323, "status": "failed", "stage": "test", "name": "eslint"}]'

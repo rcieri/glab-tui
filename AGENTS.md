@@ -357,7 +357,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Operation | Endpoint | Why raw API |
 |---|---|---|
 | List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` (reads `failure_reason` and `commit`) | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
-| List a pipeline's failed jobs (`R`) | `GET /projects/{}/pipelines/{}/jobs?scope[]=failed&per_page=100` | Same as above. Returns the latest attempt of each failed job |
+| List a pipeline's failed jobs (`R`) | `GET /projects/{}/pipelines/{}/jobs?scope[]=failed&per_page=100&page=<P>` | Same as above. Returns the latest attempt of each failed job. Pages are read until a short one, all before the first retry, since a retried job leaves the listing |
 | Get job trace | `GET /projects/{}/jobs/{}/trace` (read up to `JOB_TRACE_MAX_BYTES`) | `glab ci trace` is interactive/streaming; we need programmatic text output |
 | Follow job trace (follow mode poll) | `GET /projects/{}/jobs/{}/trace?byte_offset=<N>&byte_limit=<≤500 KiB>` | Only the bytes after what is shown; a server that ignores the parameters is detected and polled with full (bounded) reads |
 | List done todos | `GET todos?state=done` | `glab todo list` only shows pending |

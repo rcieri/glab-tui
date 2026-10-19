@@ -1209,6 +1209,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
 const START_MANUAL_JOB_ACTION: &str = "Start manual job";
+/// GitHub deployments carry no job, so they have no log to open.
+const VIEW_DEPLOYMENT_LOG_ACTION: &str = "Open the selected deployment's job log in $EDITOR";
 
 const RUNNER_PAUSE_RESUME_ACTION: &str = "Pause / Resume runner";
 const RUNNER_EDIT_DESCRIPTION_ACTION: &str = "Edit runner description text";
@@ -1910,7 +1912,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
                 .environments
                 .view_deployment_log
                 .clone()),
-            action: "Open the selected deployment's job log in $EDITOR",
+            action: VIEW_DEPLOYMENT_LOG_ACTION,
         },
         Shortcut {
             category: "Environments",
@@ -2164,7 +2166,10 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     );
     if is_github {
         shortcuts.retain(|shortcut| {
-            !(shortcut.category == "Jobs" && shortcut.action == START_MANUAL_JOB_ACTION)
+            !matches!(
+                (shortcut.category, shortcut.action),
+                ("Jobs", START_MANUAL_JOB_ACTION) | ("Environments", VIEW_DEPLOYMENT_LOG_ACTION)
+            )
         });
     }
 

@@ -782,7 +782,7 @@ On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lis
 | `Enter` | List the selected environment's deployments and focus them | `view_deployments` |
 | `Tab` | Move the focus between the environment list and its deployments | `focus_deployments` |
 | `R` | Roll back to the selected deployment (with confirmation). GitLab re-runs the deployment's job. GitHub creates a deployment record of its commit, which only deploys if a workflow runs `on: deployment` | `rollback_deployment` |
-| `e` | Open the selected deployment's job log in `$EDITOR` (GitLab) | `view_deployment_log` |
+| `e` | Open the selected deployment's job log in `$EDITOR`. GitLab only: hidden on GitHub, whose deployments carry no job | `view_deployment_log` |
 | `d` | Stop the environment (with confirmation). GitLab runs its stop action. GitHub, which has no stop, marks its live deployment (the newest whose latest status is success) inactive | `stop_environment` |
 | `y` | Copy the environment's external URL | `copy_url` |
 | `o` | Open environment in browser | `open_in_browser` |

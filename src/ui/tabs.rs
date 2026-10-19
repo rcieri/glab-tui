@@ -2844,10 +2844,11 @@ pub(crate) fn render_tab_environments(
             );
         } else {
             let keys = &app.config.keybindings.environments;
+            let is_github = app.is_github();
             let doc = app
                 .environments
                 .cursor_row()
-                .map(|env| crate::entity_editor::build_environment_document(env, keys));
+                .map(|env| crate::entity_editor::build_environment_document(env, keys, is_github));
             render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
         }
     }

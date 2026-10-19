@@ -141,3 +141,66 @@ fn github_stop_deactivates_the_live_deployment_not_a_newer_failed_one() {
         "the newer failed deployment was marked inactive:\n{calls}"
     );
 }
+
+const DEPLOYMENT_LOG_ACTION: &str = "opens the selected deployment's job log";
+const DEPLOYMENT_LOG_HELP: &str = "Open the selected deployment's job log";
+
+/// Opens the detail pane on `staging`'s environment document, the one that
+/// lists the action keys: Enter shows production's deployments, Esc and j
+/// move on to staging, whose deployments are not listed.
+fn session_showing_staging_actions(is_github: bool) -> TestSession {
+    let mut session =
+        TestSession::with_config(is_github, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .expect("Enter shows the deployments of the highlighted environment");
+    session.press_keys(b"\x1bj");
+    session
+        .wait_for_screen_contains("stops the environment", 5000)
+        .expect("the detail pane lists staging's action keys");
+    session
+}
+
+fn open_environments_help(session: &mut TestSession) {
+    session.press_keys(b"?");
+    session
+        .wait_for_screen_contains("List and focus the environment's deployments", 3000)
+        .expect("the Environments help is shown");
+}
+
+/// GitHub deployments carry no job, so neither the environment's action list
+/// nor the help offers the key that opens one's log.
+#[test]
+fn github_environments_do_not_offer_the_deployment_log() {
+    let mut session = session_showing_staging_actions(true);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains(DEPLOYMENT_LOG_ACTION),
+        "the deployment log is offered on GitHub:\n{screen}"
+    );
+
+    open_environments_help(&mut session);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains(DEPLOYMENT_LOG_HELP),
+        "the help offers the deployment log on GitHub:\n{screen}"
+    );
+}
+
+#[test]
+fn gitlab_environments_offer_the_deployment_log() {
+    let mut session = session_showing_staging_actions(false);
+    assert!(
+        session.emulator.get_text().contains(DEPLOYMENT_LOG_ACTION),
+        "the detail pane offers the deployment log on GitLab"
+    );
+
+    open_environments_help(&mut session);
+    session
+        .wait_for_screen_contains(DEPLOYMENT_LOG_HELP, 3000)
+        .expect("the help offers the deployment log on GitLab");
+}

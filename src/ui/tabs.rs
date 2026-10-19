@@ -2343,8 +2343,9 @@ pub(crate) fn render_tab_todos(
                 row_cells.push(badge_cell("Type", n.type_label(kind)));
             }
             if app.is_column_visible(Tab::Todos, "ID") {
+                let reference = n.reference(kind).unwrap_or_else(|| "—".to_string());
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &n.reference(kind),
+                    &reference,
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,

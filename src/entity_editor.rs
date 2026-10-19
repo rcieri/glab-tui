@@ -775,8 +775,12 @@ pub fn build_todo_document(
         }
         (None, None) => crate::app::InspectorContent::Markdown(String::new()),
     };
+    let title = match todo.reference(kind) {
+        Some(reference) => format!("{} {reference}", todo.type_label(kind)),
+        None => todo.type_label(kind).to_string(),
+    };
     crate::app::EntityDocument {
-        title: format!("{} {}", todo.type_label(kind), todo.reference(kind)),
+        title,
         fields,
         content,
     }

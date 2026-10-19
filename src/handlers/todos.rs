@@ -243,7 +243,7 @@ fn jump_to_target(
     let project = todo.project_path.as_str();
     let iid = todo.target_iid;
     if !app.scope.contains_project(project) {
-        let reference = todo.reference(app.kind());
+        let reference = todo.reference(app.kind()).unwrap_or_default();
         let open_in_browser = &app.config.keybindings.todos.open_in_browser;
         app.show_error(format!(
             "{project}{reference} is outside {}. Press {open_in_browser} to open it in the browser.",

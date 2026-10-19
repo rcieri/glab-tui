@@ -763,7 +763,7 @@ Select items with `Space`, or with `v` and the cursor (yazi-style), then press `
 | `v` | Toggle visual select mode | `selection_toggle` |
 | `Ctrl+a` | Select every visible item | `select_all` |
 | `y` | Copy the target's URL | `copy_url` |
-| `Y` | Copy the target's reference (`#123`, or `!456` for a GitLab MR) | `copy_reference` |
+| `Y` | Copy the target's reference (`#123`, or `!456` for a GitLab MR). Targets glab-tui has no view for, such as releases or check suites, have none | `copy_reference` |
 | `p` | Show / hide the preview | `toggle_preview` |
 
 ---

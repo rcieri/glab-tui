@@ -62,13 +62,14 @@ impl Notification {
     }
 
     /// The target as written in a comment: `!456` for a GitLab MR, `#123`
-    /// for issues and GitHub PRs.
-    pub fn reference(&self, kind: BackendKind) -> String {
-        let marker = match self.target() {
-            Some(NotificationTarget::MergeRequest) if kind.is_gitlab() => '!',
+    /// for issues and GitHub PRs. Other targets have none: GitHub puts a
+    /// release's database id or `0` in `target_iid`.
+    pub fn reference(&self, kind: BackendKind) -> Option<String> {
+        let marker = match self.target()? {
+            NotificationTarget::MergeRequest if kind.is_gitlab() => '!',
             _ => '#',
         };
-        format!("{marker}{}", self.target_iid)
+        Some(format!("{marker}{}", self.target_iid))
     }
 
     /// Short name of the target kind for the Type column: `MR` or `PR`,
@@ -181,10 +182,21 @@ mod tests {
     #[test]
     fn only_gitlab_merge_requests_are_referenced_with_a_bang() {
         let mr = notification("MergeRequest");
-        assert_eq!(mr.reference(BackendKind::GitLab), "!42");
-        assert_eq!(mr.reference(BackendKind::GitHub), "#42");
-        assert_eq!(notification("Issue").reference(BackendKind::GitLab), "#42");
-        assert_eq!(notification("Commit").reference(BackendKind::GitLab), "#42");
+        assert_eq!(mr.reference(BackendKind::GitLab).as_deref(), Some("!42"));
+        assert_eq!(mr.reference(BackendKind::GitHub).as_deref(), Some("#42"));
+        assert_eq!(
+            notification("Issue")
+                .reference(BackendKind::GitLab)
+                .as_deref(),
+            Some("#42")
+        );
+    }
+
+    #[test]
+    fn a_target_without_a_view_has_no_reference() {
+        for target in ["Commit", "Release", "CheckSuite"] {
+            assert_eq!(notification(target).reference(BackendKind::GitHub), None);
+        }
     }
 
     #[test]

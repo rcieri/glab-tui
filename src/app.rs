@@ -6764,10 +6764,16 @@ impl App {
 
     pub fn copy_selected_todo_reference(&mut self) -> anyhow::Result<()> {
         let kind = self.kind();
-        let reference = self
+        let todo = self
             .selected_todo()
-            .map(|todo| todo.reference(kind))
             .ok_or_else(|| anyhow::anyhow!("nothing selected"))?;
+        let reference = todo.reference(kind).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} {} have no reference",
+                todo.target_type,
+                kind.term("todo_plural").to_lowercase()
+            )
+        })?;
         self.clipboard.set_text(reference)?;
         Ok(())
     }
@@ -13138,6 +13144,26 @@ index 123456..789012 100644
 
         app.selected_todos = ["3".to_string()].into_iter().collect();
         assert!(app.unread_todo_ids_to_act_on().is_empty());
+    }
+
+    #[test]
+    fn copying_a_reference_needs_a_target_with_a_view() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Todos;
+        app.todos.items = serde_json::from_value(serde_json::json!([
+            {"id": "1", "project_path": "acme/api", "title": "CI", "target_type": "CheckSuite",
+             "target_iid": 0, "state": "unread", "updated_at": ""},
+            {"id": "2", "project_path": "acme/api", "title": "Fix parser", "target_type": "Issue",
+             "target_iid": 7, "state": "unread", "updated_at": ""},
+        ]))
+        .unwrap();
+        app.todos.state.select(Some(0));
+        assert!(app.copy_selected_todo_reference().is_err());
+        assert_eq!(*copied.borrow(), None);
+
+        app.todos.state.select(Some(1));
+        app.copy_selected_todo_reference().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("#7"));
     }
 
     #[test]

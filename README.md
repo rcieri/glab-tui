@@ -783,7 +783,7 @@ On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lis
 
 ### Terminal tab
 
-Logs every `glab` / `gh` / `git` command the TUI executes, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status, and `s` narrows it to failed or successful commands. The bottom row of the view is highlighted, and it is the entry the inspect, copy and re-run keys act on.
+Logs every `glab` / `gh` command the TUI executes and the `git` calls its backends make, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status, and `s` narrows it to failed or successful commands. Without wrapping, the bottom row of the view is highlighted and is the entry the inspect, copy and re-run keys act on. While wrapping, they act on the newest entry.
 
 `Enter` (or `P`) opens the command inspector: the full command line, exit code, start time, duration, the error, and the command's stderr and stdout (each kept up to 16 KiB). `y`, `Y` and `r` work inside it too, on the inspected entry. Re-running asks for confirmation, runs the exact recorded `glab` / `gh` / `git` call again (including the request body of an `api --input -` call) and logs it as a new `Rerun:` entry. It does not refresh any tab. Entries that only describe an action, such as custom commands, record no call and cannot be re-run.
 

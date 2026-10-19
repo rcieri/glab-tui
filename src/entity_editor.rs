@@ -551,6 +551,7 @@ fn format_linked_issues_value(
 pub fn build_pipeline_document(
     pipeline: &crate::domain::pipelines::Pipeline,
     jobs: &[crate::domain::pipelines::Job],
+    is_github: bool,
 ) -> crate::app::EntityDocument {
     use crate::app::Field;
     let mut fields = vec![
@@ -588,11 +589,12 @@ pub fn build_pipeline_document(
         fields.push(Field::read_only("Project", pipeline.project_path.clone()));
     }
     if let Some(source) = &pipeline.source {
-        fields.push(Field::read_only("Trigger", source.clone()));
+        let label = if is_github { "Event" } else { "Source" };
+        fields.push(Field::read_only(label, source.clone()));
     }
     if !pipeline.actor_login.is_empty() {
         fields.push(Field::read_only(
-            "Triggered By",
+            "Actor",
             format!("@{}", pipeline.actor_login),
         ));
     }
@@ -1642,7 +1644,7 @@ mod tests {
         ]))
         .unwrap();
 
-        let doc = build_pipeline_document(&pipeline, &jobs);
+        let doc = build_pipeline_document(&pipeline, &jobs, false);
 
         assert_eq!(
             field_values(&doc),
@@ -1654,8 +1656,8 @@ mod tests {
                 ("SHA", "01234567..."),
                 ("Commit", "Bump parser"),
                 ("Commit Author", "Grace Hopper"),
-                ("Trigger", "push"),
-                ("Triggered By", "@deployer"),
+                ("Source", "push"),
+                ("Actor", "@deployer"),
             ]
         );
     }
@@ -1678,11 +1680,15 @@ mod tests {
         };
 
         assert_eq!(
-            title(&build_pipeline_document(&run("Fix login"), &[])),
+            title(&build_pipeline_document(&run("Fix login"), &[], true)),
             None
         );
         assert_eq!(
-            title(&build_pipeline_document(&run("Release 2.0 (#40)"), &[])),
+            title(&build_pipeline_document(
+                &run("Release 2.0 (#40)"),
+                &[],
+                true
+            )),
             Some("Release 2.0 (#40)".to_string())
         );
     }

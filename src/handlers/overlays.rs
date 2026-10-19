@@ -711,17 +711,25 @@ fn run_submit_action(
                     crate::app::Tab::Environments,
                     Ok(()),
                 ));
-                if let Ok(deployments) = crate::domain::deployments::list_deployments(
+                match crate::domain::deployments::list_deployments(
                     &client,
                     &scope,
                     Some(&environment),
                 )
                 .await
                 {
-                    let _ = tx.send(Event::DeploymentsFetched {
-                        environment,
-                        deployments,
-                    });
+                    Ok(deployments) => {
+                        let _ = tx.send(Event::DeploymentsFetched {
+                            environment,
+                            deployments,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::CommandCompleted(
+                            crate::app::Tab::Environments,
+                            Err(format!("Failed to fetch deployments: {e}")),
+                        ));
+                    }
                 }
             });
         }

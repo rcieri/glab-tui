@@ -13,6 +13,8 @@ pub struct JobTraceView {
     lines: Vec<Line<'static>>,
     parsed: Option<Parsed>,
     wrapped: Option<WrappedRows>,
+    /// Line at the top of the pane the last `visible_lines` filled.
+    top_line: usize,
 }
 
 /// What `JobTraceView::lines` holds.
@@ -36,6 +38,17 @@ struct WrappedRows {
     /// Rows of the incomplete last line, which starts at `complete_rows`.
     partial_rows: usize,
     text_len: Option<usize>,
+}
+
+impl WrappedRows {
+    /// Row `line` starts at. Lines past the complete ones start where the
+    /// incomplete last line does.
+    fn start_row(&self, line: usize) -> usize {
+        self.line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.complete_rows)
+    }
 }
 
 impl JobTraceView {
@@ -74,6 +87,21 @@ impl JobTraceView {
             .map_or(0, |rows| rows.complete_rows + rows.partial_rows)
     }
 
+    /// Line at the top of the pane when it was last drawn.
+    pub fn top_line(&self) -> usize {
+        self.top_line
+    }
+
+    /// Row `line` starts at, laid out as `rows` lays the log out.
+    pub fn row_of_line(&mut self, theme: &Theme, wrap_width: Option<usize>, line: usize) -> usize {
+        self.parse_new_text(theme);
+        let Some(width) = wrap_width else {
+            return line;
+        };
+        self.count_wrapped_rows(width);
+        self.wrapped.as_ref().map_or(0, |rows| rows.start_row(line))
+    }
+
     /// The lines a pane `height` rows tall shows `scroll` rows down the log,
     /// and how many rows of the first one are above the pane.
     pub fn visible_lines(
@@ -87,19 +115,14 @@ impl JobTraceView {
         let bottom = scroll.saturating_add(height);
         let Some(width) = wrap_width else {
             let end = bottom.min(self.lines.len());
-            return (self.lines[scroll.min(end)..end].to_vec(), 0);
+            self.top_line = scroll.min(end);
+            return (self.lines[self.top_line..end].to_vec(), 0);
         };
         self.count_wrapped_rows(width);
         let (Some(parsed), Some(rows)) = (self.parsed, self.wrapped.as_ref()) else {
             return (Vec::new(), 0);
         };
         let has_partial_line = parsed.complete_lines < self.lines.len();
-        let row_of = |line: usize| {
-            rows.line_starts
-                .get(line)
-                .copied()
-                .unwrap_or(rows.complete_rows)
-        };
         let first = if has_partial_line && scroll >= rows.complete_rows {
             parsed.complete_lines
         } else {
@@ -113,7 +136,8 @@ impl JobTraceView {
             rows.line_starts.partition_point(|&start| start < bottom)
         };
         let lines = self.lines[first..end.max(first)].to_vec();
-        (lines, scroll.saturating_sub(row_of(first)))
+        self.top_line = first;
+        (lines, scroll.saturating_sub(rows.start_row(first)))
     }
 
     fn forget_parsed_lines(&mut self) {
@@ -283,5 +307,29 @@ mod tests {
             all_lines(&mut view, &theme),
             parse_ansi_trace("new\n", &theme)
         );
+    }
+
+    #[test]
+    fn row_of_line_counts_the_rows_wrapped_lines_take() {
+        let theme = Theme::default();
+        let mut view = JobTraceView::new(trace_of("a long first line\nsecond\nthird"));
+
+        assert_eq!(view.row_of_line(&theme, None, 2), 2);
+        // At 6 cells the first line takes rows 0-2, "second" row 3, "third" row 4.
+        assert_eq!(view.row_of_line(&theme, Some(6), 1), 3);
+        assert_eq!(view.row_of_line(&theme, Some(6), 2), 4);
+    }
+
+    #[test]
+    fn top_line_is_the_line_holding_the_first_visible_row() {
+        let theme = Theme::default();
+        let mut view = JobTraceView::new(trace_of("a long first line\nsecond\nthird"));
+
+        view.visible_lines(&theme, Some(6), 2, 2);
+        assert_eq!(view.top_line(), 0);
+        view.visible_lines(&theme, Some(6), 3, 2);
+        assert_eq!(view.top_line(), 1);
+        view.visible_lines(&theme, None, 2, 2);
+        assert_eq!(view.top_line(), 2);
     }
 }

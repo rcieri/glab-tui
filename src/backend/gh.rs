@@ -2588,6 +2588,8 @@ impl Backend for GhBackend {
             completed_at: Option<String>,
             #[serde(default, deserialize_with = "deserialize_needs")]
             needs: Vec<String>,
+            #[serde(default)]
+            url: Option<String>,
         }
 
         let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
@@ -2624,6 +2626,10 @@ impl Backend for GhBackend {
                     duration_seconds: duration,
                     runner: j.runner_name,
                     needs: j.needs,
+                    web_url: j.url,
+                    queued_seconds: None,
+                    failure_reason: None,
+                    artifacts: Vec::new(),
                 }
             })
             .collect();

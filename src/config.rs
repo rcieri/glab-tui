@@ -1206,7 +1206,15 @@ pub struct KeybindingJobs {
     pub trace_search: String,
     #[serde(default)]
     pub toggle_trace_follow: String,
-    #[serde(default = "def_copy_sha")]
+    /// Scroll the job log to the next line reporting a failure, fetching the
+    /// log first when it is not shown.
+    #[serde(default = "def_jump_to_failure")]
+    pub jump_to_failure: String,
+    #[serde(default = "def_copy_job_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_job_id")]
+    pub copy_id: String,
+    #[serde(default = "def_copy_job_sha")]
     pub copy_sha: String,
     #[serde(default = "def_selection_toggle")]
     pub selection_toggle: String,
@@ -1328,6 +1336,8 @@ pub struct CustomKeybindingConfig {
     pub mrs: Vec<CustomKeybinding>,
     /// Run from the MR/PR diff view, with the file and line under the cursor.
     pub diff: Vec<CustomKeybinding>,
+    /// Run from the Jobs tab, with the highlighted job or every selected one.
+    pub jobs: Vec<CustomKeybinding>,
     /// Panes that take no custom keybindings, kept only to report them.
     #[serde(flatten, skip_serializing)]
     pub unsupported_panes: std::collections::BTreeMap<String, toml::Value>,
@@ -1408,6 +1418,10 @@ keybind_defaults! {
     def_toggle_trace_wrap = "w",
     def_trace_search = "/",
     def_toggle_trace_follow = "f",
+    def_jump_to_failure = "E",
+    def_copy_job_url = "y",
+    def_copy_job_id = "Y",
+    def_copy_job_sha = "Alt+y",
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
@@ -1561,7 +1575,10 @@ impl Default for KeybindingJobs {
             toggle_trace_wrap: def_toggle_trace_wrap(),
             trace_search: def_trace_search(),
             toggle_trace_follow: def_toggle_trace_follow(),
-            copy_sha: def_copy_sha(),
+            jump_to_failure: def_jump_to_failure(),
+            copy_url: def_copy_job_url(),
+            copy_id: def_copy_job_id(),
+            copy_sha: def_copy_job_sha(),
             selection_toggle: def_selection_toggle(),
             select_all: def_select_all(),
         }
@@ -1942,6 +1959,10 @@ view_trace = "Enter"
 toggle_trace_wrap = "w"
 trace_search = "/"
 toggle_trace_follow = "f"
+jump_to_failure = "E"
+copy_url = "y"
+copy_id = "Y"
+copy_sha = "Alt+y"
 selection_toggle = "v"
 
 [keybindings.runners]
@@ -1988,6 +2009,7 @@ copy_command = "y"
 # `prs` is accepted for `mrs`). Template arguments per table:
 #   mrs:       RepoName RepoPath PrNumber HeadRefName BaseRefName Author
 #   issues:    RepoName RepoPath IssueNumber IssueTitle Author
+#   jobs:      RepoName RepoPath JobId JobName Stage Status
 #   universal: RepoName RepoPath
 #   diff:      mrs arguments + FilePath LineNumber (the line under the diff cursor)
 # Each is also exported as GLAB_TUI_<NAME>, e.g. GLAB_TUI_PR_NUMBER.
@@ -2499,9 +2521,9 @@ page_size = 250
     }
 
     #[test]
-    fn copy_sha_defaults_to_y() {
+    fn copy_sha_defaults_to_y_on_pipelines_and_alt_y_on_jobs() {
         assert_eq!(Config::default().keybindings.pipelines.copy_sha, "y");
-        assert_eq!(Config::default().keybindings.jobs.copy_sha, "y");
+        assert_eq!(Config::default().keybindings.jobs.copy_sha, "Alt+y");
     }
 
     #[test]

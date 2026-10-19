@@ -1982,6 +1982,36 @@ pub async fn handle_active_tab_key(
                                 app.show_error(format!("Failed to copy commit SHA: {error}"));
                             }
                         }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.copy_url,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_job_url() {
+                                app.show_error(format!("Failed to copy job URL: {error}"));
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.copy_id,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_job_id() {
+                                app.show_error(format!("Failed to copy job ID: {error}"));
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.jump_to_failure,
+                            key_event,
+                        ) =>
+                        {
+                            if let Some(view) = &app.job_trace {
+                                let top_line = view.top_line();
+                                app.jump_to_trace_failure(Some(top_line));
+                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
+                                app.pending_job_trace_failure = Some(job_id);
+                            }
+                        }
                         _ => handled = false,
                     }
                 } else {
@@ -2608,6 +2638,7 @@ pub async fn handle_active_tab_key(
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                     app.pending_job_trace_editor = None;
+                    app.pending_job_trace_failure = None;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;
                     app.job_trace = None;
@@ -3726,7 +3757,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         };
         let mut app = App::default();
         app.active_tab = crate::app::Tab::Jobs;

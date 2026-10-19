@@ -136,6 +136,23 @@ impl JobTrace {
         self.is_truncated
     }
 
+    /// Index of the first line after `current` (from the top when `None`)
+    /// that reports a failure, wrapping around to the first such line.
+    pub fn next_failure_line(&self, current: Option<usize>) -> Option<usize> {
+        let is_ahead = |index: usize| current.is_none_or(|current| index > current);
+        let mut failures = self
+            .text
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| is_failure_line(line))
+            .map(|(index, _)| index);
+        let first = failures.next()?;
+        if is_ahead(first) {
+            return Some(first);
+        }
+        Some(failures.find(|&index| is_ahead(index)).unwrap_or(first))
+    }
+
     /// Applies an update read from this trace's cursor. Returns `false`, and
     /// changes nothing, when the update was read from another position (the
     /// trace changed while it was being read).
@@ -166,6 +183,35 @@ impl JobTrace {
             self.split_char = push_utf8_lossy(&mut self.text, &joined).to_vec();
         }
     }
+}
+
+/// Words a CI log line reports a failure with: runner verdicts (`ERROR: Job
+/// failed`, `##[error]`), compiler and test diagnostics, panics and stack
+/// traces. Matched as whole words, so `errors: 0` and `allow_failure` are not,
+/// and not after a zero, so a test summary's `0 failed` is not either.
+const FAILURE_WORDS: &[&str] = &[
+    "error",
+    "fatal",
+    "failed",
+    "failure",
+    "panicked",
+    "traceback",
+    "exception",
+];
+
+fn is_failure_line(line: &str) -> bool {
+    let line = crate::utils::format::sanitize_untrusted(line);
+    let mut previous = "";
+    line.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .any(|word| {
+            let is_failure = previous != "0"
+                && FAILURE_WORDS
+                    .iter()
+                    .any(|failure| word.eq_ignore_ascii_case(failure));
+            previous = word;
+            is_failure
+        })
 }
 
 /// Decodes `bytes` onto `text`, invalid sequences as U+FFFD, and returns the
@@ -297,5 +343,40 @@ mod tests {
 
         assert!(trace.apply(update));
         assert_eq!(trace, fresh);
+    }
+
+    const FAILING_LOG: &str = "\
+$ cargo test
+test result: ok. 12 passed; 0 failed
+errors: 0, allow_failure: true
+\u{1b}[0;31merror[E0308]\u{1b}[0m: mismatched types
+compiling more
+##[error]Process completed with exit code 1.
+";
+
+    #[test]
+    fn next_failure_line_skips_lines_that_only_mention_failure_counts() {
+        let trace = JobTrace::from_read(FAILING_LOG.as_bytes(), false);
+        assert_eq!(trace.next_failure_line(None), Some(3));
+    }
+
+    #[test]
+    fn next_failure_line_moves_past_the_current_line_and_wraps_around() {
+        let trace = JobTrace::from_read(FAILING_LOG.as_bytes(), false);
+        assert_eq!(trace.next_failure_line(Some(3)), Some(5));
+        assert_eq!(trace.next_failure_line(Some(5)), Some(3));
+    }
+
+    #[test]
+    fn next_failure_line_includes_the_first_line_when_starting_from_the_top() {
+        let trace = JobTrace::from_read(b"fatal: not a git repository\nok\n", false);
+        assert_eq!(trace.next_failure_line(None), Some(0));
+        assert_eq!(trace.next_failure_line(Some(0)), Some(0));
+    }
+
+    #[test]
+    fn next_failure_line_is_none_for_a_clean_log() {
+        let trace = JobTrace::from_read(b"$ make\nall good\n", false);
+        assert_eq!(trace.next_failure_line(None), None);
     }
 }

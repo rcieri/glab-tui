@@ -1,10 +1,10 @@
-use crate::app::{App, Tab};
+use crate::app::{App, EntityDocument, InspectorContent, Tab};
 use crate::config::THEME;
 use crate::ui::list_tab::TableContext;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
@@ -1894,203 +1894,71 @@ pub(crate) fn render_tab_jobs(
         f.render_stateful_widget(table, content_area, &mut state);
         app.jobs.state = state;
 
-        if app.job_trace_loading {
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} Preview ", icons.label_details))
-                .title_style(
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(theme.border));
-
-            f.render_widget(
-                Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
-                    .alignment(Alignment::Center)
-                    .block(preview_block)
-                    .style(Style::default().fg(theme.text_muted)),
-                detail_rect,
-            );
-        } else if app.job_trace.is_some() {
-            let width = detail_rect.width.saturating_sub(2) as usize;
-            let height = detail_rect.height.saturating_sub(2) as usize;
-            let wrap_width = app.job_trace_wrap.then_some(width);
-
-            let (total_lines, is_truncated) = app.job_trace.as_mut().map_or((0, false), |view| {
-                (view.rows(&theme, wrap_width), view.trace().is_truncated())
+        let shows_trace = app.job_trace_loading || app.job_trace.is_some();
+        let selected_job = app
+            .jobs
+            .state
+            .selected()
+            .and_then(|selected| filtered_jobs.get(selected).copied());
+        if shows_trace {
+            let header = selected_job.map(|job| {
+                crate::entity_editor::build_job_document(job, InspectorContent::Empty(""))
             });
-            let truncated_suffix = if is_truncated {
-                format!(
-                    " [TRUNCATED: first {} MiB]",
-                    crate::domain::job_trace::JOB_TRACE_MAX_BYTES / (1024 * 1024)
-                )
-            } else {
-                String::new()
-            };
-
-            let max_scroll = u16::try_from(total_lines.saturating_sub(height)).unwrap_or(u16::MAX);
-
-            settle_detail_scroll(app, max_scroll);
-
-            let title_suffix = if total_lines > height {
-                let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
-                format!(" [j/k | {}%] ", percent.min(100))
-            } else {
-                String::new()
-            };
-
-            let search_suffix = if app.job_trace_search_query.is_empty() {
-                String::new()
-            } else {
-                format!(" [Search: {}]", app.job_trace_search_query)
-            };
-            let follow_suffix = if app.job_trace_follow {
-                " [FOLLOW]"
-            } else {
-                ""
-            };
-
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(
-                    " Preview{title_suffix}{truncated_suffix}{search_suffix}{follow_suffix} "
-                ))
-                .title_style(
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(theme.border));
-
-            let scroll = usize::from(app.detail_scroll);
-            let (visible_lines, rows_above) = app
-                .job_trace
-                .as_mut()
-                .map(|view| view.visible_lines(&theme, wrap_width, scroll, height))
-                .unwrap_or_default();
-            let mut paragraph = Paragraph::new(visible_lines)
-                .block(preview_block)
-                .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
-
-            if app.job_trace_wrap {
-                paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
-            }
-
-            f.render_widget(paragraph, detail_rect);
-        } else {
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} Preview ", icons.label_details))
-                .title_style(
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(theme.border));
-            let mut text = Vec::new();
-
-            // Show selected job metadata first
-            if let Some(selected) = app.jobs.state.selected() {
-                if let Some(j) = filtered_jobs.get(selected) {
-                    let (status_text, status_color) = match j.status() {
-                        "success" => ("success", theme.green),
-                        "failed" => ("failed", theme.red),
-                        "running" => ("running", theme.blue),
-                        "canceled" => ("canceled", theme.text_muted),
-                        "pending" => ("pending", theme.yellow),
-                        "skipped" => ("skipped", theme.text_muted),
-                        _ => ("unknown", theme.text_muted),
-                    };
-                    text.push(Line::from(vec![
-                        Span::styled("Name:     ", Style::default().fg(theme.text_muted)),
-                        Span::styled(
-                            crate::utils::format::sanitize_untrusted(j.name()).into_owned(),
-                            Style::default()
-                                .fg(theme.text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-                    text.push(Line::from(vec![
-                        Span::styled("Status:   ", Style::default().fg(theme.text_muted)),
-                        Span::styled(
-                            status_text,
-                            Style::default()
-                                .fg(status_color)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-                    if !is_github {
-                        text.push(Line::from(vec![
-                            Span::styled("Stage:    ", Style::default().fg(theme.text_muted)),
-                            Span::styled(j.stage().to_string(), Style::default().fg(theme.purple)),
-                        ]));
-                    }
-                    if let Some(matrix) = j.matrix() {
-                        text.push(Line::from(vec![
-                            Span::styled("Matrix:   ", Style::default().fg(theme.text_muted)),
-                            Span::styled(matrix.to_string(), Style::default().fg(theme.text_muted)),
-                        ]));
-                    }
-                    if let Some(runner) = j.runner() {
-                        text.push(Line::from(vec![
-                            Span::styled("Runner:   ", Style::default().fg(theme.text_muted)),
-                            Span::styled(
-                                runner.to_string(),
-                                Style::default().fg(theme.text_normal),
-                            ),
-                        ]));
-                    }
-                    if let Some(dur) = j.duration_seconds() {
-                        let mins = dur / 60;
-                        let secs = dur % 60;
-                        text.push(Line::from(vec![
-                            Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
-                            Span::styled(
-                                format!("{mins}m {secs}s"),
-                                Style::default().fg(theme.text_normal),
-                            ),
-                        ]));
-                    }
-                    if !j.needs().is_empty() {
-                        text.push(Line::from(vec![
-                            Span::styled("Needs:    ", Style::default().fg(theme.text_muted)),
-                            Span::styled(j.needs().join(", "), Style::default().fg(theme.yellow)),
-                        ]));
-                    }
-                    text.push(Line::from(""));
+            let trace_rect = match header {
+                Some(header) => {
+                    let header_height = u16::try_from(header.fields.len() + 2)
+                        .unwrap_or(u16::MAX)
+                        .min(detail_rect.height / 2);
+                    let [header_rect, trace_rect] =
+                        Layout::vertical([Constraint::Length(header_height), Constraint::Fill(1)])
+                            .areas(detail_rect);
+                    super::inspector::render_entity_inspector(
+                        f,
+                        &header,
+                        header_rect,
+                        super::inspector::InspectorMode::ReadOnly {
+                            scroll: 0,
+                            title_suffix: "",
+                        },
+                        &app.label_colors,
+                    );
+                    trace_rect
                 }
-            }
-
-            let stage_label = if is_github {
-                "Jobs Status:"
-            } else {
-                "Stages Success Rate:"
+                None => detail_rect,
             };
-            text.push(Line::from(vec![Span::styled(
-                stage_label,
-                Style::default()
-                    .fg(theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )]));
-            text.push(Line::from(""));
-            if is_github {
-                super::helpers::append_job_summaries(&mut text, &app.jobs.items);
+            if app.job_trace_loading {
+                f.render_widget(
+                    Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
+                        .alignment(Alignment::Center)
+                        .block(job_trace_block(String::new(), &theme))
+                        .style(Style::default().fg(theme.text_muted)),
+                    trace_rect,
+                );
             } else {
-                super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
+                render_job_trace(f, app, trace_rect, &theme);
             }
-            let summary_height = detail_rect.height.saturating_sub(2) as usize;
-            // Not wrapped, so rendered_line_count doesn't read the width.
-            let total_lines = super::helpers::rendered_line_count(&text, 0, false);
-            let max_detail_scroll =
-                u16::try_from(total_lines.saturating_sub(summary_height)).unwrap_or(u16::MAX);
-            settle_detail_scroll(app, max_detail_scroll);
-            f.render_widget(
-                Paragraph::new(text)
-                    .block(preview_block)
-                    .scroll((app.detail_scroll, 0)),
+        } else {
+            let summary =
+                InspectorContent::Custom(job_summary_lines(&app.jobs.items, is_github, &theme));
+            let document = match selected_job {
+                Some(job) => crate::entity_editor::build_job_document(job, summary),
+                None => EntityDocument {
+                    title: String::new(),
+                    fields: Vec::new(),
+                    content: summary,
+                },
+            };
+            let max_detail_scroll = super::inspector::render_entity_inspector(
+                f,
+                &document,
                 detail_rect,
+                super::inspector::InspectorMode::ReadOnly {
+                    scroll: app.detail_scroll,
+                    title_suffix: "",
+                },
+                &app.label_colors,
             );
+            settle_detail_scroll(app, max_detail_scroll);
         }
     } else {
         f.render_widget(Paragraph::new("\n\n No jobs loaded.\n Press 'p' to manually enter a pipeline ID to fetch jobs for,\n or view a pipeline in Pipelines tab and press Enter.").alignment(Alignment::Center).block(main_block).style(Style::default().fg(theme.text_muted)), content_area);
@@ -2106,6 +1974,100 @@ pub(crate) fn render_tab_jobs(
             detail_rect,
         );
     }
+}
+
+/// The bordered pane a job log is drawn in, `title_suffix` after its name.
+fn job_trace_block(title_suffix: String, theme: &crate::config::Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Trace{title_suffix} "))
+        .title_style(
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(theme.border))
+}
+
+/// Draws the shown job log in `area`, scrolled to `app.detail_scroll` or to
+/// the line a jump asked for.
+fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::config::Theme) {
+    let width = area.width.saturating_sub(2) as usize;
+    let height = area.height.saturating_sub(2) as usize;
+    let wrap_width = app.job_trace_wrap.then_some(width);
+    let Some(view) = app.job_trace.as_mut() else {
+        return;
+    };
+    let total_lines = view.rows(theme, wrap_width);
+    let is_truncated = view.trace().is_truncated();
+    if let Some(line) = app.job_trace_scroll_to_line.take() {
+        let row = view.row_of_line(theme, wrap_width, line);
+        app.detail_scroll = u16::try_from(row).unwrap_or(u16::MAX);
+    }
+
+    let max_scroll = u16::try_from(total_lines.saturating_sub(height)).unwrap_or(u16::MAX);
+    settle_detail_scroll(app, max_scroll);
+
+    let mut title_suffix = String::new();
+    if total_lines > height {
+        let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
+        title_suffix.push_str(&format!(" [j/k | {}%] ", percent.min(100)));
+    }
+    if is_truncated {
+        title_suffix.push_str(&format!(
+            " [TRUNCATED: first {} MiB]",
+            crate::domain::job_trace::JOB_TRACE_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+    if !app.job_trace_search_query.is_empty() {
+        title_suffix.push_str(&format!(" [Search: {}]", app.job_trace_search_query));
+    }
+    if app.job_trace_follow {
+        title_suffix.push_str(" [FOLLOW]");
+    }
+
+    let scroll = usize::from(app.detail_scroll);
+    let (visible_lines, rows_above) = app
+        .job_trace
+        .as_mut()
+        .map(|view| view.visible_lines(theme, wrap_width, scroll, height))
+        .unwrap_or_default();
+    let mut paragraph = Paragraph::new(visible_lines)
+        .block(job_trace_block(title_suffix, theme))
+        .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
+    if app.job_trace_wrap {
+        paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
+    }
+    f.render_widget(paragraph, area);
+}
+
+/// Per-stage success rates on GitLab, per-job statuses on GitHub, whose jobs
+/// have no stages.
+fn job_summary_lines(
+    jobs: &[crate::domain::pipelines::Job],
+    is_github: bool,
+    theme: &crate::config::Theme,
+) -> Vec<Line<'static>> {
+    let heading = if is_github {
+        "Jobs Status:"
+    } else {
+        "Stages Success Rate:"
+    };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            heading,
+            Style::default()
+                .fg(theme.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    if is_github {
+        super::helpers::append_job_summaries(&mut lines, jobs);
+    } else {
+        super::helpers::append_stage_summaries(&mut lines, jobs);
+    }
+    lines
 }
 
 pub(crate) fn render_tab_runners(
@@ -3330,7 +3292,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: vec![],
+            ..Default::default()
         }];
         app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(trace));
         app
@@ -3387,12 +3349,81 @@ mod tests {
 
         let terminal = render_jobs_with_trace_pane(&mut app);
 
-        let title = " Preview [TRUNCATED: first 16 MiB] ";
+        let title = " Trace [TRUNCATED: first 16 MiB] ";
         assert_eq!(
             buffer_row(&terminal, 10),
             format!("┌{title}{}┐", "─".repeat(98 - title.len()))
         );
         assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "first part"));
+    }
+
+    #[test]
+    fn render_tab_jobs_shows_the_selected_jobs_metadata_above_its_trace() {
+        let trace = crate::domain::job_trace::JobTrace::from_read(b"first part\n", false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.jobs.items[0].runner = Some("gitlab-runner-7".to_string());
+        app.jobs.items[0].web_url = Some("https://gitlab.com/o/r/-/jobs/1".to_string());
+        app.jobs.state.select(Some(0));
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 30),
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let rows = buffer_rows(&terminal);
+        assert!(rows[10].contains("Preview: Job #1"), "{:?}", rows[10]);
+        let header: Vec<(&str, &str)> = rows[11..17]
+            .iter()
+            .map(|row| {
+                let cells: Vec<&str> = row
+                    .split(['│', ' '])
+                    .filter(|cell| !cell.is_empty())
+                    .collect();
+                (cells[1], cells[cells.len() - 1])
+            })
+            .collect();
+        assert_eq!(
+            header,
+            [
+                ("ID", "#1"),
+                ("Name", "job1"),
+                ("Status", "SUCCESS"),
+                ("Stage", "test"),
+                ("Runner", "gitlab-runner-7"),
+                ("URL", "https://gitlab.com/o/r/-/jobs/1"),
+            ]
+        );
+        assert_eq!(rows[18], format!("┌ Trace {}┐", "─".repeat(91)));
+        assert_eq!(rows[19], format!("│{:<98}│", "first part"));
+    }
+
+    #[test]
+    fn jump_to_trace_failure_scrolls_a_wrapped_trace_to_the_failure_row() {
+        let mut log = format!("{}\nok\nERROR: Job failed: exit code 1\n", "x".repeat(250));
+        log.push_str(&"after\n".repeat(50));
+        let trace = crate::domain::job_trace::JobTrace::from_read(log.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.job_trace_wrap = true;
+
+        app.jump_to_trace_failure(None);
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        // At 98 cells the first line takes rows 0-2 and "ok" row 3.
+        assert_eq!(app.detail_scroll, 4);
+        assert_eq!(
+            buffer_row(&terminal, 11),
+            format!("│{:<98}│", "ERROR: Job failed: exit code 1")
+        );
     }
 
     fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
@@ -3422,6 +3453,7 @@ mod tests {
                 "\u{1b}[31mbuild\u{1b}[0m".to_string(),
                 "\u{9b}2Jlint".to_string(),
             ],
+            ..Default::default()
         }];
         app.enabled_columns
             .entry(Tab::Jobs)

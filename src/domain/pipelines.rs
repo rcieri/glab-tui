@@ -70,7 +70,7 @@ impl Pipeline {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct Job {
     pub id: u64,
     pub status: String,
@@ -84,6 +84,15 @@ pub struct Job {
     pub runner: Option<String>,
     #[serde(default)]
     pub needs: Vec<String>,
+    #[serde(default)]
+    pub web_url: Option<String>,
+    #[serde(default)]
+    pub queued_seconds: Option<u64>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    /// File types of the job's artifacts (`archive`, `junit`, `trace`, …).
+    #[serde(default)]
+    pub artifacts: Vec<String>,
 }
 
 impl Job {
@@ -381,7 +390,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 102,
@@ -391,7 +400,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 103,
@@ -401,7 +410,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 104,
@@ -411,7 +420,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -441,7 +450,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 202,
@@ -451,7 +460,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 203,
@@ -461,7 +470,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 204,
@@ -471,7 +480,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -503,7 +512,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         }];
         let processed = process_pipeline_jobs(input_jobs);
         assert_eq!(processed.len(), 1);

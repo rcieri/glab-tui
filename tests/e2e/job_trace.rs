@@ -15,8 +15,9 @@ const OVERLAP_BYTES: usize = 1024;
 const RANGE_MAX_BYTES: usize = 500 * 1024;
 const TRACE_ENDPOINT: &str = "glab api /projects/test-owner%2Ftest-repo/jobs/54321/trace";
 /// Lines of a log that, with the `follow line N` lines the job writes, fits
-/// the 36 rows of the zoomed log pane in a 40-row terminal.
-const PANE_FITTING_LINES: usize = 32;
+/// the 25 rows the zoomed log pane keeps under the job's metadata in a
+/// 40-row terminal.
+const PANE_FITTING_LINES: usize = 20;
 /// Bytes of each of those lines, so the re-requested overlap spans 16 whole
 /// lines: appending it again would push lines off screen and show others twice.
 const PANE_FITTING_LINE_BYTES: usize = 64;
@@ -118,4 +119,35 @@ fn follow_mode_reads_whole_logs_once_the_server_ignores_ranges() {
     let screen = session.emulator.get_text();
     assert_eq!(screen.matches("follow line 1").count(), 1, "{screen}");
     assert_eq!(screen.matches("follow line 2").count(), 1, "{screen}");
+}
+
+#[test]
+fn failure_key_scrolls_the_log_to_its_failure_under_the_job_metadata() {
+    let mut log: String = (0..80)
+        .map(|line| format!("build output line {line:03}\n"))
+        .collect();
+    log.push_str("ERROR: Job failed: exit code 1\n");
+    log.push_str(&"cleanup line\n".repeat(60));
+    let mut session = show_job_log(&log, &[]);
+
+    let screen = session.emulator.get_text();
+    for metadata in [
+        "Preview: Job #54321",
+        "shared-runner-7",
+        "1m 35s",
+        "archive, junit",
+        "https://gitlab.com/test-owner/test-repo/-/jobs/54321",
+    ] {
+        assert!(screen.contains(metadata), "{metadata} in\n{screen}");
+    }
+
+    session.send_input(b"E");
+    session
+        .wait_for_screen_contains("ERROR: Job failed: exit code 1", 15000)
+        .expect("the failure line is scrolled into view");
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("build output line 079"),
+        "the failure line tops the log pane:\n{screen}"
+    );
 }

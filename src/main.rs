@@ -1417,6 +1417,10 @@ async fn main() -> Result<()> {
                     if opens_editor {
                         app.pending_job_trace_editor = None;
                     }
+                    let jumps_to_failure = app.pending_job_trace_failure == Some(job_id);
+                    if jumps_to_failure {
+                        app.pending_job_trace_failure = None;
+                    }
                     if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(trace) => {
@@ -1426,6 +1430,9 @@ async fn main() -> Result<()> {
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
+                                if jumps_to_failure {
+                                    app.jump_to_trace_failure(None);
+                                }
                                 if opens_editor {
                                     crate::handlers::tabs::open_job_trace_in_editor(
                                         &mut app,

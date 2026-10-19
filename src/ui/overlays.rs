@@ -1712,6 +1712,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Jobs",
+            key: d(app.config.keybindings.jobs.jump_to_failure.clone()),
+            action: "Jump to the next failure line in the job trace",
+        },
+        Shortcut {
+            category: "Jobs",
             key: s("m"),
             action: "Collapse / expand matrix jobs",
         },
@@ -1719,6 +1724,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Jobs",
             key: d(app.config.keybindings.jobs.copy_sha.clone()),
             action: "Copy pipeline commit SHA",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.copy_url.clone()),
+            action: "Copy job web URL",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.copy_id.clone()),
+            action: "Copy job ID",
         },
         // ── Milestones ──
         Shortcut {

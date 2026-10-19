@@ -2065,6 +2065,27 @@ impl Backend for GlabBackend {
             status: String,
             stage: String,
             name: String,
+            #[serde(default)]
+            duration: Option<f64>,
+            #[serde(default)]
+            queued_duration: Option<f64>,
+            #[serde(default)]
+            runner: Option<GiRunner>,
+            #[serde(default)]
+            web_url: Option<String>,
+            #[serde(default)]
+            failure_reason: Option<String>,
+            #[serde(default)]
+            artifacts: Option<Vec<GiArtifact>>,
+        }
+        #[derive(Deserialize)]
+        struct GiRunner {
+            #[serde(default)]
+            description: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct GiArtifact {
+            file_type: String,
         }
         let jobs: Vec<GiJob> = serde_json::from_str(&raw)?;
         let all_jobs: Vec<Job> = jobs
@@ -2075,9 +2096,18 @@ impl Backend for GlabBackend {
                 stage: j.stage,
                 name: j.name,
                 matrix: None,
-                duration_seconds: None,
-                runner: None,
+                duration_seconds: j.duration.map(|seconds| seconds.max(0.0) as u64),
+                runner: j.runner.and_then(|runner| runner.description),
                 needs: Vec::new(),
+                web_url: j.web_url,
+                queued_seconds: j.queued_duration.map(|seconds| seconds.max(0.0) as u64),
+                failure_reason: j.failure_reason,
+                artifacts: j
+                    .artifacts
+                    .into_iter()
+                    .flatten()
+                    .map(|artifact| artifact.file_type)
+                    .collect(),
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))

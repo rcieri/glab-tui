@@ -79,18 +79,16 @@ fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark) {
     spawn_marks(tx, client, ids, mark);
 }
 
-/// Marks `ids` one after the other, paced when there are several. The ones
-/// the server accepted are reported as one successful `TodoChange`, the
-/// rest as one failed `TodoChange`, so a batch raises at most one toast.
+/// Reports the accepted and the failed ids as one `TodoChange` each, so a
+/// batch raises at most one toast.
 fn spawn_marks(tx: &UnboundedSender<Event>, client: GitlabClient, ids: Vec<String>, mark: Mark) {
     let tx = tx.clone();
-    let is_batch = ids.len() > 1;
     tokio::spawn(async move {
         let mut marked = Vec::new();
         let mut failed = Vec::new();
         let mut errors: Vec<String> = Vec::new();
-        for id in ids {
-            if is_batch {
+        for (i, id) in ids.into_iter().enumerate() {
+            if i > 0 {
                 crate::backend::rate_limit::pace_bulk_operation().await;
             }
             match mark.apply(&client, &id).await {

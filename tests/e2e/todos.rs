@@ -100,6 +100,21 @@ fn test_space_selects_todos_and_d_marks_every_selected_one_done() {
 }
 
 #[test]
+fn test_d_marks_the_selection_even_when_the_search_hides_every_row() {
+    let mut session = session_on_todos(&[]);
+
+    press_keys(&mut session, b" j ");
+    session.send_input(b"/no such todo\r");
+    wait_for_screen_without(&mut session, OWN_TODO, 5000);
+    press_keys(&mut session, b"d");
+
+    wait_for_cli_call(&mut session, "glab todo done 1", 5000);
+    wait_for_cli_call(&mut session, "glab todo done 2", 5000);
+    let calls = session.get_cli_calls();
+    assert!(!calls.contains("glab todo done 3"), "{calls}");
+}
+
+#[test]
 fn test_visual_select_and_enter_mark_the_range_read_without_leaving_the_tab() {
     let mut session = session_on_todos(&[]);
 

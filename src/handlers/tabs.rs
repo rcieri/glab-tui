@@ -2189,13 +2189,13 @@ pub async fn handle_active_tab_key(
                 app.detail_visible = !app.detail_visible;
                 app.details_zoomed = false;
             }
-            _ if app.selected_todo().is_none() => handled = false,
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_read, key_event) => {
                 crate::handlers::todos::open_selected(app, &tx);
             }
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_done, key_event) => {
                 crate::handlers::todos::mark_selected_done(app, &tx);
             }
+            _ if app.selected_todo().is_none() => handled = false,
             _ if keybinding_matches(&app.config.keybindings.todos.unsubscribe, key_event) => {
                 crate::handlers::todos::unsubscribe_selected(app, &tx);
             }

@@ -2979,6 +2979,13 @@ fn settles_own_row(cmd: &TerminalCommand) -> bool {
     cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX) || cmd.command.starts_with(RERUN_LOG_PREFIX)
 }
 
+fn outcome_status(outcome: &Result<(), String>) -> String {
+    match outcome {
+        Ok(()) => "Success".to_string(),
+        Err(error) => format!("Failed: {error}"),
+    }
+}
+
 #[derive(Debug)]
 pub enum GroupItem {
     Header(String),
@@ -4961,16 +4968,27 @@ impl App {
     /// the error toast; unlike `show_error`, the entry it marks failed is
     /// this one rather than whichever command is still running.
     pub fn log_command_outcome(&mut self, command: String, outcome: Result<(), String>) {
-        self.record_command_outcome(command, &outcome);
+        self.record_command_outcome(command, &outcome, crate::command_log::Execution::default());
         if let Err(error) = outcome {
             self.raise_error_toast(error);
         }
     }
 
     /// Appends a finished command to the terminal log without a toast.
-    pub fn record_command_outcome(&mut self, command: String, outcome: &Result<(), String>) {
-        let row = self.start_command(command);
-        self.settle_command(row, outcome);
+    /// `execution` holds when it ran; a command refused before running has
+    /// none.
+    pub fn record_command_outcome(
+        &mut self,
+        command: String,
+        outcome: &Result<(), String>,
+        execution: crate::command_log::Execution,
+    ) {
+        self.terminal_commands.push(TerminalCommand {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            command,
+            status: outcome_status(outcome),
+            execution,
+        });
     }
 
     /// Appends a command still running to the terminal log and returns its
@@ -4989,13 +5007,16 @@ impl App {
         })
     }
 
-    /// Stamps the outcome on a row returned by `start_command`.
-    pub fn settle_command(&mut self, row: LogRow, outcome: &Result<(), String>) {
-        let status = match outcome {
-            Ok(()) => "Success".to_string(),
-            Err(error) => format!("Failed: {error}"),
-        };
-        self.terminal_commands.set_status(row, status);
+    /// Stamps the outcome, and when the command ran, on a row returned by
+    /// `start_command`.
+    pub fn settle_command(
+        &mut self,
+        row: LogRow,
+        outcome: &Result<(), String>,
+        execution: crate::command_log::Execution,
+    ) {
+        self.terminal_commands
+            .settle(row, outcome_status(outcome), Some(execution));
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
@@ -12030,7 +12051,7 @@ index 123456..789012 100644
         app.terminal_scroll = 3;
 
         app.clear_terminal_log();
-        app.settle_command(row, &Ok(()));
+        app.settle_command(row, &Ok(()), crate::command_log::Execution::default());
 
         assert!(app.terminal_commands.is_empty());
         assert_eq!(app.terminal_scroll, 0);

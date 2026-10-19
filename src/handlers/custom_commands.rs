@@ -1,5 +1,6 @@
 use crate::AppTerminal;
 use crate::app::{App, CUSTOM_COMMAND_LOG_PREFIX};
+use crate::command_log::Execution;
 use crate::custom_commands::{CommandPane, CustomCommand, TemplateValues, render, shell_process};
 use crate::event::Event;
 use crate::scope::Scope;
@@ -51,11 +52,19 @@ pub struct RunReport {
     total: usize,
     /// Rows refused before running, already logged.
     refused: Vec<String>,
-    /// Rendered command and outcome of each run, in order.
-    runs: Vec<(String, Result<(), String>)>,
+    /// Every run, in order.
+    runs: Vec<FinishedRun>,
     /// Terminal-log rows shown as running while a background run works,
     /// one per run in the same order; empty for terminal runs.
     log_rows: Vec<crate::command_log::LogRow>,
+}
+
+/// One run of a command: the rendered command, how it ended and when it ran.
+#[derive(Clone, Debug)]
+struct FinishedRun {
+    rendered: String,
+    outcome: Result<(), String>,
+    execution: Execution,
 }
 
 /// Where a command's stderr goes while it runs.
@@ -97,6 +106,7 @@ fn execute(
         app.record_command_outcome(
             format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", command.command),
             &Err(reason.clone()),
+            Execution::default(),
         );
         refused.push(reason);
     }
@@ -113,6 +123,7 @@ fn execute(
                 app.record_command_outcome(
                     format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", command.command),
                     &Err(reason.clone()),
+                    Execution::default(),
                 );
                 refused.push(reason);
             }
@@ -151,11 +162,12 @@ fn execute(
     report.runs = match crate::editor::suspend_while(terminal, || {
         run_all(command, runs, Handoff::Terminal)
     }) {
-        Ok(outcomes) => outcomes,
-        Err(error) => vec![(
-            command.command.clone(),
-            Err(format!("\"{label}\" not run: {error}")),
-        )],
+        Ok(runs) => runs,
+        Err(error) => vec![FinishedRun {
+            rendered: command.command.clone(),
+            outcome: Err(format!("\"{label}\" not run: {error}")),
+            execution: Execution::default(),
+        }],
     };
     report_runs(app, report);
 }
@@ -164,7 +176,7 @@ fn run_all(
     command: &CustomCommand,
     runs: Vec<(String, TemplateValues)>,
     handoff: Handoff,
-) -> Vec<(String, Result<(), String>)> {
+) -> Vec<FinishedRun> {
     runs.into_iter()
         .map(|(rendered, values)| {
             if handoff == Handoff::Terminal {
@@ -174,8 +186,18 @@ fn run_all(
             }
             let mut process = shell_process(&rendered);
             process.envs(values.environment());
+            let started_at = chrono::Local::now();
+            let clock = std::time::Instant::now();
             let outcome = run_process(command, &mut process, handoff);
-            (rendered, outcome)
+            FinishedRun {
+                rendered,
+                outcome,
+                execution: Execution {
+                    started_at: Some(started_at),
+                    duration: Some(clock.elapsed()),
+                    ..Default::default()
+                },
+            }
         })
         .collect()
 }
@@ -183,13 +205,16 @@ fn run_all(
 /// Logs every run of a keypress and raises one toast for its failures.
 pub fn report_runs(app: &mut App, report: RunReport) {
     let mut failures = report.refused;
-    for (index, (rendered, outcome)) in report.runs.into_iter().enumerate() {
+    for (index, run) in report.runs.into_iter().enumerate() {
         match report.log_rows.get(index) {
-            Some(&row) => app.settle_command(row, &outcome),
-            None => app
-                .record_command_outcome(format!("{CUSTOM_COMMAND_LOG_PREFIX}{rendered}"), &outcome),
+            Some(&row) => app.settle_command(row, &run.outcome, run.execution),
+            None => app.record_command_outcome(
+                format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", run.rendered),
+                &run.outcome,
+                run.execution,
+            ),
         }
-        if let Err(reason) = outcome {
+        if let Err(reason) = run.outcome {
             failures.push(reason);
         }
     }
@@ -698,6 +723,53 @@ mod tests {
             started.elapsed()
         );
         assert!(outcome.unwrap_err().ends_with(": boom"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_run_is_logged_with_when_it_started_and_how_long_it_took() {
+        let command = CustomCommand {
+            pane: CommandPane::Universal,
+            key: "X".to_string(),
+            name: None,
+            command: String::new(),
+            background: false,
+            shadowed_on: Vec::new(),
+        };
+        let runs = vec![
+            ("sleep 0.3".to_string(), TemplateValues::default()),
+            ("sleep 0.3".to_string(), TemplateValues::default()),
+        ];
+        let mut app = App::default();
+
+        let report = RunReport {
+            label: "sleep".to_string(),
+            total: 2,
+            refused: Vec::new(),
+            runs: run_all(&command, runs, Handoff::Background),
+            log_rows: Vec::new(),
+        };
+        report_runs(&mut app, report);
+
+        let executions: Vec<&Execution> = app
+            .terminal_commands
+            .iter()
+            .map(|cmd| &cmd.execution)
+            .collect();
+        let minimum = std::time::Duration::from_millis(300);
+        assert_eq!(executions.len(), 2);
+        assert!(
+            executions.iter().all(|run| run.duration >= Some(minimum)),
+            "{executions:?}"
+        );
+        let (Some(first), Some(second)) = (executions[0].started_at, executions[1].started_at)
+        else {
+            panic!("every run records its start: {executions:?}");
+        };
+        assert!(
+            (second - first).to_std().unwrap() >= minimum,
+            "{executions:?}"
+        );
     }
 
     #[test]

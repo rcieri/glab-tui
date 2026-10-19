@@ -537,22 +537,16 @@ fn job_target(
         values.insert("Stage", job.stage.clone());
     }
     values.insert("Status", job.status.clone());
-    insert_repo_values(&mut values, app, job_project(app, job), checkouts);
+    let project = row_project(
+        app.jobs_project().unwrap_or(""),
+        job.web_url.as_deref(),
+        &app.scope,
+    );
+    insert_repo_values(&mut values, app, project, checkouts);
     Target {
         row: format!("#{}", job.id),
         values,
     }
-}
-
-/// `namespace/project` of the Jobs tab's pipeline. In group scope a pipeline
-/// opened without a listed row resolves to the group itself, so the job's
-/// web URL names the project instead.
-fn job_project(app: &App, job: &crate::domain::pipelines::Job) -> Option<String> {
-    let project = app.project_path_for_jobs();
-    if app.scope.is_repository() || project != app.scope.as_str() {
-        return Some(project);
-    }
-    row_project("", job.web_url.as_deref(), &app.scope)
 }
 
 /// Values for a diff-view command: the open MR/PR plus the file and line

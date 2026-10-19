@@ -3258,7 +3258,7 @@ pub fn apply_opened_pipeline(
             }
             let has_jobs = !jobs.is_empty();
             app.jobs.items = jobs;
-            app.active_pipeline_project = Some(app.project_path_for_pipeline(pipeline_id));
+            app.active_pipeline_project = app.pipeline_project(pipeline_id).map(str::to_owned);
             app.active_pipeline_id = Some(pipeline_id);
             app.jobs.state.select(Some(0));
             app.detail_scroll = 0;
@@ -4387,6 +4387,28 @@ mod tests {
         let cached: Vec<u64> = app.pipeline_jobs[&7].iter().map(|j| j.id()).collect();
         assert_eq!(cached, vec![70]);
         assert!(!app.loading_tabs.contains(&crate::app::Tab::Jobs));
+    }
+
+    /// A group-scope pipeline with no project of its own must not record the
+    /// group as the Jobs tab's project: the jobs' web URLs name it instead.
+    #[test]
+    fn opening_a_pipeline_without_a_project_records_none_in_group_scope() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![listed_pipeline(7)];
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_pipeline_id, Some(7));
+        assert_eq!(app.active_pipeline_project, None);
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
     /// Enter pressed twice before the first reply: the first reply descends,

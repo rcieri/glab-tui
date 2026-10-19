@@ -4479,11 +4479,11 @@ impl App {
         }
     }
 
-    /// The project a pipeline belongs to: its own row's path, then the
-    /// project the Jobs tab was opened with when `id` is the active pipeline,
-    /// then the scope. A listed row always wins so an older Jobs-tab project
-    /// never redirects actions on other pipelines.
-    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+    /// The project a pipeline belongs to, when known: its own row's path,
+    /// then the project the Jobs tab was opened with when `id` is the active
+    /// pipeline. A listed row always wins so an older Jobs-tab project never
+    /// redirects actions on other pipelines.
+    pub fn pipeline_project(&self, id: u64) -> Option<&str> {
         self.pipelines
             .items
             .iter()
@@ -4495,14 +4495,24 @@ impl App {
                     .as_deref()
                     .filter(|p| !p.is_empty() && self.active_pipeline_id == Some(id))
             })
-            .unwrap_or_else(|| self.scope.as_str())
+    }
+
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        self.pipeline_project(id)
+            .unwrap_or(self.scope.as_str())
             .to_string()
     }
 
-    /// The project of the jobs on the Jobs tab. Jobs carry no project of
-    /// their own: they all belong to the active pipeline.
+    /// The project of the jobs on the Jobs tab, when known. Jobs carry no
+    /// project of their own: they all belong to the active pipeline.
+    pub fn jobs_project(&self) -> Option<&str> {
+        self.pipeline_project(self.active_pipeline_id?)
+    }
+
     pub fn project_path_for_jobs(&self) -> String {
-        self.project_path_for_pipeline(self.active_pipeline_id.unwrap_or(0))
+        self.jobs_project()
+            .unwrap_or(self.scope.as_str())
+            .to_string()
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -9236,7 +9246,13 @@ diff --git a/Makefile b/Makefile
         assert_eq!(app.project_path_for_pipeline(7), "acme/project-b");
         assert_eq!(app.project_path_for_pipeline(5), "acme/project-a");
         assert_eq!(app.project_path_for_pipeline(9), "acme");
+        assert_eq!(app.pipeline_project(9), None);
         assert_eq!(app.project_path_for_jobs(), "acme/project-a");
+        assert_eq!(app.jobs_project(), Some("acme/project-a"));
+
+        app.active_pipeline_id = None;
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
     #[test]

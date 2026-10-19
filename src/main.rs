@@ -2490,8 +2490,9 @@ async fn main() -> Result<()> {
                                                 let client_clone = client.clone();
                                                 let project_context =
                                                     app.project_path_for_pipeline(pipeline_id);
-                                                app.active_pipeline_project =
-                                                    Some(project_context.clone());
+                                                app.active_pipeline_project = app
+                                                    .pipeline_project(pipeline_id)
+                                                    .map(str::to_owned);
                                                 let tx = app.scoped_sender(events.sender());
                                                 tokio::spawn(async move {
                                                     match domain::pipelines::list_pipeline_jobs(
@@ -3364,9 +3365,10 @@ async fn main() -> Result<()> {
                                                     if let Some(client) = &app.gitlab_client {
                                                         let project_context = app
                                                             .project_path_for_pipeline(pipeline_id);
+                                                        app.active_pipeline_project = app
+                                                            .pipeline_project(pipeline_id)
+                                                            .map(str::to_owned);
                                                         app.active_pipeline_id = Some(pipeline_id);
-                                                        app.active_pipeline_project =
-                                                            Some(project_context.clone());
                                                         app.jobs.state.select(Some(0));
                                                         app.jobs.items.clear();
                                                         app.loading_tabs.insert(app::Tab::Jobs);

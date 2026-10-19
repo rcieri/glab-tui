@@ -682,11 +682,17 @@ pub(crate) fn badge_style_for(
                 true,
                 Some(format!(" {} STALE ", icons.runner_offline)),
             ),
-            "never contacted" | "never_contacted" | "unknown" => (
+            "never contacted" => (
                 theme.text_muted,
                 active_bg(theme.inactive_bg),
                 true,
-                Some(format!(" {} {} ", icons.status_unknown, val.to_uppercase())),
+                Some(format!(" {} NEVER CONTACTED ", icons.status_unknown)),
+            ),
+            "unknown" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} UNKNOWN ", icons.status_unknown)),
             ),
             "running" => (
                 theme.blue,

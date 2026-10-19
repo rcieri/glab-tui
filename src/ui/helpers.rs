@@ -649,7 +649,39 @@ pub(crate) fn badge_style_for(
                 true,
                 Some(format!(" {} MERGED ", icons.state_merged)),
             ),
+            "unread" | "pending" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} NEW ", icons.todo_unread)),
+            ),
+            "read" | "done" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} READ ", icons.todo_read)),
+            ),
             _ => (theme.text_normal, None, false, None),
+        },
+        "Type" => match val {
+            "MR" | "PR" => (
+                theme.purple,
+                active_bg(theme.purple_bg),
+                true,
+                Some(format!(" {} {val} ", icons.tab_pr)),
+            ),
+            "Issue" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} Issue ", icons.tab_issue)),
+            ),
+            _ => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {val} ")),
+            ),
         },
         "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
             "success" | "online" | "ready" => (

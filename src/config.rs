@@ -255,6 +255,8 @@ pub struct Icons {
     pub nav_next: String,
     pub comment_bubble: String,
     pub pointer: String,
+    pub todo_unread: String,
+    pub todo_read: String,
 }
 
 impl Icons {
@@ -371,6 +373,8 @@ impl Icons {
             nav_next: "▶".to_string(),
             comment_bubble: "💬".to_string(),
             pointer: "❯".to_string(),
+            todo_unread: "\u{f0e0}".to_string(),
+            todo_read: "\u{f2b6}".to_string(),
         }
     }
 
@@ -489,6 +493,8 @@ impl Icons {
             nav_next: ">".to_string(),
             comment_bubble: "\"".to_string(),
             pointer: ">".to_string(),
+            todo_unread: "*".to_string(),
+            todo_read: ".".to_string(),
         }
     }
 }
@@ -1240,6 +1246,20 @@ pub struct KeybindingTodos {
     pub unsubscribe: String,
     #[serde(default = "def_toggle_show_read")]
     pub toggle_show_read: String,
+    #[serde(default = "def_select_todo")]
+    pub select_todo: String,
+    #[serde(default = "def_selection_toggle")]
+    pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
+    #[serde(default = "def_copy_todo_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_todo_reference")]
+    pub copy_reference: String,
+    /// Shows or hides the inspector, which `Enter` cannot open on this tab
+    /// because it opens the todo's target.
+    #[serde(default = "def_toggle_todo_preview")]
+    pub toggle_preview: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1417,6 +1437,10 @@ keybind_defaults! {
     def_mark_all_as_read = "A",
     def_unsubscribe = "U",
     def_toggle_show_read = "r",
+    def_select_todo = "Space",
+    def_copy_todo_url = "y",
+    def_copy_todo_reference = "Y",
+    def_toggle_todo_preview = "p",
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
@@ -1588,6 +1612,12 @@ impl Default for KeybindingTodos {
             mark_all_as_read: def_mark_all_as_read(),
             unsubscribe: def_unsubscribe(),
             toggle_show_read: def_toggle_show_read(),
+            select_todo: def_select_todo(),
+            selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
+            copy_url: def_copy_todo_url(),
+            copy_reference: def_copy_todo_reference(),
+            toggle_preview: def_toggle_todo_preview(),
         }
     }
 }
@@ -1956,6 +1986,12 @@ mark_as_done = "d"
 mark_all_as_read = "A"
 unsubscribe = "U"
 toggle_show_read = "r"
+select_todo = "Space"
+selection_toggle = "v"
+select_all = "Ctrl+a"
+copy_url = "y"
+copy_reference = "Y"
+toggle_preview = "p"
 
 [keybindings.branches]
 create_branch = "n"
@@ -2518,33 +2554,37 @@ page_size = 250
         assert_eq!(global.scroll_half_page_up, "Ctrl+u");
     }
 
-    #[test]
-    fn mr_keybindings_do_not_collide() {
-        let cfg = Config::default();
-
-        // Enumerate fields via the struct's own `Serialize` impl instead of a
-        // hand-maintained array: a manually listed array silently excludes
-        // whatever field the author forgot to add (this happened once
-        // already -- `select_mr` was missing), so a newly added
-        // `KeybindingMrs` field is picked up automatically here with no
-        // extra step required.
-        let value = serde_json::to_value(&cfg.keybindings.mrs).expect("serialize KeybindingMrs");
+    /// Panics when two fields of a keybinding table share a default key.
+    /// Fields are enumerated through the table's own `Serialize` impl, so a
+    /// newly added field is checked without being listed anywhere.
+    fn assert_no_duplicate_bindings(table: &str, bindings: &impl Serialize) {
+        let value = serde_json::to_value(bindings).expect("serialize keybinding table");
         let fields = value
             .as_object()
-            .expect("KeybindingMrs serializes to a JSON object");
-        assert!(!fields.is_empty(), "KeybindingMrs serialized to no fields");
+            .expect("a keybinding table serializes to a JSON object");
+        assert!(!fields.is_empty(), "{table} serialized to no fields");
 
         let mut seen: HashMap<&str, &str> = HashMap::new();
         for (field, binding) in fields {
             let binding = binding
                 .as_str()
-                .expect("every KeybindingMrs field is a string");
+                .expect("every keybinding field is a string");
             if let Some(other_field) = seen.insert(binding, field) {
                 panic!(
-                    "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
+                    "duplicate {table} keybinding {binding:?}: used by both `{other_field}` and `{field}`"
                 );
             }
         }
+    }
+
+    #[test]
+    fn mr_keybindings_do_not_collide() {
+        assert_no_duplicate_bindings("mrs", &Config::default().keybindings.mrs);
+    }
+
+    #[test]
+    fn todo_keybindings_do_not_collide() {
+        assert_no_duplicate_bindings("todos", &Config::default().keybindings.todos);
     }
 
     #[test]

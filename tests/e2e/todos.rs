@@ -76,6 +76,82 @@ fn wait_for_cli_call(session: &mut TestSession, call: &str, timeout_ms: u64) {
     }
 }
 
+/// Sends keys one at a time: the app reads a burst of bytes as one sequence.
+fn press_keys(session: &mut TestSession, keys: &[u8]) {
+    for key in keys {
+        session.send_input(&[*key]);
+        session.settle(150);
+    }
+}
+
+#[test]
+fn test_space_selects_todos_and_d_marks_every_selected_one_done() {
+    let mut session = session_on_todos(&[]);
+
+    press_keys(&mut session, b" j d");
+
+    wait_for_cli_call(&mut session, "glab todo done 1", 5000);
+    wait_for_cli_call(&mut session, "glab todo done 2", 5000);
+    wait_for_screen_without(&mut session, OWN_TODO, 5000);
+    wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
+    let calls = session.get_cli_calls();
+    assert!(!calls.contains("glab todo done 3"), "{calls}");
+    assert!(session.emulator.get_text().contains("Review pagination"));
+}
+
+#[test]
+fn test_visual_select_and_enter_mark_the_range_read_without_leaving_the_tab() {
+    let mut session = session_on_todos(&[]);
+
+    press_keys(&mut session, b"vj\r");
+
+    wait_for_cli_call(&mut session, "glab todo done 1", 5000);
+    wait_for_cli_call(&mut session, "glab todo done 2", 5000);
+    wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
+    let screen = session.emulator.get_text();
+    assert!(screen.contains("Review pagination"), "{screen}");
+    assert!(!screen.contains("Worktree for eight"), "{screen}");
+}
+
+#[test]
+fn test_preview_shows_the_todo_comment_as_markdown_with_badges() {
+    let mut session = session_on_todos(&[]);
+    session
+        .wait_for_screen_contains(" NEW ", 2000)
+        .expect("the State column should show a NEW badge");
+    session
+        .wait_for_screen_contains(" MR ", 2000)
+        .expect("the Type column should show an MR badge");
+
+    press_keys(&mut session, b"p");
+
+    session
+        .wait_for_screen_contains("Ping from carol about worktree eight", 5000)
+        .expect("the preview should render the mention as Markdown");
+    session
+        .wait_for_screen_contains("@carol", 2000)
+        .expect("the preview should name the author");
+}
+
+#[test]
+fn test_github_preview_fetches_the_latest_comment() {
+    let mut session = launch_on_todos(true, &[], "Issues", "Todo Item 1");
+
+    press_keys(&mut session, b"p");
+
+    wait_for_cli_call(
+        &mut session,
+        "gh api repos/test-owner/test-repo/issues/comments/77",
+        5000,
+    );
+    session
+        .wait_for_screen_contains("Comment from octocat on item one", 5000)
+        .expect("the preview should render the fetched comment");
+    session
+        .wait_for_screen_contains("@octocat", 2000)
+        .expect("the preview should name the comment author");
+}
+
 #[test]
 fn test_todos_list_unread_only_until_read_ones_are_toggled_on() {
     let mut session = session_on_todos(&[]);

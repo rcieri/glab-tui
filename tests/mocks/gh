@@ -114,6 +114,8 @@ if [[ "$*" == *"api"* ]]; then
         else
             cat "$FIXTURES_DIR/gh_pr_comments.json"
         fi
+    elif [[ "$*" == *"/issues/comments/"* ]]; then
+        echo '{"body": "Comment from **octocat** on item one", "user": {"login": "octocat"}}'
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
@@ -135,7 +137,7 @@ if [[ "$*" == *"api"* ]]; then
         echo '[{
             "id": "1",
             "repository": {"full_name": "test-owner/test-repo"},
-            "subject": {"title": "Todo Item 1", "type": "Issue", "url": "https://api.github.com/repos/test-owner/test-repo/issues/1"},
+            "subject": {"title": "Todo Item 1", "type": "Issue", "url": "https://api.github.com/repos/test-owner/test-repo/issues/1", "latest_comment_url": "https://api.github.com/repos/test-owner/test-repo/issues/comments/77"},
             "unread": true,
             "updated_at": "2026-07-06T12:00:00Z"
         }]'

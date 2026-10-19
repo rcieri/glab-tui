@@ -72,7 +72,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
     * [custom_commands.rs](src/handlers/custom_commands.rs): `run_bound_command` — resolves the highlighted row's template values, runs the custom command through `editor::suspend_while` (or a background thread) and logs the outcome.
-    * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle). Every mutation goes through `spawn_todo_change`, which reports `Event::TodoChanged`.
+    * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle, copy URL / reference). Read and done marks go through `spawn_marks` (paced batch, one `TodoChanged` for the accepted ids and one for the failed ones), the other mutations through `spawn_todo_change`. Both report `Event::TodoChanged`.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
@@ -203,10 +203,13 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Todos Tab (GitLab Todos / GitHub Notifications)
 * The read filter lives on `GitlabClient::show_read_notifications` (default `false`, unread only) so every refresh path fetches with it. `App::toggle_show_read_todos` flips it and `Event::TodosFetched` carries the filter it was requested with, so a list fetched before a toggle is dropped.
-* Mutations report `Event::TodoChanged(TodoChange, Result)`. On success `App::apply_todo_change` updates `app.todos` in place (no refetch): read and done items are restated while the tab shows them and dropped otherwise, and GitHub's done notifications always leave the list. On failure the error goes through `App::show_error`.
+* Mutations report `Event::TodoChanged(TodoChange, Result)`. `MarkedRead` / `MarkedDone` carry every id of the batch. On success `App::apply_todo_change` updates `app.todos` in place (no refetch): read and done items are restated while the tab shows them and dropped otherwise, and GitHub's done notifications always leave the list. On failure the error goes through `App::show_error`.
+* Batch selection: `App::selected_todos` (notification ids) is filled by `select_todo` (Space), `selection_toggle` (visual mode through `toggle_select_mode` / `update_visual_selection`) and `select_all`. With a selection, `mark_as_read` and `mark_as_done` act on `App::todo_ids_to_act_on` (every selected todo, hidden by the search or not) and clear the selection. `apply_todo_change` and `App::set_todos` drop selected ids that left the list.
+* Inspector: `Enter` opens the target on this tab, so `toggle_preview` (`p`) shows the preview. `build_todo_document` renders `Notification::body` as Markdown. GitLab fills `body` from the todo list (the note text for mentions, else the target description). GitHub lists no body: `fetch::dispatch_inspected_todo_detail_fetch` (on `Event::Tick`, debounced like the PR stack fetch) reads `Notification::detail_api_path` (latest comment, else the subject) through `Backend::get_notification_detail` and sends `Event::TodoDetailFetched`. A failure is kept in `App::failed_todo_details` and shown instead of refetching. `set_todos` keeps a fetched body while the notification's `updated_at` is unchanged.
+* `Notification::reference` (`!N` for a GitLab MR, `#N` otherwise) and `type_label` (`MR` / `PR` / `Issue`) feed the ID and Type columns, the inspector, the out-of-scope error and `copy_reference`. The State and Type badges come from `badge_style_for`.
 * GitLab todos have no read state: `mark_notification_as_read` and `mark_notification_as_done` both run `glab todo done`.
 * `mark_as_read` and `Enter` share `handlers::todos::open_selected`. The jump resolves the target in the todo's own project (`Scope::contains_project`, `App::focus_issue` / `focus_mr` with `Some(project)`) and fetches it when unlisted. A todo outside the current scope, or whose target has no view in glab-tui, raises an error instead of landing on a same-numbered item, and stays unread: `jump_to_target` returns whether it had something to open, and only then is the todo marked read.
-* E2E coverage: `tests/e2e/todos.rs`, driven by `todo list` (`todos.json`) and `api todos?state=done` (`todos_done.json`) in `tests/mocks/glab`.
+* E2E coverage: `tests/e2e/todos.rs`, driven by `todo list` (`todos.json`) and `api todos?state=done` (`todos_done.json`) in `tests/mocks/glab`, and on GitHub by the `notifications` and `/issues/comments/` branches of `tests/mocks/gh`.
 
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
@@ -421,6 +424,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Mark notification done | `DELETE notifications/threads/{}` | No native command |
 | Mark all notifications read | `PUT notifications` | No native command |
 | Unsubscribe from notification thread | `DELETE notifications/threads/{}/subscription` | No native command |
+| Notification comment / body (Todos preview) | `GET repos/{}/issues/comments/{}` (the notification's `latest_comment_url`), else its subject (`repos/{}/issues/{}`, `repos/{}/pulls/{}`, …) | No native command. On demand only, for the notification resting in the preview |
 | List branches | `GET /repos/{}/branches?per_page=<N>` | No native command |
 | Create branch | `POST /repos/{}/git/refs` | No native command |
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |

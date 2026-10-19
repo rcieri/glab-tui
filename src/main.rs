@@ -1274,12 +1274,18 @@ async fn main() -> Result<()> {
                             &mut app,
                             &events.sender(),
                         );
+                        let _ = crate::fetch::dispatch_inspected_todo_detail_fetch(
+                            &client,
+                            &mut app,
+                            &events.sender(),
+                        );
                     } else {
                         app.pending_related_mrs_iid = None;
                         app.pending_related_mrs_since = None;
                         app.pending_mr_related_issues_iid = None;
                         app.pending_mr_related_issues_since = None;
                         app.pr_stack_candidate = None;
+                        app.todo_detail_candidate = None;
                     }
                     if app.active_tab == app::Tab::Jobs
                         && app.job_trace_follow
@@ -1641,7 +1647,7 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Todos);
                     app.refreshed_tabs.insert(app::Tab::Todos);
                     app.stale_tabs.remove(&app::Tab::Todos);
-                    app.todos.items = notifications;
+                    app.set_todos(notifications);
                     app.update_filter_selection();
                     app.project_cache.todos = app.todos.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -1655,6 +1661,9 @@ async fn main() -> Result<()> {
                     app.show_error(change.failure_message(app.kind(), &err));
                     // CLI failure: full stderr is in the terminal log.
                     app.error_has_cli_detail = true;
+                }
+                Event::TodoDetailFetched { id, result } => {
+                    app.apply_todo_detail(&id, result);
                 }
                 Event::RunnersFetched(runners) => {
                     app.complete_loading_tab(app::Tab::Runners, "Success");

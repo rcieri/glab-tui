@@ -7,7 +7,7 @@ use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, Trace
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, ensure_complete_diff};
-use crate::domain::notifications::{Notification, NotificationTarget};
+use crate::domain::notifications::{Notification, NotificationDetail, NotificationTarget};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
@@ -452,6 +452,75 @@ fn first_listed<T: serde::de::DeserializeOwned>(raw: &str) -> Result<Option<T>> 
     }
     let items: Option<Vec<T>> = serde_json::from_str(raw)?;
     Ok(items.and_then(|items| items.into_iter().next()))
+}
+
+/// Parses a GitLab todo list (`glab todo list --output=json` or the
+/// `todos` endpoint).
+fn parse_gitlab_todos(raw: &str) -> Result<Vec<Notification>> {
+    #[derive(Deserialize)]
+    struct GiTodo {
+        id: serde_json::Value,
+        project: GiTodoProject,
+        target: GiTodoTarget,
+        target_type: String,
+        state: String,
+        updated_at: String,
+        #[serde(default)]
+        author: Option<GiTodoAuthor>,
+        #[serde(default)]
+        action_name: Option<String>,
+        #[serde(default)]
+        target_url: Option<String>,
+        #[serde(default)]
+        body: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GiTodoProject {
+        path_with_namespace: String,
+    }
+    #[derive(Deserialize)]
+    struct GiTodoTarget {
+        title: String,
+        iid: u64,
+        #[serde(default)]
+        description: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GiTodoAuthor {
+        username: String,
+    }
+    let todos: Vec<GiTodo> = serde_json::from_str(raw)?;
+    Ok(todos
+        .into_iter()
+        .map(|item| {
+            let id = match item.id {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s,
+                _ => String::new(),
+            };
+            // GitLab fills `body` with the note text for mentions and with
+            // the target title for every other action.
+            let body = item
+                .body
+                .filter(|body| !body.trim().is_empty() && *body != item.target.title)
+                .or(item.target.description)
+                .unwrap_or_default();
+            Notification {
+                id,
+                project_path: item.project.path_with_namespace,
+                title: item.target.title,
+                target_type: item.target_type,
+                target_iid: item.target.iid,
+                state: item.state,
+                updated_at: item.updated_at,
+                author: item.author.map(|a| a.username).unwrap_or_default(),
+                reason: item.action_name.unwrap_or_default(),
+                web_url: item.target_url.unwrap_or_default(),
+                body: Some(body),
+                detail_api_path: None,
+            }
+        })
+        .collect())
 }
 
 pub struct GlabBackend {
@@ -2651,68 +2720,19 @@ impl Backend for GlabBackend {
         let raw = self
             .run_glab(&["todo", "list", "--output=json"], "Fetching Todos")
             .await?;
-        #[derive(Deserialize)]
-        struct GiTodo {
-            id: serde_json::Value,
-            project: GiTodoProject,
-            target: GiTodoTarget,
-            target_type: String,
-            state: String,
-            updated_at: String,
-        }
-        #[derive(Deserialize)]
-        struct GiTodoProject {
-            path_with_namespace: String,
-        }
-        #[derive(Deserialize)]
-        struct GiTodoTarget {
-            title: String,
-            iid: u64,
-        }
-        let todos: Vec<GiTodo> = serde_json::from_str(&raw)?;
-        let mut list: Vec<Notification> = todos
-            .into_iter()
-            .map(|item| {
-                let id = match item.id {
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::String(s) => s,
-                    _ => String::new(),
-                };
-                Notification {
-                    id,
-                    project_path: item.project.path_with_namespace,
-                    title: item.target.title,
-                    target_type: item.target_type,
-                    target_iid: item.target.iid,
-                    state: item.state,
-                    updated_at: item.updated_at,
-                }
-            })
-            .collect();
+        let mut list = parse_gitlab_todos(&raw)?;
         if show_read {
             let endpoint = "todos?state=done";
             let raw = self
                 .raw_api(endpoint, "GET", None, "Fetching Done Todos")
                 .await?;
-            let done_todos: Vec<GiTodo> = serde_json::from_str(&raw).unwrap_or_default();
-            list.extend(done_todos.into_iter().map(|item| {
-                let id = match item.id {
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::String(s) => s,
-                    _ => String::new(),
-                };
-                Notification {
-                    id,
-                    project_path: item.project.path_with_namespace,
-                    title: item.target.title,
-                    target_type: item.target_type,
-                    target_iid: item.target.iid,
-                    state: item.state,
-                    updated_at: item.updated_at,
-                }
-            }));
+            list.extend(parse_gitlab_todos(&raw).unwrap_or_default());
         }
         Ok(list)
+    }
+
+    async fn get_notification_detail(&self, _detail_api_path: &str) -> Result<NotificationDetail> {
+        anyhow::bail!("GitLab todos carry their body in the todo list")
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
@@ -3300,6 +3320,56 @@ async fn open_in_web_browser(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gitlab_todo(action: &str, body: &str, description: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": 7,
+            "project": {"path_with_namespace": "acme/api"},
+            "author": {"username": "alice"},
+            "action_name": action,
+            "target_type": "MergeRequest",
+            "target": {"title": "Add retries", "iid": 4, "description": description},
+            "target_url": "https://gitlab.example/acme/api/-/merge_requests/4",
+            "body": body,
+            "state": "pending",
+            "updated_at": "2026-07-06T12:00:00Z"
+        })
+    }
+
+    #[test]
+    fn a_gitlab_todo_shows_the_mention_or_else_the_target_description() {
+        let raw = serde_json::json!([
+            gitlab_todo(
+                "mentioned",
+                "@bob can you **check** this?",
+                Some("Retry flaky calls")
+            ),
+            gitlab_todo("assigned", "Add retries", Some("Retry flaky calls")),
+            gitlab_todo("review_requested", "Add retries", None),
+        ])
+        .to_string();
+
+        let todos = parse_gitlab_todos(&raw).unwrap();
+
+        let bodies: Vec<Option<&str>> = todos.iter().map(|t| t.body.as_deref()).collect();
+        assert_eq!(
+            bodies,
+            vec![
+                Some("@bob can you **check** this?"),
+                Some("Retry flaky calls"),
+                Some(""),
+            ]
+        );
+        let first = &todos[0];
+        assert_eq!(first.id, "7");
+        assert_eq!(first.author, "alice");
+        assert_eq!(first.reason, "mentioned");
+        assert_eq!(
+            first.web_url,
+            "https://gitlab.example/acme/api/-/merge_requests/4"
+        );
+        assert_eq!(first.detail_api_path, None);
+    }
 
     fn diff_refs() -> GiDiffRefs {
         GiDiffRefs {

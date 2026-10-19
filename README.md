@@ -745,16 +745,26 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 
 On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lists unread items only until `r` toggles read (GitHub) or done (GitLab) items on, and the tab title shows the active filter (`Unread` / `All`). Every action updates the list as soon as the CLI call succeeds, and a failed call raises an error toast.
 
+The State and Type columns are badges (`NEW` / `READ`, `Issue` / `MR` or `PR`). `p` opens the preview, which renders the comment that triggered the item as Markdown, or the target's description when there is none, with the reason and author. GitLab todos carry it in the list. GitHub fetches the latest comment (or the issue / PR body) once the cursor rests on a notification.
+
+Select items with `Space`, or with `v` and the cursor (yazi-style), then press `Enter` or `d` to mark every selected item read or done in one go. `Esc` clears the selection.
+
 > Remappable via `[keybindings.todos]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`) | `mark_as_read` |
-| `d` | Mark item as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
+| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`). With a selection, marks every selected item read without leaving the tab | `mark_as_read` |
+| `d` | Mark item (or every selected item) as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
 | `A` | Mark all items as read (with confirmation) | `mark_all_as_read` |
 | `U` | Unsubscribe from the item's thread (GitLab: issues and MRs only) | `unsubscribe` |
 | `r` | Toggle showing read / done items | `toggle_show_read` |
 | `o` | Open item in browser | `open_in_browser` |
+| `Space` | Toggle the item in the selection | `select_todo` |
+| `v` | Toggle visual select mode | `selection_toggle` |
+| `Ctrl+a` | Select every visible item | `select_all` |
+| `y` | Copy the target's URL | `copy_url` |
+| `Y` | Copy the target's reference (`#123`, or `!456` for a GitLab MR) | `copy_reference` |
+| `p` | Show / hide the preview | `toggle_preview` |
 
 ---
 

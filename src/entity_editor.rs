@@ -734,30 +734,51 @@ pub fn build_runner_document(
     }
 }
 
+/// `detail_error` is why fetching the body of a GitHub notification failed.
 pub fn build_todo_document(
     todo: &crate::domain::notifications::Notification,
+    kind: crate::backend::BackendKind,
+    detail_error: Option<&str>,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", todo.id)),
+    let mut fields = vec![
         crate::app::Field::text("Title", todo.title.clone()),
-        crate::app::Field::read_only(
-            "Target",
-            if todo.target_type == "MergeRequest" {
-                format!("!{}", todo.target_iid)
-            } else if todo.target_type == "Issue" {
-                format!("#{}", todo.target_iid)
-            } else {
-                format!("{} #{}", todo.target_type, todo.target_iid)
-            },
-        ),
-        crate::app::Field::read_only("State", todo.state.to_uppercase()),
-        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&todo.updated_at)),
-        crate::app::Field::read_only("Project", todo.project_path.clone()),
+        crate::app::Field::read_only("Type", todo.type_label(kind).to_string()),
+        crate::app::Field::read_only("State", todo.state.clone()),
     ];
+    if !todo.reason.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Reason",
+            todo.reason.replace('_', " "),
+        ));
+    }
+    if !todo.author.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Author",
+            format!("@{}", todo.author),
+        ));
+    }
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&todo.updated_at),
+    ));
+    fields.push(crate::app::Field::read_only(
+        "Project",
+        todo.project_path.clone(),
+    ));
+    let content = match (&todo.body, detail_error) {
+        (Some(body), _) => crate::app::InspectorContent::Markdown(body.clone()),
+        (None, Some(error)) => {
+            crate::app::InspectorContent::Markdown(format!("_Could not load details: {error}_"))
+        }
+        (None, None) if todo.detail_api_path.is_some() => {
+            crate::app::InspectorContent::Empty("Loading details…")
+        }
+        (None, None) => crate::app::InspectorContent::Markdown(String::new()),
+    };
     crate::app::EntityDocument {
-        title: format!("Notification {}", todo.id),
+        title: format!("{} {}", todo.type_label(kind), todo.reference(kind)),
         fields,
-        content: crate::app::InspectorContent::Empty("Notification details"),
+        content,
     }
 }
 

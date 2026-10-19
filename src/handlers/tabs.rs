@@ -2185,6 +2185,10 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.todos.mark_all_as_read, key_event) => {
                 crate::handlers::todos::confirm_mark_all_read(app);
             }
+            _ if keybinding_matches(&app.config.keybindings.todos.toggle_preview, key_event) => {
+                app.detail_visible = !app.detail_visible;
+                app.details_zoomed = false;
+            }
             _ if app.selected_todo().is_none() => handled = false,
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_read, key_event) => {
                 crate::handlers::todos::open_selected(app, &tx);
@@ -2197,6 +2201,22 @@ pub async fn handle_active_tab_key(
             }
             _ if keybinding_matches(&app.config.keybindings.todos.open_in_browser, key_event) => {
                 crate::handlers::todos::open_selected_in_browser(app, &tx);
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.select_todo, key_event) => {
+                app.toggle_todo_selection();
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.selection_toggle, key_event) => {
+                app.toggle_select_mode();
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.select_all, key_event) => {
+                let added = app.select_all_filtered();
+                show_selected_all_notice(app, added);
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.copy_url, key_event) => {
+                crate::handlers::todos::copy_selected_url(app);
+            }
+            _ if keybinding_matches(&app.config.keybindings.todos.copy_reference, key_event) => {
+                crate::handlers::todos::copy_selected_reference(app);
             }
             _ => handled = false,
         },

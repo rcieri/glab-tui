@@ -454,8 +454,6 @@ fn first_listed<T: serde::de::DeserializeOwned>(raw: &str) -> Result<Option<T>> 
     Ok(items.and_then(|items| items.into_iter().next()))
 }
 
-/// Parses a GitLab todo list (`glab todo list --output=json` or the
-/// `todos` endpoint).
 fn parse_gitlab_todos(raw: &str) -> Result<Vec<Notification>> {
     #[derive(Deserialize)]
     struct GiTodo {

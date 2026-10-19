@@ -122,7 +122,10 @@ fn test_visual_select_and_enter_mark_the_range_read_without_leaving_the_tab() {
 
     wait_for_cli_call(&mut session, "glab todo done 1", 5000);
     wait_for_cli_call(&mut session, "glab todo done 2", 5000);
+    wait_for_screen_without(&mut session, OWN_TODO, 5000);
     wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
+    let calls = session.get_cli_calls();
+    assert!(!calls.contains("glab todo done 3"), "{calls}");
     let screen = session.emulator.get_text();
     assert!(screen.contains("Review pagination"), "{screen}");
     assert!(!screen.contains("Worktree for eight"), "{screen}");

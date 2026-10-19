@@ -3395,6 +3395,12 @@ impl Backend for GhBackend {
             updated_at: String,
             #[serde(default)]
             status: Option<String>,
+            #[serde(default)]
+            creator: Option<GhCreator>,
+        }
+        #[derive(Deserialize)]
+        struct GhCreator {
+            login: String,
         }
         let deploys: Vec<GhDeploy> = serde_json::from_str(&raw)?;
         Ok(deploys
@@ -3416,9 +3422,53 @@ impl Backend for GhBackend {
                     }),
                 deployable: None,
                 description: d.description,
-                user: None,
+                user: d
+                    .creator
+                    .map(|c| crate::domain::deployments::DeploymentUser { username: c.login }),
             })
             .collect())
+    }
+
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
+        let name = &environment.name;
+        let latest = self
+            .list_deployments(&Scope::Repository(project.to_string()), 1, Some(name))
+            .await?;
+        let deployment = latest.first().ok_or_else(|| {
+            anyhow::anyhow!("environment {name} has no deployment to mark inactive")
+        })?;
+        let endpoint = format!("/repos/{project}/deployments/{}/statuses", deployment.id);
+        let body = serde_json::json!({ "state": "inactive" }).to_string();
+        self.raw_api(&endpoint, "POST", Some(&body), "Stopping Environment")
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()> {
+        // By default GitHub verifies every status context on the commit and
+        // refuses the deployment when one is not green. This SHA was already
+        // deployed once, so the check is skipped.
+        let body = serde_json::json!({
+            "ref": deployment.sha,
+            "environment": environment,
+            "auto_merge": false,
+            "required_contexts": [],
+            "description": format!("Rollback to deployment #{}", deployment.id),
+        })
+        .to_string();
+        self.raw_api(
+            &format!("/repos/{project}/deployments"),
+            "POST",
+            Some(&body),
+            "Rolling Back Deployment",
+        )
+        .await
+        .map(|_| ())
     }
 
     // ── Labels / Members / Misc ──

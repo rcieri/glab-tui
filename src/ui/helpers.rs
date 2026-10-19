@@ -649,6 +649,24 @@ pub(crate) fn badge_style_for(
                 true,
                 Some(format!(" {} MERGED ", icons.state_merged)),
             ),
+            "available" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} AVAILABLE ", icons.state_open)),
+            ),
+            "stopping" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} STOPPING ", icons.status_pending)),
+            ),
+            "stopped" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} STOPPED ", icons.state_closed)),
+            ),
             _ => (theme.text_normal, None, false, None),
         },
         "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
@@ -675,6 +693,24 @@ pub(crate) fn badge_style_for(
                 active_bg(theme.yellow_bg),
                 true,
                 Some(format!(" {} PENDING ", icons.status_pending)),
+            ),
+            "created" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} CREATED ", icons.status_pending)),
+            ),
+            "blocked" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} BLOCKED ", icons.status_pending)),
+            ),
+            "skipped" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} SKIPPED ", icons.status_canceled)),
             ),
             "canceled" | "cancelled" => (
                 theme.text_muted,

@@ -663,6 +663,68 @@ fn run_submit_action(
                 rows,
             );
         }
+        crate::app::ConfirmAction::StopEnvironment(environment) => {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let tx = app.scoped_sender(tx);
+            tokio::spawn(async move {
+                let result = crate::domain::deployments::stop_environment(
+                    &client,
+                    &project_path,
+                    &environment,
+                )
+                .await;
+                let _ = tx.send(Event::CommandCompleted(
+                    crate::app::Tab::Environments,
+                    result.map_err(|e| {
+                        format!("Failed to stop environment {}: {e}", environment.name)
+                    }),
+                ));
+            });
+        }
+        crate::app::ConfirmAction::RollbackDeployment {
+            environment,
+            deployment,
+        } => {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let scope = app.scope.clone();
+            let tx = app.scoped_sender(tx);
+            tokio::spawn(async move {
+                let result = crate::domain::deployments::rollback_deployment(
+                    &client,
+                    &project_path,
+                    &environment,
+                    &deployment,
+                )
+                .await;
+                if let Err(e) = result {
+                    let _ = tx.send(Event::CommandCompleted(
+                        crate::app::Tab::Environments,
+                        Err(format!("Failed to roll back {environment}: {e}")),
+                    ));
+                    return;
+                }
+                let _ = tx.send(Event::CommandCompleted(
+                    crate::app::Tab::Environments,
+                    Ok(()),
+                ));
+                if let Ok(deployments) = crate::domain::deployments::list_deployments(
+                    &client,
+                    &scope,
+                    Some(&environment),
+                )
+                .await
+                {
+                    let _ = tx.send(Event::DeploymentsFetched {
+                        environment,
+                        deployments,
+                    });
+                }
+            });
+        }
     }
 }
 

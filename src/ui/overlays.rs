@@ -987,6 +987,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             crate::app::ConfirmAction::MarkAllTodosRead => icons.tab_todo.clone(),
             crate::app::ConfirmAction::CancelPipeline(_)
             | crate::app::ConfirmAction::CancelJobs { .. } => icons.status_canceled.clone(),
+            crate::app::ConfirmAction::StopEnvironment(_) => icons.action_close.clone(),
+            crate::app::ConfirmAction::RollbackDeployment { .. } => icons.label_deployment.clone(),
         };
         let option_rows = dialog.options.len();
 
@@ -1873,7 +1875,52 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Environments",
             key: d(app.config.keybindings.environments.view_deployments.clone()),
-            action: "View deployments list for environment",
+            action: "List and focus the environment's deployments",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app
+                .config
+                .keybindings
+                .environments
+                .focus_deployments
+                .clone()),
+            action: "Move focus between environments and deployments",
+        },
+        Shortcut {
+            category: "Environments",
+            key: s("j / k (focused)"),
+            action: "Select a deployment to inspect",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app
+                .config
+                .keybindings
+                .environments
+                .rollback_deployment
+                .clone()),
+            action: "Roll back to the selected deployment",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app
+                .config
+                .keybindings
+                .environments
+                .view_deployment_log
+                .clone()),
+            action: "Open the selected deployment's job log in $EDITOR",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app.config.keybindings.environments.stop_environment.clone()),
+            action: "Stop environment",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app.config.keybindings.environments.copy_url.clone()),
+            action: "Copy environment URL",
         },
         Shortcut {
             category: "Environments",

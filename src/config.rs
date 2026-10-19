@@ -1260,6 +1260,16 @@ pub struct KeybindingEnvironments {
     pub view_deployments: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_focus_deployments")]
+    pub focus_deployments: String,
+    #[serde(default = "def_rollback_deployment")]
+    pub rollback_deployment: String,
+    #[serde(default = "def_stop_environment")]
+    pub stop_environment: String,
+    #[serde(default = "def_copy_environment_url")]
+    pub copy_url: String,
+    #[serde(default = "def_view_deployment_log")]
+    pub view_deployment_log: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1420,6 +1430,11 @@ keybind_defaults! {
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
+    def_focus_deployments = "Tab",
+    def_rollback_deployment = "R",
+    def_stop_environment = "d",
+    def_copy_environment_url = "y",
+    def_view_deployment_log = "e",
     def_toggle_terminal_wrap = "w",
     def_clear_terminal_log = "C",
     def_copy_terminal_command = "y",
@@ -1608,6 +1623,11 @@ impl Default for KeybindingEnvironments {
         Self {
             view_deployments: def_view_deployments(),
             open_in_browser: def_open_in_browser(),
+            focus_deployments: def_focus_deployments(),
+            rollback_deployment: def_rollback_deployment(),
+            stop_environment: def_stop_environment(),
+            copy_url: def_copy_environment_url(),
+            view_deployment_log: def_view_deployment_log(),
         }
     }
 }
@@ -1963,6 +1983,12 @@ delete_branch = "d"
 
 [keybindings.environments]
 view_deployments = "Enter"
+open_in_browser = "o"
+focus_deployments = "Tab"
+rollback_deployment = "R"
+stop_environment = "d"
+copy_url = "y"
+view_deployment_log = "e"
 
 [keybindings.terminal]
 toggle_wrap = "w"

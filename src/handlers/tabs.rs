@@ -199,6 +199,152 @@ pub fn open_job_trace_in_editor(app: &mut App, job_id: u64, terminal: &mut AppTe
         app.show_error(format!("Failed to open job trace in editor: {error}"));
     }
 }
+
+/// Lists `environment`'s deployments into the detail pane.
+fn spawn_fetch_deployments(app: &App, tx: &UnboundedSender<Event>, environment: String) {
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    let _ = tx.send(Event::CommandStarted(format!(
+        "Fetching deployments for {environment}"
+    )));
+    let scope = app.scope.clone();
+    let tx = app.scoped_sender(tx.clone());
+    tokio::spawn(async move {
+        match crate::domain::deployments::list_deployments(&client, &scope, Some(&environment))
+            .await
+        {
+            Ok(deployments) => {
+                let _ = tx.send(Event::DeploymentsFetched {
+                    environment,
+                    deployments,
+                });
+            }
+            Err(e) => {
+                let _ = tx.send(Event::CommandCompleted(
+                    crate::app::Tab::Environments,
+                    Err(format!("Failed to fetch deployments: {e}")),
+                ));
+            }
+        }
+    });
+}
+
+/// Navigation keys while the deployments pane has focus. Returns whether
+/// the key was taken.
+fn handle_focused_deployments_key(app: &mut App, key_event: &KeyEvent) -> bool {
+    let Some(shown) = app.focused_deployments_mut() else {
+        return false;
+    };
+    match key_event.code {
+        KeyCode::Down | KeyCode::Char('j') => shown.table.next_item(),
+        KeyCode::Up | KeyCode::Char('k') => shown.table.previous_item(),
+        KeyCode::Home => shown.table.first_item(),
+        KeyCode::End => shown.table.last_item(),
+        KeyCode::Esc | KeyCode::Backspace => shown.is_focused = false,
+        _ => return false,
+    }
+    app.detail_scroll = 0;
+    true
+}
+
+const NO_DEPLOYMENT_SELECTED: &str =
+    "No deployment selected: list the environment's deployments first";
+
+fn handle_environments_key(
+    app: &mut App,
+    key_event: &KeyEvent,
+    tx: &UnboundedSender<Event>,
+) -> bool {
+    if handle_focused_deployments_key(app, key_event) {
+        return true;
+    }
+    let Some(environment) = app.environments.cursor_row().cloned() else {
+        return false;
+    };
+    let keys = &app.config.keybindings.environments;
+    if keybinding_matches(&keys.open_in_browser, key_event) {
+        let project_path = app.scope.as_str().to_string();
+        let client = app.gitlab_client.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let Some(client) = client else {
+                return;
+            };
+            let result = client
+                .open_environment_in_browser(&project_path, &environment.name)
+                .await;
+            let _ = tx.send(Event::CommandCompleted(
+                crate::app::Tab::Environments,
+                result.map_err(|e| e.to_string()),
+            ));
+        });
+    } else if keybinding_matches(&keys.view_deployments, key_event) {
+        app.detail_visible = true;
+        spawn_fetch_deployments(app, tx, environment.name);
+    } else if app.is_deployments_focus_key(key_event) {
+        if let Some(shown) = app.environment_deployments.as_mut() {
+            shown.is_focused = !shown.is_focused;
+        }
+    } else if keybinding_matches(&keys.stop_environment, key_event) {
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::StopEnvironment(Box::new(environment)),
+            app,
+        ));
+    } else if keybinding_matches(&keys.rollback_deployment, key_event) {
+        match app.selected_deployment().cloned() {
+            Some(deployment) if !app.is_github() && deployment.job_id().is_none() => {
+                let iid = deployment.iid;
+                app.show_error(format!("Deployment #{iid} has no deploy job to re-run"));
+            }
+            Some(deployment) => {
+                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                    crate::app::ConfirmAction::RollbackDeployment {
+                        environment: environment.name,
+                        deployment: Box::new(deployment),
+                    },
+                    app,
+                ));
+            }
+            None => app.show_error(NO_DEPLOYMENT_SELECTED.to_string()),
+        }
+    } else if keybinding_matches(&keys.copy_url, key_event) {
+        if let Err(error) = app.copy_selected_environment_url() {
+            app.show_error(format!("Failed to copy environment URL: {error}"));
+        }
+    } else if keybinding_matches(&keys.view_deployment_log, key_event) {
+        spawn_deployment_log_fetch(app, tx);
+    } else {
+        return false;
+    }
+    true
+}
+
+/// Fetches the log of the selected deployment's job for the editor.
+fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
+    let Some(deployment) = app.selected_deployment() else {
+        app.show_error(NO_DEPLOYMENT_SELECTED.to_string());
+        return;
+    };
+    let deployment_id = deployment.id;
+    let Some(job_id) = deployment.job_id() else {
+        let iid = deployment.iid;
+        app.show_error(format!("Deployment #{iid} has no job log"));
+        return;
+    };
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    let project = app.scope.as_str().to_string();
+    let tx = app.scoped_sender(tx.clone());
+    tokio::spawn(async move {
+        let result = crate::domain::pipelines::get_job_trace(&client, &project, job_id).await;
+        let _ = tx.send(Event::DeploymentLogFetched {
+            deployment_id,
+            result: result.map_err(|e| e.to_string()),
+        });
+    });
+}
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -2452,69 +2598,7 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Environments => {
-            let mut matched = false;
-            if let Some(env_name) = app.environments.cursor_row().map(|env| env.name.clone()) {
-                if keybinding_matches(
-                    &app.config.keybindings.environments.open_in_browser,
-                    key_event,
-                ) {
-                    matched = true;
-                    let project_path = app.scope.as_str().to_string();
-                    let client = app.gitlab_client.clone();
-                    let tx2 = tx.clone();
-                    tokio::spawn(async move {
-                        let Some(client) = client else {
-                            return;
-                        };
-                        let result = client
-                            .open_environment_in_browser(&project_path, &env_name)
-                            .await;
-                        let _ = tx2.send(Event::CommandCompleted(
-                            crate::app::Tab::Environments,
-                            result.map_err(|e| e.to_string()),
-                        ));
-                    });
-                } else if keybinding_matches(
-                    &app.config.keybindings.environments.view_deployments,
-                    key_event,
-                ) {
-                    matched = true;
-                    app.detail_visible = true;
-                    let _ = tx.send(Event::CommandStarted(format!(
-                        "Fetching deployments for {env_name}"
-                    )));
-                    let client = app.gitlab_client.clone();
-                    let scope = app.scope.clone();
-                    let tx = app.scoped_sender(tx.clone());
-                    tokio::spawn(async move {
-                        if let Some(client) = client {
-                            match crate::domain::deployments::list_deployments(
-                                &client,
-                                &scope,
-                                Some(&env_name),
-                            )
-                            .await
-                            {
-                                Ok(deployments) => {
-                                    let _ = tx.send(Event::DeploymentsFetched {
-                                        environment: env_name,
-                                        deployments,
-                                    });
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        crate::app::Tab::Environments,
-                                        Err(format!("Failed to fetch deployments: {e}")),
-                                    ));
-                                }
-                            }
-                        }
-                    });
-                }
-            }
-            if !matched {
-                handled = false;
-            }
+            handled = handle_environments_key(app, key_event, &tx);
         }
         crate::app::Tab::Terminal => {
             if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, key_event) {
@@ -4384,5 +4468,144 @@ mod tests {
         assert_eq!(app.current_parent_id(), Some(7));
         let listed: Vec<u64> = app.pipelines.items.iter().map(|p| p.id()).collect();
         assert_eq!(listed, vec![8]);
+    }
+
+    fn deployment_json(id: u64, iid: u64, job: Option<u64>) -> serde_json::Value {
+        let mut deployment = serde_json::json!({
+            "id": id, "iid": iid, "ref_name": "main", "tag": false,
+            "sha": format!("{id:0>40}"), "status": "success",
+            "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"
+        });
+        if let Some(job) = job {
+            deployment["deployable"] = serde_json::json!({ "id": job, "name": "deploy" });
+        }
+        deployment
+    }
+
+    /// `production` (highlighted) and `staging`, with production's newest
+    /// deployment #2 and its predecessor #1 listed and focused.
+    fn app_with_focused_deployments(deployments: serde_json::Value) -> App {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([
+                {"id": 1, "name": "production", "state": "available"},
+                {"id": 2, "name": "staging", "state": "available"}
+            ]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+        app.show_deployments(
+            "production".to_string(),
+            serde_json::from_value(deployments).expect("deployment fixture parses"),
+        );
+        app
+    }
+
+    fn two_deployments() -> serde_json::Value {
+        serde_json::json!([
+            deployment_json(11, 2, Some(501)),
+            deployment_json(10, 1, Some(500))
+        ])
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        let modifiers = match code {
+            KeyCode::Char(c) if c.is_ascii_uppercase() => KeyModifiers::SHIFT,
+            _ => KeyModifiers::NONE,
+        };
+        KeyEvent::new(code, modifiers)
+    }
+
+    fn highlighted_environment(app: &App) -> Option<&str> {
+        app.environments.cursor_row().map(|env| env.name.as_str())
+    }
+
+    #[tokio::test]
+    async fn j_moves_through_focused_deployments_and_keeps_the_environment() {
+        let mut app = app_with_focused_deployments(two_deployments());
+
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(10));
+        assert_eq!(highlighted_environment(&app), Some("production"));
+    }
+
+    #[tokio::test]
+    async fn esc_hands_navigation_back_to_the_environment_list() {
+        let mut app = app_with_focused_deployments(two_deployments());
+
+        dispatch(&mut app, &key(KeyCode::Esc)).await;
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+
+        assert_eq!(highlighted_environment(&app), Some("staging"));
+    }
+
+    #[tokio::test]
+    async fn focus_key_toggles_between_the_list_and_the_deployments() {
+        let mut app = app_with_focused_deployments(two_deployments());
+        let tab = key(KeyCode::Tab);
+        assert!(app.is_deployments_focus_key(&tab));
+
+        dispatch(&mut app, &tab).await;
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        assert_eq!(highlighted_environment(&app), Some("staging"));
+    }
+
+    #[tokio::test]
+    async fn rollback_key_confirms_a_rollback_to_the_selected_deployment() {
+        let mut app = app_with_focused_deployments(two_deployments());
+
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('R'))).await;
+
+        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let crate::app::ConfirmAction::RollbackDeployment {
+            environment,
+            deployment,
+        } = &dialog.action
+        else {
+            panic!("expected a rollback confirmation, got {:?}", dialog.action);
+        };
+        assert_eq!((environment.as_str(), deployment.id), ("production", 10));
+        assert!(dialog.is_on_cancel());
+    }
+
+    #[tokio::test]
+    async fn rollback_key_without_listed_deployments_raises_an_error() {
+        let mut app = app_with_focused_deployments(serde_json::json!([]));
+
+        dispatch(&mut app, &key(KeyCode::Char('R'))).await;
+
+        assert!(app.submit_dialog.is_none());
+        assert_eq!(app.error_message.as_deref(), Some(NO_DEPLOYMENT_SELECTED));
+    }
+
+    #[tokio::test]
+    async fn gitlab_rollback_of_a_deployment_without_a_job_is_refused() {
+        let mut app =
+            app_with_focused_deployments(serde_json::json!([deployment_json(10, 1, None)]));
+
+        dispatch(&mut app, &key(KeyCode::Char('R'))).await;
+
+        assert!(app.submit_dialog.is_none());
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("Deployment #1 has no deploy job to re-run")
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_key_confirms_before_stopping_the_highlighted_environment() {
+        let mut app = app_with_focused_deployments(two_deployments());
+
+        dispatch(&mut app, &key(KeyCode::Char('d'))).await;
+
+        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        assert!(matches!(
+            &dialog.action,
+            crate::app::ConfirmAction::StopEnvironment(env) if env.id == 1
+        ));
+        assert!(dialog.is_on_cancel());
     }
 }

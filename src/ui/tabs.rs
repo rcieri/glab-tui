@@ -2828,68 +2828,216 @@ pub(crate) fn render_tab_environments(
                 query: &app.search_query,
             },
         );
-        let shown_deployments = app
+        let has_deployments = app
             .environment_deployments
-            .as_mut()
-            .map(|shown| &mut shown.table)
-            .filter(|table| !table.items.is_empty());
-        if let Some(deployments) = shown_deployments {
-            let deploy_rows: Vec<Row> = deployments
-                .items
-                .iter()
-                .map(|d| {
-                    let status_color = match d.status.as_str() {
-                        "success" => theme.green,
-                        "failed" => theme.red,
-                        "running" => theme.blue,
-                        "canceled" => theme.text_muted,
-                        _ => theme.text_muted,
-                    };
-                    let cells = vec![
-                        Cell::from(Span::styled(
-                            d.status.as_str(),
-                            Style::default()
-                                .fg(status_color)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::raw(crate::utils::format::truncate(&d.ref_name, 20))),
-                        Cell::from(Span::raw(crate::utils::format::truncate(&d.sha, 10))),
-                        Cell::from(Span::raw(crate::utils::format::time_ago(&d.created_at))),
-                    ];
-                    Row::new(cells)
-                })
-                .collect();
-            let deploy_widths = [
-                Constraint::Length(14),
-                Constraint::Fill(1),
-                Constraint::Length(14),
-                Constraint::Length(20),
-            ];
-            let deploy_table = Table::new(deploy_rows, deploy_widths)
-                .header(
-                    Row::new(
-                        ["Status", "Ref", "SHA", "Date"]
-                            .iter()
-                            .map(|h| Cell::from(*h).style(header_style)),
-                    )
-                    .style(Style::default().add_modifier(Modifier::BOLD)),
-                )
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(format!(" {} Deployments ", icons.label_deployment))
-                        .border_style(Style::default().fg(theme.border)),
-                )
-                .row_highlight_style(highlight_style);
-            f.render_stateful_widget(deploy_table, detail_rect, &mut deployments.state);
+            .as_ref()
+            .is_some_and(|shown| !shown.table.items.is_empty());
+        if has_deployments {
+            render_environment_deployments(
+                f,
+                app,
+                detail_rect,
+                highlight_style,
+                header_style,
+                &theme,
+                &icons,
+            );
         } else {
+            let keys = &app.config.keybindings.environments;
             let doc = app
                 .environments
                 .cursor_row()
-                .map(crate::entity_editor::build_environment_document);
+                .map(|env| crate::entity_editor::build_environment_document(env, keys));
             render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
         }
     }
+}
+
+/// Rows the deployments table takes in the detail pane: all of them when
+/// they fit in half the pane, so the selected deployment's details always
+/// keep the other half.
+fn deployments_table_height(deployment_count: usize, pane_height: u16) -> u16 {
+    const BORDERS_AND_HEADER: u16 = 3;
+    let wanted = u16::try_from(deployment_count)
+        .unwrap_or(u16::MAX)
+        .saturating_add(BORDERS_AND_HEADER);
+    wanted.min(pane_height / 2).max(BORDERS_AND_HEADER + 1)
+}
+
+/// A column of the deployments table in the Environments detail pane.
+#[derive(Clone, Copy)]
+enum DeploymentColumn {
+    Status,
+    Id,
+    Sha,
+    Ref,
+    Deployer,
+    Created,
+}
+
+impl DeploymentColumn {
+    /// Narrower panes drop the ID and deployer, which the details below
+    /// the table show anyway, so the ref keeps room to be read.
+    const WIDE: &'static [Self] = &[
+        Self::Status,
+        Self::Id,
+        Self::Sha,
+        Self::Ref,
+        Self::Deployer,
+        Self::Created,
+    ];
+    const NARROW: &'static [Self] = &[Self::Status, Self::Sha, Self::Created, Self::Ref];
+    const WIDE_PANE_MIN_WIDTH: u16 = 80;
+
+    fn fitting(pane_width: u16) -> &'static [Self] {
+        if pane_width >= Self::WIDE_PANE_MIN_WIDTH {
+            Self::WIDE
+        } else {
+            Self::NARROW
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Status => "Status",
+            Self::Id => "ID",
+            Self::Sha => "SHA",
+            Self::Ref => "Ref",
+            Self::Deployer => "Deployer",
+            Self::Created => "Created",
+        }
+    }
+
+    fn width(self) -> Constraint {
+        match self {
+            Self::Status => Constraint::Length(12),
+            Self::Id => Constraint::Length(5),
+            Self::Sha => Constraint::Length(8),
+            Self::Ref => Constraint::Fill(1),
+            Self::Deployer => Constraint::Length(16),
+            Self::Created => Constraint::Length(13),
+        }
+    }
+
+    fn cell(
+        self,
+        deployment: &crate::domain::deployments::Deployment,
+        is_selected: bool,
+        theme: &crate::config::Theme,
+        icons: &crate::config::Icons,
+    ) -> Cell<'static> {
+        match self {
+            Self::Status => {
+                let (fg, bg, is_bold, text) = super::helpers::badge_style_for(
+                    "Deploy Status",
+                    &deployment.status,
+                    is_selected,
+                    theme.bg,
+                    theme,
+                    icons,
+                );
+                let mut style = Style::default().fg(fg);
+                if let Some(bg) = bg {
+                    style = style.bg(bg);
+                }
+                if is_bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                let text =
+                    text.unwrap_or_else(|| sanitize_untrusted(&deployment.status).into_owned());
+                Cell::from(Span::styled(text, style))
+            }
+            Self::Id => Cell::from(format!("#{}", deployment.iid)),
+            Self::Sha => Cell::from(deployment.short_sha().to_string()),
+            Self::Ref => Cell::from(sanitize_untrusted(&deployment.ref_name).into_owned()),
+            Self::Deployer => Cell::from(
+                deployment
+                    .user
+                    .as_ref()
+                    .map(|user| format!("@{}", sanitize_untrusted(&user.username)))
+                    .unwrap_or_default(),
+            ),
+            Self::Created => Cell::from(time_ago(&deployment.created_at)),
+        }
+    }
+}
+
+/// The shown deployments as a table over the selected deployment's details.
+fn render_environment_deployments(
+    f: &mut Frame,
+    app: &mut App,
+    detail_rect: Rect,
+    highlight_style: Style,
+    header_style: Style,
+    theme: &crate::config::Theme,
+    icons: &crate::config::Icons,
+) {
+    let Some(shown) = app.environment_deployments.as_mut() else {
+        return;
+    };
+    let [table_rect, inspector_rect] = ratatui::layout::Layout::vertical([
+        Constraint::Length(deployments_table_height(
+            shown.table.items.len(),
+            detail_rect.height,
+        )),
+        Constraint::Fill(1),
+    ])
+    .areas(detail_rect);
+
+    let columns = DeploymentColumn::fitting(table_rect.width);
+    let selected = shown.table.state.selected();
+    let rows: Vec<Row> = shown
+        .table
+        .items
+        .iter()
+        .enumerate()
+        .map(|(idx, deployment)| {
+            let is_selected = selected == Some(idx) && shown.is_focused;
+            Row::new(
+                columns
+                    .iter()
+                    .map(|column| column.cell(deployment, is_selected, theme, icons)),
+            )
+        })
+        .collect();
+    let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
+    let (border_color, focus_hint) = if shown.is_focused {
+        (theme.border_focused, "")
+    } else {
+        (theme.border, " (unfocused)")
+    };
+    let title = format!(
+        " {} Deployments of {}{focus_hint} ",
+        icons.label_deployment,
+        sanitize_untrusted(&shown.environment)
+    );
+    let table = Table::new(rows, widths)
+        .header(
+            Row::new(
+                columns
+                    .iter()
+                    .map(|column| Cell::from(column.label()).style(header_style)),
+            )
+            .style(Style::default().add_modifier(Modifier::BOLD)),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        )
+        .row_highlight_style(if shown.is_focused {
+            highlight_style
+        } else {
+            Style::default().add_modifier(Modifier::BOLD)
+        })
+        .highlight_symbol(format!(" {} ", icons.highlight_arrow));
+    f.render_stateful_widget(table, table_rect, &mut shown.table.state);
+
+    let doc = shown
+        .selected()
+        .map(crate::entity_editor::build_deployment_document);
+    render_list_preview(f, app, inspector_rect, doc, theme, &icons.label_deployment);
 }
 
 pub(crate) fn render_tab_terminal(
@@ -3497,13 +3645,14 @@ mod tests {
             .find(|row| row.contains("production"))
             .expect("environment row rendered");
         let cells: Vec<_> = env_row.split_whitespace().collect();
-        let highlight_arrow = crate::config::ICONS.read().unwrap().highlight_arrow.clone();
+        let icons = crate::config::ICONS.read().unwrap();
         assert_eq!(
             cells,
             [
-                highlight_arrow.as_str(),
+                icons.highlight_arrow.as_str(),
                 "production",
-                "available",
+                icons.state_open.as_str(),
+                "AVAILABLE",
                 "N/A",
                 "https://prod.example"
             ],

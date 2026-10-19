@@ -683,6 +683,17 @@ pub trait Backend: Send + Sync {
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>>;
+    /// GitLab runs the environment's stop action. GitHub has no stop, so it
+    /// marks the environment's newest deployment inactive.
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()>;
+    /// Deploys `deployment`'s commit to `environment` again: GitLab re-runs the
+    /// deployment's job, GitHub creates a new deployment of its SHA.
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()>;
 
     // ── Labels / Members / Misc ──
     async fn fetch_labels(

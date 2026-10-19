@@ -2902,7 +2902,8 @@ impl Backend for GlabBackend {
             }
         };
         let encoded = Self::encode_path(project);
-        let mut endpoint = format!("/projects/{encoded}/deployments?per_page={page_size}");
+        let mut endpoint =
+            format!("/projects/{encoded}/deployments?per_page={page_size}&order_by=id&sort=desc");
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={env}"));
         }
@@ -2947,6 +2948,31 @@ impl Backend for GlabBackend {
                 user: d.user,
             })
             .collect())
+    }
+
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!("/projects/{encoded}/environments/{}/stop", environment.id);
+        self.raw_api(&endpoint, "POST", None, "Stopping Environment")
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        _environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()> {
+        let job_id = deployment.job_id().ok_or_else(|| {
+            anyhow::anyhow!("deployment #{} has no deploy job to re-run", deployment.iid)
+        })?;
+        self.run_glab(
+            &["ci", "retry", &job_id.to_string(), "-R", project],
+            "Rolling Back Deployment",
+        )
+        .await
+        .map(|_| ())
     }
 
     // ── Labels / Members / Misc ──

@@ -100,6 +100,11 @@ pub enum Event {
         environment: String,
         deployments: Vec<crate::domain::deployments::Deployment>,
     },
+    /// The log of a deployment's job, fetched to open in the editor.
+    DeploymentLogFetched {
+        deployment_id: u64,
+        result: Result<crate::domain::job_trace::JobTrace, String>,
+    },
     /// Result of fetching MRs/PRs that close an issue. `Ok(vec![])` is
     /// legitimate (the issue has no closing MRs) and is not an error.
     RelatedMrsFetched {

@@ -72,7 +72,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
 - **Branches** — browse branches with default/protected markers; create and delete branches inline
-- **Environments & Deployments** — browse environments and their deployment status, drilling into deployment history with `Enter`
+- **Environments & Deployments** — browse environments and their deployment status, walk an environment's deployment history with `Enter`, inspect each deployment's commit, deployer, job and notes, roll back with `R`, stop an environment with `d` and copy its URL with `y`
 - **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status and unified error toasts
 - **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
 - **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
@@ -773,11 +773,19 @@ On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lis
 
 ### Environments tab
 
+`Enter` lists the highlighted environment's deployments, newest first, above the selected deployment's details, and moves the focus to them: `j`/`k`, `Home`/`End` then select a deployment instead of an environment. `Tab` moves the focus back and forth, `Esc` returns it to the environment list. While deployments are listed `Tab` is taken, so open the Configure View with `,`. Selecting another environment drops the listed deployments.
+
 > Remappable via `[keybindings.environments]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Fetch and view the deployments list for the selected environment | `view_deployments` |
+| `Enter` | List the selected environment's deployments and focus them | `view_deployments` |
+| `Tab` | Move the focus between the environment list and its deployments | `focus_deployments` |
+| `R` | Roll back to the selected deployment (with confirmation). GitLab re-runs the deployment's job. GitHub creates a new deployment of its commit | `rollback_deployment` |
+| `e` | Open the selected deployment's job log in `$EDITOR` (GitLab) | `view_deployment_log` |
+| `d` | Stop the environment (with confirmation). GitLab runs its stop action. GitHub, which has no stop, marks its latest deployment inactive | `stop_environment` |
+| `y` | Copy the environment's external URL | `copy_url` |
+| `o` | Open environment in browser | `open_in_browser` |
 
 ---
 

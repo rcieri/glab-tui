@@ -67,7 +67,6 @@ impl Mark {
     }
 }
 
-/// Marks the todos `todo_ids_to_act_on` names and ends the batch selection.
 fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark) {
     let ids = app.todo_ids_to_act_on();
     if ids.is_empty() {

@@ -187,8 +187,9 @@ impl JobTrace {
 
 /// Words a CI log line reports a failure with: runner verdicts (`ERROR: Job
 /// failed`, `##[error]`), compiler and test diagnostics, panics and stack
-/// traces. Matched as whole words, so `errors: 0` and `allow_failure` are not,
-/// and not after a zero, so a test summary's `0 failed` is not either.
+/// traces. Matched as whole words, so `errors: 0`, `allow_failure` and
+/// `proc-macro-error` are not, and not after a zero, so a test summary's
+/// `0 failed` is not either.
 const FAILURE_WORDS: &[&str] = &[
     "error",
     "fatal",
@@ -202,7 +203,8 @@ const FAILURE_WORDS: &[&str] = &[
 fn is_failure_line(line: &str) -> bool {
     let line = crate::utils::format::sanitize_untrusted(line);
     let mut previous = "";
-    line.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+    line.split(|c: char| !is_word_char(c))
+        .map(|word| word.trim_end_matches('.'))
         .filter(|word| !word.is_empty())
         .any(|word| {
             let is_failure = previous != "0"
@@ -212,6 +214,12 @@ fn is_failure_line(line: &str) -> bool {
             previous = word;
             is_failure
         })
+}
+
+/// Characters a word is made of. `-`, `.` and `/` keep crate names and paths
+/// such as `quick-error` or `src/error.rs` whole.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/')
 }
 
 /// Decodes `bytes` onto `text`, invalid sequences as U+FFFD, and returns the
@@ -378,5 +386,25 @@ compiling more
     fn next_failure_line_is_none_for_a_clean_log() {
         let trace = JobTrace::from_read(b"$ make\nall good\n", false);
         assert_eq!(trace.next_failure_line(None), None);
+    }
+
+    #[test]
+    fn failure_words_inside_names_and_paths_do_not_match() {
+        for line in [
+            "   Compiling proc-macro-error v1.0.4",
+            "   Compiling quick-error v2.0.1",
+            "PASS src/components/Error.test.tsx",
+            "  --> src/error.rs:10:5",
+        ] {
+            assert!(!is_failure_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn failure_word_ending_a_sentence_matches() {
+        assert!(is_failure_line(
+            "error: could not compile `app` due to previous error."
+        ));
+        assert!(is_failure_line("Build failed."));
     }
 }

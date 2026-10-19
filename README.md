@@ -710,11 +710,11 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 | `r` | Resume (un-pause) selected runner | `resume` |
 | `e` | Edit runner description (inline text input) | `edit_description` |
 | `o` | Open runner in browser | `open_in_browser` |
-| `s` | Cycle the Status filter: Online, Paused, Offline, all | `cycle_status` |
+| `s` | Cycle the Status filter: Online, Paused, Offline, all (Online, Offline, all on GitHub, whose runners cannot be paused) | `cycle_status` |
 | `y` | Copy runner URL | `copy_url` |
 | `Y` | Copy runner ID | `copy_id` |
 
-The preview lists each runner's type (instance, group or project), tags, version, last contact and IP address. On GitLab the tags, version and last contact come from one `glab api runners/<id>` call per listed runner. On GitHub the runner's labels are its tags, and type, version and last contact are not available. A runner that is paused shows `PAUSED` whatever its connection state. The `Tags` column (shown by default) can be searched and filtered by tag from the column configurator, where the `Type`, `Version` and `Last Contact` columns can be enabled too.
+The preview lists each runner's type (instance, group or project), tags, version, last contact, IP address and URL. On GitLab the tags, version, last contact and IP address come from one `glab api graphql` query over the project's runners, and the IP address only appears when a runner manager reports one (GitLab 17 and later no longer report the runner's own IP). On GitHub the runner's labels are its tags, and type, version, last contact and IP address are not available. A runner that is paused shows `PAUSED` whatever its connection state. The `Tags` column (shown by default) can be searched and filtered by tag from the column configurator, where the `Type`, `Version` and `Last Contact` columns can be enabled too.
 
 ---
 

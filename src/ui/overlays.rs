@@ -1835,12 +1835,12 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "TODOs",
             key: d(app.config.keybindings.todos.selection_toggle.clone()),
-            action: "Toggle visual select mode",
+            action: "Toggle select mode (paint selection while navigating)",
         },
         Shortcut {
             category: "TODOs",
             key: d(app.config.keybindings.todos.select_all.clone()),
-            action: "Select all visible todos",
+            action: "Select all filtered todos",
         },
         Shortcut {
             category: "TODOs",

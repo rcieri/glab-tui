@@ -760,8 +760,8 @@ Select items with `Space`, or with `v` and the cursor (yazi-style), then press `
 | `r` | Toggle showing read / done items | `toggle_show_read` |
 | `o` | Open item in browser | `open_in_browser` |
 | `Space` | Toggle the item in the selection | `select_todo` |
-| `v` | Toggle visual select mode | `selection_toggle` |
-| `Ctrl+a` | Select every visible item | `select_all` |
+| `v` | Toggle select mode (paint selection while navigating) | `selection_toggle` |
+| `Ctrl+a` | Select every filtered item | `select_all` |
 | `y` | Copy the target's URL | `copy_url` |
 | `Y` | Copy the target's reference (`#123`, or `!456` for a GitLab MR). Targets glab-tui has no view for, such as releases or check suites, have none | `copy_reference` |
 | `p` | Show / hide the preview | `toggle_preview` |

@@ -4488,8 +4488,9 @@ mod tests {
         deployment
     }
 
-    /// `production` (highlighted) and `staging`, with production's newest
-    /// deployment #2 and its predecessor #1 listed and focused.
+    /// `production` (highlighted) and `staging` beside an open detail pane,
+    /// with `deployments` listed for production and focused unless the list
+    /// is empty.
     fn app_with_focused_deployments(deployments: serde_json::Value) -> App {
         let mut app = App::default();
         app.active_tab = crate::app::Tab::Environments;

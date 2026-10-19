@@ -186,13 +186,14 @@ impl JobTrace {
 }
 
 /// Words a CI log line reports a failure with: runner verdicts (`ERROR: Job
-/// failed`, `##[error]`), compiler and test diagnostics, panics and stack
-/// traces. Matched as whole words, so `errors: 0`, `allow_failure` and
-/// `proc-macro-error` are not, and not after a zero, so a test summary's
-/// `0 failed` is not either.
+/// failed`, `##[error]`), compiler and test diagnostics (`--- FAIL:`), panics
+/// and stack traces. Matched as whole words, so `errors: 0`, `allow_failure`
+/// and `proc-macro-error` are not, and not with a zero count next to them, so
+/// `0 failed`, `Failed: 0` and `failed=0` are not either.
 const FAILURE_WORDS: &[&str] = &[
     "error",
     "fatal",
+    "fail",
     "failed",
     "failure",
     "panicked",
@@ -202,18 +203,41 @@ const FAILURE_WORDS: &[&str] = &[
 
 fn is_failure_line(line: &str) -> bool {
     let line = crate::utils::format::sanitize_untrusted(line);
-    let mut previous = "";
-    line.split(|c: char| !is_word_char(c))
-        .map(|word| word.trim_end_matches('.'))
-        .filter(|word| !word.is_empty())
-        .any(|word| {
-            let is_failure = previous != "0"
-                && FAILURE_WORDS
-                    .iter()
-                    .any(|failure| word.eq_ignore_ascii_case(failure));
-            previous = word;
-            is_failure
-        })
+    words(&line).any(|(start, word)| {
+        FAILURE_WORDS
+            .iter()
+            .any(|failure| word.eq_ignore_ascii_case(failure))
+            && !is_zero_count_before(&line[..start])
+            && !is_zero_count_after(&line[start + word.len()..])
+    })
+}
+
+/// Each word of `text` with its byte offset, less a sentence's trailing `.`.
+fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut searched = 0;
+    std::iter::from_fn(move || {
+        let start = searched + text[searched..].find(is_word_char)?;
+        let end = text[start..]
+            .find(|c: char| !is_word_char(c))
+            .map_or(text.len(), |len| start + len);
+        searched = end;
+        Some((start, text[start..end].trim_end_matches('.')))
+    })
+}
+
+/// `0 failed`, but not Ansible's `unreachable=0 failed=1`.
+fn is_zero_count_before(before: &str) -> bool {
+    before.trim_end().rsplit(char::is_whitespace).next() == Some("0")
+}
+
+/// `Failed: 0`, `failed=0` or `# fail 0`, but not cargo's `FAILED. 0 passed`
+/// or `1 failed; 0 ignored`.
+fn is_zero_count_after(after: &str) -> bool {
+    after
+        .trim_start_matches(|c: char| matches!(c, ':' | '=') || c.is_whitespace())
+        .split(|c: char| !is_word_char(c))
+        .next()
+        .is_some_and(|count| count.trim_end_matches('.') == "0")
 }
 
 /// Characters a word is made of. `-`, `.` and `/` keep crate names and paths
@@ -406,5 +430,33 @@ compiling more
             "error: could not compile `app` due to previous error."
         ));
         assert!(is_failure_line("Build failed."));
+    }
+
+    #[test]
+    fn test_failures_and_nonzero_failure_counts_match() {
+        for line in [
+            "--- FAIL: TestParse (0.00s)",
+            "FAIL\texample.com/pkg\t0.012s",
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored",
+            "Failed!  - Failed:     1, Passed:    10, Skipped:     0, Total:    11",
+            "host1 : ok=3 changed=0 unreachable=0 failed=1 skipped=0",
+            "Error: 0.1.2 is not a published version",
+        ] {
+            assert!(is_failure_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn zero_failure_counts_do_not_match() {
+        for line in [
+            "Passed!  - Failed:     0, Passed:    11, Skipped:     0, Total:    11",
+            "Test Count: 11, Passed: 11, Failed: 0, Warnings: 0",
+            "host1 : ok=3 changed=0 unreachable=0 failed=0 skipped=0",
+            "test result: ok. 12 passed; 0 failed; 0 ignored",
+            "# fail 0",
+            "fail-fast: false",
+        ] {
+            assert!(!is_failure_line(line), "{line}");
+        }
     }
 }

@@ -49,7 +49,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/domain/](src/domain/): Domain models and top-level API functions.
     * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
-    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode. `JobTrace::next_failure_line` finds the next line reporting a failure (`FAILURE_WORDS`, whole words, not after a `0`) for the Jobs tab's `jump_to_failure` key.
+    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode. `JobTrace::next_failure_line` finds the next line reporting a failure (`FAILURE_WORDS`, whole words that keep `-`, `.` and `/`, not next to a zero count) for the Jobs tab's `jump_to_failure` key.
     * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.

@@ -16,6 +16,8 @@ const DONE_TODO: &str = "Already handled todo";
 /// `icons.highlight_arrow` of the Nerd Font set, drawn in front of the
 /// selected table row.
 const HIGHLIGHT_ARROW: &str = "\u{f44a}";
+/// `icons.todo_unread` of the Nerd Font set, drawn in the State badge.
+const UNREAD_BADGE: &str = "\u{f0e0} NEW ";
 
 /// Only Issues and Todos stay enabled, so `l` from Issues lands on Todos.
 const CONFIG: &str = r#"disabled_tabs = ["mrs", "pipelines", "jobs", "runners", "releases"]"#;
@@ -135,7 +137,7 @@ fn test_visual_select_and_enter_mark_the_range_read_without_leaving_the_tab() {
 fn test_preview_shows_the_todo_comment_as_markdown_with_badges() {
     let mut session = session_on_todos(&[]);
     session
-        .wait_for_screen_contains(" NEW ", 2000)
+        .wait_for_screen_contains(UNREAD_BADGE, 2000)
         .expect("the State column should show a NEW badge");
     session
         .wait_for_screen_contains(" MR ", 2000)

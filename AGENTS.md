@@ -359,6 +359,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
+| Runner details (tags, version, last contact) | `GET runners/{}`, one call per listed runner, run concurrently after `glab runner list` | `glab runner list` returns neither field and `glab runner` has no view subcommand. A runner whose details fail still lists, with those fields unknown |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
 | MR approval/mergeability state | `glab api graphql` over `mergeRequests(iids: [...])` | `glab mr list` exposes neither axis; one bulk query fills the Approval/Mergeable columns (batched by `api_per_page`) |
 | List group issues | `GET /groups/{}/issues?state=...&per_page=<N>&page=<P>` | `glab issue list -g` spans each project via separate requests; a single group endpoint aggregates across the whole group. Group path is `%2F` URL-encoded. |
@@ -414,7 +415,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
 | Merge a stacked PR (`Backend::merge_pr_stack`) | `PUT /repos/{}/pulls/{}/merge-async` with `merge_method`, then `GET .../merge-async/{uuid}` every 2 s while `pending` | `gh pr merge` calls the GraphQL `mergePullRequest` mutation, which refuses stacked PRs. Merges the PR with every open PR below it, all or nothing (a merge-queue base enqueues them). Single merges of a stacked PR open `ConfirmAction::MergeStack`. Bulk merges look the selection up with `list_pr_stack_summaries` and route stacked PRs here |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
-| List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
+| List runners | `GET /repos/{}/actions/runners?per_page=<N>` (labels become the runner's tags) | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
 | List notifications | `GET notifications[?all=true]` | No `gh notification` command |
 | Mark notification read | `PATCH notifications/threads/{}` | No native command |

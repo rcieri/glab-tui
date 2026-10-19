@@ -52,6 +52,7 @@ fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
         .unwrap_or_default();
     assert!(row.contains("ONLINE") && row.contains("YES"), "{screen}");
     assert!(!row.contains("PAUSED"), "{screen}");
+    assert!(row.contains("self-hosted, gpu"), "{screen}");
     assert!(!screen.contains("not supported"), "{screen}");
     assert!(!screen.contains("Edit Runner Description"), "{screen}");
 
@@ -62,4 +63,57 @@ fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
     let help = session.emulator.get_text();
     assert!(!help.contains("Pause / Resume runner"), "{help}");
     assert!(!help.contains("Edit runner description text"), "{help}");
+}
+
+/// The preview carries each runner's routing metadata from the per-runner
+/// details call, and `s` steps the Status filter through Online, Paused and
+/// Offline before showing every runner again.
+#[test]
+fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
+    let mut session =
+        TestSession::with_config_and_args(false, 40, 180, None, &["--tab", "runners"]);
+
+    session
+        .wait_for_screen_contains("docker, linux", 10_000)
+        .unwrap();
+    session.press_keys(b"\r");
+    session.wait_for_screen_contains("17.4.0", 5_000).unwrap();
+    let screen = session.emulator.get_text();
+    for expected in [
+        "Type",
+        "Project",
+        "Tags",
+        "docker",
+        "linux",
+        "Version",
+        "Last Contact",
+        "10.0.0.7",
+    ] {
+        assert!(screen.contains(expected), "missing {expected}: {screen}");
+    }
+    assert!(
+        screen.contains("https://gitlab.com/test-owner/test-repo/-")
+            && screen.contains("/runners/9876"),
+        "{screen}"
+    );
+
+    session.press_keys(b"\x1b");
+    session.settle(500);
+    let shown = |session: &TestSession| {
+        let screen = session.emulator.get_text();
+        (
+            screen.contains("Shared Runner 1"),
+            screen.contains("Docker Runner 2"),
+        )
+    };
+    let mut steps = Vec::new();
+    for _ in 0..4 {
+        session.press_keys(b"s");
+        session.settle(800);
+        steps.push(shown(&session));
+    }
+    assert_eq!(
+        steps,
+        [(true, false), (false, false), (false, true), (true, true)]
+    );
 }

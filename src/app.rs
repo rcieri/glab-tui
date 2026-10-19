@@ -4065,16 +4065,13 @@ pub(crate) fn milestone_state_display(raw: &str) -> &'static str {
     }
 }
 
-/// Map a runner's raw `status` field to the uppercase display text shown
-/// in the Runners table's Status cell, which its column filter also offers.
-pub(crate) fn runner_status_display(raw: &str) -> &'static str {
-    match raw {
-        "online" => "ONLINE",
-        "paused" => "PAUSED",
-        "offline" => "OFFLINE",
-        _ => "UNKNOWN",
-    }
-}
+/// The Runners Status filters the `cycle_status` key steps through, in order,
+/// before it shows every status again.
+const RUNNER_STATUS_CYCLE: &[crate::domain::runners::RunnerStatus] = &[
+    crate::domain::runners::RunnerStatus::Online,
+    crate::domain::runners::RunnerStatus::Paused,
+    crate::domain::runners::RunnerStatus::Offline,
+];
 
 /// Whether a row whose `col` cell has `values` passes the column filter
 /// `selected`. Text columns match case-insensitive substrings; the rest
@@ -4834,6 +4831,57 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("Branch name unavailable; refresh the Branches tab"))?;
         self.clipboard.set_text(branch)?;
         Ok(())
+    }
+
+    pub fn copy_selected_runner_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .runners
+            .cursor_row()
+            .and_then(|runner| runner.web_url.clone())
+            .ok_or_else(|| anyhow::anyhow!("Runner URL unavailable; refresh the Runners tab"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_runner_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .runners
+            .cursor_row()
+            .map(|runner| runner.id.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No runner selected"))?;
+        self.clipboard.set_text(id)?;
+        Ok(())
+    }
+
+    /// Step the Runners Status column filter to the next entry of
+    /// `RUNNER_STATUS_CYCLE`, then back to every status. Any other Status
+    /// filter, such as one picked in the column configurator, restarts the
+    /// cycle at its first entry.
+    pub fn cycle_runner_status_filter(&mut self) {
+        let column = crate::ui::list_tab::ColumnDef::label(RunnerColumn::Status);
+        let position = self
+            .get_column_filter(Tab::Runners, column)
+            .filter(|selected| selected.len() == 1)
+            .and_then(|selected| {
+                RUNNER_STATUS_CYCLE
+                    .iter()
+                    .position(|status| selected.contains(status.label()))
+            });
+        let next = match position {
+            None => RUNNER_STATUS_CYCLE.first(),
+            Some(index) => RUNNER_STATUS_CYCLE.get(index + 1),
+        };
+        match next {
+            Some(status) => {
+                self.set_column_filter(Tab::Runners, column, [status.label().to_string()].into());
+                self.show_notice(format!("Runners: {} only", status.label()));
+            }
+            None => {
+                self.remove_column_filter(Tab::Runners, column);
+                self.show_notice("Runners: all statuses");
+            }
+        }
+        self.update_filter_selection();
     }
 
     /// Ids and titles of the current bulk selection, sorted by iid. Built from
@@ -7619,14 +7667,6 @@ mod tests {
         assert_eq!(milestone_state_display(""), "");
     }
 
-    #[test]
-    fn runner_status_display_uppercases_known_states() {
-        assert_eq!(runner_status_display("online"), "ONLINE");
-        assert_eq!(runner_status_display("paused"), "PAUSED");
-        assert_eq!(runner_status_display("offline"), "OFFLINE");
-        assert_eq!(runner_status_display("not_a_state"), "UNKNOWN");
-    }
-
     fn runner(
         id: u64,
         description: &str,
@@ -7638,6 +7678,7 @@ mod tests {
             description: Some(description.to_string()),
             status: status.to_string(),
             active,
+            ..Default::default()
         }
     }
 
@@ -7713,6 +7754,118 @@ mod tests {
     }
 
     #[test]
+    fn runner_status_cycle_steps_online_paused_offline_then_all() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..Default::default()
+        };
+        app.runners.set_items(vec![
+            runner(1, "a", "online", true),
+            runner(2, "b", "online", false),
+            runner(3, "c", "offline", true),
+            runner(4, "d", "stale", true),
+        ]);
+
+        let mut views = Vec::new();
+        for _ in 0..4 {
+            app.cycle_runner_status_filter();
+            app.sync_list_views();
+            views.push(runner_ids(app.runners.view_rows()));
+        }
+
+        assert_eq!(views, vec![vec![1], vec![2], vec![3], vec![1, 2, 3, 4]]);
+    }
+
+    #[test]
+    fn runner_status_cycle_restarts_from_a_filter_it_did_not_set() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..Default::default()
+        };
+        app.set_column_filter(
+            Tab::Runners,
+            "Status",
+            ["OFFLINE".to_string(), "STALE".to_string()].into(),
+        );
+
+        app.cycle_runner_status_filter();
+
+        assert_eq!(
+            app.get_column_filter(Tab::Runners, "Status"),
+            Some(&["ONLINE".to_string()].into())
+        );
+    }
+
+    #[test]
+    fn runner_tags_filter_keeps_runners_carrying_any_selected_tag() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..Default::default()
+        };
+        let tagged = |id, tags: &[&str]| crate::domain::runners::Runner {
+            tags: tags.iter().map(ToString::to_string).collect(),
+            ..runner(id, "r", "online", true)
+        };
+        app.runners.set_items(vec![
+            tagged(1, &["docker", "linux"]),
+            tagged(2, &["macos"]),
+            tagged(3, &[]),
+        ]);
+
+        assert_eq!(
+            crate::ui::list_tab::ListNavigation::distinct_filter_values(&app.runners, "Tags"),
+            vec![
+                "docker".to_string(),
+                "linux".to_string(),
+                "macos".to_string()
+            ]
+        );
+        app.set_column_filter(
+            Tab::Runners,
+            "Tags",
+            ["linux".to_string(), "macos".to_string()].into(),
+        );
+        app.sync_list_views();
+
+        assert_eq!(runner_ids(app.runners.view_rows()), vec![1, 2]);
+    }
+
+    #[test]
+    fn runner_copy_keys_copy_the_highlighted_runner_url_and_id() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Runners;
+        app.runners.set_items(vec![crate::domain::runners::Runner {
+            web_url: Some("https://gitlab.com/a/b/-/runners/42".to_string()),
+            ..runner(42, "r", "online", true)
+        }]);
+        app.sync_list_views();
+
+        app.copy_selected_runner_url().unwrap();
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some("https://gitlab.com/a/b/-/runners/42")
+        );
+        app.copy_selected_runner_id().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn runner_url_copy_without_a_url_asks_for_a_refresh() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Runners;
+        app.runners.set_items(vec![runner(42, "r", "online", true)]);
+        app.sync_list_views();
+
+        let error = app.copy_selected_runner_url().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Runner URL unavailable; refresh the Runners tab"
+        );
+        assert_eq!(*copied.borrow(), None);
+    }
+
+    #[test]
     fn runners_group_by_status_orders_by_displayed_status() {
         use crate::ui::list_tab::runners::RunnerColumn;
         use crate::ui::list_tab::{ListTab, ViewInputs};
@@ -7722,7 +7875,7 @@ mod tests {
             runner(2, "b", "online", true),
             runner(3, "c", "offline", true),
             runner(4, "d", "online", true),
-            runner(5, "e", "never_contacted", false),
+            runner(5, "e", "never_contacted", true),
         ];
 
         let mut list_asc = ListTab::<RunnerColumn>::default();
@@ -7743,8 +7896,8 @@ mod tests {
             sort: Some(("Status", false)),
         });
 
-        assert_eq!(runner_ids(list_asc.view_rows()), vec![3, 2, 4, 1, 5]);
-        assert_eq!(runner_ids(list_desc.view_rows()), vec![5, 1, 2, 4, 3]);
+        assert_eq!(runner_ids(list_asc.view_rows()), vec![5, 3, 2, 4, 1]);
+        assert_eq!(runner_ids(list_desc.view_rows()), vec![1, 2, 4, 3, 5]);
     }
 
     #[test]
@@ -7956,7 +8109,7 @@ mod tests {
             serde_json::from_value(serde_json::json!([
                 {"id": 10, "description": "b", "status": "paused", "active": true},
                 {"id": 9, "description": "c", "status": "online", "active": true},
-                {"id": 100, "description": "a", "status": "offline", "active": false},
+                {"id": 100, "description": "a", "status": "offline", "active": true},
             ]))
             .unwrap(),
         );

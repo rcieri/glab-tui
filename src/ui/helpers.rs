@@ -652,17 +652,41 @@ pub(crate) fn badge_style_for(
             _ => (theme.text_normal, None, false, None),
         },
         "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-            "success" | "online" | "ready" => (
+            "success" | "ready" => (
                 theme.green,
                 active_bg(theme.green_bg),
                 true,
                 Some(format!(" {} SUCCESS ", icons.status_success)),
             ),
-            "failed" | "offline" => (
+            "failed" => (
                 theme.red,
                 active_bg(theme.red_bg),
                 true,
                 Some(format!(" {} FAILED ", icons.status_failed)),
+            ),
+            "online" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} ONLINE ", icons.runner_online)),
+            ),
+            "offline" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} OFFLINE ", icons.runner_offline)),
+            ),
+            "stale" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} STALE ", icons.runner_offline)),
+            ),
+            "never contacted" | "never_contacted" | "unknown" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} {} ", icons.status_unknown, val.to_uppercase())),
             ),
             "running" => (
                 theme.blue,
@@ -783,15 +807,14 @@ pub(crate) fn badge_style_for(
             }
         }
         "Milestone" | "Branch" | "Source Branch" | "Target Branch" | "Ref" | "Deploy Ref"
-        | "Stage" => (theme.purple, None, false, None),
+        | "Stage" | "Type" => (theme.purple, None, false, None),
         "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target" | "Project" => {
             (theme.blue, None, false, None)
         }
         "Updated" | "Created" | "Duration" | "Released" | "Deployed" | "Date" | "Due Date"
-        | "Start Date" | "Avg Wait" => (theme.yellow, None, false, None),
-        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" => {
-            (theme.blue, None, false, None)
-        }
+        | "Start Date" | "Avg Wait" | "Last Contact" => (theme.yellow, None, false, None),
+        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" | "Version"
+        | "IP Address" => (theme.blue, None, false, None),
         _ => (theme.text_normal, None, false, None),
     }
 }

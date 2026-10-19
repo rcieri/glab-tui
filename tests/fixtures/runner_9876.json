@@ -1,0 +1,12 @@
+{
+  "id": 9876,
+  "description": "Shared Runner 1",
+  "status": "online",
+  "active": true,
+  "paused": false,
+  "runner_type": "project_type",
+  "ip_address": "10.0.0.7",
+  "tag_list": ["docker", "linux"],
+  "version": "17.4.0",
+  "contacted_at": "2026-01-02T03:04:05.000Z"
+}

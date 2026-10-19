@@ -128,8 +128,7 @@ if [[ "$*" == *"api"* ]]; then
         # GithubWorkflowRuns is: {"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "..."}]}
         echo '{"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "2026-07-06T12:00:00Z"}]}'
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
-        # For Github runners, we wrap runners.json into GithubRunners
-        echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online"}]}'
+        echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online", "labels": [{"id": 1, "name": "self-hosted", "type": "read-only"}, {"id": 2, "name": "gpu", "type": "custom"}]}]}'
     elif [[ "$*" == *"notifications"* ]]; then
         # GitHub notifications:
         echo '[{

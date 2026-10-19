@@ -11,7 +11,7 @@ use crate::domain::notifications::{Notification, NotificationTarget};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
-use crate::domain::runners::Runner;
+use crate::domain::runners::{Runner, RunnerType};
 use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
@@ -2245,19 +2245,64 @@ impl Backend for GlabBackend {
             id: u64,
             description: Option<String>,
             status: String,
-            #[serde(default)]
-            active: bool,
+            active: Option<bool>,
+            paused: Option<bool>,
+            runner_type: Option<RunnerType>,
+            ip_address: Option<String>,
         }
-        let runners: Vec<GiRunner> = serde_json::from_str(&raw)?;
-        Ok(runners
+        let listed: Vec<GiRunner> = serde_json::from_str(&raw)?;
+        let host = tokio::task::spawn_blocking(gitlab_host)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "gitlab.com".to_string());
+        let mut runners: Vec<Runner> = listed
             .into_iter()
             .map(|r| Runner {
                 id: r.id,
                 description: r.description,
                 status: r.status,
-                active: r.active,
+                active: r.paused.map(|paused| !paused).or(r.active).unwrap_or(true),
+                runner_type: r.runner_type,
+                ip_address: r.ip_address.filter(|ip| !ip.is_empty()),
+                web_url: Some(gitlab_runner_url(&host, scope, r.id)),
+                ..Runner::default()
             })
-            .collect())
+            .collect();
+
+        // Tags, version and last contact are only in the per-runner details.
+        // A runner whose details cannot be read (the token may not see an
+        // instance runner's) still lists, with those fields unknown.
+        #[derive(Deserialize)]
+        struct GiRunnerDetails {
+            #[serde(default)]
+            tag_list: Vec<String>,
+            version: Option<String>,
+            contacted_at: Option<String>,
+            ip_address: Option<String>,
+        }
+        let requests = runners
+            .iter()
+            .map(|r| vec!["api".to_string(), format!("runners/{}", r.id)])
+            .collect();
+        let details =
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Runner Details").await;
+        for (index, response) in details {
+            let Some(details) = response
+                .ok()
+                .and_then(|json| serde_json::from_str::<GiRunnerDetails>(&json).ok())
+            else {
+                continue;
+            };
+            let runner = &mut runners[index];
+            runner.tags = details.tag_list;
+            runner.version = details.version.filter(|v| !v.is_empty());
+            runner.contacted_at = details.contacted_at;
+            if runner.ip_address.is_none() {
+                runner.ip_address = details.ip_address.filter(|ip| !ip.is_empty());
+            }
+        }
+        Ok(runners)
     }
 
     async fn pause_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
@@ -3111,11 +3156,7 @@ impl Backend for GlabBackend {
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
         let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
-        let path = match scope {
-            Scope::Repository(p) => p.replace('/', "%2F"),
-            Scope::Group(p) => format!("groups/{}", p.replace('/', "%2F")),
-        };
-        let url = format!("https://{host}/{path}/-/runners/{runner_id}");
+        let url = gitlab_runner_url(&host, scope, runner_id);
         open_in_web_browser(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
@@ -3266,6 +3307,15 @@ fn gitlab_host() -> Option<String> {
 /// the edge, so we avoid double-encoding.
 fn url_encode_branch(name: &str) -> String {
     name.replace('/', "%2F")
+}
+
+/// The runner's settings page on `host`, under the project or group that
+/// `scope` names.
+fn gitlab_runner_url(host: &str, scope: &Scope, runner_id: u64) -> String {
+    match scope {
+        Scope::Repository(project) => format!("https://{host}/{project}/-/runners/{runner_id}"),
+        Scope::Group(group) => format!("https://{host}/groups/{group}/-/runners/{runner_id}"),
+    }
 }
 
 /// Open `url` in the user's default browser via `git web--browse`, which

@@ -1224,6 +1224,12 @@ pub struct KeybindingRunners {
     pub edit_description: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_cycle_runner_status")]
+    pub cycle_status: String,
+    #[serde(default = "def_copy_runner_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_runner_id")]
+    pub copy_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1411,6 +1417,9 @@ keybind_defaults! {
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
+    def_cycle_runner_status = "s",
+    def_copy_runner_url = "y",
+    def_copy_runner_id = "Y",
     def_mark_as_read = "Enter",
     def_open_in_browser_todo = "o",
     def_mark_as_done = "d",
@@ -1575,6 +1584,9 @@ impl Default for KeybindingRunners {
             resume: def_resume_runner(),
             edit_description: def_edit_description(),
             open_in_browser: def_open_in_browser(),
+            cycle_status: def_cycle_runner_status(),
+            copy_url: def_copy_runner_url(),
+            copy_id: def_copy_runner_id(),
         }
     }
 }
@@ -1948,6 +1960,9 @@ selection_toggle = "v"
 pause = "p"
 resume = "r"
 edit_description = "e"
+cycle_status = "s"
+copy_url = "y"
+copy_id = "Y"
 
 [keybindings.todos]
 mark_as_read = "Enter"

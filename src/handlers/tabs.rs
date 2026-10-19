@@ -2190,7 +2190,7 @@ pub async fn handle_active_tab_key(
                 app.details_zoomed = false;
             }
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_read, key_event) => {
-                crate::handlers::todos::open_selected(app, &tx);
+                crate::handlers::todos::activate_todo(app, &tx);
             }
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_done, key_event) => {
                 crate::handlers::todos::mark_selected_done(app, &tx);
@@ -2665,7 +2665,7 @@ pub async fn handle_active_tab_key(
                 app.is_typing_search = true;
             }
             KeyCode::Enter => match app.active_tab {
-                crate::app::Tab::Todos => crate::handlers::todos::open_selected(app, &tx),
+                crate::app::Tab::Todos => crate::handlers::todos::activate_todo(app, &tx),
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
                         let pipe_info = app.filtered_pipelines().get(idx).map(|p| {

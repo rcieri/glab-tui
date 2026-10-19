@@ -6,15 +6,17 @@ use crate::domain::notifications::{self, Notification, NotificationTarget, TodoC
 use crate::event::Event;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Bound to both `keybindings.todos.mark_as_read` and `Enter`. With a batch
-/// selection it marks every selected todo read. Otherwise it opens the
-/// highlighted todo's issue or MR/PR and marks the todo read. A todo with
-/// nothing to open here stays unread.
-pub fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
-    if !app.selected_todos.is_empty() {
-        mark_selection(app, tx, Mark::Read);
-        return;
+pub fn activate_todo(app: &mut App, tx: &UnboundedSender<Event>) {
+    if app.selected_todos.is_empty() {
+        open_selected(app, tx);
+    } else {
+        mark_selected_read(app, tx);
     }
+}
+
+/// Opens the highlighted todo's issue or MR/PR and marks the todo read. A
+/// todo with nothing to open here stays unread.
+fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
     let Some(todo) = app.selected_todo().cloned() else {
         return;
     };
@@ -25,6 +27,10 @@ pub fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
         return;
     }
     spawn_marks(tx, client, vec![todo.id], Mark::Read);
+}
+
+fn mark_selected_read(app: &mut App, tx: &UnboundedSender<Event>) {
+    mark_selection(app, tx, Mark::Read);
 }
 
 /// Marks every selected todo done, or the highlighted one without a

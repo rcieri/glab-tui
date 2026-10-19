@@ -424,10 +424,7 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
         CommandPane::Jobs => {
             let jobs: Vec<&crate::domain::pipelines::Job> = if app.selected_jobs.is_empty() {
                 let job = app
-                    .jobs
-                    .state
-                    .selected()
-                    .and_then(|index| app.filtered_jobs().get(index).copied())
+                    .selected_job()
                     .ok_or_else(|| "no job is selected".to_string())?;
                 vec![job]
             } else {

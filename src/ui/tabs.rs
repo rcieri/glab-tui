@@ -1930,7 +1930,7 @@ pub(crate) fn render_tab_jobs(
                 f.render_widget(
                     Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
                         .alignment(Alignment::Center)
-                        .block(job_trace_block(String::new(), &theme))
+                        .block(job_trace_block("", &theme))
                         .style(Style::default().fg(theme.text_muted)),
                     trace_rect,
                 );
@@ -1976,8 +1976,7 @@ pub(crate) fn render_tab_jobs(
     }
 }
 
-/// The bordered pane a job log is drawn in, `title_suffix` after its name.
-fn job_trace_block(title_suffix: String, theme: &crate::config::Theme) -> Block<'static> {
+fn job_trace_block(title_suffix: &str, theme: &crate::config::Theme) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .title(format!(" Trace{title_suffix} "))
@@ -2033,7 +2032,7 @@ fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::con
         .map(|view| view.visible_lines(theme, wrap_width, scroll, height))
         .unwrap_or_default();
     let mut paragraph = Paragraph::new(visible_lines)
-        .block(job_trace_block(title_suffix, theme))
+        .block(job_trace_block(&title_suffix, theme))
         .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
     if app.job_trace_wrap {
         paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });

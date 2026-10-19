@@ -2269,6 +2269,7 @@ pub(crate) fn render_tab_todos(
             detail_rect,
         );
     } else {
+        let kind = app.kind();
         let mut filtered_todos = App::filtered_todos_list(
             &app.todos.items,
             &app.search_query,
@@ -2278,15 +2279,14 @@ pub(crate) fn render_tab_todos(
                 .copied()
                 .unwrap_or(true),
             app.group_by_column.get(&Tab::Todos).unwrap_or(&None),
+            kind,
         );
         App::apply_column_filters(
             &mut filtered_todos,
             &app.column_filters,
             Tab::Todos,
-            App::todo_filter_values,
+            |n, col| App::todo_filter_values(n, col, kind),
         );
-
-        let kind = app.kind();
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
             let is_checked = app.selected_todos.contains(&n.id);

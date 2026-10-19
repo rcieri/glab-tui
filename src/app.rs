@@ -6543,6 +6543,7 @@ impl App {
         items: &'a [crate::domain::notifications::Notification],
         query: &str,
         enabled_cols: &std::collections::HashSet<String>,
+        kind: BackendKind,
     ) -> Vec<&'a crate::domain::notifications::Notification> {
         if query.trim().is_empty() {
             return items.iter().collect();
@@ -6565,6 +6566,7 @@ impl App {
                     try_match(&item.project_path);
                 }
                 if enabled_cols.contains("Type") {
+                    try_match(item.type_label(kind));
                     try_match(&item.target_type);
                 }
                 if enabled_cols.contains("ID") {
@@ -6594,15 +6596,16 @@ impl App {
         enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
         ascending: bool,
         group_by_column: &Option<String>,
+        kind: BackendKind,
     ) -> Vec<&'a crate::domain::notifications::Notification> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns.get(&Tab::Todos).unwrap_or(&default_set);
-        let mut list = Self::filter_todos_list(items, query, enabled_cols);
+        let mut list = Self::filter_todos_list(items, query, enabled_cols, kind);
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
                 let val_a = match col.as_str() {
                     "State" => a.state.clone(),
-                    "Type" => a.target_type.clone(),
+                    "Type" => a.type_label(kind).to_string(),
                     "Project" => a.project_path.clone(),
                     "ID" => a.target_iid.to_string(),
                     "Title" => a.title.clone(),
@@ -6611,7 +6614,7 @@ impl App {
                 };
                 let val_b = match col.as_str() {
                     "State" => b.state.clone(),
-                    "Type" => b.target_type.clone(),
+                    "Type" => b.type_label(kind).to_string(),
                     "Project" => b.project_path.clone(),
                     "ID" => b.target_iid.to_string(),
                     "Title" => b.title.clone(),
@@ -6628,9 +6631,12 @@ impl App {
         list
     }
 
+    /// The Type column's values are the label it shows, then the raw type that
+    /// filters saved before the label still name.
     pub fn todo_filter_values(
         item: &crate::domain::notifications::Notification,
         col: &str,
+        kind: BackendKind,
     ) -> Vec<String> {
         match col {
             "State" => vec![if item.is_unread() {
@@ -6639,7 +6645,14 @@ impl App {
                 "READ".to_string()
             }],
             "Project" => vec![item.project_path.clone()],
-            "Type" => vec![item.target_type.clone()],
+            "Type" => {
+                let label = item.type_label(kind);
+                if label == item.target_type {
+                    vec![label.to_string()]
+                } else {
+                    vec![label.to_string(), item.target_type.clone()]
+                }
+            }
             "ID" => vec![item.id.to_string()],
             "Title" => vec![item.title.clone()],
             "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
@@ -6648,6 +6661,7 @@ impl App {
     }
 
     pub fn filtered_todos(&self) -> Vec<&crate::domain::notifications::Notification> {
+        let kind = self.kind();
         let mut list = Self::filtered_todos_list(
             &self.todos.items,
             &self.search_query,
@@ -6657,13 +6671,11 @@ impl App {
                 .copied()
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Todos).unwrap_or(&None),
+            kind,
         );
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Todos,
-            Self::todo_filter_values,
-        );
+        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
+            Self::todo_filter_values(item, col, kind)
+        });
         list
     }
 
@@ -7251,8 +7263,9 @@ impl App {
                 }
             }
             Tab::Todos => {
+                let kind = self.kind();
                 for item in &self.todos.items {
-                    for v in Self::todo_filter_values(item, col) {
+                    if let Some(v) = Self::todo_filter_values(item, col, kind).into_iter().next() {
                         values.insert(v);
                     }
                 }
@@ -7417,13 +7430,14 @@ impl App {
                 map
             }
             Tab::Todos => {
+                let kind = self.kind();
                 let items = self.filtered_todos();
                 let mut map: std::collections::BTreeMap<String, Vec<usize>> =
                     std::collections::BTreeMap::new();
                 for (idx, n) in items.iter().enumerate() {
                     let key = match col.as_str() {
                         "State" => n.state.clone(),
-                        "Type" => n.target_type.clone(),
+                        "Type" => n.type_label(kind).to_string(),
                         "Project" => n.project_path.clone(),
                         "ID" => format!("#{}", n.target_iid),
                         "Title" => {
@@ -13144,6 +13158,35 @@ index 123456..789012 100644
 
         app.selected_todos = ["3".to_string()].into_iter().collect();
         assert!(app.unread_todo_ids_to_act_on().is_empty());
+    }
+
+    #[test]
+    fn todo_type_search_filter_and_picker_use_the_label_the_cell_shows() {
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.enabled_columns
+            .insert(Tab::Todos, ["Type".to_string()].into_iter().collect());
+        let listed = |app: &App| -> Vec<String> {
+            app.filtered_todos().iter().map(|t| t.id.clone()).collect()
+        };
+
+        app.search_query = "pr".to_string();
+        assert_eq!(listed(&app), vec!["2".to_string()]);
+        app.search_query.clear();
+
+        app.set_column_filter(Tab::Todos, "Type", ["PR".to_string()].into_iter().collect());
+        assert_eq!(listed(&app), vec!["2".to_string()]);
+        app.set_column_filter(
+            Tab::Todos,
+            "Type",
+            ["MergeRequest".to_string()].into_iter().collect(),
+        );
+        assert_eq!(listed(&app), vec!["2".to_string()]);
+        app.remove_column_filter(Tab::Todos, "Type");
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Todos, "Type"),
+            vec!["Issue".to_string(), "PR".to_string()]
+        );
     }
 
     #[test]

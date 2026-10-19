@@ -281,6 +281,9 @@ fn handle_environments_key(
         });
     } else if keybinding_matches(&keys.view_deployments, key_event) {
         app.detail_visible = true;
+        if let Some(shown) = app.environment_deployments.as_mut() {
+            shown.is_focused = !shown.table.items.is_empty();
+        }
         spawn_fetch_deployments(app, tx, environment.name);
     } else if app.is_deployments_focus_key(key_event) {
         if let Some(shown) = app.environment_deployments.as_mut() {
@@ -4539,6 +4542,18 @@ mod tests {
         dispatch(&mut app, &key(KeyCode::Char('j'))).await;
 
         assert_eq!(highlighted_environment(&app), Some("staging"));
+    }
+
+    #[tokio::test]
+    async fn view_key_refocuses_deployments_already_listed() {
+        let mut app = app_with_focused_deployments(two_deployments());
+
+        dispatch(&mut app, &key(KeyCode::Esc)).await;
+        dispatch(&mut app, &key(KeyCode::Enter)).await;
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(10));
+        assert_eq!(highlighted_environment(&app), Some("production"));
     }
 
     #[tokio::test]

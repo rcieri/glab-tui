@@ -2394,7 +2394,7 @@ pub(crate) fn render_tab_todos(
         }
         if app.is_column_visible(Tab::Todos, "Type") {
             header_cells.push(Cell::from(Line::from("Type").alignment(Alignment::Center)));
-            widths.push(Constraint::Length(9));
+            widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Todos, "ID") {
             header_cells.push(Cell::from("ID"));

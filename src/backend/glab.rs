@@ -3247,11 +3247,16 @@ async fn open_in_web_browser(
         .args(["web--browse", url])
         .output()
         .await;
-    let child_output = match &output {
-        Ok(out) => out.into(),
-        Err(_) => ChildOutput::NOT_STARTED,
+    let (status, child_output) = match &output {
+        Ok(out) if out.status.success() => ("Success".to_string(), ChildOutput::from(out)),
+        Ok(out) => {
+            let child_output = ChildOutput::from(out);
+            let reason = logged.failure_reason(&child_output);
+            (format!("Failed: {reason}"), child_output)
+        }
+        Err(error) => (format!("Failed: {error}"), ChildOutput::NOT_STARTED),
     };
-    logged.finish(tx.as_ref(), "Success".to_string(), child_output);
+    logged.finish(tx.as_ref(), status, child_output);
     Ok(())
 }
 

@@ -1400,8 +1400,6 @@ pub(crate) fn render_inspector_content(
     }
 }
 
-/// One row of the pipeline inspector's failure summary: stage, job and why
-/// it failed, all third-party text.
 fn failed_job_line(
     job: &crate::domain::pipelines::Job,
     theme: &Theme,

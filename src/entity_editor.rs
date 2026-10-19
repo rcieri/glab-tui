@@ -734,11 +734,10 @@ pub fn build_runner_document(
     }
 }
 
-/// `detail_error` is why fetching the body of a GitHub notification failed.
 pub fn build_todo_document(
     todo: &crate::domain::notifications::Notification,
     kind: crate::backend::BackendKind,
-    detail_error: Option<&str>,
+    detail_fetch_error: Option<&str>,
 ) -> crate::app::EntityDocument {
     let mut fields = vec![
         crate::app::Field::text("Title", todo.title.clone()),
@@ -765,7 +764,7 @@ pub fn build_todo_document(
         "Project",
         todo.project_path.clone(),
     ));
-    let content = match (&todo.body, detail_error) {
+    let content = match (&todo.body, detail_fetch_error) {
         (Some(body), _) => crate::app::InspectorContent::Markdown(body.clone()),
         (None, Some(error)) => {
             crate::app::InspectorContent::Markdown(format!("_Could not load details: {error}_"))

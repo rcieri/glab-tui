@@ -211,6 +211,27 @@ fn github_api_path(url: &str) -> Option<String> {
         .map(|start| url[start + 1..].to_string())
 }
 
+/// The `gh issue view` / `gh pr view` arguments that read the issue or PR an
+/// API path names. Comments, releases, discussions and commits have no
+/// native command.
+fn native_detail_args(detail_api_path: &str) -> Option<[&str; 7]> {
+    let path = detail_api_path.strip_prefix("repos/")?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let name = parts.next()?;
+    let command = match parts.next()? {
+        "issues" => "issue",
+        "pulls" => "pr",
+        _ => return None,
+    };
+    let number = parts.next()?;
+    if parts.next().is_some() || number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let repo = &path[..owner.len() + 1 + name.len()];
+    Some([command, "view", number, "-R", repo, "--json", "body,author"])
+}
+
 fn parse_github_notifications(raw: &str) -> Result<Vec<Notification>> {
     #[derive(Deserialize)]
     struct GhNotif {
@@ -288,8 +309,8 @@ fn parse_github_notifications(raw: &str) -> Result<Vec<Notification>> {
 }
 
 /// Reads the comment, issue, PR or release a notification's
-/// `detail_api_path` points at. Comments and issues name their author
-/// `user`, releases `author`.
+/// `detail_api_path` points at. The API names a comment's author `user`,
+/// a release's `author`, and `gh issue view` / `gh pr view` use `author`.
 fn parse_github_notification_detail(raw: &str) -> Result<NotificationDetail> {
     #[derive(Deserialize)]
     struct GhUser {
@@ -3249,9 +3270,13 @@ impl Backend for GhBackend {
     }
 
     async fn get_notification_detail(&self, detail_api_path: &str) -> Result<NotificationDetail> {
-        let raw = self
-            .raw_api(detail_api_path, "GET", None, "Fetching Notification")
-            .await?;
+        let raw = match native_detail_args(detail_api_path) {
+            Some(args) => self.run_gh(&args, "Fetching Notification").await?,
+            None => {
+                self.raw_api(detail_api_path, "GET", None, "Fetching Notification")
+                    .await?
+            }
+        };
         parse_github_notification_detail(&raw)
     }
 
@@ -4035,6 +4060,35 @@ mod tests {
                 body: String::new(),
             }
         );
+    }
+
+    #[test]
+    fn only_an_issue_or_pr_subject_is_read_with_a_native_command() {
+        assert_eq!(
+            native_detail_args("repos/acme/api/issues/9"),
+            Some([
+                "issue",
+                "view",
+                "9",
+                "-R",
+                "acme/api",
+                "--json",
+                "body,author"
+            ])
+        );
+        assert_eq!(
+            native_detail_args("repos/acme/api/pulls/4"),
+            Some(["pr", "view", "4", "-R", "acme/api", "--json", "body,author"])
+        );
+        for raw_only in [
+            "repos/acme/api/issues/comments/99",
+            "repos/acme/api/pulls/comments/7",
+            "repos/acme/api/releases/123",
+            "repos/acme/api/commits/abc123",
+            "repos/acme/api/issues/",
+        ] {
+            assert_eq!(native_detail_args(raw_only), None, "{raw_only}");
+        }
     }
 
     #[test]

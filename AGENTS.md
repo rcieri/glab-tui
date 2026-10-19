@@ -392,6 +392,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
 | List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
 | List labels | `gh label list --json name,color -R <repo> --limit 100` | Single call (label colors feed the Labels column) |
+| Notification body of an issue or PR without comments (Todos preview) | `gh issue view <n> -R <repo> --json body,author` / `gh pr view <n> -R <repo> --json body,author` | N/A (on demand, for the notification resting in the preview) |
 
 #### Mutations — Native Subcommands
 
@@ -424,7 +425,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Mark notification done | `DELETE notifications/threads/{}` | No native command |
 | Mark all notifications read | `PUT notifications` | No native command |
 | Unsubscribe from notification thread | `DELETE notifications/threads/{}/subscription` | No native command |
-| Notification comment / body (Todos preview) | `GET repos/{}/issues/comments/{}` (the notification's `latest_comment_url`), else its subject (`repos/{}/issues/{}`, `repos/{}/pulls/{}`, …) | No native command. On demand only, for the notification resting in the preview |
+| Notification comment / body (Todos preview) | `GET repos/{}/issues/comments/{}` (the notification's `latest_comment_url`), else a subject other than an issue or PR (release, discussion, commit) | A comment and those subjects have no native command. An issue or PR subject goes through `gh issue view` / `gh pr view` instead. On demand only, for the notification resting in the preview |
 | List branches | `GET /repos/{}/branches?per_page=<N>` | No native command |
 | Create branch | `POST /repos/{}/git/refs` | No native command |
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |

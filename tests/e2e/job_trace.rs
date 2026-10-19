@@ -31,8 +31,9 @@ fn trace_calls(session: &TestSession) -> Vec<String> {
         .collect()
 }
 
-/// Launches glab-tui with `log` as the job's log and opens it.
-fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
+/// Launches glab-tui with `log` as the job's log and lists the job, its log
+/// not fetched yet.
+fn list_job(log: &str, extra: &[(&str, &str)]) -> TestSession {
     let sandbox = Sandbox::new(false).unwrap();
     let trace_file = sandbox.temp_dir.path().join("job.log");
     std::fs::write(&trace_file, log).unwrap();
@@ -52,11 +53,28 @@ fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
     session
         .wait_for_screen_contains("rspec", 15000)
         .expect("the pipeline's job is listed");
+    session
+}
+
+/// Launches glab-tui with `log` as the job's log and opens it.
+fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
+    let mut session = list_job(log, extra);
     session.send_input(b"\r");
     session
         .wait_for_screen_contains("build output line 000", 15000)
         .expect("the job log is shown");
     session
+}
+
+/// A log whose one failure, line 80, is more than a log pane away from both
+/// its start and its end.
+fn failing_log() -> String {
+    let mut log: String = (0..80)
+        .map(|line| format!("build output line {line:03}\n"))
+        .collect();
+    log.push_str("ERROR: Job failed: exit code 1\n");
+    log.push_str(&"cleanup line\n".repeat(60));
+    log
 }
 
 fn ranged_read_after(log: &str) -> String {
@@ -123,12 +141,7 @@ fn follow_mode_reads_whole_logs_once_the_server_ignores_ranges() {
 
 #[test]
 fn failure_key_scrolls_the_log_to_its_failure_under_the_job_metadata() {
-    let mut log: String = (0..80)
-        .map(|line| format!("build output line {line:03}\n"))
-        .collect();
-    log.push_str("ERROR: Job failed: exit code 1\n");
-    log.push_str(&"cleanup line\n".repeat(60));
-    let mut session = show_job_log(&log, &[]);
+    let mut session = show_job_log(&failing_log(), &[]);
 
     let screen = session.emulator.get_text();
     for metadata in [
@@ -150,4 +163,20 @@ fn failure_key_scrolls_the_log_to_its_failure_under_the_job_metadata() {
         !screen.contains("build output line 079"),
         "the failure line tops the log pane:\n{screen}"
     );
+}
+
+#[test]
+fn failure_key_fetches_an_unshown_log_and_scrolls_it_to_its_failure() {
+    let mut session = list_job(&failing_log(), &[]);
+
+    session.send_input(b"E");
+    session
+        .wait_for_screen_contains("ERROR: Job failed: exit code 1", 15000)
+        .expect("the fetched log is scrolled to its failure");
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("build output line 079"),
+        "the failure line tops the log pane:\n{screen}"
+    );
+    assert_eq!(trace_calls(&session), [TRACE_ENDPOINT], "one fetch");
 }

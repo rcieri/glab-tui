@@ -140,7 +140,6 @@ pub(crate) async fn run_optimistic_mutation<F, Fut>(
 /// What a pipeline retry reruns.
 #[derive(Clone, Copy)]
 enum PipelineRetry {
-    /// GitLab reruns failed and canceled jobs, GitHub the whole run.
     Pipeline,
     FailedJobs,
 }

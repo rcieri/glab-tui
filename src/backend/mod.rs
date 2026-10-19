@@ -580,6 +580,7 @@ pub trait Backend: Send + Sync {
     }
 
     // ── Pipeline / Job actions ──
+    /// Reruns the pipeline: on GitLab its failed and canceled jobs, on GitHub the whole run.
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     /// Reruns only the jobs of `pipeline_id` that failed; errors when none did.
     async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()>;

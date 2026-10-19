@@ -265,8 +265,8 @@ pub fn count_wrapped_lines(text: &str, width: usize) -> usize {
         let mut current_line_len = 0;
         let mut first = true;
         for word in line.split(' ') {
-            let word_len = word.chars().count();
-            if word_len == 0 {
+            let word_len = Span::raw(word).width();
+            if word.is_empty() {
                 if current_line_len + 1 > width {
                     total_lines += 1;
                     current_line_len = 1;
@@ -377,6 +377,12 @@ mod tests {
         assert_eq!(count_wrapped_lines("a b c", 3), 2);
         assert_eq!(count_wrapped_lines("hello\nworld", 10), 2);
         assert_eq!(count_wrapped_lines("hello\nworld", 10), 2);
+    }
+
+    #[test]
+    fn count_wrapped_lines_measures_wide_characters_in_cells() {
+        assert_eq!(count_wrapped_lines("你好世界", 4), 2);
+        assert_eq!(count_wrapped_lines("ok 🎉🎉", 5), 2);
     }
 
     #[test]

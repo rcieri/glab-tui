@@ -530,7 +530,7 @@ fn job_target(
 ) -> Target {
     let mut values = TemplateValues::default();
     values.insert("JobId", job.id.to_string());
-    values.insert("JobName", job.name.clone());
+    values.insert("JobName", job.api_name.clone());
     if job.stage.is_empty() {
         values.insert_unavailable("Stage", "the job has no stage".to_string());
     } else {
@@ -922,7 +922,8 @@ mod tests {
     }
 
     fn job(json: serde_json::Value) -> crate::domain::pipelines::Job {
-        serde_json::from_value(json).expect("job fixture")
+        let job = serde_json::from_value(json).expect("job fixture");
+        crate::domain::pipelines::process_pipeline_jobs(vec![job]).remove(0)
     }
 
     #[test]
@@ -1000,6 +1001,32 @@ mod tests {
         assert_eq!(
             render("{{.RepoName}} {{.JobId}}", &values).as_deref(),
             Ok("acme/sub/tool 8")
+        );
+    }
+
+    #[test]
+    fn matrix_job_passes_the_name_the_api_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![job(serde_json::json!({
+            "id": 9, "status": "failed", "stage": "test", "name": "rspec: [3.2, pg]"
+        }))];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            values
+                .environment()
+                .find(|(name, _)| name == "GLAB_TUI_JOB_NAME"),
+            Some(("GLAB_TUI_JOB_NAME".to_string(), "rspec: [3.2, pg]"))
+        );
+        assert_eq!(
+            render("{{.JobName}}", &values),
+            Err(
+                "{{.JobName}} contains ' ', which the shell would interpret; \
+                 use \"$GLAB_TUI_JOB_NAME\" in the command instead"
+                    .to_string()
+            )
         );
     }
 }

@@ -2095,6 +2095,7 @@ impl Backend for GlabBackend {
                 status: j.status,
                 stage: j.stage,
                 name: j.name,
+                api_name: String::new(),
                 matrix: None,
                 duration_seconds: j.duration.map(|seconds| seconds.max(0.0) as u64),
                 runner: j.runner.and_then(|runner| runner.description),

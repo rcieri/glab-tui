@@ -76,6 +76,10 @@ pub struct Job {
     pub status: String,
     pub stage: String,
     pub name: String,
+    /// The name the API reported, before `process_pipeline_jobs` splits a
+    /// matrix job's name into `name` and `matrix`.
+    #[serde(default)]
+    pub api_name: String,
     #[serde(skip)]
     pub matrix: Option<String>,
     #[serde(default)]
@@ -231,6 +235,7 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
                     job_item.matrix = Some(matrix_content);
                 }
             }
+            job_item.api_name = name;
             job_item
         })
         .collect();
@@ -491,6 +496,7 @@ mod tests {
             .find(|j| j.matrix.as_deref() == Some("ubuntu, unit"))
             .unwrap();
         assert_eq!(ubuntu.name, "run-tests");
+        assert_eq!(ubuntu.api_name, "run-tests [ubuntu, unit]");
         assert_eq!(ubuntu.id, 203);
 
         let windows = processed
@@ -517,6 +523,7 @@ mod tests {
         assert_eq!(processed.len(), 1);
         assert_eq!(processed[0].name, "test-matrix");
         assert_eq!(processed[0].matrix.as_deref(), Some("ubuntu-latest, 20"));
+        assert_eq!(processed[0].api_name, "test-matrix (ubuntu-latest, 20)");
     }
 
     #[test]

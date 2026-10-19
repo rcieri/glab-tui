@@ -2622,6 +2622,7 @@ impl Backend for GhBackend {
                     // cannot imply semantics that do not exist.
                     stage: String::new(),
                     name: j.name,
+                    api_name: String::new(),
                     matrix: None,
                     duration_seconds: duration,
                     runner: j.runner_name,

@@ -580,8 +580,8 @@ pub fn build_pipeline_document(
             commit.author_name.clone(),
         ));
     }
-    let is_display_title_new = commit.is_none_or(|commit| commit.title != pipeline.display_title);
-    if !pipeline.display_title.is_empty() && is_display_title_new {
+    let differs_from_commit = commit.is_none_or(|commit| commit.title != pipeline.display_title);
+    if !pipeline.display_title.is_empty() && differs_from_commit {
         fields.push(Field::read_only("Title", pipeline.display_title.clone()));
     }
     if !pipeline.project_path.is_empty() {

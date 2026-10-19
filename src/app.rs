@@ -5007,22 +5007,27 @@ impl App {
     }
 
     /// Logs a call a backend finished. It settles the running entry with the
-    /// same text, else the most recent running CLI entry (an action logged
-    /// by `CommandStarted`), and is appended when neither exists.
+    /// same text. Otherwise the call is appended as its own row, and the most
+    /// recent running CLI entry (an action logged by `CommandStarted`) only
+    /// takes its status: nothing ties that action to this particular call, so
+    /// its invocation and output stay on the call's row.
     pub fn log_cli_command(&mut self, entry: TerminalCommand) {
         if entry.status == "Running" {
             self.terminal_commands.push(entry);
             return;
         }
-        let row = self
+        match self
             .terminal_commands
             .find_latest(|cmd| cmd.command == entry.command && cmd.status == "Running")
-            .or_else(|| self.latest_running_cli_command());
-        match row {
+        {
             Some(row) => self
                 .terminal_commands
                 .settle(row, entry.status, Some(entry.execution)),
             None => {
+                if let Some(action) = self.latest_running_cli_command() {
+                    self.terminal_commands
+                        .set_status(action, entry.status.clone());
+                }
                 self.terminal_commands.push(entry);
             }
         }
@@ -11960,7 +11965,7 @@ index 123456..789012 100644
     }
 
     #[test]
-    fn backend_log_settles_the_running_action_with_its_execution() {
+    fn backend_log_stamps_the_running_action_and_keeps_its_call_on_its_own_row() {
         let mut app = App::default();
         app.start_command("Creating branch: x from main".to_string());
         let logged = executed_entry("CREATE BRANCH: glab api -X POST b", "Success", "{}", "");
@@ -11968,10 +11973,13 @@ index 123456..789012 100644
         app.log_cli_command(logged.clone());
 
         let entries: Vec<&TerminalCommand> = app.terminal_commands.iter().collect();
-        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "Creating branch: x from main");
         assert_eq!(entries[0].status, "Success");
-        assert_eq!(entries[0].execution, logged.execution);
+        assert_eq!(entries[0].execution.invocation, None);
+        assert_eq!(entries[0].execution.stdout, "");
+        assert_eq!(entries[1].command, logged.command);
+        assert_eq!(entries[1].execution, logged.execution);
     }
 
     #[test]

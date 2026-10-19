@@ -614,8 +614,10 @@ fn test_terminal_inspects_filters_and_reruns_a_failed_command() {
     session
         .wait_for_screen_contains("┌ Terminal · Errors [", 5000)
         .expect("the title names the status filter");
+    session
+        .wait_for_screen_contains("FAILED", 5000)
+        .expect("the failed MR fetch is listed under Errors");
     let text = session.emulator.get_text();
-    assert!(text.contains("FAILED"), "{text}");
     assert!(
         !text.contains("SUCCESS"),
         "the Errors filter hides successful commands: {text}"

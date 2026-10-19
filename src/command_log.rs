@@ -52,11 +52,34 @@ impl Invocation {
         self
     }
 
+    /// The call as a shell command line. An argument that is not a plain word
+    /// is single-quoted, so a copied line runs as recorded and a title such as
+    /// `fix $(id)` is not expanded by the shell it is pasted into.
     pub fn command_line(&self) -> String {
-        std::iter::once(self.program.binary())
-            .chain(self.args.iter().map(String::as_str))
+        std::iter::once(Cow::Borrowed(self.program.binary()))
+            .chain(self.args.iter().map(|arg| shell_quote(arg)))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+/// Characters besides ASCII letters and digits that no interactive shell
+/// gives a meaning to inside a word.
+const PLAIN_WORD_PUNCTUATION: &str = "-_./:=@%+,";
+
+/// `arg` as one shell word: unchanged when it is a plain word, else
+/// single-quoted with each `'` written as `'\''`. A leading `=` is quoted
+/// because zsh expands `=name` to the path of the command `name`.
+fn shell_quote(arg: &str) -> Cow<'_, str> {
+    let is_plain_word = !arg.is_empty()
+        && !arg.starts_with('=')
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || PLAIN_WORD_PUNCTUATION.contains(c));
+    if is_plain_word {
+        Cow::Borrowed(arg)
+    } else {
+        Cow::Owned(format!("'{}'", arg.replace('\'', r"'\''")))
     }
 }
 
@@ -365,6 +388,29 @@ mod tests {
         );
 
         assert_eq!(logged.command_line(), "glab api -X POST --input - b");
+    }
+
+    #[test]
+    fn command_line_quotes_arguments_that_are_not_plain_words() {
+        let invocation = Invocation::new(
+            Program::Glab,
+            &[
+                "mr",
+                "note",
+                "create",
+                "-m",
+                "fix $(id) it's",
+                "--label=",
+                "",
+                "=ls",
+                "a,b@c:1/d.e%f+g",
+            ],
+        );
+
+        assert_eq!(
+            invocation.command_line(),
+            r"glab mr note create -m 'fix $(id) it'\''s' --label= '' '=ls' a,b@c:1/d.e%f+g"
+        );
     }
 
     #[test]

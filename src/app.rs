@@ -3551,7 +3551,7 @@ impl SubmitDialog {
                 )
             }
             ConfirmAction::StopEnvironment(environment) => {
-                let name = &environment.name;
+                let name = crate::utils::format::sanitize_untrusted(&environment.name);
                 let body = if kind.is_github() {
                     format!(
                         "Mark environment '{name}' inactive? GitHub has no stop action, so its \
@@ -3575,10 +3575,14 @@ impl SubmitDialog {
                 environment,
                 deployment,
             } => {
+                let environment = crate::utils::format::sanitize_untrusted(environment);
                 let sha = deployment.short_sha();
-                let ref_name = &deployment.ref_name;
+                let ref_name = crate::utils::format::sanitize_untrusted(&deployment.ref_name);
                 let how = match &deployment.deployable {
-                    Some(job) if !kind.is_github() => format!("re-runs its job '{}'", job.name),
+                    Some(job) if !kind.is_github() => format!(
+                        "re-runs its job '{}'",
+                        crate::utils::format::sanitize_untrusted(&job.name)
+                    ),
                     _ => "creates a deployment record of that commit, which only deploys if a \
                           workflow runs on the `deployment` event"
                         .to_string(),
@@ -13328,6 +13332,32 @@ index 123456..789012 100644
         app.active_tab = Tab::Issues;
 
         assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn rollback_dialog_strips_escape_sequences_from_third_party_names() {
+        let deployment: crate::domain::deployments::Deployment =
+            serde_json::from_value(serde_json::json!({
+                "id": 10, "iid": 1, "ref_name": "main\u{1b}[2J", "tag": false,
+                "sha": "abc123", "status": "success",
+                "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z",
+                "deployable": { "id": 500, "name": "deploy\u{1b}]8;;https://evil.example\u{7}" }
+            }))
+            .expect("deployment fixture parses");
+
+        let dialog = SubmitDialog::build(
+            ConfirmAction::RollbackDeployment {
+                environment: "prod\u{1b}[31m".to_string(),
+                deployment: Box::new(deployment),
+            },
+            &App::default(),
+        );
+
+        assert_eq!(dialog.title, "Roll Back 'prod' to abc123");
+        assert_eq!(
+            dialog.body,
+            "Re-deploy abc123 (main) from deployment #1 to 'prod'? This re-runs its job 'deploy'."
+        );
     }
 
     #[test]

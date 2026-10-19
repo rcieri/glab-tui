@@ -2006,8 +2006,8 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             if let Some(view) = &app.job_trace {
-                                let top_line = view.top_line();
-                                app.jump_to_trace_failure(Some(top_line));
+                                let after = view.failure_search_start();
+                                app.jump_to_trace_failure(Some(after));
                             } else if spawn_job_trace_fetch(app, &tx, job_id) {
                                 app.pending_job_trace_failure = Some(job_id);
                             }

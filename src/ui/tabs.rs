@@ -2000,7 +2000,7 @@ fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::con
     let total_lines = view.rows(theme, wrap_width);
     let is_truncated = view.trace().is_truncated();
     if let Some(line) = app.job_trace_scroll_to_line.take() {
-        let row = view.row_of_line(theme, wrap_width, line);
+        let row = view.jump_to_line(theme, wrap_width, line);
         app.detail_scroll = u16::try_from(row).unwrap_or(u16::MAX);
     }
 
@@ -3422,6 +3422,30 @@ mod tests {
             buffer_row(&terminal, 11),
             format!("│{:<98}│", "ERROR: Job failed: exit code 1")
         );
+    }
+
+    #[test]
+    fn jump_to_trace_failure_moves_past_failures_on_the_last_page_and_wraps() {
+        let mut log = "fatal: early\n".to_string();
+        log.push_str(&"ok\n".repeat(50));
+        log.push_str("error: late\nok\nERROR: Job failed: exit code 1\n");
+        let trace = crate::domain::job_trace::JobTrace::from_read(log.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+
+        // 54 lines in an 8-row pane: the last page starts at line 46, below
+        // both late failures (lines 51 and 53).
+        let mut scrolls = Vec::new();
+        let mut search_starts = Vec::new();
+        for _ in 0..3 {
+            let after = app.job_trace.as_ref().unwrap().failure_search_start();
+            app.jump_to_trace_failure(Some(after));
+            render_jobs_with_trace_pane(&mut app);
+            scrolls.push(app.detail_scroll);
+            search_starts.push(app.job_trace.as_ref().unwrap().failure_search_start());
+        }
+
+        assert_eq!(scrolls, vec![46, 46, 0]);
+        assert_eq!(search_starts, vec![51, 53, 0]);
     }
 
     fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {

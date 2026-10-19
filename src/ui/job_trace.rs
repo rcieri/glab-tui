@@ -15,6 +15,9 @@ pub struct JobTraceView {
     wrapped: Option<WrappedRows>,
     /// Line at the top of the pane the last `visible_lines` filled.
     top_line: usize,
+    /// Line the last jump went to, while it is on screen. A jump near the end
+    /// of the log is clamped to the last page, so it need not top the pane.
+    jumped_to: Option<usize>,
 }
 
 /// What `JobTraceView::lines` holds.
@@ -70,6 +73,7 @@ impl JobTraceView {
         let is_applied = self.trace.apply(update);
         if is_applied && is_restart {
             self.forget_parsed_lines();
+            self.jumped_to = None;
         }
         is_applied
     }
@@ -87,9 +91,16 @@ impl JobTraceView {
             .map_or(0, |rows| rows.complete_rows + rows.partial_rows)
     }
 
-    /// Line at the top of the pane when it was last drawn.
-    pub fn top_line(&self) -> usize {
-        self.top_line
+    /// Line the next failure is searched after: the one the last jump went
+    /// to while it is on screen, else the one at the top of the pane.
+    pub fn failure_search_start(&self) -> usize {
+        self.jumped_to.unwrap_or(self.top_line)
+    }
+
+    /// Row the pane scrolls to for a jump to `line`.
+    pub fn jump_to_line(&mut self, theme: &Theme, wrap_width: Option<usize>, line: usize) -> usize {
+        self.jumped_to = Some(line);
+        self.row_of_line(theme, wrap_width, line)
     }
 
     /// Row `line` starts at, laid out as `rows` lays the log out.
@@ -116,6 +127,7 @@ impl JobTraceView {
         let Some(width) = wrap_width else {
             let end = bottom.min(self.lines.len());
             self.top_line = scroll.min(end);
+            self.forget_jump_off(self.top_line..end);
             return (self.lines[self.top_line..end].to_vec(), 0);
         };
         self.count_wrapped_rows(width);
@@ -136,8 +148,14 @@ impl JobTraceView {
             rows.line_starts.partition_point(|&start| start < bottom)
         };
         let lines = self.lines[first..end.max(first)].to_vec();
+        let rows_above = scroll.saturating_sub(rows.start_row(first));
         self.top_line = first;
-        (lines, scroll.saturating_sub(rows.start_row(first)))
+        self.forget_jump_off(first..end);
+        (lines, rows_above)
+    }
+
+    fn forget_jump_off(&mut self, visible: std::ops::Range<usize>) {
+        self.jumped_to = self.jumped_to.filter(|line| visible.contains(line));
     }
 
     fn forget_parsed_lines(&mut self) {
@@ -321,15 +339,29 @@ mod tests {
     }
 
     #[test]
-    fn top_line_is_the_line_holding_the_first_visible_row() {
+    fn failure_search_starts_at_the_line_holding_the_first_visible_row() {
         let theme = Theme::default();
         let mut view = JobTraceView::new(trace_of("a long first line\nsecond\nthird"));
 
         view.visible_lines(&theme, Some(6), 2, 2);
-        assert_eq!(view.top_line(), 0);
+        assert_eq!(view.failure_search_start(), 0);
         view.visible_lines(&theme, Some(6), 3, 2);
-        assert_eq!(view.top_line(), 1);
+        assert_eq!(view.failure_search_start(), 1);
         view.visible_lines(&theme, None, 2, 2);
-        assert_eq!(view.top_line(), 2);
+        assert_eq!(view.failure_search_start(), 2);
+    }
+
+    #[test]
+    fn failure_search_starts_at_the_jumped_to_line_until_it_leaves_the_pane() {
+        let theme = Theme::default();
+        let mut view = JobTraceView::new(trace_of("0\n1\n2\n3\n4\n5\n"));
+
+        assert_eq!(view.jump_to_line(&theme, None, 5), 5);
+        view.visible_lines(&theme, None, 3, 3);
+        assert_eq!(view.failure_search_start(), 5);
+        view.visible_lines(&theme, None, 0, 3);
+        assert_eq!(view.failure_search_start(), 0);
+        view.visible_lines(&theme, None, 3, 3);
+        assert_eq!(view.failure_search_start(), 3);
     }
 }

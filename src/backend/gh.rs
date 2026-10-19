@@ -2629,7 +2629,7 @@ impl Backend for GhBackend {
                     web_url: j.url,
                     queued_seconds: None,
                     failure_reason: None,
-                    artifacts: Vec::new(),
+                    artifact_file_types: Vec::new(),
                 }
             })
             .collect();

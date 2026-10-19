@@ -640,10 +640,10 @@ pub fn build_job_document(
     if !job.needs.is_empty() {
         fields.push(crate::app::Field::read_only("Needs", job.needs.join(", ")));
     }
-    if !job.artifacts.is_empty() {
+    if !job.artifact_file_types.is_empty() {
         fields.push(crate::app::Field::read_only(
             "Artifacts",
-            job.artifacts.join(", "),
+            job.artifact_file_types.join(", "),
         ));
     }
     if let Some(url) = &job.web_url {

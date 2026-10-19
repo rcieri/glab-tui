@@ -2102,11 +2102,13 @@ impl Backend for GlabBackend {
                 web_url: j.web_url,
                 queued_seconds: j.queued_duration.map(|seconds| seconds.max(0.0) as u64),
                 failure_reason: j.failure_reason,
-                artifacts: j
+                artifact_file_types: j
                     .artifacts
                     .into_iter()
                     .flatten()
                     .map(|artifact| artifact.file_type)
+                    // GitLab lists every finished job's own log as a `trace` artifact.
+                    .filter(|file_type| file_type != "trace")
                     .collect(),
             })
             .collect();

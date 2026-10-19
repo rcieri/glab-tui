@@ -90,9 +90,8 @@ pub struct Job {
     pub queued_seconds: Option<u64>,
     #[serde(default)]
     pub failure_reason: Option<String>,
-    /// File types of the job's artifacts (`archive`, `junit`, `trace`, …).
     #[serde(default)]
-    pub artifacts: Vec<String>,
+    pub artifact_file_types: Vec<String>,
 }
 
 impl Job {

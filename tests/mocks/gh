@@ -120,8 +120,19 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
-    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
-        cat "$FIXTURES_DIR/deployments.json"
+    elif [[ "$*" == *"/deployments/"*"/statuses"* ]]; then
+        if [[ " $* " == *" -X POST "* ]]; then
+            echo '{"id": 1}'
+        elif [[ "$*" == *"/deployments/100/"* ]]; then
+            # The newest deployment failed, so the older one is still live.
+            echo '[{"state": "failure"}]'
+        else
+            echo '[{"state": "success"}]'
+        fi
+    elif [[ "$*" == *"/environments"* ]]; then
+        cat "$FIXTURES_DIR/gh_environments.json"
+    elif [[ "$*" == *"/deployments"* ]]; then
+        cat "$FIXTURES_DIR/gh_deployments.json"
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         # For Github actions runs, we wrap pipelines.json into GithubWorkflowRuns
         # pipelines.json is: [{"id": 12345, "status": "success", "ref": "main", "updated_at": "..."}]

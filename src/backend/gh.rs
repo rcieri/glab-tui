@@ -953,6 +953,22 @@ fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
     }
 }
 
+/// How many of an environment's newest deployments a stop searches for the
+/// one GitHub still serves.
+const STOP_DEPLOYMENT_LOOKBACK: usize = 30;
+
+/// State of a deployment's newest status (GitHub lists them newest first),
+/// `None` while it has no status yet.
+fn parse_latest_deployment_state(raw: &str) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct GhDeploymentStatus {
+        state: String,
+    }
+    let statuses: Vec<GhDeploymentStatus> =
+        serde_json::from_str(raw).context("parsing GitHub deployment statuses")?;
+    Ok(statuses.into_iter().next().map(|status| status.state))
+}
+
 /// Build the GraphQL query that finds the issues which a PR closes.
 fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
@@ -3431,17 +3447,41 @@ impl Backend for GhBackend {
 
     async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
         let name = &environment.name;
-        let latest = self
-            .list_deployments(&Scope::Repository(project.to_string()), 1, Some(name))
+        let deployments = self
+            .list_deployments(
+                &Scope::Repository(project.to_string()),
+                STOP_DEPLOYMENT_LOOKBACK,
+                Some(name),
+            )
             .await?;
-        let deployment = latest.first().ok_or_else(|| {
-            anyhow::anyhow!("environment {name} has no deployment to mark inactive")
-        })?;
-        let endpoint = format!("/repos/{project}/deployments/{}/statuses", deployment.id);
-        let body = serde_json::json!({ "state": "inactive" }).to_string();
-        self.raw_api(&endpoint, "POST", Some(&body), "Stopping Environment")
-            .await
-            .map(|_| ())
+        // GitHub serves an environment from its newest deployment whose
+        // latest status is `success`: a newer failed, pending or status-less
+        // one (such as a rollback no workflow picked up) is not live.
+        for deployment in &deployments {
+            let statuses = self
+                .raw_api(
+                    &format!(
+                        "/repos/{project}/deployments/{}/statuses?per_page=1",
+                        deployment.id
+                    ),
+                    "GET",
+                    None,
+                    "Fetching Deployment Status",
+                )
+                .await?;
+            if parse_latest_deployment_state(&statuses)?.as_deref() != Some("success") {
+                continue;
+            }
+            let endpoint = format!("/repos/{project}/deployments/{}/statuses", deployment.id);
+            let body = serde_json::json!({ "state": "inactive" }).to_string();
+            return self
+                .raw_api(&endpoint, "POST", Some(&body), "Stopping Environment")
+                .await
+                .map(|_| ());
+        }
+        Err(anyhow::anyhow!(
+            "environment {name} has no active deployment to mark inactive"
+        ))
     }
 
     async fn rollback_deployment(

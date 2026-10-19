@@ -9,6 +9,10 @@
 //! newest deployment has SHA `f00dcafe`, which nothing else on the
 //! Environments tab shows, and the older one, run by job 500, carries the
 //! note `Hotfix rollout for the login outage`.
+//!
+//! On GitHub the mock `gh` serves `tests/fixtures/gh_environments.json` and
+//! `tests/fixtures/gh_deployments.json` (deployment 100, then 99), and the
+//! newest status of deployment 100 is `failure` while 99's is `success`.
 
 use crate::TestSession;
 
@@ -113,4 +117,27 @@ fn stop_stops_the_highlighted_environment_after_confirmation() {
             5000,
         )
         .expect("confirming stops the highlighted environment");
+}
+
+#[test]
+fn github_stop_deactivates_the_live_deployment_not_a_newer_failed_one() {
+    let mut session =
+        TestSession::with_config(true, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+
+    session.press_keys(b"d");
+    confirm_dialog(&mut session, "Stop Environment 'production'");
+    session
+        .wait_for_cli_call(
+            "gh api -X POST --input - /repos/test-owner/test-repo/deployments/99/statuses",
+            5000,
+        )
+        .expect("confirming deactivates the deployment whose latest status is success");
+    let calls = session.get_cli_calls();
+    assert!(
+        !calls.contains("/repos/test-owner/test-repo/deployments/100/statuses\n"),
+        "the newer failed deployment was marked inactive:\n{calls}"
+    );
 }

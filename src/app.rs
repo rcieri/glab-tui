@@ -3555,7 +3555,7 @@ impl SubmitDialog {
                 let body = if kind.is_github() {
                     format!(
                         "Mark environment '{name}' inactive? GitHub has no stop action, so its \
-                         latest deployment is marked inactive."
+                         live deployment, the newest that succeeded, is marked inactive."
                     )
                 } else {
                     format!(

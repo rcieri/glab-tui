@@ -1,0 +1,26 @@
+[
+  {
+    "id": 100,
+    "sha": "f00dcafe00000000000000000000000000000000",
+    "ref": "main",
+    "environment": "production",
+    "description": "",
+    "created_at": "2026-07-06T10:00:00Z",
+    "updated_at": "2026-07-06T10:05:00Z",
+    "creator": {
+      "login": "alice"
+    }
+  },
+  {
+    "id": 99,
+    "sha": "0ldc0de100000000000000000000000000000000",
+    "ref": "release-1.0",
+    "environment": "production",
+    "description": "Hotfix rollout for the login outage",
+    "created_at": "2026-07-01T09:00:00Z",
+    "updated_at": "2026-07-01T09:05:00Z",
+    "creator": {
+      "login": "bob"
+    }
+  }
+]

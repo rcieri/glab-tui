@@ -435,7 +435,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |
 | List environments | `GET /repos/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /repos/{}/deployments?per_page=<N>[&environment=<name>]` | No native command |
-| Stop environment | `GET /repos/{}/deployments?per_page=1&environment=<name>`, then `POST /repos/{}/deployments/{}/statuses` with `state: inactive` | GitHub has no environment stop: deactivating the latest deployment is its equivalent |
+| Stop environment | `GET /repos/{}/deployments?per_page=30&environment=<name>`, then `GET /repos/{}/deployments/{}/statuses?per_page=1` for each, newest first, until one is `success`, then `POST /repos/{}/deployments/{}/statuses` with `state: inactive` on that one | GitHub has no environment stop: deactivating the live deployment (the newest whose latest status is `success`) is its equivalent. The deployment list carries no status, so each one is asked |
 | Roll back deployment | `POST /repos/{}/deployments` with `ref: <sha>`, `environment`, `auto_merge: false`, `required_contexts: []` | No native command. Empty `required_contexts` skips GitHub's commit-status check, which would refuse an already deployed SHA whose statuses are not all green |
 | List members | `GET /repos/{}/assignees?per_page=100` | No native command |
 | Update milestone | `PATCH repos/{}/milestones/{}` | No `gh milestone` command |

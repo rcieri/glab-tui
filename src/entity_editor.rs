@@ -1670,14 +1670,21 @@ mod tests {
             }))
             .unwrap()
         };
-        let has_title =
-            |doc: &crate::app::EntityDocument| doc.fields.iter().any(|f| f.label == "Title");
+        let title = |doc: &crate::app::EntityDocument| {
+            doc.fields
+                .iter()
+                .find(|f| f.label == "Title")
+                .map(|f| f.value.clone())
+        };
 
-        assert!(!has_title(&build_pipeline_document(&run("Fix login"), &[])));
-        assert!(has_title(&build_pipeline_document(
-            &run("Release 2.0 (#40)"),
-            &[]
-        )));
+        assert_eq!(
+            title(&build_pipeline_document(&run("Fix login"), &[])),
+            None
+        );
+        assert_eq!(
+            title(&build_pipeline_document(&run("Release 2.0 (#40)"), &[])),
+            Some("Release 2.0 (#40)".to_string())
+        );
     }
 
     #[test]

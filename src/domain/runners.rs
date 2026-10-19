@@ -23,9 +23,10 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// The state shown in the Status column. A paused runner reports its
-    /// connectivity (`online`, `offline`, ...) in `status` on GitLab 16 and
-    /// later, so `active` decides first: a runner that takes no jobs is paused.
+    /// The state shown in the Status column. GitLab reports a paused runner
+    /// as `paused` unless it is also `stale` or `never_contacted`, and
+    /// whether it takes jobs matters more than either, so `active` decides
+    /// first.
     pub fn status_kind(&self) -> RunnerStatus {
         if !self.active {
             return RunnerStatus::Paused;
@@ -135,9 +136,12 @@ mod tests {
     }
 
     #[test]
-    fn inactive_runner_is_paused_whatever_its_connectivity() {
-        assert_eq!(runner("online", false).status_kind(), RunnerStatus::Paused);
-        assert_eq!(runner("offline", false).status_kind(), RunnerStatus::Paused);
+    fn inactive_runner_is_paused_even_when_stale_or_never_contacted() {
+        assert_eq!(runner("stale", false).status_kind(), RunnerStatus::Paused);
+        assert_eq!(
+            runner("never_contacted", false).status_kind(),
+            RunnerStatus::Paused
+        );
     }
 
     #[test]

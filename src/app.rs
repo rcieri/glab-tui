@@ -6988,12 +6988,18 @@ impl App {
 
     /// The shown deployments, when the navigation keys belong to them.
     pub fn focused_deployments_mut(&mut self) -> Option<&mut EnvironmentDeployments> {
-        if self.active_tab != Tab::Environments {
+        if self.active_tab != Tab::Environments || !self.is_detail_pane_on_screen() {
             return None;
         }
         self.environment_deployments
             .as_mut()
             .filter(|shown| shown.is_focused)
+    }
+
+    /// Whether the last frame drew the detail pane. `detail_rect` covers the
+    /// terminal being too narrow for it, `detail_visible` a `q` pressed since.
+    fn is_detail_pane_on_screen(&self) -> bool {
+        self.detail_visible && self.detail_rect.is_some()
     }
 
     pub fn selected_deployment(&self) -> Option<&crate::domain::deployments::Deployment> {
@@ -7005,6 +7011,7 @@ impl App {
     /// which is also bound to Tab by default.
     pub fn is_deployments_focus_key(&self, key: &crossterm::event::KeyEvent) -> bool {
         self.active_tab == Tab::Environments
+            && self.is_detail_pane_on_screen()
             && self
                 .environment_deployments
                 .as_ref()

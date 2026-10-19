@@ -4490,6 +4490,8 @@ mod tests {
     fn app_with_focused_deployments(deployments: serde_json::Value) -> App {
         let mut app = App::default();
         app.active_tab = crate::app::Tab::Environments;
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
         app.environments.set_items(
             serde_json::from_value(serde_json::json!([
                 {"id": 1, "name": "production", "state": "available"},
@@ -4563,6 +4565,27 @@ mod tests {
         assert!(app.is_deployments_focus_key(&tab));
 
         dispatch(&mut app, &tab).await;
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        assert_eq!(highlighted_environment(&app), Some("staging"));
+    }
+
+    #[tokio::test]
+    async fn hiding_the_detail_pane_hands_navigation_back_to_the_environment_list() {
+        let mut app = app_with_focused_deployments(two_deployments());
+
+        dispatch(&mut app, &key(KeyCode::Char('q'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+
+        assert!(!app.detail_visible);
+        assert_eq!(highlighted_environment(&app), Some("staging"));
+    }
+
+    #[tokio::test]
+    async fn deployments_left_off_a_narrow_screen_take_no_keys() {
+        let mut app = app_with_focused_deployments(two_deployments());
+        app.detail_rect = None;
+
+        assert!(!app.is_deployments_focus_key(&key(KeyCode::Tab)));
         dispatch(&mut app, &key(KeyCode::Char('j'))).await;
         assert_eq!(highlighted_environment(&app), Some("staging"));
     }

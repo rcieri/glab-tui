@@ -1906,9 +1906,13 @@ pub(crate) fn render_tab_jobs(
             });
             let trace_rect = match header {
                 Some(header) => {
-                    let header_height = u16::try_from(header.fields.len() + 2)
-                        .unwrap_or(u16::MAX)
-                        .min(detail_rect.height / 2);
+                    let header_height = u16::try_from(super::inspector::read_only_fields_height(
+                        &header,
+                        detail_rect.width,
+                        &app.label_colors,
+                    ))
+                    .unwrap_or(u16::MAX)
+                    .min(detail_rect.height / 2);
                     let [header_rect, trace_rect] =
                         Layout::vertical([Constraint::Length(header_height), Constraint::Fill(1)])
                             .areas(detail_rect);
@@ -3405,6 +3409,46 @@ mod tests {
         assert_eq!(rows[19], format!("│{:<98}│", "first part"));
         // 30 rows less the 8-row header and the trace pane's two borders.
         assert_eq!(app.job_trace.as_ref().unwrap().viewport_height(), 20);
+    }
+
+    #[test]
+    fn render_tab_jobs_header_keeps_a_wrapped_url_in_the_side_pane() {
+        let trace = crate::domain::job_trace::JobTrace::from_read(b"first part\n", false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.jobs.items[0].runner = Some("gitlab-runner-7".to_string());
+        app.jobs.items[0].web_url = Some("https://gitlab.com/o/r/-/jobs/1".to_string());
+        app.jobs.state.select(Some(0));
+        let mut terminal = Terminal::new(TestBackend::new(45, 40)).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 30),
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        // The 45-column side pane wraps the URL onto a second row, which the
+        // header must leave room for.
+        let rows = buffer_rows(&terminal);
+        let url: Vec<&str> = rows[16]
+            .split(['│', ' '])
+            .filter(|cell| !cell.is_empty())
+            .collect();
+        assert_eq!(
+            (url[1], url[url.len() - 1]),
+            ("URL", "https://gitlab.com/o/r/-/jobs")
+        );
+        assert_eq!(rows[17], format!("│{:<43}│", format!("{:11}/1", "")));
+        assert_eq!(rows[18], format!("└{}┘", "─".repeat(43)));
+        assert_eq!(rows[19], format!("┌ Trace {}┐", "─".repeat(36)));
+        assert_eq!(rows[20], format!("│{:<43}│", "first part"));
     }
 
     #[test]

@@ -121,17 +121,22 @@ pub(crate) fn render_entity_inspector(
 
     // Field-list parameters and "is there a content pane to draw" are the only
     // mode-driven inputs to the shared layout below.
-    let (has_content, selected_idx, editing, cursor_pos, skip_description) = match &mode {
+    let (has_content, field_list) = match &mode {
         InspectorMode::Interactive { menu } => (
             matches!(&doc.content, InspectorContent::Custom(lines) if !lines.is_empty())
                 || menu.fields.iter().any(|f| {
                     (f.label == "Description" || f.label == "Release Notes")
                         && f.kind == FieldType::Text
                 }),
-            Some(menu.selected_idx),
-            menu.editing,
-            menu.cursor_pos,
-            true,
+            FieldList {
+                fields: &doc.fields,
+                selected_idx: Some(menu.selected_idx),
+                editing: menu.editing,
+                cursor_pos: menu.cursor_pos,
+                label_colors,
+                skip_description: true,
+                interactive: true,
+            },
         ),
         InspectorMode::ReadOnly { .. } => (
             match &doc.content {
@@ -143,23 +148,11 @@ pub(crate) fn render_entity_inspector(
                 InspectorContent::PipelineStages(jobs) => !jobs.is_empty(),
                 InspectorContent::Custom(lines) => !lines.is_empty(),
             },
-            None,
-            false,
-            0,
-            false,
+            FieldList::read_only(&doc.fields, label_colors),
         ),
     };
 
     let has_fields = !doc.fields.is_empty();
-    let field_list = FieldList {
-        fields: &doc.fields,
-        selected_idx,
-        editing,
-        cursor_pos,
-        label_colors,
-        skip_description,
-        interactive: is_interactive,
-    };
 
     let max_scroll = if has_content && has_fields {
         // Single column: metadata fields on top, full-width markdown below.
@@ -426,6 +419,36 @@ pub(crate) struct FieldList<'a> {
     pub label_colors: &'a HashMap<String, Color>,
     pub skip_description: bool,
     pub interactive: bool,
+}
+
+impl<'a> FieldList<'a> {
+    fn read_only(fields: &'a [Field], label_colors: &'a HashMap<String, Color>) -> Self {
+        Self {
+            fields,
+            selected_idx: None,
+            editing: false,
+            cursor_pos: 0,
+            label_colors,
+            skip_description: false,
+            interactive: false,
+        }
+    }
+}
+
+/// Height of a `ReadOnly` inspector `width` columns wide that shows only
+/// `doc`'s fields, border included. A `List` leaves out an item that does not
+/// fit whole, so a wrapped value needs all its rows counted.
+pub(crate) fn read_only_fields_height(
+    doc: &EntityDocument,
+    width: u16,
+    label_colors: &HashMap<String, Color>,
+) -> usize {
+    let field_list = FieldList::read_only(&doc.fields, label_colors);
+    let rows: usize = build_field_list_items(&field_list, width.saturating_sub(2))
+        .iter()
+        .map(ListItem::height)
+        .sum();
+    rows + 2
 }
 
 pub(crate) fn build_field_list_items(
@@ -1672,6 +1695,22 @@ mod tests {
         // pane_width 40 will force wrapping of the long title
         let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 40);
         assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn read_only_fields_height_counts_the_rows_of_wrapped_values() {
+        let doc = EntityDocument {
+            title: "Job #1".to_string(),
+            fields: vec![
+                Field::read_only("ID", "#1".to_string()),
+                Field::read_only("URL", "https://gitlab.com/o/r/-/jobs/1".to_string()),
+            ],
+            content: InspectorContent::Empty(""),
+        };
+        let label_colors = HashMap::new();
+
+        assert_eq!(read_only_fields_height(&doc, 100, &label_colors), 4);
+        assert_eq!(read_only_fields_height(&doc, 45, &label_colors), 5);
     }
 
     #[test]

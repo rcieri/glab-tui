@@ -6737,6 +6737,19 @@ impl App {
             .collect()
     }
 
+    /// `todo_ids_to_act_on` without the todos already read, which a read
+    /// mark would leave unchanged.
+    pub fn unread_todo_ids_to_act_on(&self) -> Vec<String> {
+        let mut ids = self.todo_ids_to_act_on();
+        ids.retain(|id| {
+            self.todos
+                .items
+                .iter()
+                .any(|t| &t.id == id && t.is_unread())
+        });
+        ids
+    }
+
     pub fn copy_selected_todo_url(&mut self) -> anyhow::Result<()> {
         let url = self
             .selected_todo()
@@ -13104,6 +13117,16 @@ index 123456..789012 100644
             app.todo_ids_to_act_on(),
             vec!["1".to_string(), "3".to_string()]
         );
+    }
+
+    #[test]
+    fn a_read_batch_skips_the_selected_todos_already_read() {
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.selected_todos = ["3".to_string(), "1".to_string()].into_iter().collect();
+        assert_eq!(app.unread_todo_ids_to_act_on(), vec!["1".to_string()]);
+
+        app.selected_todos = ["3".to_string()].into_iter().collect();
+        assert!(app.unread_todo_ids_to_act_on().is_empty());
     }
 
     #[test]

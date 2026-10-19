@@ -74,8 +74,16 @@ impl Mark {
 }
 
 fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark) {
-    let ids = app.todo_ids_to_act_on();
+    let ids = match mark {
+        Mark::Read => app.unread_todo_ids_to_act_on(),
+        Mark::Done => app.todo_ids_to_act_on(),
+    };
     if ids.is_empty() {
+        if matches!(mark, Mark::Read) && !app.selected_todos.is_empty() {
+            app.clear_selections();
+            let todos = app.kind().term("todo_plural").to_lowercase();
+            app.show_notice(format!("The selected {todos} are already read"));
+        }
         return;
     }
     let Some(client) = backend_client(app) else {

@@ -6772,19 +6772,28 @@ impl App {
         Ok(())
     }
 
-    /// Stores the outcome of a notification's detail fetch.
+    /// Stores the outcome of a notification's detail fetch. A result for a
+    /// path the notification no longer points at is dropped, so the next tick
+    /// fetches the current one.
     pub fn apply_todo_detail(
         &mut self,
         id: &str,
+        detail_api_path: &str,
         result: Result<crate::domain::notifications::NotificationDetail, String>,
     ) {
         self.fetching_todo_details.remove(id);
+        let Some(todo) = self
+            .todos
+            .items
+            .iter_mut()
+            .find(|t| t.id == id && t.detail_api_path.as_deref() == Some(detail_api_path))
+        else {
+            return;
+        };
         match result {
             Ok(detail) => {
                 self.failed_todo_details.remove(id);
-                if let Some(todo) = self.todos.items.iter_mut().find(|t| t.id == id) {
-                    todo.apply_detail(detail);
-                }
+                todo.apply_detail(detail);
             }
             Err(error) => {
                 self.failed_todo_details.insert(id.to_string(), error);
@@ -13180,11 +13189,13 @@ index 123456..789012 100644
     fn a_refetch_keeps_a_fetched_body_until_the_notification_changes() {
         use crate::domain::notifications::NotificationDetail;
         let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.todos.items[0].detail_api_path = Some("repos/acme/api/issues/1".to_string());
         let listed = app.todos.items.clone();
         app.fetching_todo_details.insert("1".to_string());
 
         app.apply_todo_detail(
             "1",
+            "repos/acme/api/issues/1",
             Ok(NotificationDetail {
                 author: "alice".to_string(),
                 body: "Please look".to_string(),
@@ -13200,6 +13211,33 @@ index 123456..789012 100644
         updated[0].updated_at = "2026-07-07T00:00:00Z".to_string();
         app.set_todos(updated);
         assert_eq!(app.todos.items[0].body, None);
+    }
+
+    #[test]
+    fn a_detail_fetched_for_a_path_the_notification_left_is_dropped() {
+        use crate::domain::notifications::NotificationDetail;
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.todos.items[0].detail_api_path = Some("repos/acme/api/issues/comments/2".to_string());
+
+        app.fetching_todo_details.insert("1".to_string());
+        app.apply_todo_detail(
+            "1",
+            "repos/acme/api/issues/comments/1",
+            Ok(NotificationDetail {
+                author: "alice".to_string(),
+                body: "Older comment".to_string(),
+            }),
+        );
+        app.apply_todo_detail(
+            "1",
+            "repos/acme/api/issues/comments/1",
+            Err("HTTP 502".to_string()),
+        );
+
+        assert!(app.fetching_todo_details.is_empty());
+        assert_eq!(app.todos.items[0].body, None);
+        assert_eq!(app.todos.items[0].author, "");
+        assert!(!app.failed_todo_details.contains_key("1"));
     }
 
     #[test]

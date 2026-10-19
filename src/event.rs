@@ -69,9 +69,11 @@ pub enum Event {
         show_read: bool,
     },
     TodoChanged(crate::domain::notifications::TodoChange, Result<(), String>),
-    /// The comment or description behind GitHub notification `id`.
+    /// The comment or description behind GitHub notification `id`, read from
+    /// `detail_api_path`.
     TodoDetailFetched {
         id: String,
+        detail_api_path: String,
         result: Result<crate::domain::notifications::NotificationDetail, String>,
     },
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),

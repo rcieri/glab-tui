@@ -793,6 +793,7 @@ pub fn dispatch_inspected_todo_detail_fetch(
             domain::notifications::get_notification_detail(&client, &detail_api_path).await;
         let _ = tx.send(Event::TodoDetailFetched {
             id,
+            detail_api_path,
             result: result.map_err(|e| format!("{e:#}")),
         });
     });

@@ -1662,8 +1662,12 @@ async fn main() -> Result<()> {
                     // CLI failure: full stderr is in the terminal log.
                     app.error_has_cli_detail = true;
                 }
-                Event::TodoDetailFetched { id, result } => {
-                    app.apply_todo_detail(&id, result);
+                Event::TodoDetailFetched {
+                    id,
+                    detail_api_path,
+                    result,
+                } => {
+                    app.apply_todo_detail(&id, &detail_api_path, result);
                 }
                 Event::RunnersFetched(runners) => {
                     app.complete_loading_tab(app::Tab::Runners, "Success");

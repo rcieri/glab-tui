@@ -623,6 +623,9 @@ fn run_submit_action(
         crate::app::ConfirmAction::MarkAllTodosRead => {
             crate::handlers::todos::mark_all_read(app, &tx);
         }
+        crate::app::ConfirmAction::RerunCommand(invocation) => {
+            crate::handlers::terminal::rerun(app, invocation, tx);
+        }
         crate::app::ConfirmAction::CancelPipeline(pipeline_id) => {
             let Some(client) = app.gitlab_client.clone() else {
                 return;

@@ -1,4 +1,5 @@
 use crate::app::{App, Tab};
+use crate::command_log::StatusFilter;
 use crate::config::THEME;
 use crate::ui::list_tab::TableContext;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
@@ -2938,17 +2939,23 @@ pub(crate) fn render_tab_terminal(
     };
     let scroll = app.terminal_scroll.min(max_scroll);
 
-    let filter_count = if app.search_query.trim().is_empty() {
+    let status_filter = app.terminal_status_filter;
+    let filter_label = if status_filter == StatusFilter::All {
+        String::new()
+    } else {
+        format!(" · {}", status_filter.label())
+    };
+    let filter_count = if app.search_query.trim().is_empty() && status_filter == StatusFilter::All {
         String::new()
     } else {
         format!(" [{}/{}]", num_cmds, app.terminal_commands.len())
     };
     let block_title = if app.terminal_wrap {
-        format!(" Terminal (Wrap){filter_count} [{total_lines} lines] ")
+        format!(" Terminal (Wrap){filter_label}{filter_count} [{total_lines} lines] ")
     } else if scroll > 0 {
-        format!(" Terminal (Scroll: {scroll}/{max_scroll}){filter_count} ")
+        format!(" Terminal (Scroll: {scroll}/{max_scroll}){filter_label}{filter_count} ")
     } else {
-        format!(" Terminal{filter_count} ")
+        format!(" Terminal{filter_label}{filter_count} ")
     };
     let custom_main_block = base_block.clone().title(block_title).title_style(
         Style::default()
@@ -3521,6 +3528,7 @@ mod tests {
                     timestamp: String::new(),
                     command: command.to_string(),
                     status: "Success".to_string(),
+                    ..Default::default()
                 });
         }
         app.terminal_scroll = usize::MAX;

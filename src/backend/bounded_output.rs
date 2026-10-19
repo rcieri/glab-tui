@@ -29,6 +29,14 @@ impl BoundedOutput {
     pub fn succeeded(&self) -> bool {
         self.stdout.is_truncated || self.status.success()
     }
+
+    pub fn child_output(&self) -> super::logged_command::ChildOutput<'_> {
+        super::logged_command::ChildOutput {
+            exit_code: self.status.code(),
+            stdout: &self.stdout.bytes,
+            stderr: &self.stderr,
+        }
+    }
 }
 
 /// Runs `command` like `Command::output`, keeping at most `max_stdout_bytes`

@@ -1,6 +1,7 @@
 mod bounded_output;
 pub mod gh;
 pub mod glab;
+pub(crate) mod logged_command;
 pub mod rate_limit;
 pub mod subprocess;
 

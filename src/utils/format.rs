@@ -110,6 +110,19 @@ pub fn time_ago(date_str: &str) -> String {
     }
 }
 
+/// How long a command ran: `850ms`, `2.4s`, `3m 05s`.
+pub fn format_elapsed(duration: std::time::Duration) -> String {
+    let millis = duration.as_millis();
+    if millis < 1000 {
+        return format!("{millis}ms");
+    }
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        return format!("{:.1}s", duration.as_secs_f64());
+    }
+    format!("{}m {:02}s", seconds / 60, seconds % 60)
+}
+
 pub fn format_ref(r#ref: &str) -> String {
     if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
@@ -714,6 +727,16 @@ fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_elapsed_switches_units_at_a_second_and_a_minute() {
+        use std::time::Duration;
+        assert_eq!(format_elapsed(Duration::from_millis(999)), "999ms");
+        assert_eq!(format_elapsed(Duration::from_millis(1000)), "1.0s");
+        assert_eq!(format_elapsed(Duration::from_millis(2449)), "2.4s");
+        assert_eq!(format_elapsed(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(format_elapsed(Duration::from_secs(185)), "3m 05s");
+    }
 
     #[test]
     fn test_expand_tabs_indentation() {

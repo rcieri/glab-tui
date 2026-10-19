@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Features
+- **Terminal tab command inspector, re-run and status filter**: `Enter` or `P` opens a detail modal for the highlighted entry with the full command line, exit code, start time, duration, error, stderr and stdout (each stream kept up to 16 KiB). `r` re-runs the recorded `glab` / `gh` / `git` call after a confirmation and logs it as a new entry, `s` cycles the log between All, Errors and Success, and `Y` copies the entry's output or error next to `y` for the command line. All four keys are remappable under `[keybindings.terminal]` (`inspect_command`, `rerun_command`, `cycle_status_filter`, `copy_output`) (#660).
 - **Todos / Notifications actions**: New keys on the Todos tab. `d` marks the highlighted item done (`mark_as_done`), `A` marks every item read after a confirmation (`mark_all_as_read`), `U` unsubscribes from the item's issue, MR/PR or thread (`unsubscribe`) and `r` toggles listing read (GitHub) or done (GitLab) items (`toggle_show_read`). The tab now lists unread items only by default, and its title names the active filter (`Unread` / `All`) (#583).
 
 ### Bug Fixes

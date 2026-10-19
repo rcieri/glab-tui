@@ -783,7 +783,9 @@ On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lis
 
 ### Terminal tab
 
-Logs every `glab` / `gh` command the TUI executes, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status. The bottom row of the view is highlighted, and it is the entry the copy key acts on.
+Logs every `glab` / `gh` / `git` command the TUI executes, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status, and `s` narrows it to failed or successful commands. The bottom row of the view is highlighted, and it is the entry the inspect, copy and re-run keys act on.
+
+`Enter` (or `P`) opens the command inspector: the full command line, exit code, start time, duration, the error, and the command's stderr and stdout (each kept up to 16 KiB). `y`, `Y` and `r` work inside it too, on the inspected entry. Re-running asks for confirmation, runs the exact recorded `glab` / `gh` / `git` call again (including the request body of an `api --input -` call) and logs it as a new `Rerun:` entry. It does not refresh any tab. Entries that only describe an action, such as custom commands, record no call and cannot be re-run.
 
 > Remappable via `[keybindings.terminal]` in `config.toml`.
 
@@ -791,9 +793,15 @@ Logs every `glab` / `gh` command the TUI executes, with success/failure status. 
 |---|---|---|
 | `j` / `↓` | Scroll log down | — |
 | `k` / `↑` | Scroll log up | — |
+| `Enter` / `P` | Inspect the highlighted entry (`P` is fixed) | `inspect_command` |
+| `s` | Cycle the status filter: All, Errors, Success | `cycle_status_filter` |
+| `r` | Re-run the highlighted entry's `glab` / `gh` / `git` call after a confirmation | `rerun_command` |
 | `w` | Toggle line wrapping | `toggle_wrap` |
 | `y` | Copy the highlighted entry's command line to the clipboard (the newest entry while wrapping) | `copy_command` |
+| `Y` | Copy the highlighted entry's output (stdout, then stderr), or its error when it printed nothing | `copy_output` |
 | `C` | Clear the log | `clear_log` |
+
+In the inspector, `j`/`k`, `g`/`G`, PageUp/PageDown and `Ctrl+d`/`Ctrl+u` scroll, and `Esc`, `q`, `Enter` or `P` close it.
 
 ---
 

@@ -74,6 +74,7 @@ fn tab_hardwired_keys(tab: Tab) -> &'static [(&'static str, &'static str)] {
             ("W", "open workflow"),
         ],
         Tab::Jobs => &[("S", "start job")],
+        Tab::Terminal => &[("P", "inspect command")],
         _ => &[],
     }
 }

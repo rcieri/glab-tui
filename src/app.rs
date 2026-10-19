@@ -1,5 +1,5 @@
 use crate::backend::BackendKind;
-use crate::command_log::{CommandLog, LogRow, TerminalCommand};
+use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
 use crate::config::{Config, KeybindingConfig, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
@@ -752,6 +752,28 @@ impl Selector {
 }
 
 const COMMENT_EXCERPT_CHARS: usize = 40;
+
+/// The Terminal tab's detail modal over one log entry. It follows `row`, so
+/// it keeps showing the same entry while newer ones are logged, and closes
+/// once that entry leaves the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalInspector {
+    pub row: LogRow,
+    /// First visible line; the render clamps it to the content.
+    pub scroll: usize,
+    /// Text rows visible at the last render, the step of a half-page scroll.
+    pub page_height: usize,
+}
+
+impl TerminalInspector {
+    pub fn new(row: LogRow) -> Self {
+        Self {
+            row,
+            scroll: 0,
+            page_height: 0,
+        }
+    }
+}
 
 /// The review threads overlay opened from the diff view. `threads` is a
 /// snapshot of the MR's notes classified against the loaded diff; it is
@@ -2949,6 +2971,14 @@ impl DatePicker {
 /// Prefix of every terminal-log entry written for a custom keybinding.
 pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 
+/// Prefix of every terminal-log entry written for a re-run from the Terminal
+/// tab. Like custom commands, those entries settle their own row.
+pub const RERUN_LOG_PREFIX: &str = "Rerun: ";
+
+fn settles_own_row(cmd: &TerminalCommand) -> bool {
+    cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX) || cmd.command.starts_with(RERUN_LOG_PREFIX)
+}
+
 #[derive(Debug)]
 pub enum GroupItem {
     Header(String),
@@ -2966,6 +2996,7 @@ pub enum OverlayKind {
     ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
+    TerminalInspector,
 }
 
 /// A PR action that needs the PR's stack, so it waits for an on-demand stack
@@ -3000,6 +3031,7 @@ pub enum ConfirmAction {
     MarkAllTodosRead,
     CancelPipeline(u64), // pipeline id
     CancelJobs { pipeline_id: u64, job_ids: Vec<u64> },
+    RerunCommand(Invocation),
 }
 
 impl ConfirmAction {
@@ -3524,6 +3556,23 @@ impl SubmitDialog {
                     true,
                 )
             }
+            ConfirmAction::RerunCommand(invocation) => {
+                let body_note = if invocation.stdin.is_some() {
+                    " with its recorded request body"
+                } else {
+                    ""
+                };
+                (
+                    "Re-run Command".to_string(),
+                    format!(
+                        "Run again{body_note}: {}",
+                        crate::utils::format::sanitize_untrusted(&invocation.command_line())
+                    ),
+                    "Re-run".to_string(),
+                    vec![],
+                    false,
+                )
+            }
             ConfirmAction::MarkAllTodosRead => {
                 let todos = kind.term("todo_plural");
                 let body = if kind.is_github() {
@@ -3713,6 +3762,8 @@ pub struct App {
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
     pub terminal_commands: CommandLog,
     pub terminal_wrap: bool,
+    pub terminal_status_filter: StatusFilter,
+    pub terminal_inspector: Option<TerminalInspector>,
     pub issues: StatefulTable<crate::domain::issues::Issue>,
     pub mrs: StatefulTable<crate::domain::mr::MergeRequest>,
     pub pipelines: StatefulTable<crate::domain::pipelines::Pipeline>,
@@ -3924,6 +3975,8 @@ impl Default for App {
             gitlab_client: None,
             terminal_commands: CommandLog::default(),
             terminal_wrap: false,
+            terminal_status_filter: StatusFilter::default(),
+            terminal_inspector: None,
             issues: StatefulTable::with_items(vec![]),
             mrs: StatefulTable::with_items(vec![]),
             pipelines: StatefulTable::with_items(vec![]),
@@ -4889,7 +4942,7 @@ impl App {
                     || cmd.command.contains("submit")
                     || cmd.command.contains("bulk"))
                     && cmd.status == "Running"
-                    && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+                    && !settles_own_row(cmd)
             })
             .or_else(|| self.latest_running_cli_command());
         if let Some(row) = row {
@@ -4924,10 +4977,15 @@ impl App {
     /// row for `settle_command`. The row stays valid when older entries are
     /// dropped; it stops resolving once its own entry is dropped or cleared.
     pub fn start_command(&mut self, command: String) -> LogRow {
+        let started_at = chrono::Local::now();
         self.terminal_commands.push(TerminalCommand {
-            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            timestamp: started_at.format("%H:%M:%S").to_string(),
             command,
             status: "Running".to_string(),
+            execution: crate::command_log::Execution {
+                started_at: Some(started_at),
+                ..Default::default()
+            },
         })
     }
 
@@ -4941,32 +4999,55 @@ impl App {
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands are skipped: they settle their own row, and
-    /// an unrelated completion must not stamp a background command finished.
+    /// Custom commands and re-runs are skipped: they settle their own row,
+    /// and an unrelated completion must not stamp them finished.
     pub fn latest_running_cli_command(&self) -> Option<LogRow> {
-        self.terminal_commands.find_latest(|cmd| {
-            cmd.status == "Running" && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+        self.terminal_commands
+            .find_latest(|cmd| cmd.status == "Running" && !settles_own_row(cmd))
+    }
+
+    /// Logs a call a backend finished. It settles the running entry with the
+    /// same text, else the most recent running CLI entry (an action logged
+    /// by `CommandStarted`), and is appended when neither exists.
+    pub fn log_cli_command(&mut self, entry: TerminalCommand) {
+        if entry.status == "Running" {
+            self.terminal_commands.push(entry);
+            return;
+        }
+        let row = self
+            .terminal_commands
+            .find_latest(|cmd| cmd.command == entry.command && cmd.status == "Running")
+            .or_else(|| self.latest_running_cli_command());
+        match row {
+            Some(row) => self
+                .terminal_commands
+                .settle(row, entry.status, Some(entry.execution)),
+            None => {
+                self.terminal_commands.push(entry);
+            }
+        }
+    }
+
+    /// Terminal-log entries the Terminal tab lists: those passing the status
+    /// filter and matching the search bar, oldest first.
+    fn filtered_terminal_rows(&self) -> impl Iterator<Item = (LogRow, &TerminalCommand)> {
+        let query = self.search_query.trim();
+        let status_filter = self.terminal_status_filter;
+        let matcher = &*FUZZY_MATCHER;
+        self.terminal_commands.rows().filter(move |(_, cmd)| {
+            status_filter.admits(cmd)
+                && (query.is_empty()
+                    || matcher.fuzzy_match(&cmd.command, query).is_some()
+                    || matcher.fuzzy_match(&cmd.status, query).is_some())
         })
     }
 
-    /// Terminal-log entries matching the search bar, oldest first.
     pub fn filtered_terminal_commands(&self) -> Vec<&TerminalCommand> {
-        let query = self.search_query.trim();
-        if query.is_empty() {
-            return self.terminal_commands.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        self.terminal_commands
-            .iter()
-            .filter(|cmd| {
-                matcher.fuzzy_match(&cmd.command, query).is_some()
-                    || matcher.fuzzy_match(&cmd.status, query).is_some()
-            })
-            .collect()
+        self.filtered_terminal_rows().map(|(_, cmd)| cmd).collect()
     }
 
-    /// Position, within `filtered_terminal_commands`, of the entry the copy
-    /// key acts on: the bottom row of the unwrapped view, which is the newest
+    /// Position, within `filtered_terminal_commands`, of the highlighted
+    /// entry: the bottom row of the unwrapped view, which is the newest
     /// entry unless the log is scrolled back. Wrapped mode scrolls by screen
     /// line rather than by entry, so there it is always the newest entry.
     pub fn terminal_cursor(&self, filtered_len: usize) -> Option<usize> {
@@ -4978,15 +5059,85 @@ impl App {
         filtered_len.checked_sub(scrolled_back + 1)
     }
 
+    pub fn selected_terminal_row(&self) -> Option<LogRow> {
+        let rows: Vec<LogRow> = self.filtered_terminal_rows().map(|(row, _)| row).collect();
+        self.terminal_cursor(rows.len())
+            .and_then(|index| rows.get(index).copied())
+    }
+
+    /// The entry the Terminal tab's actions apply to: the inspected one
+    /// while the inspector is open, else the highlighted one.
+    fn terminal_action_target(&self) -> anyhow::Result<&TerminalCommand> {
+        let row = match self.terminal_inspector {
+            Some(inspector) => Some(inspector.row),
+            None => self.selected_terminal_row(),
+        };
+        row.and_then(|row| self.terminal_commands.get(row))
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry selected"))
+    }
+
     pub fn copy_terminal_command(&mut self) -> anyhow::Result<()> {
-        let entries = self.filtered_terminal_commands();
-        let line = self
-            .terminal_cursor(entries.len())
-            .and_then(|index| entries.get(index))
-            .map(|cmd| cmd.command_line().to_string())
-            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to copy"))?;
+        let line = self.terminal_action_target()?.command_line().into_owned();
         self.clipboard.set_text(line)?;
         Ok(())
+    }
+
+    pub fn copy_terminal_output(&mut self) -> anyhow::Result<()> {
+        let output = self
+            .terminal_action_target()?
+            .output()
+            .ok_or_else(|| anyhow::anyhow!("the command has no captured output"))?;
+        self.clipboard.set_text(output)?;
+        Ok(())
+    }
+
+    pub fn open_terminal_inspector(&mut self) -> anyhow::Result<()> {
+        let row = self
+            .selected_terminal_row()
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to inspect"))?;
+        self.terminal_inspector = Some(TerminalInspector::new(row));
+        Ok(())
+    }
+
+    /// Asks to run the selected entry's CLI call again.
+    pub fn confirm_terminal_rerun(&mut self) -> anyhow::Result<()> {
+        let invocation = self
+            .terminal_action_target()?
+            .execution
+            .invocation
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("this entry records no glab, gh or git call to re-run")
+            })?;
+        self.submit_dialog = Some(SubmitDialog::build(
+            ConfirmAction::RerunCommand(invocation),
+            self,
+        ));
+        Ok(())
+    }
+
+    /// Logs a re-run as running and returns its row for `finish_rerun`.
+    pub fn start_rerun(&mut self, invocation: &Invocation) -> LogRow {
+        self.start_command(format!("{RERUN_LOG_PREFIX}{}", invocation.command_line()))
+    }
+
+    pub fn finish_rerun(
+        &mut self,
+        row: LogRow,
+        status: String,
+        execution: crate::command_log::Execution,
+    ) {
+        let failure = status.strip_prefix("Failed: ").map(str::to_string);
+        self.terminal_commands.settle(row, status, Some(execution));
+        match failure {
+            Some(reason) => self.raise_error_toast(format!("Re-run failed: {reason}")),
+            None => self.show_notice("Re-run succeeded"),
+        }
+    }
+
+    pub fn cycle_terminal_status_filter(&mut self) {
+        self.terminal_status_filter = self.terminal_status_filter.next();
+        self.terminal_scroll = 0;
     }
 
     pub fn clear_terminal_log(&mut self) {
@@ -5008,6 +5159,7 @@ impl App {
                 timestamp: timestamp.clone(),
                 command: format!("Custom keybinding: {}", problem.binding),
                 status: format!("Failed: {}", problem.problem),
+                ..Default::default()
             });
         }
         if !problems.is_empty() {
@@ -11518,11 +11670,8 @@ index 123456..789012 100644
     #[test]
     fn show_error_sets_toast_and_marks_running_command() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "glab mr list".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("glab mr list", "Running"));
 
         app.show_error("boom".to_string());
 
@@ -11534,16 +11683,10 @@ index 123456..789012 100644
     #[test]
     fn show_error_prefers_cli_command_over_older_running() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "deferred task".to_string(),
-            status: "Running".to_string(),
-        });
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "gh pr list".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("deferred task", "Running"));
+        app.terminal_commands
+            .push(log_entry("gh pr list", "Running"));
 
         app.show_error("boom".to_string());
 
@@ -11553,11 +11696,8 @@ index 123456..789012 100644
     #[test]
     fn show_error_falls_back_to_most_recent_running_when_no_cli() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "deferred task".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("deferred task", "Running"));
 
         app.show_error("boom".to_string());
 
@@ -11567,11 +11707,8 @@ index 123456..789012 100644
     #[test]
     fn show_error_leaves_completed_commands_untouched() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "glab mr list".to_string(),
-            status: "Success".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("glab mr list", "Success"));
 
         app.show_error("boom".to_string());
 
@@ -11590,6 +11727,7 @@ index 123456..789012 100644
             timestamp: String::new(),
             command: command.to_string(),
             status: status.to_string(),
+            ..Default::default()
         }
     }
 
@@ -11675,10 +11813,206 @@ index 123456..789012 100644
     fn copy_terminal_command_on_an_empty_log_is_an_error() {
         let (mut app, copied) = app_with_recording_clipboard();
 
-        let error = app.copy_terminal_command().unwrap_err();
-
-        assert_eq!(error.to_string(), "no terminal log entry to copy");
+        assert!(app.copy_terminal_command().is_err());
         assert_eq!(*copied.borrow(), None);
+    }
+
+    fn executed_entry(command: &str, status: &str, stdout: &str, stderr: &str) -> TerminalCommand {
+        let line = command.split_once(": ").map_or(command, |(_, line)| line);
+        TerminalCommand {
+            execution: crate::command_log::Execution {
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+                invocation: Some(Invocation::new(
+                    crate::command_log::Program::Glab,
+                    &line.split(' ').skip(1).collect::<Vec<_>>(),
+                )),
+                ..Default::default()
+            },
+            ..log_entry(command, status)
+        }
+    }
+
+    #[test]
+    fn status_filter_cycles_through_errors_and_successes_and_combines_with_search() {
+        let mut app = App::default();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Failed: HTTP 502"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Running"));
+        app.terminal_commands
+            .push(log_entry("Fetch runs: glab ci list", "Failed: HTTP 401"));
+        app.terminal_scroll = 2;
+        let listed = |app: &App| -> Vec<String> {
+            app.filtered_terminal_commands()
+                .iter()
+                .map(|cmd| cmd.command.clone())
+                .collect()
+        };
+
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::Failed);
+        assert_eq!(app.terminal_scroll, 0);
+        assert_eq!(
+            listed(&app),
+            ["Fetch PRs: gh pr list", "Fetch runs: glab ci list"]
+        );
+
+        app.search_query = "glab".to_string();
+        assert_eq!(listed(&app), ["Fetch runs: glab ci list"]);
+
+        app.search_query.clear();
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::Succeeded);
+        assert_eq!(listed(&app), ["Fetch issues: glab issue list"]);
+
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::All);
+        assert_eq!(listed(&app).len(), 4);
+    }
+
+    #[test]
+    fn copy_terminal_output_copies_stdout_then_stderr_of_the_highlighted_entry() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands.push(executed_entry(
+            "FETCH: glab issue list",
+            "Failed: exit 1",
+            "[]",
+            "warning: deprecated flag",
+        ));
+
+        app.copy_terminal_output().unwrap();
+
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some("[]\nwarning: deprecated flag")
+        );
+    }
+
+    #[test]
+    fn copy_terminal_output_falls_back_to_the_failure_reason() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Creating branch: x", "Failed: branch exists"));
+        app.terminal_commands
+            .push(log_entry("Creating branch: y", "Success"));
+
+        assert!(app.copy_terminal_output().is_err());
+        assert_eq!(*copied.borrow(), None);
+
+        app.terminal_scroll = 1;
+        app.copy_terminal_output().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("branch exists"));
+    }
+
+    #[test]
+    fn actions_follow_the_inspected_entry_while_newer_entries_arrive() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(executed_entry("FETCH: glab mr list", "Success", "", ""));
+        app.open_terminal_inspector().unwrap();
+        app.terminal_commands
+            .push(executed_entry("FETCH: glab issue list", "Success", "", ""));
+
+        app.copy_terminal_command().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("glab mr list"));
+
+        app.terminal_inspector = None;
+        app.copy_terminal_command().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("glab issue list"));
+    }
+
+    #[test]
+    fn rerun_asks_for_confirmation_with_the_recorded_invocation() {
+        let mut app = App::default();
+        app.terminal_commands.push(executed_entry(
+            "DELETE BRANCH: glab api -X DELETE projects/1/repository/branches/x",
+            "Success",
+            "",
+            "",
+        ));
+
+        app.confirm_terminal_rerun().unwrap();
+
+        let dialog = app.submit_dialog.expect("confirmation is open");
+        let crate::app::ConfirmAction::RerunCommand(invocation) = dialog.action else {
+            panic!("expected a rerun confirmation, got {:?}", dialog.action);
+        };
+        assert_eq!(
+            invocation.command_line(),
+            "glab api -X DELETE projects/1/repository/branches/x"
+        );
+        assert_eq!(
+            dialog.body,
+            "Run again: glab api -X DELETE projects/1/repository/branches/x"
+        );
+    }
+
+    #[test]
+    fn rerun_of_an_entry_without_a_recorded_call_is_refused() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+
+        assert!(app.confirm_terminal_rerun().is_err());
+        assert!(app.submit_dialog.is_none());
+    }
+
+    #[test]
+    fn backend_log_settles_the_running_action_with_its_execution() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+        let logged = executed_entry("CREATE BRANCH: glab api -X POST b", "Success", "{}", "");
+
+        app.log_cli_command(logged.clone());
+
+        let entries: Vec<&TerminalCommand> = app.terminal_commands.iter().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "Creating branch: x from main");
+        assert_eq!(entries[0].status, "Success");
+        assert_eq!(entries[0].execution, logged.execution);
+    }
+
+    #[test]
+    fn backend_log_never_settles_a_running_rerun() {
+        let mut app = App::default();
+        let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
+        let rerun_row = app.start_rerun(&invocation);
+
+        app.log_cli_command(executed_entry("FETCH: glab mr list", "Success", "", ""));
+
+        assert_eq!(app.terminal_commands.len(), 2);
+        assert_eq!(
+            app.terminal_commands
+                .get(rerun_row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+    }
+
+    #[test]
+    fn finished_rerun_settles_its_row_and_toasts_a_failure() {
+        let mut app = App::default();
+        let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
+        let row = app.start_rerun(&invocation);
+        let execution = crate::command_log::Execution {
+            exit_code: Some(1),
+            stderr: "HTTP 401".to_string(),
+            invocation: Some(invocation),
+            ..Default::default()
+        };
+
+        app.finish_rerun(row, "Failed: HTTP 401".to_string(), execution.clone());
+
+        let entry = app.terminal_commands.get(row).expect("row is still logged");
+        assert_eq!(entry.command, "Rerun: gh pr list");
+        assert_eq!(entry.status, "Failed: HTTP 401");
+        assert_eq!(entry.execution, execution);
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("Re-run failed: HTTP 401")
+        );
     }
 
     #[test]

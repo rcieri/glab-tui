@@ -1,5 +1,7 @@
 use super::Backend;
 use super::bounded_output::{CapturedStdout, output_bounded};
+use super::logged_command::{ChildOutput, LoggedCommand};
+use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
@@ -305,42 +307,30 @@ async fn run_glab_command_inner(
     desc: String,
     max_stdout_bytes: Option<usize>,
 ) -> Result<CapturedStdout> {
-    let label = desc.to_uppercase();
-    let cmd_str = format!("glab {}", args.join(" "));
+    let logged = LoggedCommand::start(&desc, Invocation::new(Program::Glab, &args));
 
     let output = match output_bounded(Command::new("glab").args(&args), max_stdout_bytes).await {
         Ok(output) => output,
         Err(e) => {
-            if let Some(tx) = &tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-                    command: format!("{label}: {cmd_str}"),
-                    status: format!("Failed: {e}"),
-                });
-            }
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
             return Err(e.into());
         }
     };
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     if output.succeeded() {
-        if let Some(tx) = &tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{label}: {cmd_str}"),
-                status: "Success".to_string(),
-            });
-        }
+        logged.finish(tx.as_ref(), "Success".to_string(), output.child_output());
         Ok(output.stdout)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if let Some(tx) = &tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{label}: {cmd_str}"),
-                status: format!("Failed: {err_msg}"),
-            });
-        }
+        logged.finish(
+            tx.as_ref(),
+            format!("Failed: {err_msg}"),
+            output.child_output(),
+        );
         anyhow::bail!("glab command failed: {err_msg}")
     }
 }
@@ -3179,64 +3169,40 @@ async fn run_glab_raw_api(
     body: Option<&str>,
     desc: &str,
 ) -> Result<String> {
-    let mut cmd_args: Vec<String> = vec!["api".into()];
-    if method != "GET" {
-        cmd_args.push("-X".into());
-        cmd_args.push(method.into());
-    }
-    cmd_args.push(endpoint.into());
-    let cmd_str = format!("glab {}", cmd_args.join(" "));
-    let label = desc.to_uppercase();
-
-    let mut cmd = Command::new("glab");
-    cmd.arg("api");
-    if method != "GET" {
-        cmd.arg("-X");
-        cmd.arg(method);
-    }
     let input = body.filter(|b| !b.is_empty());
-    if input.is_some() {
-        cmd.arg("--input");
-        cmd.arg("-");
+    let mut args = vec!["api"];
+    if method != "GET" {
+        args.extend(["-X", method]);
     }
-    cmd.arg(endpoint);
+    if input.is_some() {
+        args.extend(["--input", "-"]);
+    }
+    args.push(endpoint);
+    let logged = LoggedCommand::start(
+        desc,
+        Invocation::new(Program::Glab, &args).with_stdin(input),
+    );
 
-    let output = super::subprocess::output(&mut cmd, input.map(str::as_bytes)).await;
+    let output =
+        super::subprocess::output(Command::new("glab").args(&args), input.map(str::as_bytes)).await;
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     match output {
         Ok(out) => {
             if out.status.success() {
-                let s = String::from_utf8(out.stdout)?;
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{label}: {cmd_str}"),
-                        status: "Success".to_string(),
-                    });
-                }
-                Ok(s)
+                logged.finish(tx.as_ref(), "Success".to_string(), (&out).into());
+                Ok(String::from_utf8(out.stdout)?)
             } else {
                 let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{label}: {cmd_str}"),
-                        status: format!("Failed: {err_msg}"),
-                    });
-                }
+                logged.finish(tx.as_ref(), format!("Failed: {err_msg}"), (&out).into());
                 anyhow::bail!("glab api failed: {err_msg}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{e}");
-            if let Some(ref tx) = tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{label}: {cmd_str}"),
-                    status: format!("Failed: {err_msg}"),
-                });
-            }
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
             Err(e)
         }
     }
@@ -3278,22 +3244,16 @@ async fn open_in_web_browser(
     tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     label: &str,
 ) -> Result<()> {
+    let logged = LoggedCommand::start(label, Invocation::new(Program::Git, &["web--browse", url]));
     let output = tokio::process::Command::new("git")
         .args(["web--browse", url])
         .output()
         .await;
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    let status = match &output {
-        Ok(out) if out.status.success() => "Success".to_string(),
-        _ => "Success".to_string(),
+    let child_output = match &output {
+        Ok(out) => out.into(),
+        Err(_) => ChildOutput::NOT_STARTED,
     };
-    if let Some(ref tx) = tx {
-        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-            timestamp,
-            command: format!("{label}: git web--browse {url}"),
-            status,
-        });
-    }
+    logged.finish(tx.as_ref(), "Success".to_string(), child_output);
     Ok(())
 }
 

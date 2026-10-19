@@ -276,6 +276,16 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         }
                         return;
                     }
+                    OverlayKind::TerminalInspector => {
+                        if let Some(inspector) = &mut app.terminal_inspector {
+                            inspector.scroll = if scroll_down {
+                                inspector.scroll.saturating_add(1)
+                            } else {
+                                inspector.scroll.saturating_sub(1)
+                            };
+                        }
+                        return;
+                    }
                     // Consume scroll on non-scrollable modals
                     _ => return,
                 }
@@ -359,6 +369,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         }
                         return;
                     }
+                    OverlayKind::TerminalInspector => return,
                 }
             }
 
@@ -1011,6 +1022,7 @@ async fn main() -> Result<()> {
                 timestamp,
                 command: "Initialization: gitlab client".to_string(),
                 status: "Failed: Failed to initialize GitLab client".to_string(),
+                ..Default::default()
             });
         app.show_error("Failed to initialize GitLab client".to_string());
     }
@@ -1025,6 +1037,7 @@ async fn main() -> Result<()> {
                     timestamp,
                     command: "Startup: Not in a git repository".to_string(),
                     status: "Failed: No repo detected — select one below or press Esc".to_string(),
+                    ..Default::default()
                 });
             let mut switch_repo_paths = std::collections::HashMap::new();
             for entry in &switchable {
@@ -2158,45 +2171,19 @@ async fn main() -> Result<()> {
                     app.show_error(err_msg);
                     app.error_has_cli_detail = true;
                 }
-                Event::TerminalCommandLogged {
-                    timestamp,
-                    command,
+                Event::TerminalCommandLogged(entry) => {
+                    app.log_cli_command(*entry);
+                }
+                Event::CommandRerun {
+                    row,
                     status,
+                    execution,
                 } => {
-                    if status == "Running" {
-                        app.terminal_commands
-                            .push(crate::command_log::TerminalCommand {
-                                timestamp,
-                                command,
-                                status,
-                            });
-                    } else if let Some(row) = app
-                        .terminal_commands
-                        .find_latest(|cmd| cmd.command == command && cmd.status == "Running")
-                    {
-                        app.terminal_commands.set_status(row, status);
-                    } else if let Some(row) = app.latest_running_cli_command() {
-                        // fallback: update most recent Running entry when
-                        // command strings differ (e.g. CommandStarted vs backend log)
-                        app.terminal_commands.set_status(row, status);
-                    } else {
-                        app.terminal_commands
-                            .push(crate::command_log::TerminalCommand {
-                                timestamp,
-                                command,
-                                status,
-                            });
-                    }
+                    app.finish_rerun(row, status, *execution);
                 }
                 Event::CommandStarted(msg) => {
                     app.show_notice(msg.clone());
-                    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                    app.terminal_commands
-                        .push(crate::command_log::TerminalCommand {
-                            timestamp,
-                            command: msg,
-                            status: "Running".to_string(),
-                        });
+                    app.start_command(msg);
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     app.sync_list_views();
@@ -2304,6 +2291,7 @@ async fn main() -> Result<()> {
                         && app.selector.is_none()
                         && !app.show_help
                         && app.review_threads.is_none()
+                        && app.terminal_inspector.is_none()
                         && !app.focus_column_checklist
                         && !app.is_typing_search
                         && !app.job_trace_searching
@@ -2320,6 +2308,7 @@ async fn main() -> Result<()> {
                         || handle_refresh(&mut app, &key_event, &mut last_refresh, events.sender())
                         || handle_date_picker(&mut app, &key_event, events.sender())
                         || handle_review_threads(&mut app, &key_event)
+                        || handlers::terminal::handle_inspector_key(&mut app, &key_event)
                     {
                         continue;
                     }

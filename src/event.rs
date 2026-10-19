@@ -76,10 +76,14 @@ pub enum Event {
     Notice(String),
     /// A background custom command finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
-    TerminalCommandLogged {
-        timestamp: String,
-        command: String,
+    /// A `glab`/`gh`/`git` call a backend finished.
+    TerminalCommandLogged(Box<crate::command_log::TerminalCommand>),
+    /// A command re-run from the Terminal tab finished; `row` is the entry
+    /// logged when it started.
+    CommandRerun {
+        row: crate::command_log::LogRow,
         status: String,
+        execution: Box<crate::command_log::Execution>,
     },
     MilestonesFetched(Vec<crate::domain::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::domain::issues::Issue>),

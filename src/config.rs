@@ -1270,6 +1270,14 @@ pub struct KeybindingTerminal {
     pub clear_log: String,
     #[serde(default = "def_copy_terminal_command")]
     pub copy_command: String,
+    #[serde(default = "def_copy_terminal_output")]
+    pub copy_output: String,
+    #[serde(default = "def_inspect_terminal_command")]
+    pub inspect_command: String,
+    #[serde(default = "def_rerun_terminal_command")]
+    pub rerun_command: String,
+    #[serde(default = "def_cycle_terminal_status_filter")]
+    pub cycle_status_filter: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1423,6 +1431,10 @@ keybind_defaults! {
     def_toggle_terminal_wrap = "w",
     def_clear_terminal_log = "C",
     def_copy_terminal_command = "y",
+    def_copy_terminal_output = "Y",
+    def_inspect_terminal_command = "Enter",
+    def_rerun_terminal_command = "r",
+    def_cycle_terminal_status_filter = "s",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
@@ -1618,6 +1630,10 @@ impl Default for KeybindingTerminal {
             toggle_wrap: def_toggle_terminal_wrap(),
             clear_log: def_clear_terminal_log(),
             copy_command: def_copy_terminal_command(),
+            copy_output: def_copy_terminal_output(),
+            inspect_command: def_inspect_terminal_command(),
+            rerun_command: def_rerun_terminal_command(),
+            cycle_status_filter: def_cycle_terminal_status_filter(),
         }
     }
 }
@@ -1968,6 +1984,10 @@ view_deployments = "Enter"
 toggle_wrap = "w"
 clear_log = "C"
 copy_command = "y"
+copy_output = "Y"
+inspect_command = "Enter"
+rerun_command = "r"
+cycle_status_filter = "s"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

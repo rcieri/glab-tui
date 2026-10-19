@@ -1132,6 +1132,26 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_list_refresh_retries_a_notification_body_that_failed() {
+        let mut app = app_inspecting_notification_1();
+        let client = app.gitlab_client.clone().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let listed = app.todos.items.clone();
+        app.failed_todo_details
+            .insert("1".to_string(), "HTTP 502".to_string());
+        let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
+        app.todo_detail_candidate = Some(("1".to_string(), rested));
+        assert!(!dispatch_inspected_todo_detail_fetch(
+            &client, &mut app, &tx
+        ));
+
+        app.set_todos(listed);
+
+        app.todo_detail_candidate = Some(("1".to_string(), rested));
+        assert!(dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx));
+    }
+
     fn pr_stack_of_11() -> crate::domain::mr::PrStack {
         crate::domain::mr::PrStack {
             info: crate::domain::mr::StackInfo {

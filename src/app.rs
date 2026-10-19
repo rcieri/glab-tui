@@ -6688,8 +6688,9 @@ impl App {
     }
 
     /// Replaces the listed todos with a fresh fetch. A notification that has
-    /// not changed since its detail was fetched keeps it, and selections of
-    /// notifications that left the list are dropped.
+    /// not changed since its detail was fetched keeps it, a failed detail
+    /// fetch is tried again, and selections of notifications that left the
+    /// list are dropped.
     pub fn set_todos(
         &mut self,
         mut notifications: Vec<crate::domain::notifications::Notification>,
@@ -6705,6 +6706,7 @@ impl App {
                 todo.author = known.author.clone();
             }
         }
+        self.failed_todo_details.clear();
         self.todos.items = notifications;
         self.prune_todo_selection();
     }

@@ -7,7 +7,9 @@ use chrono::{DateTime, Local};
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::command_log::{Execution, Invocation, Program, TerminalCommand, captured_text};
+use crate::command_log::{
+    Execution, Invocation, MAX_CAPTURED_OUTPUT_BYTES, Program, TerminalCommand, captured_text,
+};
 use crate::event::Event;
 
 /// What a finished child left behind.
@@ -150,7 +152,14 @@ pub(crate) async fn rerun(invocation: Invocation) -> (String, Execution) {
 
     let _permit = super::rate_limit::RATE_LIMITER.pace_request().await;
     let logged = LoggedCommand::start("", invocation);
-    match super::subprocess::output(&mut command, stdin.as_deref().map(str::as_bytes)).await {
+    // One byte past what an entry keeps lets `captured_text` mark it truncated.
+    let output = super::subprocess::output_capped(
+        &mut command,
+        stdin.as_deref().map(str::as_bytes),
+        MAX_CAPTURED_OUTPUT_BYTES + 1,
+    )
+    .await;
+    match output {
         Ok(output) => {
             let child_output = ChildOutput::from(&output);
             let status = if output.status.success() {
@@ -260,5 +269,29 @@ mod tests {
         assert_eq!(execution.exit_code, Some(1));
         assert_eq!(status, format!("Failed: {}", execution.stderr));
         assert!(status.contains("no-such-subcommand-for-glab-tui"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rerun_of_a_large_output_keeps_the_logged_prefix_and_marks_it_truncated() {
+        let invocation = Invocation::new(
+            Program::Git,
+            &[
+                "-c",
+                "alias.big=!head -c 100000 /dev/zero | tr '\\0' z",
+                "big",
+            ],
+        );
+
+        let (status, execution) = rerun(invocation).await;
+
+        assert_eq!(status, "Success");
+        assert_eq!(
+            execution.stdout,
+            format!(
+                "{}\n[TRUNCATED: first 16 KiB]",
+                "z".repeat(MAX_CAPTURED_OUTPUT_BYTES)
+            )
+        );
     }
 }

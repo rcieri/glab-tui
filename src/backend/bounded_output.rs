@@ -86,13 +86,7 @@ pub(crate) async fn output_bounded_within(
             is_truncated,
         })
     };
-    let read_stderr = async move {
-        let (kept, has_more) = read_prefix_from(stderr, STDERR_MAX_BYTES).await?;
-        if let Some(mut rest) = has_more {
-            tokio::io::copy(&mut rest, &mut tokio::io::sink()).await?;
-        }
-        io::Result::Ok(kept)
-    };
+    let read_stderr = read_prefix_draining(stderr, STDERR_MAX_BYTES);
     let killer = async {
         if kill_rx.await.is_ok() {
             let _ = child.start_kill();
@@ -142,6 +136,19 @@ async fn read_all(mut reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
 async fn read_prefix(reader: impl AsyncRead + Unpin, limit: usize) -> io::Result<(Vec<u8>, bool)> {
     let (kept, rest) = read_prefix_from(reader, limit).await?;
     Ok((kept, rest.is_some()))
+}
+
+/// The first `limit` bytes of `reader`. The rest is read and thrown away, so
+/// the child never blocks on a full pipe and runs to completion.
+pub(super) async fn read_prefix_draining(
+    reader: impl AsyncRead + Unpin,
+    limit: usize,
+) -> io::Result<Vec<u8>> {
+    let (kept, rest) = read_prefix_from(reader, limit).await?;
+    if let Some(mut rest) = rest {
+        tokio::io::copy(&mut rest, &mut tokio::io::sink()).await?;
+    }
+    Ok(kept)
 }
 
 /// The first `limit` bytes of `reader`, and the reader itself when more

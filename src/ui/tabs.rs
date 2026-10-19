@@ -2026,11 +2026,10 @@ fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::con
     }
 
     let scroll = usize::from(app.detail_scroll);
-    let (visible_lines, rows_above) = app
-        .job_trace
-        .as_mut()
-        .map(|view| view.visible_lines(theme, wrap_width, scroll, height))
-        .unwrap_or_default();
+    let Some(view) = app.job_trace.as_mut() else {
+        return;
+    };
+    let (visible_lines, rows_above) = view.visible_lines(theme, wrap_width, scroll, height);
     let mut paragraph = Paragraph::new(visible_lines)
         .block(job_trace_block(&title_suffix, theme))
         .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));

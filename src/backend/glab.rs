@@ -2170,11 +2170,22 @@ impl Backend for GlabBackend {
         if failed.is_empty() {
             anyhow::bail!("pipeline #{pipeline_id} has no failed jobs to retry");
         }
+        let mut errors = Vec::new();
         for (i, job) in failed.iter().enumerate() {
             if i > 0 {
                 crate::backend::rate_limit::pace_bulk_operation().await;
             }
-            self.retry_job(project, job.id).await?;
+            if let Err(error) = self.retry_job(project, job.id).await {
+                errors.push(format!("job #{}: {error}", job.id));
+            }
+        }
+        if !errors.is_empty() {
+            anyhow::bail!(
+                "retried {} of {} failed jobs: {}",
+                failed.len() - errors.len(),
+                failed.len(),
+                errors.join("; ")
+            );
         }
         Ok(())
     }

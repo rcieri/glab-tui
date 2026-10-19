@@ -57,6 +57,22 @@ fn test_retry_failed_on_gitlab_reruns_only_the_failed_jobs() {
 }
 
 #[test]
+fn retry_failed_on_gitlab_keeps_going_past_a_refused_job_and_reports_it() {
+    let mut session = session_on_pipelines(&[
+        ("TEST_GLAB_FAILED_JOBS", "1"),
+        ("TEST_GLAB_FAIL_MATCH", "ci retry 54322"),
+    ]);
+
+    session.press_keys(b"R");
+    session
+        .wait_for_cli_call("ci retry 54323", 5000)
+        .expect("the job after the refused one is still retried");
+    session
+        .wait_for_screen_contains("retried 1 of 2 failed jobs", 5000)
+        .expect("the error says how many jobs were retried");
+}
+
+#[test]
 fn test_retry_failed_on_github_reruns_the_failed_jobs_of_the_run() {
     let mut session = TestSession::new(true, 40, 200);
     session

@@ -33,8 +33,13 @@ pub fn handle_tab_key(app: &mut App, key_event: &KeyEvent) -> bool {
 }
 
 /// Keys of the command inspector. The re-run confirmation it opens is drawn
-/// on top and takes its keys first.
+/// on top and takes its keys first. A selector or text input opened over it,
+/// such as the repo switcher, reads its keys later in the main loop, so the
+/// inspector leaves them alone.
 pub fn handle_inspector_key(app: &mut App, key_event: &KeyEvent) -> bool {
+    if app.selector.is_some() || app.text_input.is_some() {
+        return false;
+    }
     let Some(mut inspector) = app.terminal_inspector else {
         return false;
     };
@@ -106,4 +111,27 @@ pub fn rerun(app: &mut App, invocation: Invocation, tx: UnboundedSender<Event>) 
             execution: Box::new(execution),
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn inspector_leaves_keys_to_a_selector_opened_over_it() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+        app.open_terminal_inspector().unwrap();
+        app.selector = Some(crate::app::Selector::draft_actions(0));
+
+        for code in [KeyCode::Char('j'), KeyCode::Enter, KeyCode::Esc] {
+            let key = KeyEvent::new(code, KeyModifiers::NONE);
+            assert!(!handle_inspector_key(&mut app, &key), "{code:?}");
+        }
+        assert_eq!(
+            app.terminal_inspector.map(|inspector| inspector.scroll),
+            Some(0)
+        );
+    }
 }

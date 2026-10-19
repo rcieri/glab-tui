@@ -917,7 +917,15 @@ pub(crate) fn build_field_list_items(
                                     }
                                 }
                             }
-                        } else if label == "Tags" && val != "--" {
+                        } else if val == "--" {
+                            val_spans.push(Span::styled(
+                                " --",
+                                Style::default()
+                                    .fg(theme.text_muted)
+                                    .bg(item_bg)
+                                    .add_modifier(Modifier::ITALIC),
+                            ));
+                        } else if label == "Tags" {
                             let pill_style = Style::default()
                                 .fg(theme.purple)
                                 .bg(if is_selected {

@@ -3579,7 +3579,9 @@ impl SubmitDialog {
                 let ref_name = &deployment.ref_name;
                 let how = match &deployment.deployable {
                     Some(job) if !kind.is_github() => format!("re-runs its job '{}'", job.name),
-                    _ => "creates a new deployment of that commit".to_string(),
+                    _ => "creates a deployment record of that commit, which only deploys if a \
+                          workflow runs on the `deployment` event"
+                        .to_string(),
                 };
                 (
                     format!("Roll Back '{environment}' to {sha}"),

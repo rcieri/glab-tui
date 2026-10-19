@@ -688,7 +688,8 @@ pub trait Backend: Send + Sync {
     /// latest status is `success`, inactive.
     async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()>;
     /// Deploys `deployment`'s commit to `environment` again: GitLab re-runs the
-    /// deployment's job, GitHub creates a new deployment of its SHA.
+    /// deployment's job, GitHub records a new deployment of its SHA, which only
+    /// deploys once a workflow running on the `deployment` event picks it up.
     async fn rollback_deployment(
         &self,
         project: &str,

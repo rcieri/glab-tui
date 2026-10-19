@@ -4073,6 +4073,13 @@ const RUNNER_STATUS_CYCLE: &[crate::domain::runners::RunnerStatus] = &[
     crate::domain::runners::RunnerStatus::Offline,
 ];
 
+/// `RUNNER_STATUS_CYCLE` without `Paused`, for a backend whose runners can
+/// never be paused, where the step would otherwise empty the table.
+const UNPAUSABLE_RUNNER_STATUS_CYCLE: &[crate::domain::runners::RunnerStatus] = &[
+    crate::domain::runners::RunnerStatus::Online,
+    crate::domain::runners::RunnerStatus::Offline,
+];
+
 /// Whether a row whose `col` cell has `values` passes the column filter
 /// `selected`. Text columns match case-insensitive substrings; the rest
 /// match exactly, also accepting the raw API values older configs saved.
@@ -4853,23 +4860,25 @@ impl App {
         Ok(())
     }
 
-    /// Step the Runners Status column filter to the next entry of
-    /// `RUNNER_STATUS_CYCLE`, then back to every status. Any other Status
-    /// filter, such as one picked in the column configurator, restarts the
-    /// cycle at its first entry.
+    /// Step the Runners Status column filter to the next entry of the
+    /// backend's status cycle (`RUNNER_STATUS_CYCLE`, or
+    /// `UNPAUSABLE_RUNNER_STATUS_CYCLE` where runners cannot be paused),
+    /// then back to every status. A Status filter that is not exactly one
+    /// cycle entry restarts the cycle at its first entry.
     pub fn cycle_runner_status_filter(&mut self) {
+        let cycle = self.runner_status_cycle();
         let column = crate::ui::list_tab::ColumnDef::label(RunnerColumn::Status);
         let position = self
             .get_column_filter(Tab::Runners, column)
             .filter(|selected| selected.len() == 1)
             .and_then(|selected| {
-                RUNNER_STATUS_CYCLE
+                cycle
                     .iter()
                     .position(|status| selected.contains(status.label()))
             });
         let next = match position {
-            None => RUNNER_STATUS_CYCLE.first(),
-            Some(index) => RUNNER_STATUS_CYCLE.get(index + 1),
+            None => cycle.first(),
+            Some(index) => cycle.get(index + 1),
         };
         match next {
             Some(status) => {
@@ -4882,6 +4891,14 @@ impl App {
             }
         }
         self.update_filter_selection();
+    }
+
+    fn runner_status_cycle(&self) -> &'static [crate::domain::runners::RunnerStatus] {
+        if self.kind().supports_runner_management() {
+            RUNNER_STATUS_CYCLE
+        } else {
+            UNPAUSABLE_RUNNER_STATUS_CYCLE
+        }
     }
 
     /// Ids and titles of the current bulk selection, sorted by iid. Built from
@@ -7761,7 +7778,7 @@ mod tests {
         };
         app.runners.set_items(vec![
             runner(1, "a", "online", true),
-            runner(2, "b", "online", false),
+            runner(2, "b", "paused", false),
             runner(3, "c", "offline", true),
             runner(4, "d", "stale", true),
         ]);
@@ -7777,7 +7794,7 @@ mod tests {
     }
 
     #[test]
-    fn runner_status_cycle_restarts_from_a_filter_it_did_not_set() {
+    fn runner_status_cycle_restarts_from_a_multi_value_filter() {
         let mut app = App {
             active_tab: Tab::Runners,
             ..Default::default()
@@ -7793,6 +7810,33 @@ mod tests {
         assert_eq!(
             app.get_column_filter(Tab::Runners, "Status"),
             Some(&["ONLINE".to_string()].into())
+        );
+    }
+
+    #[test]
+    fn runner_status_cycle_skips_paused_where_runners_cannot_be_paused() {
+        let mut app = app_on(true, crate::scope::Scope::Repository("o/r".to_string()));
+        app.active_tab = Tab::Runners;
+
+        let mut filters = Vec::new();
+        for _ in 0..3 {
+            app.cycle_runner_status_filter();
+            filters.push(
+                app.get_column_filter(Tab::Runners, "Status")
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        assert_eq!(
+            filters,
+            [
+                ["ONLINE".to_string()].into(),
+                ["OFFLINE".to_string()].into(),
+                Vec::<String>::new()
+            ]
         );
     }
 

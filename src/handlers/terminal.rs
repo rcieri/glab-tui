@@ -69,10 +69,14 @@ pub fn handle_inspector_key(app: &mut App, key_event: &KeyEvent) -> bool {
         }
         _ if keybinding_matches(&global.scroll_page_down, key_event) => scroll.saturating_add(page),
         _ if keybinding_matches(&global.scroll_page_up, key_event) => scroll.saturating_sub(page),
+        _ if keybinding_matches(&global.scroll_down, key_event) => scroll.saturating_add(1),
+        _ if keybinding_matches(&global.scroll_up, key_event) => scroll.saturating_sub(1),
+        _ if keybinding_matches(&global.scroll_top, key_event) => 0,
+        // The render clamps it to the last line.
+        _ if keybinding_matches(&global.scroll_to_end, key_event) => usize::MAX,
         KeyCode::Char('j') | KeyCode::Down => scroll.saturating_add(1),
         KeyCode::Char('k') | KeyCode::Up => scroll.saturating_sub(1),
         KeyCode::Char('g') | KeyCode::Home => 0,
-        // The render clamps it to the last line.
         KeyCode::Char('G') | KeyCode::End => usize::MAX,
         _ => scroll,
     };
@@ -133,5 +137,21 @@ mod tests {
             app.terminal_inspector.map(|inspector| inspector.scroll),
             Some(0)
         );
+    }
+
+    #[test]
+    fn inspector_scrolls_with_remapped_global_scroll_keys() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+        app.open_terminal_inspector().unwrap();
+        app.config.keybindings.global.scroll_down = "z".to_string();
+        app.config.keybindings.global.scroll_to_end = "x".to_string();
+        let scroll_after = |app: &mut App, key: char| {
+            handle_inspector_key(app, &KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+            app.terminal_inspector.map(|inspector| inspector.scroll)
+        };
+
+        assert_eq!(scroll_after(&mut app, 'z'), Some(1));
+        assert_eq!(scroll_after(&mut app, 'x'), Some(usize::MAX));
     }
 }

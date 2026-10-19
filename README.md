@@ -801,7 +801,7 @@ Logs every `glab` / `gh` / `git` command the TUI executes, with success/failure 
 | `Y` | Copy the highlighted entry's output (stdout, then stderr), or its error when it printed nothing | `copy_output` |
 | `C` | Clear the log | `clear_log` |
 
-In the inspector, `j`/`k`, `g`/`G`, PageUp/PageDown and `Ctrl+d`/`Ctrl+u` scroll, and `Esc`, `q`, `Enter` or `P` close it.
+In the inspector, `j`/`k`, `g`/`G` and the `[keybindings.global]` scroll keys (`J`/`K`, Home/End, PageUp/PageDown, `Ctrl+d`/`Ctrl+u`) scroll, and `Esc`, `q`, `Enter` or `P` close it.
 
 ---
 

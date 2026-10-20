@@ -110,13 +110,11 @@ fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
     // with its unknown fields muted.
     session.press_keys(b"\x1b");
     session.settle(300);
-    session.press_keys(b"\x1b");
-    session.settle(300);
     session.press_keys(b"j");
     session.settle(300);
     session.press_keys(b"\r");
     session
-        .wait_for_screen_contains("Docker Runner 2", 5_000)
+        .wait_for_screen_contains("Preview: Runner #9877", 5_000)
         .unwrap();
     let screen = session.emulator.get_text();
     let line = |needle: &str| {

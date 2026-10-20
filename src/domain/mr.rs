@@ -287,10 +287,7 @@ pub async fn list_mr_notes(
     project_path: &str,
     mr_iid: u64,
 ) -> Result<Vec<DiscussionNote>> {
-    client
-        .backend
-        .list_mr_notes(project_path, mr_iid, client.page_size)
-        .await
+    client.backend.list_mr_notes(project_path, mr_iid).await
 }
 
 pub async fn fetch_related_issues(

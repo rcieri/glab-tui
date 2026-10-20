@@ -110,6 +110,19 @@ pub fn time_ago(date_str: &str) -> String {
     }
 }
 
+/// How long a command ran: `850ms`, `2.4s`, `3m 05s`.
+pub fn format_elapsed(duration: std::time::Duration) -> String {
+    let millis = duration.as_millis();
+    if millis < 1000 {
+        return format!("{millis}ms");
+    }
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        return format!("{:.1}s", duration.as_secs_f64());
+    }
+    format!("{}m {:02}s", seconds / 60, seconds % 60)
+}
+
 pub fn format_ref(r#ref: &str) -> String {
     if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
@@ -272,8 +285,11 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
     trace
         .lines()
         .map(|raw_line| {
-            let (gl_ts, line) = strip_gl_ts(raw_line);
-            let (prefix, content) = split_gh_prefix(line);
+            let TraceLine {
+                gl_ts,
+                gh_prefix,
+                content,
+            } = TraceLine::split(raw_line);
 
             let content_spans = if content.contains('\x1b') {
                 parse_ansi_line(content, theme)
@@ -290,7 +306,7 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
                         .add_modifier(Modifier::ITALIC),
                 ));
             }
-            if let Some(p) = prefix {
+            if let Some(p) = gh_prefix {
                 spans.push(Span::styled(
                     p.to_string(),
                     Style::default().fg(theme.text_muted),
@@ -302,16 +318,49 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
         .collect()
 }
 
-/// Strips the GitHub Actions log prefix `<job_name>\t<step_name>\t` if present.
-/// Returns `(Some(prefix), content)` or `(None, whole_line)`.
-fn split_gh_prefix(line: &str) -> (Option<&str>, &str) {
-    if let Some(first_tab) = line.find('\t') {
-        if let Some(second_tab) = line[first_tab + 1..].find('\t') {
-            let prefix_end = first_tab + 1 + second_tab + 1;
-            return (Some(&line[..prefix_end]), &line[prefix_end..]);
+/// A job log line apart from what the runner or `gh` put before it.
+struct TraceLine<'a> {
+    gl_ts: Option<&'a str>,
+    gh_prefix: Option<&'a str>,
+    content: &'a str,
+}
+
+impl<'a> TraceLine<'a> {
+    fn split(line: &'a str) -> Self {
+        let (gl_ts, line) = strip_gl_ts(line);
+        let (gh_prefix, content) = split_gh_prefix(line);
+        Self {
+            gl_ts,
+            gh_prefix,
+            content,
         }
     }
-    (None, line)
+}
+
+/// What the job printed on `line`, without the GitLab Runner timestamp or the
+/// `<job>\t<step>\t` prefix `gh run view --log` adds.
+pub fn trace_line_content(line: &str) -> &str {
+    TraceLine::split(line).content
+}
+
+/// Strips the `gh run view --log` prefix `<job_name>\t<step_name>\t`. `gh`
+/// always follows it with the line's timestamp (on a job's first line after a
+/// byte order mark), which keeps tab-separated output such as Go's
+/// `FAIL\t<pkg>\t0.01s` whole. Returns `(Some(prefix), content)` or
+/// `(None, whole_line)`.
+fn split_gh_prefix(line: &str) -> (Option<&str>, &str) {
+    let Some((second_tab, _)) = line.match_indices('\t').nth(1) else {
+        return (None, line);
+    };
+    let (prefix, content) = line.split_at(second_tab + 1);
+    if strip_gh_ts(content.trim_start_matches('\u{feff}'))
+        .0
+        .is_some()
+    {
+        (Some(prefix), content)
+    } else {
+        (None, line)
+    }
 }
 
 fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
@@ -716,6 +765,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn format_elapsed_switches_units_at_a_second_and_a_minute() {
+        use std::time::Duration;
+        assert_eq!(format_elapsed(Duration::from_millis(999)), "999ms");
+        assert_eq!(format_elapsed(Duration::from_millis(1000)), "1.0s");
+        assert_eq!(format_elapsed(Duration::from_millis(2449)), "2.4s");
+        assert_eq!(format_elapsed(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(format_elapsed(Duration::from_secs(185)), "3m 05s");
+    }
+
+    #[test]
     fn test_expand_tabs_indentation() {
         assert_eq!(expand_tabs("no tabs here", 4), "no tabs here");
         assert_eq!(expand_tabs("\tone", 4), "    one");
@@ -930,6 +989,34 @@ mod tests {
         assert_eq!(
             text,
             "2026-08-18T16:54:49.475670Z ✓ src/foo.test.ts (19 tests)"
+        );
+    }
+
+    #[test]
+    fn trace_line_content_drops_the_runner_and_gh_prefixes() {
+        assert_eq!(
+            trace_line_content(
+                "build\tUpload logs on failure\t2024-05-14T11:19:20.0000000Z Uploading"
+            ),
+            "2024-05-14T11:19:20.0000000Z Uploading"
+        );
+        assert_eq!(
+            trace_line_content("build\tSet up job\t\u{feff}2024-05-14T11:19:20.0000000Z Runner"),
+            "\u{feff}2024-05-14T11:19:20.0000000Z Runner"
+        );
+        assert_eq!(
+            trace_line_content("2024-05-14T11:19:20.000000Z 01E error: boom"),
+            "error: boom"
+        );
+    }
+
+    #[test]
+    fn trace_line_content_keeps_tab_separated_output_whole() {
+        let go = "FAIL\texample.com/pkg\t0.012s";
+        assert_eq!(trace_line_content(go), go);
+        assert_eq!(
+            trace_line_content(&format!("2024-05-14T11:19:20.000000Z 00O {go}")),
+            go
         );
     }
 }

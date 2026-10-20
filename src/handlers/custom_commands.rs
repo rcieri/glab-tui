@@ -1,5 +1,6 @@
 use crate::AppTerminal;
 use crate::app::{App, CUSTOM_COMMAND_LOG_PREFIX};
+use crate::command_log::Execution;
 use crate::custom_commands::{CommandPane, CustomCommand, TemplateValues, render, shell_process};
 use crate::event::Event;
 use crate::scope::Scope;
@@ -51,11 +52,19 @@ pub struct RunReport {
     total: usize,
     /// Rows refused before running, already logged.
     refused: Vec<String>,
-    /// Rendered command and outcome of each run, in order.
-    runs: Vec<(String, Result<(), String>)>,
+    /// Every run, in order.
+    runs: Vec<FinishedRun>,
     /// Terminal-log rows shown as running while a background run works,
     /// one per run in the same order; empty for terminal runs.
     log_rows: Vec<crate::command_log::LogRow>,
+}
+
+/// One run of a command: the rendered command, how it ended and when it ran.
+#[derive(Clone, Debug)]
+struct FinishedRun {
+    rendered: String,
+    outcome: Result<(), String>,
+    execution: Execution,
 }
 
 /// Where a command's stderr goes while it runs.
@@ -97,6 +106,7 @@ fn execute(
         app.record_command_outcome(
             format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", command.command),
             &Err(reason.clone()),
+            Execution::default(),
         );
         refused.push(reason);
     }
@@ -113,6 +123,7 @@ fn execute(
                 app.record_command_outcome(
                     format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", command.command),
                     &Err(reason.clone()),
+                    Execution::default(),
                 );
                 refused.push(reason);
             }
@@ -151,11 +162,12 @@ fn execute(
     report.runs = match crate::editor::suspend_while(terminal, || {
         run_all(command, runs, Handoff::Terminal)
     }) {
-        Ok(outcomes) => outcomes,
-        Err(error) => vec![(
-            command.command.clone(),
-            Err(format!("\"{label}\" not run: {error}")),
-        )],
+        Ok(runs) => runs,
+        Err(error) => vec![FinishedRun {
+            rendered: command.command.clone(),
+            outcome: Err(format!("\"{label}\" not run: {error}")),
+            execution: Execution::default(),
+        }],
     };
     report_runs(app, report);
 }
@@ -164,7 +176,7 @@ fn run_all(
     command: &CustomCommand,
     runs: Vec<(String, TemplateValues)>,
     handoff: Handoff,
-) -> Vec<(String, Result<(), String>)> {
+) -> Vec<FinishedRun> {
     runs.into_iter()
         .map(|(rendered, values)| {
             if handoff == Handoff::Terminal {
@@ -174,8 +186,18 @@ fn run_all(
             }
             let mut process = shell_process(&rendered);
             process.envs(values.environment());
+            let started_at = chrono::Local::now();
+            let clock = std::time::Instant::now();
             let outcome = run_process(command, &mut process, handoff);
-            (rendered, outcome)
+            FinishedRun {
+                rendered,
+                outcome,
+                execution: Execution {
+                    started_at: Some(started_at),
+                    duration: Some(clock.elapsed()),
+                    ..Default::default()
+                },
+            }
         })
         .collect()
 }
@@ -183,13 +205,16 @@ fn run_all(
 /// Logs every run of a keypress and raises one toast for its failures.
 pub fn report_runs(app: &mut App, report: RunReport) {
     let mut failures = report.refused;
-    for (index, (rendered, outcome)) in report.runs.into_iter().enumerate() {
+    for (index, run) in report.runs.into_iter().enumerate() {
         match report.log_rows.get(index) {
-            Some(&row) => app.settle_command(row, &outcome),
-            None => app
-                .record_command_outcome(format!("{CUSTOM_COMMAND_LOG_PREFIX}{rendered}"), &outcome),
+            Some(&row) => app.settle_command(row, &run.outcome, run.execution),
+            None => app.record_command_outcome(
+                format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", run.rendered),
+                &run.outcome,
+                run.execution,
+            ),
         }
-        if let Err(reason) = outcome {
+        if let Err(reason) = run.outcome {
             failures.push(reason);
         }
     }
@@ -456,6 +481,37 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
                 .map(|pipeline| pipeline_target(app, pipeline, &mut checkouts))
                 .collect()
         }
+        CommandPane::Jobs => {
+            let jobs: Vec<&crate::domain::pipelines::Job> = if app.selected_jobs.is_empty() {
+                let job = app
+                    .selected_job()
+                    .ok_or_else(|| "no job is selected".to_string())?;
+                vec![job]
+            } else {
+                let mut loaded: Vec<_> = app
+                    .jobs
+                    .items
+                    .iter()
+                    .filter(|job| app.selected_jobs.contains(&job.id))
+                    .collect();
+                loaded.sort_by_key(|job| job.id);
+                let mut missing: Vec<u64> = app
+                    .selected_jobs
+                    .iter()
+                    .copied()
+                    .filter(|id| !loaded.iter().any(|job| job.id == *id))
+                    .collect();
+                missing.sort_unstable();
+                missing_rows = missing.into_iter().map(|id| format!("#{id}")).collect();
+                loaded
+            };
+            if jobs.is_empty() {
+                return Err("the selected jobs are no longer loaded".to_string());
+            }
+            jobs.into_iter()
+                .map(|job| job_target(app, job, &mut checkouts))
+                .collect()
+        }
         CommandPane::Diff => vec![Target {
             row: String::new(),
             values: diff_values(app, &mut checkouts)?,
@@ -544,6 +600,32 @@ fn pipeline_target(
     insert_repo_values(&mut values, app, project, checkouts);
     Target {
         row: format!("#{}", pipeline.id),
+        values,
+    }
+}
+
+fn job_target(
+    app: &App,
+    job: &crate::domain::pipelines::Job,
+    checkouts: &mut CheckoutCache,
+) -> Target {
+    let mut values = TemplateValues::default();
+    values.insert("JobId", job.id.to_string());
+    values.insert("JobName", job.api_name.clone());
+    if job.stage.is_empty() {
+        values.insert_unavailable("Stage", "the job has no stage".to_string());
+    } else {
+        values.insert("Stage", job.stage.clone());
+    }
+    values.insert("Status", job.status.clone());
+    let project = row_project(
+        app.jobs_project().unwrap_or(""),
+        job.web_url.as_deref(),
+        &app.scope,
+    );
+    insert_repo_values(&mut values, app, project, checkouts);
+    Target {
+        row: format!("#{}", job.id),
         values,
     }
 }
@@ -756,6 +838,53 @@ mod tests {
         assert!(outcome.unwrap_err().ends_with(": boom"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn each_run_is_logged_with_when_it_started_and_how_long_it_took() {
+        let command = CustomCommand {
+            pane: CommandPane::Universal,
+            key: "X".to_string(),
+            name: None,
+            command: String::new(),
+            background: false,
+            shadowed_on: Vec::new(),
+        };
+        let runs = vec![
+            ("sleep 0.3".to_string(), TemplateValues::default()),
+            ("sleep 0.3".to_string(), TemplateValues::default()),
+        ];
+        let mut app = App::default();
+
+        let report = RunReport {
+            label: "sleep".to_string(),
+            total: 2,
+            refused: Vec::new(),
+            runs: run_all(&command, runs, Handoff::Background),
+            log_rows: Vec::new(),
+        };
+        report_runs(&mut app, report);
+
+        let executions: Vec<&Execution> = app
+            .terminal_commands
+            .iter()
+            .map(|cmd| &cmd.execution)
+            .collect();
+        let minimum = std::time::Duration::from_millis(300);
+        assert_eq!(executions.len(), 2);
+        assert!(
+            executions.iter().all(|run| run.duration >= Some(minimum)),
+            "{executions:?}"
+        );
+        let (Some(first), Some(second)) = (executions[0].started_at, executions[1].started_at)
+        else {
+            panic!("every run records its start: {executions:?}");
+        };
+        assert!(
+            (second - first).to_std().unwrap() >= minimum,
+            "{executions:?}"
+        );
+    }
+
     #[test]
     fn selected_issues_each_get_a_run_in_number_order() {
         let mut app = App::default();
@@ -955,6 +1084,115 @@ mod tests {
             render("cd {{.RepoPath}}", &values),
             Err(
                 "{{.RepoPath}} is unavailable: the group acme has no single repository".to_string()
+            )
+        );
+    }
+
+    fn job(json: serde_json::Value) -> crate::domain::pipelines::Job {
+        let job = serde_json::from_value(json).expect("job fixture");
+        crate::domain::pipelines::process_pipeline_jobs(vec![job]).remove(0)
+    }
+
+    #[test]
+    fn job_values_come_from_the_highlighted_row() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![
+            job(
+                serde_json::json!({"id": 5, "status": "success", "stage": "build", "name": "compile"}),
+            ),
+            job(serde_json::json!({"id": 6, "status": "failed", "stage": "test", "name": "rspec"})),
+        ];
+        app.jobs.state.select(Some(1));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            render(
+                "{{.RepoName}} {{.JobId}} {{.JobName}} {{.Stage}} {{.Status}}",
+                &values
+            )
+            .as_deref(),
+            Ok("owner/repo 6 rspec test failed")
+        );
+    }
+
+    #[test]
+    fn selected_jobs_each_get_a_run_in_id_order_and_vanished_ones_are_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![
+            job(serde_json::json!({"id": 30, "status": "failed", "stage": "test", "name": "c"})),
+            job(serde_json::json!({"id": 10, "status": "failed", "stage": "test", "name": "a"})),
+            job(serde_json::json!({"id": 20, "status": "success", "stage": "test", "name": "b"})),
+        ];
+        app.jobs.state.select(Some(2));
+        app.selected_jobs = [30, 10, 99].into_iter().collect();
+
+        let selection = targets(&app, CommandPane::Jobs).unwrap();
+        let rendered: Vec<String> = selection
+            .targets
+            .iter()
+            .map(|target| render("retry {{.JobId}}", &target.values).unwrap())
+            .collect();
+        assert_eq!(rendered, vec!["retry 10", "retry 30"]);
+        assert_eq!(selection.missing_rows, vec!["#99"]);
+    }
+
+    #[test]
+    fn github_job_has_no_stage_to_pass() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![job(
+            serde_json::json!({"id": 7, "status": "success", "stage": "", "name": "lint"}),
+        )];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            render("echo {{.Stage}}", &values),
+            Err("{{.Stage}} is unavailable: the job has no stage".to_string())
+        );
+    }
+
+    #[test]
+    fn group_scope_job_takes_its_repo_name_from_the_web_url() {
+        let mut app = App::default();
+        app.scope = Scope::Group("acme".to_string());
+        app.jobs.items = vec![job(serde_json::json!({
+            "id": 8, "status": "failed", "stage": "test", "name": "rspec",
+            "web_url": "https://gitlab.com/acme/sub/tool/-/jobs/8"
+        }))];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            render("{{.RepoName}} {{.JobId}}", &values).as_deref(),
+            Ok("acme/sub/tool 8")
+        );
+    }
+
+    #[test]
+    fn matrix_job_passes_the_name_the_api_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![job(serde_json::json!({
+            "id": 9, "status": "failed", "stage": "test", "name": "rspec: [3.2, pg]"
+        }))];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            values
+                .environment()
+                .find(|(name, _)| name == "GLAB_TUI_JOB_NAME"),
+            Some(("GLAB_TUI_JOB_NAME".to_string(), "rspec: [3.2, pg]"))
+        );
+        assert_eq!(
+            render("{{.JobName}}", &values),
+            Err(
+                "{{.JobName}} contains ' ', which the shell would interpret; \
+                 use \"$GLAB_TUI_JOB_NAME\" in the command instead"
+                    .to_string()
             )
         );
     }

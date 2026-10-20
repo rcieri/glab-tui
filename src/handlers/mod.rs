@@ -4,4 +4,5 @@
 pub mod custom_commands;
 pub mod overlays;
 pub mod tabs;
+pub mod terminal;
 pub mod todos;

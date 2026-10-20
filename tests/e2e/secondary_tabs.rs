@@ -7,8 +7,8 @@
 //! `milestone list`, `branches.json` for the branches endpoint and
 //! `environments.json` / `deployments.json` for the environment endpoints.
 //! Every tab-list fixture holds at least two rows, so a search that matches one of
-//! them is visible on screen. `deployments.json` holds one: the test only
-//! checks that its endpoint is called.
+//! them is visible on screen. The environments test only checks that the
+//! deployments endpoint is called.
 
 use std::time::{Duration, Instant};
 
@@ -199,7 +199,7 @@ fn environments_tab_lists_filters_and_fetches_the_matching_deployments() {
     let mut session = session_on_tab(9, "production");
     assert_lists(
         &mut session,
-        &["production", "available", "staging", "stopped"],
+        &["production", "AVAILABLE", "staging", "STOPPED"],
     );
 
     search(&mut session, "prod");
@@ -208,7 +208,7 @@ fn environments_tab_lists_filters_and_fetches_the_matching_deployments() {
     session.press_keys(b"\r");
     session
         .wait_for_cli_call(
-            "glab api /projects/test-owner%2Ftest-repo/deployments?per_page=100&environment=production",
+            "glab api /projects/test-owner%2Ftest-repo/deployments?per_page=100&order_by=id&sort=desc&environment=production",
             5000,
         )
         .expect("Enter should fetch the deployments of the environment the search selected");

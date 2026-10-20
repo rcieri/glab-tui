@@ -13,6 +13,13 @@ pub struct JobTraceView {
     lines: Vec<Line<'static>>,
     parsed: Option<Parsed>,
     wrapped: Option<WrappedRows>,
+    /// Line at the top of the pane the last `visible_lines` filled.
+    top_line: usize,
+    /// Line the last jump went to, while it is on screen. A jump near the end
+    /// of the log is clamped to the last page, so it need not top the pane.
+    jumped_to: Option<usize>,
+    /// Rows of the pane the last `visible_lines` filled, `0` before then.
+    viewport_height: usize,
 }
 
 /// What `JobTraceView::lines` holds.
@@ -38,6 +45,17 @@ struct WrappedRows {
     text_len: Option<usize>,
 }
 
+impl WrappedRows {
+    /// Row `line` starts at. Lines past the complete ones start where the
+    /// incomplete last line does.
+    fn start_row(&self, line: usize) -> usize {
+        self.line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.complete_rows)
+    }
+}
+
 impl JobTraceView {
     pub fn new(trace: JobTrace) -> Self {
         Self {
@@ -57,6 +75,7 @@ impl JobTraceView {
         let is_applied = self.trace.apply(update);
         if is_applied && is_restart {
             self.forget_parsed_lines();
+            self.jumped_to = None;
         }
         is_applied
     }
@@ -74,6 +93,33 @@ impl JobTraceView {
             .map_or(0, |rows| rows.complete_rows + rows.partial_rows)
     }
 
+    /// Line the next failure is searched after: the one the last jump went
+    /// to while it is on screen, else the one at the top of the pane.
+    pub fn failure_search_start(&self) -> usize {
+        self.jumped_to.unwrap_or(self.top_line)
+    }
+
+    /// Rows of the pane when it was last drawn, `0` before the first draw.
+    pub fn viewport_height(&self) -> usize {
+        self.viewport_height
+    }
+
+    /// Row the pane scrolls to for a jump to `line`.
+    pub fn jump_to_line(&mut self, theme: &Theme, wrap_width: Option<usize>, line: usize) -> usize {
+        self.jumped_to = Some(line);
+        self.row_of_line(theme, wrap_width, line)
+    }
+
+    /// Row `line` starts at, laid out as `rows` lays the log out.
+    pub fn row_of_line(&mut self, theme: &Theme, wrap_width: Option<usize>, line: usize) -> usize {
+        self.parse_new_text(theme);
+        let Some(width) = wrap_width else {
+            return line;
+        };
+        self.count_wrapped_rows(width);
+        self.wrapped.as_ref().map_or(0, |rows| rows.start_row(line))
+    }
+
     /// The lines a pane `height` rows tall shows `scroll` rows down the log,
     /// and how many rows of the first one are above the pane.
     pub fn visible_lines(
@@ -84,22 +130,19 @@ impl JobTraceView {
         height: usize,
     ) -> (Vec<Line<'static>>, usize) {
         self.parse_new_text(theme);
+        self.viewport_height = height;
         let bottom = scroll.saturating_add(height);
         let Some(width) = wrap_width else {
             let end = bottom.min(self.lines.len());
-            return (self.lines[scroll.min(end)..end].to_vec(), 0);
+            self.top_line = scroll.min(end);
+            self.forget_jump_off(self.top_line..end);
+            return (self.lines[self.top_line..end].to_vec(), 0);
         };
         self.count_wrapped_rows(width);
         let (Some(parsed), Some(rows)) = (self.parsed, self.wrapped.as_ref()) else {
             return (Vec::new(), 0);
         };
         let has_partial_line = parsed.complete_lines < self.lines.len();
-        let row_of = |line: usize| {
-            rows.line_starts
-                .get(line)
-                .copied()
-                .unwrap_or(rows.complete_rows)
-        };
         let first = if has_partial_line && scroll >= rows.complete_rows {
             parsed.complete_lines
         } else {
@@ -113,7 +156,14 @@ impl JobTraceView {
             rows.line_starts.partition_point(|&start| start < bottom)
         };
         let lines = self.lines[first..end.max(first)].to_vec();
-        (lines, scroll.saturating_sub(row_of(first)))
+        let rows_above = scroll.saturating_sub(rows.start_row(first));
+        self.top_line = first;
+        self.forget_jump_off(first..end);
+        (lines, rows_above)
+    }
+
+    fn forget_jump_off(&mut self, visible: std::ops::Range<usize>) {
+        self.jumped_to = self.jumped_to.filter(|line| visible.contains(line));
     }
 
     fn forget_parsed_lines(&mut self) {
@@ -283,5 +333,43 @@ mod tests {
             all_lines(&mut view, &theme),
             parse_ansi_trace("new\n", &theme)
         );
+    }
+
+    #[test]
+    fn row_of_line_counts_the_rows_wrapped_lines_take() {
+        let theme = Theme::default();
+        let mut view = JobTraceView::new(trace_of("a long first line\nsecond\nthird"));
+
+        assert_eq!(view.row_of_line(&theme, None, 2), 2);
+        // At 6 cells the first line takes rows 0-2, "second" row 3, "third" row 4.
+        assert_eq!(view.row_of_line(&theme, Some(6), 1), 3);
+        assert_eq!(view.row_of_line(&theme, Some(6), 2), 4);
+    }
+
+    #[test]
+    fn failure_search_starts_at_the_line_holding_the_first_visible_row() {
+        let theme = Theme::default();
+        let mut view = JobTraceView::new(trace_of("a long first line\nsecond\nthird"));
+
+        view.visible_lines(&theme, Some(6), 2, 2);
+        assert_eq!(view.failure_search_start(), 0);
+        view.visible_lines(&theme, Some(6), 3, 2);
+        assert_eq!(view.failure_search_start(), 1);
+        view.visible_lines(&theme, None, 2, 2);
+        assert_eq!(view.failure_search_start(), 2);
+    }
+
+    #[test]
+    fn failure_search_starts_at_the_jumped_to_line_until_it_leaves_the_pane() {
+        let theme = Theme::default();
+        let mut view = JobTraceView::new(trace_of("0\n1\n2\n3\n4\n5\n"));
+
+        assert_eq!(view.jump_to_line(&theme, None, 5), 5);
+        view.visible_lines(&theme, None, 3, 3);
+        assert_eq!(view.failure_search_start(), 5);
+        view.visible_lines(&theme, None, 0, 3);
+        assert_eq!(view.failure_search_start(), 0);
+        view.visible_lines(&theme, None, 3, 3);
+        assert_eq!(view.failure_search_start(), 3);
     }
 }

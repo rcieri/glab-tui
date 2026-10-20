@@ -1,7 +1,7 @@
 [
   {
     "id": 100,
-    "iid": 1,
+    "iid": 2,
     "status": "success",
     "ref": "main",
     "tag": false,
@@ -12,6 +12,38 @@
       "id": 1,
       "name": "production",
       "external_url": "https://production.example.com"
+    },
+    "deployable": {
+      "id": 501,
+      "name": "deploy-production",
+      "status": "success"
+    },
+    "user": {
+      "username": "alice"
+    }
+  },
+  {
+    "id": 99,
+    "iid": 1,
+    "status": "failed",
+    "ref": "release-1.0",
+    "tag": false,
+    "sha": "0ldc0de1",
+    "created_at": "2026-07-01T09:00:00Z",
+    "updated_at": "2026-07-01T09:05:00Z",
+    "environment": {
+      "id": 1,
+      "name": "production",
+      "external_url": "https://production.example.com"
+    },
+    "deployable": {
+      "id": 500,
+      "name": "deploy-production",
+      "status": "failed"
+    },
+    "description": "Hotfix rollout for the login outage",
+    "user": {
+      "username": "bob"
     }
   }
 ]

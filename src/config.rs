@@ -1221,7 +1221,13 @@ pub struct KeybindingJobs {
     pub trace_search: String,
     #[serde(default)]
     pub toggle_trace_follow: String,
-    #[serde(default = "def_copy_sha")]
+    #[serde(default = "def_jump_to_failure")]
+    pub jump_to_failure: String,
+    #[serde(default = "def_copy_job_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_job_id")]
+    pub copy_id: String,
+    #[serde(default = "def_copy_job_sha")]
     pub copy_sha: String,
     #[serde(default = "def_selection_toggle")]
     pub selection_toggle: String,
@@ -1275,6 +1281,16 @@ pub struct KeybindingEnvironments {
     pub view_deployments: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_focus_deployments")]
+    pub focus_deployments: String,
+    #[serde(default = "def_rollback_deployment")]
+    pub rollback_deployment: String,
+    #[serde(default = "def_stop_environment")]
+    pub stop_environment: String,
+    #[serde(default = "def_copy_environment_url")]
+    pub copy_url: String,
+    #[serde(default = "def_view_deployment_log")]
+    pub view_deployment_log: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1285,6 +1301,14 @@ pub struct KeybindingTerminal {
     pub clear_log: String,
     #[serde(default = "def_copy_terminal_command")]
     pub copy_command: String,
+    #[serde(default = "def_copy_terminal_output")]
+    pub copy_output: String,
+    #[serde(default = "def_inspect_terminal_command")]
+    pub inspect_command: String,
+    #[serde(default = "def_rerun_terminal_command")]
+    pub rerun_command: String,
+    #[serde(default = "def_cycle_terminal_status_filter")]
+    pub cycle_status_filter: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1344,6 +1368,8 @@ pub struct CustomKeybindingConfig {
     /// Run from the MR/PR diff view, with the file and line under the cursor.
     pub diff: Vec<CustomKeybinding>,
     pub pipelines: Vec<CustomKeybinding>,
+    /// Run from the Jobs tab, with the highlighted job or every selected one.
+    pub jobs: Vec<CustomKeybinding>,
     /// Panes that take no custom keybindings, kept only to report them.
     #[serde(flatten, skip_serializing)]
     pub unsupported_panes: std::collections::BTreeMap<String, toml::Value>,
@@ -1424,6 +1450,10 @@ keybind_defaults! {
     def_toggle_trace_wrap = "w",
     def_trace_search = "/",
     def_toggle_trace_follow = "f",
+    def_jump_to_failure = "E",
+    def_copy_job_url = "y",
+    def_copy_job_id = "Y",
+    def_copy_job_sha = "Alt+y",
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
@@ -1436,15 +1466,23 @@ keybind_defaults! {
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
+    def_focus_deployments = "Tab",
+    def_rollback_deployment = "R",
+    def_stop_environment = "d",
+    def_copy_environment_url = "y",
+    def_view_deployment_log = "e",
     def_toggle_terminal_wrap = "w",
     def_clear_terminal_log = "C",
     def_copy_terminal_command = "y",
+    def_copy_terminal_output = "Y",
+    def_inspect_terminal_command = "Enter",
+    def_rerun_terminal_command = "r",
+    def_cycle_terminal_status_filter = "s",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
     def_submit_edit = "Ctrl+x",
     def_copy_branch = "y",
-    def_copy_sha = "y",
     def_retry_failed = "R",
     def_copy_pipeline_sha = "C",
     def_copy_url = "y",
@@ -1588,7 +1626,10 @@ impl Default for KeybindingJobs {
             toggle_trace_wrap: def_toggle_trace_wrap(),
             trace_search: def_trace_search(),
             toggle_trace_follow: def_toggle_trace_follow(),
-            copy_sha: def_copy_sha(),
+            jump_to_failure: def_jump_to_failure(),
+            copy_url: def_copy_job_url(),
+            copy_id: def_copy_job_id(),
+            copy_sha: def_copy_job_sha(),
             selection_toggle: def_selection_toggle(),
             select_all: def_select_all(),
         }
@@ -1635,6 +1676,11 @@ impl Default for KeybindingEnvironments {
         Self {
             view_deployments: def_view_deployments(),
             open_in_browser: def_open_in_browser(),
+            focus_deployments: def_focus_deployments(),
+            rollback_deployment: def_rollback_deployment(),
+            stop_environment: def_stop_environment(),
+            copy_url: def_copy_environment_url(),
+            view_deployment_log: def_view_deployment_log(),
         }
     }
 }
@@ -1645,6 +1691,10 @@ impl Default for KeybindingTerminal {
             toggle_wrap: def_toggle_terminal_wrap(),
             clear_log: def_clear_terminal_log(),
             copy_command: def_copy_terminal_command(),
+            copy_output: def_copy_terminal_output(),
+            inspect_command: def_inspect_terminal_command(),
+            rerun_command: def_rerun_terminal_command(),
+            cycle_status_filter: def_cycle_terminal_status_filter(),
         }
     }
 }
@@ -1975,6 +2025,10 @@ view_trace = "Enter"
 toggle_trace_wrap = "w"
 trace_search = "/"
 toggle_trace_follow = "f"
+jump_to_failure = "E"
+copy_url = "y"
+copy_id = "Y"
+copy_sha = "Alt+y"
 selection_toggle = "v"
 
 [keybindings.runners]
@@ -1996,11 +2050,21 @@ delete_branch = "d"
 
 [keybindings.environments]
 view_deployments = "Enter"
+open_in_browser = "o"
+focus_deployments = "Tab"
+rollback_deployment = "R"
+stop_environment = "d"
+copy_url = "y"
+view_deployment_log = "e"
 
 [keybindings.terminal]
 toggle_wrap = "w"
 clear_log = "C"
 copy_command = "y"
+copy_output = "Y"
+inspect_command = "Enter"
+rerun_command = "r"
+cycle_status_filter = "s"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:
@@ -2022,6 +2086,7 @@ copy_command = "y"
 #   mrs:       RepoName RepoPath PrNumber HeadRefName BaseRefName Author
 #   issues:    RepoName RepoPath IssueNumber IssueTitle Author
 #   pipelines: RepoName RepoPath PipelineId Ref Sha
+#   jobs:      RepoName RepoPath JobId JobName Stage Status
 #   universal: RepoName RepoPath
 #   diff:      mrs arguments + FilePath LineNumber (the line under the diff cursor)
 # Each is also exported as GLAB_TUI_<NAME>, e.g. GLAB_TUI_PR_NUMBER.
@@ -2533,8 +2598,9 @@ page_size = 250
     }
 
     #[test]
-    fn copy_sha_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.jobs.copy_sha, "y");
+    fn copy_sha_defaults_to_c_on_pipelines_and_alt_y_on_jobs() {
+        assert_eq!(Config::default().keybindings.pipelines.copy_sha, "C");
+        assert_eq!(Config::default().keybindings.jobs.copy_sha, "Alt+y");
     }
 
     #[test]

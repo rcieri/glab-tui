@@ -82,10 +82,6 @@ fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
 /// Offline before showing every runner again.
 #[test]
 fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
-    std::panic::set_hook(Box::new(|info| {
-        use std::io::Write;
-        let _ = writeln!(std::io::stderr(), "RUNNERS_DEBUG {info}");
-    }));
     let mut session =
         TestSession::with_config_and_args(false, 40, 180, Some(ASCII_ICONS), &["--tab", "runners"]);
 
@@ -93,7 +89,9 @@ fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
         .wait_for_screen_contains("docker, linux", 10_000)
         .unwrap();
     session.press_keys(b"\r");
-    session.wait_for_screen_contains("17.4.0", 5_000).unwrap();
+    session
+        .wait_for_screen_contains("/runners/9876", 5_000)
+        .unwrap();
     let screen = session.emulator.get_text();
     let line = |needle: &str| {
         screen
@@ -116,7 +114,7 @@ fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
     // with its unknown fields muted.
     session.press_keys(b"j");
     session
-        .wait_for_screen_contains("Preview: Runner #9877", 5_000)
+        .wait_for_screen_contains("/runners/9877", 5_000)
         .unwrap();
     let screen = session.emulator.get_text();
     let line = |needle: &str| {

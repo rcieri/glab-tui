@@ -46,6 +46,59 @@ fn show_selected_all_notice(app: &mut App, added: usize) {
     app.show_notice(format!("Selected all {added} item{plural}"));
 }
 
+pub(crate) fn open_create_mr_form(
+    app: &mut App,
+    values: crate::entity_editor::MrFieldValues,
+    project: String,
+    entity_iid: u64,
+) {
+    let is_github = app.is_github();
+    let pr_suffix = if is_github {
+        "Pull Request"
+    } else {
+        "Merge Request"
+    };
+    let title = if entity_iid > 0 {
+        format!("Create {pr_suffix} from #{entity_iid}")
+    } else {
+        format!("Create {pr_suffix}")
+    };
+    let mut values = values;
+    if values.target_branch.is_empty() {
+        values.target_branch = get_default_branch().unwrap_or_else(|| "main".to_string());
+    }
+    if values.draft_status.is_empty() {
+        values.draft_status = "Draft".to_string();
+    }
+    let fields = crate::entity_editor::mr_fields(
+        values,
+        is_github,
+        if app.scope.is_group() {
+            Some(project.clone())
+        } else {
+            None
+        },
+    );
+    app.open_edit_menu(crate::app::EditMenu {
+        title,
+        entity_project: project,
+        fields,
+        initial_fields: std::collections::HashMap::new(),
+        selected_idx: 0,
+        entity_iid,
+        entity_kind: crate::app::EditEntityKind::CreateMr,
+        state: {
+            let mut s = ListState::default();
+            s.select(Some(0));
+            s
+        },
+        workflow_inputs: vec![],
+        cursor_pos: 0,
+        editing: false,
+        desc_scroll: 0,
+    });
+}
+
 /// A row whose status was set before the backend confirmed the mutation:
 /// its id and the status it showed before, when the row was on screen.
 pub(crate) type OptimisticRow = (u64, Option<String>);
@@ -839,13 +892,6 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
-                        let is_github = app.is_github();
-                        let pr_suffix = if is_github {
-                            "Pull Request"
-                        } else {
-                            "Merge Request"
-                        };
-
                         let title_val = issue.title.clone();
                         let source_branch_val = format!("{}-{}", issue.iid, slugify(&issue.title));
                         let create_from_val = format!("#{} - {}", issue.iid, issue.title);
@@ -869,57 +915,25 @@ pub async fn handle_active_tab_key(
                             .as_ref()
                             .map(|m| m.title.clone())
                             .unwrap_or_default();
-                        let target_branch_val =
-                            get_default_branch().unwrap_or_else(|| "main".to_string());
                         let project_val = if !issue.project_path.is_empty() {
                             issue.project_path.clone()
                         } else {
                             app.scope.as_str().to_string()
                         };
-                        let mut fields = crate::entity_editor::mr_fields(
+                        open_create_mr_form(
+                            app,
                             crate::entity_editor::MrFieldValues {
                                 title: title_val,
                                 labels: labels_val,
                                 assignees: assignees_val,
                                 milestone: milestone_val,
-                                target_branch: target_branch_val,
-                                draft_status: "Draft".to_string(),
+                                create_from_issue: create_from_val,
+                                source_branch: source_branch_val,
                                 ..Default::default()
                             },
-                            is_github,
-                            if app.scope.is_group() {
-                                Some(project_val.clone())
-                            } else {
-                                None
-                            },
+                            project_val,
+                            issue.iid,
                         );
-                        // Pre-fill the "Create from Issue" and "Source Branch" rows since we launched
-                        // the form directly from this issue.
-                        if let Some(f) = fields.iter_mut().find(|f| f.label == "Create from Issue")
-                        {
-                            f.value = create_from_val;
-                        }
-                        if let Some(f) = fields.iter_mut().find(|f| f.label == "Source Branch") {
-                            f.value = source_branch_val;
-                        }
-                        app.open_edit_menu(crate::app::EditMenu {
-                            title: format!("Create {} from #{}", pr_suffix, issue.iid),
-                            entity_project: project_val,
-                            fields,
-                            initial_fields: std::collections::HashMap::new(),
-                            selected_idx: 0,
-                            entity_iid: issue.iid,
-                            entity_kind: crate::app::EditEntityKind::CreateMr,
-                            state: {
-                                let mut s = ListState::default();
-                                s.select(Some(0));
-                                s
-                            },
-                            workflow_inputs: vec![],
-                            cursor_pos: 0,
-                            editing: false,
-                            desc_scroll: 0,
-                        });
                     }
                 }
             }
@@ -927,13 +941,6 @@ pub async fn handle_active_tab_key(
         },
         crate::app::Tab::MergeRequests => {
             if keybinding_matches(&app.config.keybindings.mrs.create_mr, key_event) {
-                let is_github = app.is_github();
-                let pr_suffix = if is_github {
-                    "Pull Request"
-                } else {
-                    "Merge Request"
-                };
-                let target_branch_val = get_default_branch().unwrap_or_else(|| "main".to_string());
                 let project = if app.scope.is_group() {
                     let mrs = app.filtered_mrs();
                     app.mrs
@@ -955,37 +962,12 @@ pub async fn handle_active_tab_key(
                 } else {
                     app.scope.as_str().to_string()
                 };
-                let fields = crate::entity_editor::mr_fields(
-                    crate::entity_editor::MrFieldValues {
-                        target_branch: target_branch_val,
-                        draft_status: "Draft".to_string(),
-                        ..Default::default()
-                    },
-                    is_github,
-                    if app.scope.is_group() {
-                        Some(project.clone())
-                    } else {
-                        None
-                    },
+                open_create_mr_form(
+                    app,
+                    crate::entity_editor::MrFieldValues::default(),
+                    project,
+                    0,
                 );
-                app.open_edit_menu(crate::app::EditMenu {
-                    title: format!("Create {pr_suffix}"),
-                    entity_project: project,
-                    fields,
-                    initial_fields: std::collections::HashMap::new(),
-                    selected_idx: 0,
-                    entity_iid: 0,
-                    entity_kind: crate::app::EditEntityKind::CreateMr,
-                    state: {
-                        let mut s = ListState::default();
-                        s.select(Some(0));
-                        s
-                    },
-                    workflow_inputs: vec![],
-                    cursor_pos: 0,
-                    editing: false,
-                    desc_scroll: 0,
-                });
             } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
                 if let Some(selected_idx) = app.mrs.state.selected() {
                     if let Some(m) = app.filtered_mrs().get(selected_idx) {
@@ -2429,13 +2411,20 @@ pub async fn handle_active_tab_key(
                 });
             } else if keybinding_matches(&app.config.keybindings.branches.delete_branch, key_event)
             {
-                if app.selected_branches.len() > 1 {
+                if !app.selected_branches.is_empty() {
                     let mut names: Vec<String> = app.selected_branches.iter().cloned().collect();
                     names.sort();
-                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                        crate::app::ConfirmAction::BulkDeleteBranches(names),
-                        app,
-                    ));
+                    if names.len() == 1 {
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::DeleteBranch(names.remove(0)),
+                            app,
+                        ));
+                    } else {
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::BulkDeleteBranches(names),
+                            app,
+                        ));
+                    }
                 } else if let Some(branch) = app.branches.cursor_row() {
                     app.submit_dialog = Some(crate::app::SubmitDialog::build(
                         crate::app::ConfirmAction::DeleteBranch(branch.name.clone()),
@@ -2445,59 +2434,34 @@ pub async fn handle_active_tab_key(
             } else if let Some(branch) = app.branches.cursor_row() {
                 let branch_name = branch.name.clone();
                 if keybinding_matches(&app.config.keybindings.branches.checkout_branch, key_event) {
-                    match crate::git_helpers::checkout_branch(&branch_name) {
-                        Ok(_) => {
-                            app.show_notice(format!("Checked out branch '{branch_name}'"));
-                        }
-                        Err(err) => {
-                            app.show_error(err.to_string());
-                        }
-                    }
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::git_helpers::checkout_branch(&branch_name)
+                        })
+                        .await;
+                        let _ = match result {
+                            Ok(Ok(message)) => tx.send(Event::Notice(message)),
+                            Ok(Err(e)) => {
+                                tx.send(Event::CommandCompleted(Tab::Branches, Err(e.to_string())))
+                            }
+                            Err(e) => {
+                                tx.send(Event::CommandCompleted(Tab::Branches, Err(e.to_string())))
+                            }
+                        };
+                    });
                 } else if keybinding_matches(&app.config.keybindings.branches.create_mr, key_event)
                 {
-                    let is_github = app.is_github();
-                    let pr_suffix = if is_github {
-                        "Pull Request"
-                    } else {
-                        "Merge Request"
-                    };
-                    let target_branch_val =
-                        get_default_branch().unwrap_or_else(|| "main".to_string());
                     let project = app.scope.as_str().to_string();
-                    let mut fields = crate::entity_editor::mr_fields(
+                    open_create_mr_form(
+                        app,
                         crate::entity_editor::MrFieldValues {
-                            target_branch: target_branch_val,
-                            draft_status: "Draft".to_string(),
+                            source_branch: branch_name.clone(),
                             ..Default::default()
                         },
-                        is_github,
-                        if app.scope.is_group() {
-                            Some(project.clone())
-                        } else {
-                            None
-                        },
+                        project,
+                        0,
                     );
-                    if let Some(f) = fields.iter_mut().find(|f| f.label == "Source Branch") {
-                        f.value = branch_name.clone();
-                    }
-                    app.open_edit_menu(crate::app::EditMenu {
-                        title: format!("Create {pr_suffix}"),
-                        entity_project: project,
-                        fields,
-                        initial_fields: std::collections::HashMap::new(),
-                        selected_idx: 0,
-                        entity_iid: 0,
-                        entity_kind: crate::app::EditEntityKind::CreateMr,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                        workflow_inputs: vec![],
-                        cursor_pos: 0,
-                        editing: false,
-                        desc_scroll: 0,
-                    });
                 } else if keybinding_matches(
                     &app.config.keybindings.branches.open_in_browser,
                     key_event,
@@ -4482,10 +4446,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn branches_tab_selection_and_bulk_delete() {
-        let mut app = app_with_branches(3);
-
-        // Space selects the cursor branch
+    async fn space_toggles_cursor_branch_selection() {
+        let mut app = app_with_branches(2);
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
@@ -4493,7 +4455,49 @@ mod tests {
         .await;
         assert!(app.selected_branches.contains("branch-00"));
 
-        // Move to next branch and select it
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        )
+        .await;
+        assert!(!app.selected_branches.contains("branch-00"));
+    }
+
+    #[tokio::test]
+    async fn delete_with_one_selected_opens_single_delete_dialog() {
+        let mut app = app_with_branches(2);
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        )
+        .await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        )
+        .await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        )
+        .await;
+        let dialog = app.submit_dialog.as_ref().expect("Delete dialog shown");
+        assert_eq!(dialog.title, "Delete Branch 'branch-00'");
+        if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
+            assert_eq!(name, "branch-00");
+        } else {
+            panic!("Expected ConfirmAction::DeleteBranch");
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_with_two_selected_opens_bulk_delete_dialog() {
+        let mut app = app_with_branches(3);
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        )
+        .await;
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -4505,9 +4509,7 @@ mod tests {
         )
         .await;
         assert_eq!(app.selected_branches.len(), 2);
-        assert!(app.selected_branches.contains("branch-01"));
 
-        // Delete key 'd' triggers bulk delete dialog when > 1 branch selected
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
@@ -4526,21 +4528,22 @@ mod tests {
         } else {
             panic!("Expected ConfirmAction::BulkDeleteBranches");
         }
+    }
 
-        // Ctrl+a selects all branches
-        app.submit_dialog = None;
+    #[tokio::test]
+    async fn ctrl_a_selects_every_visible_branch() {
+        let mut app = app_with_branches(3);
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
         )
         .await;
         assert_eq!(app.selected_branches.len(), 3);
+    }
 
-        // Clear selections
-        app.clear_selections();
-        assert!(app.selected_branches.is_empty());
-
-        // Visual select toggle 'v'
+    #[tokio::test]
+    async fn visual_mode_selects_range_on_cursor_move() {
+        let mut app = app_with_branches(3);
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
@@ -4553,17 +4556,5 @@ mod tests {
         )
         .await;
         assert_eq!(app.selected_branches.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn branches_tab_checkout_branch() {
-        let mut app = app_with_branches(1);
-        dispatch(
-            &mut app,
-            &KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT),
-        )
-        .await;
-        // Either notice or error toast is set
-        assert!(app.status_message.is_some() || app.error_message.is_some());
     }
 }

@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Cell;
 
-use super::{CellContext, ColumnDef, Row};
+use super::{CellContext, ColumnDef, Row, SortKey};
 use crate::domain::branches::Branch;
 use crate::ui::helpers::render_fuzzy_cell;
 use crate::utils::format::truncate;
@@ -116,6 +116,21 @@ impl ColumnDef for BranchColumn {
                 Some((a, b)) => Cow::Owned(format!("+{a} / -{b}")),
                 None => Cow::Borrowed("--"),
             },
+        }
+    }
+
+    fn sort_key(self, row: &Branch) -> SortKey {
+        match self {
+            Self::Date => SortKey::Number(
+                row.commit_date
+                    .as_deref()
+                    .and_then(|d| d.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                    .map_or(0, |t| t.timestamp().max(0) as u64),
+            ),
+            Self::AheadBehind => {
+                SortKey::Number(row.ahead_behind.map_or(0, |(ahead, _)| ahead as u64))
+            }
+            _ => SortKey::Text(self.text(row).into_owned()),
         }
     }
 

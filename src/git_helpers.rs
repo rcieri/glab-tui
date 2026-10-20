@@ -287,29 +287,6 @@ pub fn ensure_source_branch_pushed(branch: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let exists = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", "--quiet", branch])
-        .output()
-        .ok()
-        .is_some_and(|o| o.status.success());
-    if !exists {
-        let output = std::process::Command::new("git")
-            .args(["branch", branch, "HEAD"])
-            .output()
-            .map_err(|e| anyhow::anyhow!("Failed to create local branch '{branch}': {e}"))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            anyhow::bail!(
-                "Failed to create branch '{branch}': {}",
-                if err.is_empty() {
-                    "unknown error"
-                } else {
-                    &err
-                }
-            );
-        }
-    }
-
     let remote_ref = format!("refs/heads/{branch}");
     let probe = std::process::Command::new("git")
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -326,6 +303,29 @@ pub fn ensure_source_branch_pushed(branch: &str) -> anyhow::Result<()> {
                 "Could not check remote branch '{branch}': {}. Configure git credentials (e.g. `gh auth setup-git`) or use SSH.",
                 if err.is_empty() {
                     "authentication or network error"
+                } else {
+                    &err
+                }
+            );
+        }
+    }
+
+    let exists = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", branch])
+        .output()
+        .ok()
+        .is_some_and(|o| o.status.success());
+    if !exists {
+        let output = std::process::Command::new("git")
+            .args(["branch", branch, "HEAD"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to create local branch '{branch}': {e}"))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            anyhow::bail!(
+                "Failed to create branch '{branch}': {}",
+                if err.is_empty() {
+                    "unknown error"
                 } else {
                     &err
                 }
@@ -406,15 +406,15 @@ pub fn repo_root() -> Option<String> {
         .filter(|root| !root.is_empty())
 }
 
-/// Checks out `branch_name` in the local repository.
+/// Switches to `branch_name` in the local repository.
 pub fn checkout_branch(branch_name: &str) -> anyhow::Result<String> {
     if branch_name.is_empty() {
         anyhow::bail!("Branch name cannot be empty");
     }
     let output = std::process::Command::new("git")
-        .args(["checkout", branch_name])
+        .args(["switch", branch_name])
         .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run git checkout: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to run git switch: {e}"))?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
         anyhow::bail!(

@@ -28,7 +28,21 @@ pub fn enrich_branches(branches: &mut [Branch]) {
     if crate::git_helpers::repo_root().is_none() {
         return;
     }
-    let default_branch = crate::git_helpers::get_default_branch();
+    let base_sha = branches
+        .iter()
+        .find(|b| b.default)
+        .map(|b| b.commit_sha.clone())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            crate::git_helpers::get_default_branch().and_then(|def| {
+                branches
+                    .iter()
+                    .find(|b| b.name == def)
+                    .map(|b| b.commit_sha.clone())
+                    .filter(|s| !s.is_empty())
+            })
+        });
+
     for branch in branches.iter_mut() {
         if branch.author_name.is_none()
             || branch.commit_message.is_none()
@@ -55,16 +69,13 @@ pub fn enrich_branches(branches: &mut [Branch]) {
             }
         }
         if branch.ahead_behind.is_none() {
-            if branch.default {
-                branch.ahead_behind = Some((0, 0));
-            } else if let Some(ref base) = default_branch {
-                let target = if !branch.name.is_empty() {
-                    &branch.name
-                } else {
-                    &branch.commit_sha
-                };
-                branch.ahead_behind = crate::git_helpers::get_ahead_behind(base, target);
-            }
+            branch.ahead_behind = if branch.default {
+                Some((0, 0))
+            } else {
+                base_sha
+                    .as_deref()
+                    .and_then(|base| crate::git_helpers::get_ahead_behind(base, &branch.commit_sha))
+            };
         }
     }
 }
@@ -73,11 +84,16 @@ pub async fn list_branches(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
 ) -> Result<Vec<Branch>> {
-    let mut branches = client
+    let branches = client
         .backend
         .list_branches(scope, client.page_size)
         .await?;
-    enrich_branches(&mut branches);
+    let branches = tokio::task::spawn_blocking(move || {
+        let mut branches = branches;
+        enrich_branches(&mut branches);
+        branches
+    })
+    .await?;
     Ok(branches)
 }
 

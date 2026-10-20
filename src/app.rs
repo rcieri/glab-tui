@@ -4216,6 +4216,7 @@ impl App {
         self.column_filter_context = None;
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.selected_branches.clear();
         self.select_mode = false;
         self.select_anchor = None;
         self.loaded_tabs.clear();

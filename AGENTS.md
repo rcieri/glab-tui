@@ -64,7 +64,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches (routed through `&Scope`); `spawn_refresh_all_tabs()` — background tab prefetcher when `config.prefetch_tabs` is enabled; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
 * [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_project_path_from_web_url`, `parse_group`, `parse_remote_host`, `get_current_branch`, `repo_root`, `slugify`, `get_workflow_files`.
-* [src/custom_commands.rs](src/custom_commands.rs): User-defined `[[custom_keybindings.<pane>]]` commands — `CustomCommands::load` (validation, built-in shadow detection, `ConfigProblem` reports), `CommandPane` (universal / issues / mrs / diff and their template arguments), gh-dash style `{{.Name}}` templating (`render`, `TemplateValues`, `GLAB_TUI_*` environment) and `shell_process` (`$SHELL -c`).
+* [src/custom_commands.rs](src/custom_commands.rs): User-defined `[[custom_keybindings.<pane>]]` commands — `CustomCommands::load` (validation, built-in shadow detection, `ConfigProblem` reports), `CommandPane` (universal / issues / mrs / branches / diff and their template arguments), gh-dash style `{{.Name}}` templating (`render`, `TemplateValues`, `GLAB_TUI_*` environment) and `shell_process` (`$SHELL -c`).
 * [src/command_log.rs](src/command_log.rs): `CommandLog`, the Terminal tab's history behind `App::terminal_commands`. It keeps the newest `MAX_LOG_ENTRIES` (1,000) `TerminalCommand`s and hands out `LogRow` handles that stay valid while older entries are dropped or the log is cleared. Update entries through `find_latest` / `set_status` / `App::settle_command`, never by position, since positions shift on every eviction. The Terminal tab filters it with the global search bar (`App::filtered_terminal_commands`), copies the bottom row of the view (`App::terminal_cursor`, `App::copy_terminal_command`, `copy_command` key) and clears it (`clear_log` key).
 * [src/scope.rs](src/scope.rs): `Scope` enum (`Repository` / `Group`) — `as_str()`, `is_group()`/`is_repository()`, `cli_repo_arg()`/`cli_group_arg()` (glab/gh flag injection), `api_path_prefix()` (with `%2F` URL encoding), and `Display`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
@@ -138,9 +138,9 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * **Bulk Edit Selection:** Bulk edit menus carry `InspectorContent::Custom` displaying the full list of selected `#iid` / titles in the descriptor pane so users can verify affected entities before submission.
 
 ### Visual Select Mode (Yazi-Style)
-* `v` (`selection_toggle` keybinding) toggles select mode on the Issues and MRs tabs. Navigating (`j`/`k`/arrows) paints row selection dynamically.
+* `v` (`selection_toggle` keybinding) toggles select mode on the Issues, MRs, and Branches tabs. Navigating (`j`/`k`/arrows) paints row selection dynamically.
 * Selected rows display a 1-wide leftmost colored bar (`checked_bg`) and the top-right header shows a `[SELECT]` mode badge.
-* `Space` (`select_issue` / `select_mr`) continues to toggle individual item selection.
+* `Space` (`select_issue` / `select_mr` / `select_branch`) continues to toggle individual item selection.
 
 ### Unified Error Handling (`App::show_error`)
 * All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.

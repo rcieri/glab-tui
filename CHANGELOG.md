@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Features
+- **Branches tab parity**: Local checkout/switch (`C`), create MR/PR from branch (`m`), visual and bulk selection (`Space`, `v`, `Ctrl+a`), bulk deletion with confirmation, branch commit inspector, and `custom_keybindings.branches` pane support (#658, #662).
 - **Todos / Notifications actions**: New keys on the Todos tab. `d` marks the highlighted item done (`mark_as_done`), `A` marks every item read after a confirmation (`mark_all_as_read`), `U` unsubscribes from the item's issue, MR/PR or thread (`unsubscribe`) and `r` toggles listing read (GitHub) or done (GitLab) items (`toggle_show_read`). The tab now lists unread items only by default, and its title names the active filter (`Unread` / `All`) (#583).
 
 ### Bug Fixes

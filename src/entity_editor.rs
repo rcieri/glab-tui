@@ -114,6 +114,8 @@ pub struct MrFieldValues {
     pub reviewers: String,
     pub milestone: String,
     pub target_branch: String,
+    pub source_branch: String,
+    pub create_from_issue: String,
     pub draft_status: String,
     pub description: String,
 }
@@ -140,9 +142,12 @@ pub fn mr_fields(
     ));
     fields.push(crate::app::Field::ref_field(
         "Create from Issue",
-        String::new(),
+        values.create_from_issue,
     ));
-    fields.push(crate::app::Field::ref_field("Source Branch", String::new()));
+    fields.push(crate::app::Field::ref_field(
+        "Source Branch",
+        values.source_branch,
+    ));
     fields.push(crate::app::Field::multi_select(
         "Assignees",
         values.assignees,
@@ -764,56 +769,23 @@ pub fn build_todo_document(
 pub fn build_branch_document(
     branch: &crate::domain::branches::Branch,
 ) -> crate::app::EntityDocument {
-    let local_info = if branch.author_name.is_none() || branch.commit_message.is_none() {
-        let rev = if !branch.commit_sha.is_empty() {
-            &branch.commit_sha
-        } else {
-            &branch.name
-        };
-        crate::git_helpers::get_commit_info(rev)
-    } else {
-        None
-    };
-
-    let author = branch
-        .author_name
-        .clone()
-        .or_else(|| local_info.as_ref().map(|i| i.author_name.clone()));
-    let author_email = branch
-        .author_email
-        .clone()
-        .or_else(|| local_info.as_ref().map(|i| i.author_email.clone()));
-    let author_display = author.map(|name| {
-        if let Some(email) = author_email.filter(|e| !e.is_empty()) {
-            format!("{name} <{email}>")
-        } else {
-            name
+    let author_display = branch.author_name.as_ref().map(|name| {
+        match branch.author_email.as_deref().filter(|e| !e.is_empty()) {
+            Some(email) => format!("{name} <{email}>"),
+            None => name.clone(),
         }
     });
 
-    let date = branch
-        .commit_date
-        .clone()
-        .or_else(|| local_info.as_ref().map(|i| i.date.clone()));
-    let date_display = date.map(|d| {
-        let ago = crate::utils::format::time_ago(&d);
-        if ago == d { d } else { format!("{ago} ({d})") }
-    });
-
-    let ahead_behind = branch.ahead_behind.or_else(|| {
-        if branch.default {
-            Some((0, 0))
-        } else if let Some(base) = crate::git_helpers::get_default_branch() {
-            let target = if !branch.name.is_empty() {
-                &branch.name
-            } else {
-                &branch.commit_sha
-            };
-            crate::git_helpers::get_ahead_behind(&base, target)
+    let date_display = branch.commit_date.as_ref().map(|d| {
+        let ago = crate::utils::format::time_ago(d);
+        if &ago == d {
+            d.clone()
         } else {
-            None
+            format!("{ago} ({d})")
         }
     });
+
+    let ahead_behind = branch.ahead_behind;
     let ahead_behind_display = ahead_behind.map(|(ahead, behind)| {
         if ahead == 0 && behind == 0 && branch.default {
             "Default branch".to_string()
@@ -825,7 +797,6 @@ pub fn build_branch_document(
     let commit_msg = branch
         .commit_message
         .clone()
-        .or_else(|| local_info.map(|i| i.message))
         .filter(|m| !m.trim().is_empty());
 
     let mut fields = vec![

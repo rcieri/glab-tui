@@ -990,6 +990,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             crate::app::ConfirmAction::CancelPipeline(_)
             | crate::app::ConfirmAction::CancelJobs { .. } => icons.status_canceled.clone(),
             crate::app::ConfirmAction::RerunCommand(_) => icons.tab_terminal.clone(),
+            crate::app::ConfirmAction::StopEnvironment(_) => icons.action_close.clone(),
+            crate::app::ConfirmAction::RollbackDeployment { .. } => icons.label_deployment.clone(),
         };
         let option_rows = dialog.options.len();
 
@@ -1210,6 +1212,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
 const START_MANUAL_JOB_ACTION: &str = "Start manual job";
+/// GitHub deployments carry no job, so they have no log to open.
+const VIEW_DEPLOYMENT_LOG_ACTION: &str = "Open the selected deployment's job log in $EDITOR";
 
 const RUNNER_PAUSE_RESUME_ACTION: &str = "Pause / Resume runner";
 const RUNNER_EDIT_DESCRIPTION_ACTION: &str = "Edit runner description text";
@@ -1715,6 +1719,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Jobs",
+            key: d(app.config.keybindings.jobs.jump_to_failure.clone()),
+            action: "Jump to the next failure line in the job trace",
+        },
+        Shortcut {
+            category: "Jobs",
             key: s("m"),
             action: "Collapse / expand matrix jobs",
         },
@@ -1722,6 +1731,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Jobs",
             key: d(app.config.keybindings.jobs.copy_sha.clone()),
             action: "Copy pipeline commit SHA",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.copy_url.clone()),
+            action: "Copy job web URL",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.copy_id.clone()),
+            action: "Copy job ID",
         },
         // ── Milestones ──
         Shortcut {
@@ -1899,7 +1918,52 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Environments",
             key: d(app.config.keybindings.environments.view_deployments.clone()),
-            action: "View deployments list for environment",
+            action: "List and focus the environment's deployments",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app
+                .config
+                .keybindings
+                .environments
+                .focus_deployments
+                .clone()),
+            action: "Move focus between environments and deployments",
+        },
+        Shortcut {
+            category: "Environments",
+            key: s("j / k (focused)"),
+            action: "Select a deployment to inspect",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app
+                .config
+                .keybindings
+                .environments
+                .rollback_deployment
+                .clone()),
+            action: "Roll back to the selected deployment",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app
+                .config
+                .keybindings
+                .environments
+                .view_deployment_log
+                .clone()),
+            action: VIEW_DEPLOYMENT_LOG_ACTION,
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app.config.keybindings.environments.stop_environment.clone()),
+            action: "Stop environment",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app.config.keybindings.environments.copy_url.clone()),
+            action: "Copy environment URL",
         },
         Shortcut {
             category: "Environments",
@@ -2143,7 +2207,10 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     );
     if is_github {
         shortcuts.retain(|shortcut| {
-            !(shortcut.category == "Jobs" && shortcut.action == START_MANUAL_JOB_ACTION)
+            !matches!(
+                (shortcut.category, shortcut.action),
+                ("Jobs", START_MANUAL_JOB_ACTION) | ("Environments", VIEW_DEPLOYMENT_LOG_ACTION)
+            )
         });
     }
 

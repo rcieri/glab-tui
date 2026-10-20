@@ -72,7 +72,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
 - **Branches** — browse branches with default/protected markers; create and delete branches inline
-- **Environments & Deployments** — browse environments and their deployment status, drilling into deployment history with `Enter`
+- **Environments & Deployments** — browse environments and their deployment status, walk an environment's deployment history with `Enter`, inspect each deployment's commit, deployer, job and notes, roll back with `R`, stop an environment with `d` and copy its URL with `y`
 - **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status and unified error toasts
 - **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
 - **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
@@ -368,6 +368,7 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 |---|---|
 | `custom_keybindings.mrs` (alias `prs`) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author` |
 | `custom_keybindings.issues` | `RepoName`, `RepoPath`, `IssueNumber`, `IssueTitle`, `Author` |
+| `custom_keybindings.jobs` | `RepoName`, `RepoPath`, `JobId`, `JobName`, `Stage`, `Status` |
 | `custom_keybindings.universal` | `RepoName`, `RepoPath` |
 | `custom_keybindings.diff` (diff view) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author`, `FilePath`, `LineNumber` |
 
@@ -381,9 +382,9 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
   command = "lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec 'nvim +{{.LineNumber}} {{.FilePath}}'"
   ```
 - `background = true` runs the command without handing over the terminal: the TUI stays on screen, the command gets no input, its output is not shown, and the Terminal tab logs it when it finishes; a failure toasts its last stderr line (e.g. `lazyworktree` refusing a closed issue). Use it for commands that open their own window or pane, such as `tmux new-window` or `herdr pane split`. Background commands run in their own session without a controlling terminal, so tools that query the terminal through `/dev/tty` (lazyworktree, gh) cannot inject the reply into glab-tui as keypresses. Place new herdr panes with `--pane "$HERDR_PANE_ID"` (glab-tui's own pane): `--current` follows whichever pane is focused in the herdr UI.
-- **Bulk runs:** with issues or MRs/PRs selected (`Space`, or `v` select mode), an `issues`/`mrs` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
-- Row arguments come from the highlighted issue or MR/PR. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project.
-- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
+- **Bulk runs:** with issues, MRs/PRs or jobs selected (`Space`, or `v` select mode), an `issues`/`mrs`/`jobs` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
+- Row arguments come from the highlighted issue, MR/PR or job. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project. GitHub jobs have no stage, so `{{.Stage}}` is refused there. `JobName` is the full name GitLab or GitHub reports, so a matrix job's (`rspec: [3.2, pg]`, `build (ubuntu, 3.2)`) holds spaces and brackets: pass it as `"$GLAB_TUI_JOB_NAME"`.
+- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`, `GLAB_TUI_JOB_ID`, `GLAB_TUI_JOB_NAME`, `GLAB_TUI_STAGE`, `GLAB_TUI_STATUS`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
 - Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
 - Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
@@ -680,7 +681,10 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `S` | Start manual (blocked) job. GitLab only: hidden on GitHub | `start_job` |
 | `c` | Cancel selected job (or all checked jobs) | `cancel` |
 | `d` | Download job artifact | `download_artifact` |
-| `y` | Copy pipeline commit SHA | `copy_sha` |
+| `y` | Copy job web URL | `copy_url` |
+| `Y` | Copy job ID | `copy_id` |
+| `Alt+y` | Copy pipeline commit SHA | `copy_sha` |
+| `E` | Jump to the next failure line in the job trace (fetches the trace first when it is not shown) | `jump_to_failure` |
 | `o` | Open job in browser | `open_in_browser` |
 | `e` | Open job trace in `$EDITOR` | `view_trace_editor` |
 | `p` | Switch to pipeline selector | `enter_pipeline` |
@@ -773,11 +777,19 @@ On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lis
 
 ### Environments tab
 
+`Enter` lists the highlighted environment's deployments, newest first, above the selected deployment's details, and moves the focus to them: `j`/`k`, `Home`/`End` then select a deployment instead of an environment. `Tab` moves the focus back and forth, `Esc` returns it to the environment list. While deployments are listed `Tab` is taken, so open the Configure View with `,`. Selecting another environment drops the listed deployments.
+
 > Remappable via `[keybindings.environments]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Fetch and view the deployments list for the selected environment | `view_deployments` |
+| `Enter` | List the selected environment's deployments and focus them | `view_deployments` |
+| `Tab` | Move the focus between the environment list and its deployments | `focus_deployments` |
+| `R` | Roll back to the selected deployment (with confirmation). GitLab re-runs the deployment's job. GitHub creates a deployment record of its commit, which only deploys if a workflow runs `on: deployment` | `rollback_deployment` |
+| `e` | Open the selected deployment's job log in `$EDITOR`. GitLab only: hidden on GitHub, whose deployments carry no job | `view_deployment_log` |
+| `d` | Stop the environment (with confirmation). GitLab runs its stop action. GitHub, which has no stop, marks its live deployment (the newest whose latest status is success) inactive | `stop_environment` |
+| `y` | Copy the environment's external URL | `copy_url` |
+| `o` | Open environment in browser | `open_in_browser` |
 
 ---
 

@@ -3037,8 +3037,16 @@ pub enum ConfirmAction {
     SubmitReview(u64),                // mr iid
     MarkAllTodosRead,
     CancelPipeline(u64), // pipeline id
-    CancelJobs { pipeline_id: u64, job_ids: Vec<u64> },
+    CancelJobs {
+        pipeline_id: u64,
+        job_ids: Vec<u64>,
+    },
     RerunCommand(Invocation),
+    StopEnvironment(Box<crate::domain::deployments::Environment>),
+    RollbackDeployment {
+        environment: String,
+        deployment: Box<crate::domain::deployments::Deployment>,
+    },
 }
 
 impl ConfirmAction {
@@ -3060,6 +3068,8 @@ impl ConfirmAction {
                 | Self::MarkAllTodosRead
                 | Self::CancelPipeline(_)
                 | Self::CancelJobs { .. }
+                | Self::StopEnvironment(_)
+                | Self::RollbackDeployment { .. }
         )
     }
 }
@@ -3596,6 +3606,55 @@ impl SubmitDialog {
                     true,
                 )
             }
+            ConfirmAction::StopEnvironment(environment) => {
+                let name = crate::utils::format::sanitize_untrusted(&environment.name);
+                let body = if kind.is_github() {
+                    format!(
+                        "Mark environment '{name}' inactive? GitHub has no stop action, so its \
+                         live deployment, the newest that succeeded, is marked inactive."
+                    )
+                } else {
+                    format!(
+                        "Stop environment '{name}'? GitLab runs its stop action, which tears \
+                         down review and other ephemeral environments."
+                    )
+                };
+                (
+                    format!("Stop Environment '{name}'"),
+                    body,
+                    "Stop".to_string(),
+                    vec![],
+                    true,
+                )
+            }
+            ConfirmAction::RollbackDeployment {
+                environment,
+                deployment,
+            } => {
+                let environment = crate::utils::format::sanitize_untrusted(environment);
+                let sha = deployment.short_sha();
+                let ref_name = crate::utils::format::sanitize_untrusted(&deployment.ref_name);
+                let how = match &deployment.deployable {
+                    Some(job) if !kind.is_github() => format!(
+                        "re-runs its job '{}'",
+                        crate::utils::format::sanitize_untrusted(&job.name)
+                    ),
+                    _ => "creates a deployment record of that commit, which only deploys if a \
+                          workflow runs on the `deployment` event"
+                        .to_string(),
+                };
+                (
+                    format!("Roll Back '{environment}' to {sha}"),
+                    format!(
+                        "Re-deploy {sha} ({ref_name}) from deployment #{} to '{environment}'? \
+                         This {how}.",
+                        deployment.iid
+                    ),
+                    "Roll Back".to_string(),
+                    vec![],
+                    true,
+                )
+            }
         };
         let extra_buttons = match &action {
             ConfirmAction::SubmitReview(_) => {
@@ -3735,6 +3794,18 @@ impl StaleData {
 pub struct EnvironmentDeployments {
     pub environment: String,
     pub table: StatefulTable<crate::domain::deployments::Deployment>,
+    /// Navigation keys move through the deployments instead of the
+    /// environment list.
+    pub is_focused: bool,
+}
+
+impl EnvironmentDeployments {
+    pub fn selected(&self) -> Option<&crate::domain::deployments::Deployment> {
+        self.table
+            .state
+            .selected()
+            .and_then(|idx| self.table.items.get(idx))
+    }
 }
 
 pub struct App {
@@ -3881,6 +3952,15 @@ pub struct App {
     pub job_trace_loading: bool,
     /// Job whose trace opens in the editor once its in-flight fetch lands.
     pub pending_job_trace_editor: Option<u64>,
+    /// Deployment whose job log opens in the editor once its in-flight fetch
+    /// lands.
+    pub pending_deployment_log: Option<u64>,
+    /// Job whose log scrolls to its first failure once its in-flight fetch
+    /// lands.
+    pub pending_job_trace_failure: Option<u64>,
+    /// Log line the job trace pane scrolls to on its next draw, which alone
+    /// knows the row a line starts at once wrapped.
+    pub job_trace_scroll_to_line: Option<usize>,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
@@ -4039,6 +4119,9 @@ impl Default for App {
             detail_scroll_to_bottom: false,
             job_trace_loading: false,
             pending_job_trace_editor: None,
+            pending_deployment_log: None,
+            pending_job_trace_failure: None,
+            job_trace_scroll_to_line: None,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),
             job_trace_searching: false,
@@ -4284,6 +4367,8 @@ impl App {
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;
         self.pending_job_trace_editor = None;
+        self.pending_deployment_log = None;
+        self.pending_job_trace_failure = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
@@ -4530,11 +4615,11 @@ impl App {
         }
     }
 
-    /// The project a pipeline belongs to: its own row's path, then the
-    /// project the Jobs tab was opened with when `id` is the active pipeline,
-    /// then the scope. A listed row always wins so an older Jobs-tab project
-    /// never redirects actions on other pipelines.
-    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+    /// The project a pipeline belongs to, when known: its own row's path,
+    /// then the project the Jobs tab was opened with when `id` is the active
+    /// pipeline. A listed row always wins so an older Jobs-tab project never
+    /// redirects actions on other pipelines.
+    pub fn pipeline_project(&self, id: u64) -> Option<&str> {
         self.pipelines
             .items
             .iter()
@@ -4546,14 +4631,24 @@ impl App {
                     .as_deref()
                     .filter(|p| !p.is_empty() && self.active_pipeline_id == Some(id))
             })
-            .unwrap_or_else(|| self.scope.as_str())
+    }
+
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        self.pipeline_project(id)
+            .unwrap_or(self.scope.as_str())
             .to_string()
     }
 
-    /// The project of the jobs on the Jobs tab. Jobs carry no project of
-    /// their own: they all belong to the active pipeline.
+    /// The project of the jobs on the Jobs tab, when known. Jobs carry no
+    /// project of their own: they all belong to the active pipeline.
+    pub fn jobs_project(&self) -> Option<&str> {
+        self.pipeline_project(self.active_pipeline_id?)
+    }
+
     pub fn project_path_for_jobs(&self) -> String {
-        self.project_path_for_pipeline(self.active_pipeline_id.unwrap_or(0))
+        self.jobs_project()
+            .unwrap_or(self.scope.as_str())
+            .to_string()
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -4881,6 +4976,46 @@ impl App {
         Ok(())
     }
 
+    /// The highlighted row of the Jobs tab.
+    pub fn selected_job(&self) -> Option<&crate::domain::pipelines::Job> {
+        let index = self.jobs.state.selected()?;
+        self.filtered_jobs().get(index).copied()
+    }
+
+    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_job()
+            .and_then(|job| job.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_job_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .selected_job()
+            .map(|job| job.id)
+            .ok_or_else(|| anyhow::anyhow!("No job is selected"))?;
+        self.clipboard.set_text(id.to_string())?;
+        Ok(())
+    }
+
+    /// Scrolls the shown job log to the first failure line after line
+    /// `after` (from the top when `None`), wrapping around.
+    pub fn jump_to_trace_failure(&mut self, after: Option<usize>) {
+        let Some(view) = &self.job_trace else {
+            return;
+        };
+        match view.trace().next_failure_line(after) {
+            Some(line) => {
+                self.job_trace_scroll_to_line = Some(line);
+                self.detail_scroll_to_bottom = false;
+            }
+            None => self.show_notice("No failure line in the job log"),
+        }
+    }
+
     pub fn selected_branch_name(&self) -> Option<String> {
         self.branches
             .cursor_row()
@@ -4893,6 +5028,25 @@ impl App {
             .selected_branch_name()
             .ok_or_else(|| anyhow::anyhow!("Branch name unavailable; refresh the Branches tab"))?;
         self.clipboard.set_text(branch)?;
+        Ok(())
+    }
+
+    /// The highlighted environment's external URL, stripped of escape
+    /// sequences: it is set by whoever writes the CI config and ends up pasted
+    /// into a terminal.
+    pub fn selected_environment_url(&self) -> Option<String> {
+        self.environments
+            .cursor_row()
+            .and_then(|env| env.external_url.as_deref())
+            .map(|url| crate::utils::format::sanitize_untrusted(url).into_owned())
+            .filter(|url| !url.is_empty())
+    }
+
+    pub fn copy_selected_environment_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_environment_url()
+            .ok_or_else(|| anyhow::anyhow!("environment has no external URL"))?;
+        self.clipboard.set_text(url)?;
         Ok(())
     }
 
@@ -7046,6 +7200,88 @@ impl App {
                 .is_some_and(|env| env.name == name)
     }
 
+    /// Shows `deployments` in the detail pane while `environment` is still
+    /// the highlighted row, focused so the keys navigate them. A refetch for
+    /// the environment already shown keeps its focus and selected deployment.
+    pub fn show_deployments(
+        &mut self,
+        environment: String,
+        deployments: Vec<crate::domain::deployments::Deployment>,
+    ) {
+        if !self.is_highlighted_environment(&environment) {
+            return;
+        }
+        let previous = self
+            .environment_deployments
+            .take()
+            .filter(|shown| shown.environment == environment);
+        let selected_id = previous
+            .as_ref()
+            .and_then(EnvironmentDeployments::selected)
+            .map(|deployment| deployment.id);
+        let mut table = StatefulTable::with_items(deployments);
+        if !table.items.is_empty() {
+            let idx = selected_id
+                .and_then(|id| table.items.iter().position(|d| d.id == id))
+                .unwrap_or(0);
+            table.state.select(Some(idx));
+        }
+        let is_focused = !table.items.is_empty() && previous.is_none_or(|shown| shown.is_focused);
+        self.environment_deployments = Some(EnvironmentDeployments {
+            environment,
+            table,
+            is_focused,
+        });
+    }
+
+    /// The shown deployments, when the navigation keys belong to them.
+    pub fn focused_deployments_mut(&mut self) -> Option<&mut EnvironmentDeployments> {
+        if self.active_tab != Tab::Environments || !self.is_detail_pane_on_screen() {
+            return None;
+        }
+        self.environment_deployments
+            .as_mut()
+            .filter(|shown| shown.is_focused)
+    }
+
+    /// Whether the last frame drew the detail pane. `detail_rect` covers the
+    /// terminal being too narrow for it, `detail_visible` a `q` pressed since.
+    fn is_detail_pane_on_screen(&self) -> bool {
+        self.detail_visible && self.detail_rect.is_some()
+    }
+
+    pub fn selected_deployment(&self) -> Option<&crate::domain::deployments::Deployment> {
+        self.environment_deployments.as_ref()?.selected()
+    }
+
+    /// Consumes the pending log request for `deployment_id` and says whether
+    /// its log should open, which it does only while that deployment is still
+    /// selected on the Environments tab.
+    pub fn take_pending_deployment_log(&mut self, deployment_id: u64) -> bool {
+        if self.pending_deployment_log != Some(deployment_id) {
+            return false;
+        }
+        self.pending_deployment_log = None;
+        self.active_tab == Tab::Environments
+            && self.selected_deployment().map(|d| d.id) == Some(deployment_id)
+    }
+
+    /// Whether `key` moves focus between the environment list and the shown
+    /// deployments. The event loop asks before the global configure key,
+    /// which is also bound to Tab by default.
+    pub fn is_deployments_focus_key(&self, key: &crossterm::event::KeyEvent) -> bool {
+        self.active_tab == Tab::Environments
+            && self.is_detail_pane_on_screen()
+            && self
+                .environment_deployments
+                .as_ref()
+                .is_some_and(|shown| !shown.table.items.is_empty())
+            && crate::keybinding::keybinding_matches(
+                &self.config.keybindings.environments.focus_deployments,
+                key,
+            )
+    }
+
     /// Canonicalise a saved filter value to the display string that
     /// `mr_filter_values` / issue filter functions now produce.
     ///
@@ -8528,6 +8764,58 @@ mod tests {
     }
 
     #[test]
+    fn job_url_and_id_are_copied_from_the_highlighted_job() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.active_tab = Tab::Jobs;
+        app.jobs.items = serde_json::from_str(
+            r#"[
+                {"id": 11, "status": "success", "stage": "build", "name": "compile",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/11"},
+                {"id": 12, "status": "failed", "stage": "test", "name": "rspec",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/12"}
+            ]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(1));
+
+        app.copy_selected_job_url().unwrap();
+        app.copy_selected_job_id().unwrap();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec!["https://gitlab.com/acme/app/-/jobs/12", "12"]
+        );
+    }
+
+    #[test]
+    fn job_url_copy_fails_when_the_job_has_no_url() {
+        let mut app = App::default();
+        app.jobs.items = serde_json::from_str(
+            r#"[{"id": 11, "status": "success", "stage": "build", "name": "compile"}]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(0));
+
+        assert_eq!(
+            app.copy_selected_job_url().unwrap_err().to_string(),
+            "Job URL unavailable; refresh the Jobs tab"
+        );
+    }
+
+    #[test]
     fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
         let mut app = App {
             scope: crate::scope::Scope::Repository("owner/repo".to_string()),
@@ -8973,7 +9261,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: vec![],
+            ..Default::default()
         };
         app.jobs.items = vec![job];
         app.active_tab = Tab::Jobs;
@@ -9313,7 +9601,13 @@ diff --git a/Makefile b/Makefile
         assert_eq!(app.project_path_for_pipeline(7), "acme/project-b");
         assert_eq!(app.project_path_for_pipeline(5), "acme/project-a");
         assert_eq!(app.project_path_for_pipeline(9), "acme");
+        assert_eq!(app.pipeline_project(9), None);
         assert_eq!(app.project_path_for_jobs(), "acme/project-a");
+        assert_eq!(app.jobs_project(), Some("acme/project-a"));
+
+        app.active_pipeline_id = None;
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
     #[test]
@@ -13376,6 +13670,7 @@ index 123456..789012 100644
         app.environment_deployments = Some(EnvironmentDeployments {
             environment: environment.to_string(),
             table: StatefulTable::with_items(deployments),
+            is_focused: false,
         });
         app
     }
@@ -13423,6 +13718,163 @@ index 123456..789012 100644
         app.active_tab = Tab::Environments;
         app.discard_stale_deployments();
         assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    fn deployments(ids: &[u64]) -> Vec<crate::domain::deployments::Deployment> {
+        ids.iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "id": id, "iid": id, "ref_name": "main", "tag": false, "sha": "abc123",
+                    "status": "success",
+                    "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"
+                }))
+                .expect("deployment fixture parses")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fetched_deployments_open_focused_on_the_newest() {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+
+        app.show_deployments("production".to_string(), deployments(&[3, 2, 1]));
+
+        let shown = app
+            .environment_deployments
+            .as_ref()
+            .expect("deployments shown");
+        assert!(shown.is_focused);
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(3));
+    }
+
+    #[test]
+    fn refetched_deployments_keep_the_selected_deployment_and_the_focus() {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[2, 1]));
+        let shown = app
+            .environment_deployments
+            .as_mut()
+            .expect("deployments shown");
+        shown.table.next_item();
+        shown.is_focused = false;
+
+        app.show_deployments("production".to_string(), deployments(&[3, 2, 1]));
+
+        let shown = app
+            .environment_deployments
+            .as_ref()
+            .expect("deployments shown");
+        assert!(!shown.is_focused);
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(1));
+    }
+
+    #[test]
+    fn deployments_fetched_for_an_environment_no_longer_highlighted_are_dropped() {
+        let mut app = app_showing_deployments_for("production");
+
+        app.show_deployments("staging".to_string(), deployments(&[1]));
+
+        assert_eq!(shown_deployments_environment(&app), Some("production"));
+    }
+
+    /// Production's deployments 11 (selected) and 10.
+    fn app_selecting_deployment_11() -> App {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[11, 10]));
+        app
+    }
+
+    #[test]
+    fn requested_deployment_log_opens_once() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+
+        assert!(app.take_pending_deployment_log(11));
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn deployment_log_for_a_deployment_no_longer_selected_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(10);
+
+        assert!(!app.take_pending_deployment_log(10));
+        assert_eq!(app.pending_deployment_log, None);
+    }
+
+    #[test]
+    fn deployment_log_landing_on_another_tab_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+        app.active_tab = Tab::Issues;
+
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn rollback_dialog_strips_escape_sequences_from_third_party_names() {
+        let deployment: crate::domain::deployments::Deployment =
+            serde_json::from_value(serde_json::json!({
+                "id": 10, "iid": 1, "ref_name": "main\u{1b}[2J", "tag": false,
+                "sha": "abc123", "status": "success",
+                "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z",
+                "deployable": { "id": 500, "name": "deploy\u{1b}]8;;https://evil.example\u{7}" }
+            }))
+            .expect("deployment fixture parses");
+
+        let dialog = SubmitDialog::build(
+            ConfirmAction::RollbackDeployment {
+                environment: "prod\u{1b}[31m".to_string(),
+                deployment: Box::new(deployment),
+            },
+            &App::default(),
+        );
+
+        assert_eq!(dialog.title, "Roll Back 'prod' to abc123");
+        assert_eq!(
+            dialog.body,
+            "Re-deploy abc123 (main) from deployment #1 to 'prod'? This re-runs its job 'deploy'."
+        );
+    }
+
+    #[test]
+    fn copying_the_environment_url_strips_escape_sequences() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([{
+                "id": 1, "name": "production", "state": "available",
+                "external_url": "\u{1b}]8;;https://evil.example\u{7}https://prod.example\u{1b}]8;;\u{7}"
+            }]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+
+        app.copy_selected_environment_url()
+            .expect("the URL is copied");
+
+        assert_eq!(copied.borrow().as_deref(), Some("https://prod.example"));
+    }
+
+    #[test]
+    fn copying_the_url_of_an_environment_without_one_is_an_error() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([
+                {"id": 1, "name": "production", "state": "available"}
+            ]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+
+        let error = app.copy_selected_environment_url().unwrap_err();
+
+        assert_eq!(error.to_string(), "environment has no external URL");
+        assert_eq!(*copied.borrow(), None);
     }
 
     #[test]

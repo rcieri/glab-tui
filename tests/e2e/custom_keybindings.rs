@@ -87,6 +87,40 @@ command = "printf '%s|%s|%s|%s|%s|%s' {{{{.PrNumber}}}} {{{{.HeadRefName}}}} {{{
 }
 
 #[test]
+fn test_jobs_custom_command_runs_with_the_highlighted_job_fields() {
+    let config = format!(
+        r#"
+[[custom_keybindings.jobs]]
+key = "L"
+name = "record job"
+command = "printf '%s|%s|%s|%s|%s|%s' {{{{.JobId}}}} {{{{.JobName}}}} {{{{.Stage}}}} {{{{.Status}}}} {{{{.RepoName}}}} \"$GLAB_TUI_JOB_ID\" > {{{{.RepoPath}}}}/{OUTPUT_FILE}"
+"#
+    );
+    let mut session = TestSession::with_config(false, 40, 160, Some(&config));
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 15000)
+        .expect("the pipeline is listed");
+    session.send_input(b"\x1bj"); // Alt+j: the pipeline's own jobs
+    session
+        .wait_for_screen_contains("rspec", 15000)
+        .expect("the pipeline's job is listed");
+    let output_path = session.sandbox.repo_dir.join(OUTPUT_FILE);
+
+    session.send_input(b"L");
+
+    let output = wait_for_file(&mut session, &output_path, 10000)
+        .expect("the jobs binding should run from the Jobs tab");
+    assert_eq!(
+        output,
+        "54321|rspec|test|success|test-owner/test-repo|54321"
+    );
+}
+
+#[test]
 fn test_custom_command_is_listed_in_help_on_its_tab() {
     let mut session = session_on_mrs_tab(
         r#"

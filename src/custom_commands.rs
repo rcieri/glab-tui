@@ -226,6 +226,7 @@ pub enum CommandPane {
     Universal,
     Issues,
     MergeRequests,
+    Jobs,
     /// The MR/PR diff view, which is not a tab.
     Diff,
 }
@@ -233,9 +234,10 @@ pub enum CommandPane {
 impl CommandPane {
     /// Pane-specific tables first: on a shared key the more specific binding
     /// wins over a universal one.
-    const LOOKUP_ORDER: [CommandPane; 4] = [
+    const LOOKUP_ORDER: [CommandPane; 5] = [
         CommandPane::Issues,
         CommandPane::MergeRequests,
+        CommandPane::Jobs,
         CommandPane::Diff,
         CommandPane::Universal,
     ];
@@ -245,6 +247,7 @@ impl CommandPane {
             CommandPane::Universal => "custom_keybindings.universal",
             CommandPane::Issues => "custom_keybindings.issues",
             CommandPane::MergeRequests => "custom_keybindings.mrs",
+            CommandPane::Jobs => "custom_keybindings.jobs",
             CommandPane::Diff => "custom_keybindings.diff",
         }
     }
@@ -268,6 +271,9 @@ impl CommandPane {
                 "BaseRefName",
                 "Author",
             ],
+            CommandPane::Jobs => &[
+                "RepoName", "RepoPath", "JobId", "JobName", "Stage", "Status",
+            ],
             CommandPane::Diff => &[
                 "RepoName",
                 "RepoPath",
@@ -287,6 +293,7 @@ impl CommandPane {
             CommandPane::Universal => true,
             CommandPane::Issues => tab == Tab::Issues,
             CommandPane::MergeRequests => tab == Tab::MergeRequests,
+            CommandPane::Jobs => tab == Tab::Jobs,
             CommandPane::Diff => false,
         }
     }
@@ -297,6 +304,7 @@ impl CommandPane {
             CommandPane::Universal => &tables.universal,
             CommandPane::Issues => &tables.issues,
             CommandPane::MergeRequests => &tables.mrs,
+            CommandPane::Jobs => &tables.jobs,
             CommandPane::Diff => &tables.diff,
         }
     }
@@ -352,7 +360,7 @@ impl CustomCommands {
             .keys()
             .map(|pane| ConfigProblem {
                 binding: format!("[custom_keybindings.{pane}]"),
-                problem: "unsupported pane; use universal, issues, mrs or diff".to_string(),
+                problem: "unsupported pane; use universal, issues, mrs, jobs or diff".to_string(),
             })
             .collect();
 
@@ -851,6 +859,36 @@ command = "true"
         );
     }
 
+    #[test]
+    fn jobs_binding_runs_only_on_the_jobs_tab_and_yields_to_its_builtins() {
+        let config = config_with(
+            r#"
+[[jobs]]
+key = "L"
+command = "echo {{.JobId}} {{.Stage}}"
+[[jobs]]
+key = "E"
+command = "true"
+[[jobs]]
+key = "X"
+command = "echo {{.PrNumber}}"
+"#,
+        );
+        let (commands, problems) = CustomCommands::load(&config);
+
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                "never runs: keybindings.jobs.jump_to_failure takes the key first",
+                "{{.PrNumber}} is not available in custom_keybindings.jobs; \
+                 use RepoName, RepoPath, JobId, JobName, Stage, Status",
+            ]
+        );
+        assert!(commands.find(Tab::Jobs, &key('L')).is_some());
+        assert!(commands.find(Tab::Pipelines, &key('L')).is_none());
+    }
+
     /// The list view matches these keys by key code alone, so `Ctrl+q`
     /// quits and `Alt+r` retries a pipeline instead of running the command.
     #[test]
@@ -980,7 +1018,7 @@ command = "true"
         assert_eq!(
             reasons,
             vec![
-                "unsupported pane; use universal, issues, mrs or diff",
+                "unsupported pane; use universal, issues, mrs, jobs or diff",
                 "missing `key`",
                 "\"gg\" is not a key glab-tui can bind",
                 "{{.PrNumber}} is not available in custom_keybindings.issues; \

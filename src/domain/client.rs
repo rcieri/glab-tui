@@ -199,9 +199,7 @@ impl GitlabClient {
         project: &str,
         mr_iid: u64,
     ) -> Result<Vec<crate::domain::mr::DiscussionNote>> {
-        self.backend
-            .list_mr_notes(project, mr_iid, self.page_size)
-            .await
+        self.backend.list_mr_notes(project, mr_iid).await
     }
 
     pub async fn list_mr_state(

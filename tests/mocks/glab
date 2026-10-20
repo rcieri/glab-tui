@@ -88,7 +88,7 @@ if [[ "$*" == *"api"* ]]; then
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
             echo '[]'
         else
-            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
+            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", "duration": 95.4, "queued_duration": 3.2, "runner": {"id": 7, "description": "shared-runner-7"}, "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321", "artifacts": [{"file_type": "archive"}, {"file_type": "trace"}, {"file_type": "junit"}]}]'
         fi
     elif [[ "$*" == *"groups/"*"/pipelines"* ]]; then
         echo '[{"id": 777, "status": "running", "ref": "main", "updated_at": "2026-07-06T12:00:00Z", "web_url": "https://gitlab.com/acme/project-b/-/pipelines/777"}]'

@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::TestSession;
 
 const ASCII_ICONS: &str = "icons = \"ascii\"\n";
@@ -108,11 +110,7 @@ fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
 
     // A runner the details query does not return still lists and previews,
     // with its unknown fields muted.
-    session.press_keys(b"\x1b");
-    session.settle(300);
     session.press_keys(b"j");
-    session.settle(300);
-    session.press_keys(b"\r");
     session
         .wait_for_screen_contains("Preview: Runner #9877", 5_000)
         .unwrap();
@@ -128,7 +126,11 @@ fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
     assert!(line("@ Last Contact").contains("--"), "{screen}");
 
     session.press_keys(b"\x1b");
-    session.settle(500);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.emulator.get_text().contains("Preview: Runner") {
+        assert!(Instant::now() < deadline, "Esc should close the preview");
+        session.settle(50);
+    }
     let shown = |session: &TestSession| {
         let screen = session.emulator.get_text();
         (

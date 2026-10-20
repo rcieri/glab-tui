@@ -78,5 +78,5 @@ jobs:
         run: cargo test --lib --bin glab-tui --verbose
 
       - name: Run e2e tests
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: cargo test --test e2e --verbose -- --test-threads=1

@@ -93,8 +93,31 @@ if [[ "$*" == *"api"* ]]; then
         # Must precede /pipelines: /pipelines/:id/jobs contains it.
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
             echo '[]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS_PAGES" && "$*" == *"scope[]=failed"* ]]; then
+            # A full first page of 100 failed jobs, then one more on page 2.
+            if [[ "$*" =~ [?\&]page=1([^0-9]|$) ]]; then
+                printf '['
+                for id in $(seq 60001 60100); do
+                    [[ $id -gt 60001 ]] && printf ','
+                    printf '{"id": %s, "status": "failed"}' "$id"
+                done
+                printf ']\n'
+            elif [[ "$*" =~ [?\&]page=2([^0-9]|$) ]]; then
+                echo '[{"id": 60101, "status": "failed"}]'
+            else
+                echo '[]'
+            fi
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS" && "$*" == *"scope[]=failed"* ]]; then
+            echo '[{"id": 54322, "status": "failed", "stage": "test", "name": "rubocop"},
+                   {"id": 54323, "status": "failed", "stage": "test", "name": "eslint"}]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS" ]]; then
+            # Jobs carry the pipeline's commit and, when failed, why.
+            commit='"commit": {"title": "Bump parser to 2.1", "author_name": "Grace Hopper"}'
+            echo "[{\"id\": 54321, \"status\": \"success\", \"stage\": \"test\", \"name\": \"rspec\", $commit},
+                   {\"id\": 54322, \"status\": \"failed\", \"stage\": \"test\", \"name\": \"rubocop\",
+                    \"failure_reason\": \"script_failure\", $commit}]"
         else
-            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
+            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", "duration": 95.4, "queued_duration": 3.2, "runner": {"id": 7, "description": "shared-runner-7"}, "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321", "artifacts": [{"file_type": "archive"}, {"file_type": "trace"}, {"file_type": "junit"}]}]'
         fi
     elif [[ "$*" == *"groups/"*"/pipelines"* ]]; then
         echo '[{"id": 777, "status": "running", "ref": "main", "updated_at": "2026-07-06T12:00:00Z", "web_url": "https://gitlab.com/acme/project-b/-/pipelines/777"}]'

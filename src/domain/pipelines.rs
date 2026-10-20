@@ -29,6 +29,19 @@ pub struct Pipeline {
     pub project_path: String,
     #[serde(default)]
     pub web_url: Option<String>,
+    /// Filled when the API lists the commit with the pipeline (GitHub).
+    /// GitLab reports it only with each job, see `triggering_commit`.
+    #[serde(default)]
+    pub commit: Option<CommitSummary>,
+}
+
+/// The commit a pipeline ran for, as far as the API reports it.
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
+pub struct CommitSummary {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub author_name: String,
 }
 
 impl Pipeline {
@@ -70,12 +83,16 @@ impl Pipeline {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct Job {
     pub id: u64,
     pub status: String,
     pub stage: String,
     pub name: String,
+    /// The name the API reported, before `process_pipeline_jobs` splits a
+    /// matrix job's name into `name` and `matrix`.
+    #[serde(default)]
+    pub api_name: String,
     #[serde(skip)]
     pub matrix: Option<String>,
     #[serde(default)]
@@ -84,6 +101,18 @@ pub struct Job {
     pub runner: Option<String>,
     #[serde(default)]
     pub needs: Vec<String>,
+    #[serde(default)]
+    pub web_url: Option<String>,
+    #[serde(default)]
+    pub queued_seconds: Option<u64>,
+    /// Why a failed job failed, in words (`script failure`, `step "Test"
+    /// failed`). `None` when it did not fail or the API gave no reason.
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub artifact_file_types: Vec<String>,
+    #[serde(default)]
+    pub commit: Option<CommitSummary>,
 }
 
 impl Job {
@@ -110,6 +139,9 @@ impl Job {
     }
     pub fn needs(&self) -> &[String] {
         &self.needs
+    }
+    pub fn is_failed(&self) -> bool {
+        self.status == "failed"
     }
     pub fn set_name(&mut self, name: String) {
         self.name = name;
@@ -188,6 +220,7 @@ pub fn bridges_to_level(bridges: Vec<Bridge>) -> ChildLevel {
                 // drill-down falls back to the parent's scope, as before.
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             }),
             None => level.pending.push(PendingTrigger {
                 bridge_id: bridge.id,
@@ -201,6 +234,15 @@ pub fn bridges_to_level(bridges: Vec<Bridge>) -> ChildLevel {
 
 /// What GitLab calls the source of a pipeline reached through a bridge.
 const CHILD_SOURCE: &str = "parent_pipeline";
+
+/// The commit `pipeline` ran for: GitHub lists it with the run, GitLab only
+/// with each of the pipeline's jobs.
+pub fn triggering_commit<'a>(pipeline: &'a Pipeline, jobs: &'a [Job]) -> Option<&'a CommitSummary> {
+    pipeline
+        .commit
+        .as_ref()
+        .or_else(|| jobs.iter().find_map(|job| job.commit.as_ref()))
+}
 
 pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
     let all_jobs: Vec<Job> = all_jobs
@@ -223,6 +265,7 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
                     job_item.matrix = Some(matrix_content);
                 }
             }
+            job_item.api_name = name;
             job_item
         })
         .collect();
@@ -381,7 +424,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 102,
@@ -391,7 +434,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 103,
@@ -401,7 +444,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 104,
@@ -411,7 +454,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -441,7 +484,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 202,
@@ -451,7 +494,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 203,
@@ -461,7 +504,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 204,
@@ -471,7 +514,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -483,6 +526,7 @@ mod tests {
             .find(|j| j.matrix.as_deref() == Some("ubuntu, unit"))
             .unwrap();
         assert_eq!(ubuntu.name, "run-tests");
+        assert_eq!(ubuntu.api_name, "run-tests [ubuntu, unit]");
         assert_eq!(ubuntu.id, 203);
 
         let windows = processed
@@ -503,12 +547,13 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         }];
         let processed = process_pipeline_jobs(input_jobs);
         assert_eq!(processed.len(), 1);
         assert_eq!(processed[0].name, "test-matrix");
         assert_eq!(processed[0].matrix.as_deref(), Some("ubuntu-latest, 20"));
+        assert_eq!(processed[0].api_name, "test-matrix (ubuntu-latest, 20)");
     }
 
     #[test]

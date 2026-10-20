@@ -3,8 +3,9 @@
     "repository": {
       "pullRequest": {
         "reviewThreads": {
+          "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" },
           "nodes": [
-            { "isResolved": false, "comments": { "nodes": [ { "databaseId": 201 }, { "databaseId": 202 } ] } },
+            { "isResolved": false, "comments": { "nodes": [ { "databaseId": 201 } ] } },
             { "isResolved": true, "comments": { "nodes": [ { "databaseId": 203 } ] } },
             { "isResolved": false, "comments": { "nodes": [ { "databaseId": 204 } ] } }
           ]

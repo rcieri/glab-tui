@@ -1,10 +1,11 @@
-use crate::app::{App, Tab};
+use crate::app::{App, EntityDocument, InspectorContent, Tab};
+use crate::command_log::StatusFilter;
 use crate::config::THEME;
 use crate::ui::list_tab::TableContext;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
@@ -1301,6 +1302,7 @@ pub(crate) fn render_tab_pipelines(
                 source: Some("parent_pipeline".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             })
             .collect();
         filtered_pipelines.extend(pending_rows.iter());
@@ -1586,7 +1588,7 @@ pub(crate) fn render_tab_pipelines(
         if let Some(selected) = app.pipelines.state.selected() {
             if let Some(p) = filtered_pipelines.get(selected) {
                 let jobs = app.pipeline_jobs.get(&p.id()).cloned().unwrap_or_default();
-                let doc = crate::entity_editor::build_pipeline_document(p, &jobs);
+                let doc = crate::entity_editor::build_pipeline_document(p, &jobs, is_github);
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
@@ -1894,203 +1896,75 @@ pub(crate) fn render_tab_jobs(
         f.render_stateful_widget(table, content_area, &mut state);
         app.jobs.state = state;
 
-        if app.job_trace_loading {
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} Preview ", icons.label_details))
-                .title_style(
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(theme.border));
-
-            f.render_widget(
-                Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
-                    .alignment(Alignment::Center)
-                    .block(preview_block)
-                    .style(Style::default().fg(theme.text_muted)),
-                detail_rect,
-            );
-        } else if app.job_trace.is_some() {
-            let width = detail_rect.width.saturating_sub(2) as usize;
-            let height = detail_rect.height.saturating_sub(2) as usize;
-            let wrap_width = app.job_trace_wrap.then_some(width);
-
-            let (total_lines, is_truncated) = app.job_trace.as_mut().map_or((0, false), |view| {
-                (view.rows(&theme, wrap_width), view.trace().is_truncated())
+        let shows_trace = app.job_trace_loading || app.job_trace.is_some();
+        let selected_job = app
+            .jobs
+            .state
+            .selected()
+            .and_then(|selected| filtered_jobs.get(selected).copied());
+        if shows_trace {
+            let header = selected_job.map(|job| {
+                crate::entity_editor::build_job_document(job, InspectorContent::Empty(""))
             });
-            let truncated_suffix = if is_truncated {
-                format!(
-                    " [TRUNCATED: first {} MiB]",
-                    crate::domain::job_trace::JOB_TRACE_MAX_BYTES / (1024 * 1024)
-                )
-            } else {
-                String::new()
-            };
-
-            let max_scroll = u16::try_from(total_lines.saturating_sub(height)).unwrap_or(u16::MAX);
-
-            settle_detail_scroll(app, max_scroll);
-
-            let title_suffix = if total_lines > height {
-                let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
-                format!(" [j/k | {}%] ", percent.min(100))
-            } else {
-                String::new()
-            };
-
-            let search_suffix = if app.job_trace_search_query.is_empty() {
-                String::new()
-            } else {
-                format!(" [Search: {}]", app.job_trace_search_query)
-            };
-            let follow_suffix = if app.job_trace_follow {
-                " [FOLLOW]"
-            } else {
-                ""
-            };
-
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(
-                    " Preview{title_suffix}{truncated_suffix}{search_suffix}{follow_suffix} "
-                ))
-                .title_style(
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(theme.border));
-
-            let scroll = usize::from(app.detail_scroll);
-            let (visible_lines, rows_above) = app
-                .job_trace
-                .as_mut()
-                .map(|view| view.visible_lines(&theme, wrap_width, scroll, height))
-                .unwrap_or_default();
-            let mut paragraph = Paragraph::new(visible_lines)
-                .block(preview_block)
-                .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
-
-            if app.job_trace_wrap {
-                paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
-            }
-
-            f.render_widget(paragraph, detail_rect);
-        } else {
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} Preview ", icons.label_details))
-                .title_style(
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(theme.border));
-            let mut text = Vec::new();
-
-            // Show selected job metadata first
-            if let Some(selected) = app.jobs.state.selected() {
-                if let Some(j) = filtered_jobs.get(selected) {
-                    let (status_text, status_color) = match j.status() {
-                        "success" => ("success", theme.green),
-                        "failed" => ("failed", theme.red),
-                        "running" => ("running", theme.blue),
-                        "canceled" => ("canceled", theme.text_muted),
-                        "pending" => ("pending", theme.yellow),
-                        "skipped" => ("skipped", theme.text_muted),
-                        _ => ("unknown", theme.text_muted),
-                    };
-                    text.push(Line::from(vec![
-                        Span::styled("Name:     ", Style::default().fg(theme.text_muted)),
-                        Span::styled(
-                            crate::utils::format::sanitize_untrusted(j.name()).into_owned(),
-                            Style::default()
-                                .fg(theme.text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-                    text.push(Line::from(vec![
-                        Span::styled("Status:   ", Style::default().fg(theme.text_muted)),
-                        Span::styled(
-                            status_text,
-                            Style::default()
-                                .fg(status_color)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-                    if !is_github {
-                        text.push(Line::from(vec![
-                            Span::styled("Stage:    ", Style::default().fg(theme.text_muted)),
-                            Span::styled(j.stage().to_string(), Style::default().fg(theme.purple)),
-                        ]));
-                    }
-                    if let Some(matrix) = j.matrix() {
-                        text.push(Line::from(vec![
-                            Span::styled("Matrix:   ", Style::default().fg(theme.text_muted)),
-                            Span::styled(matrix.to_string(), Style::default().fg(theme.text_muted)),
-                        ]));
-                    }
-                    if let Some(runner) = j.runner() {
-                        text.push(Line::from(vec![
-                            Span::styled("Runner:   ", Style::default().fg(theme.text_muted)),
-                            Span::styled(
-                                runner.to_string(),
-                                Style::default().fg(theme.text_normal),
-                            ),
-                        ]));
-                    }
-                    if let Some(dur) = j.duration_seconds() {
-                        let mins = dur / 60;
-                        let secs = dur % 60;
-                        text.push(Line::from(vec![
-                            Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
-                            Span::styled(
-                                format!("{mins}m {secs}s"),
-                                Style::default().fg(theme.text_normal),
-                            ),
-                        ]));
-                    }
-                    if !j.needs().is_empty() {
-                        text.push(Line::from(vec![
-                            Span::styled("Needs:    ", Style::default().fg(theme.text_muted)),
-                            Span::styled(j.needs().join(", "), Style::default().fg(theme.yellow)),
-                        ]));
-                    }
-                    text.push(Line::from(""));
+            let trace_rect = match header {
+                Some(header) => {
+                    let header_height = u16::try_from(super::inspector::read_only_fields_height(
+                        &header,
+                        detail_rect.width,
+                        &app.label_colors,
+                    ))
+                    .unwrap_or(u16::MAX)
+                    .min(detail_rect.height / 2);
+                    let [header_rect, trace_rect] =
+                        Layout::vertical([Constraint::Length(header_height), Constraint::Fill(1)])
+                            .areas(detail_rect);
+                    super::inspector::render_entity_inspector(
+                        f,
+                        &header,
+                        header_rect,
+                        super::inspector::InspectorMode::ReadOnly {
+                            scroll: 0,
+                            title_suffix: "",
+                        },
+                        &app.label_colors,
+                    );
+                    trace_rect
                 }
-            }
-
-            let stage_label = if is_github {
-                "Jobs Status:"
-            } else {
-                "Stages Success Rate:"
+                None => detail_rect,
             };
-            text.push(Line::from(vec![Span::styled(
-                stage_label,
-                Style::default()
-                    .fg(theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )]));
-            text.push(Line::from(""));
-            if is_github {
-                super::helpers::append_job_summaries(&mut text, &app.jobs.items);
+            if app.job_trace_loading {
+                f.render_widget(
+                    Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
+                        .alignment(Alignment::Center)
+                        .block(job_trace_block("", &theme))
+                        .style(Style::default().fg(theme.text_muted)),
+                    trace_rect,
+                );
             } else {
-                super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
+                render_job_trace(f, app, trace_rect, &theme);
             }
-            let summary_height = detail_rect.height.saturating_sub(2) as usize;
-            // Not wrapped, so rendered_line_count doesn't read the width.
-            let total_lines = super::helpers::rendered_line_count(&text, 0, false);
-            let max_detail_scroll =
-                u16::try_from(total_lines.saturating_sub(summary_height)).unwrap_or(u16::MAX);
-            settle_detail_scroll(app, max_detail_scroll);
-            f.render_widget(
-                Paragraph::new(text)
-                    .block(preview_block)
-                    .scroll((app.detail_scroll, 0)),
+        } else {
+            let summary =
+                InspectorContent::Custom(job_summary_lines(&app.jobs.items, is_github, &theme));
+            let document = match selected_job {
+                Some(job) => crate::entity_editor::build_job_document(job, summary),
+                None => EntityDocument {
+                    title: String::new(),
+                    fields: Vec::new(),
+                    content: summary,
+                },
+            };
+            let max_detail_scroll = super::inspector::render_entity_inspector(
+                f,
+                &document,
                 detail_rect,
+                super::inspector::InspectorMode::ReadOnly {
+                    scroll: app.detail_scroll,
+                    title_suffix: "",
+                },
+                &app.label_colors,
             );
+            settle_detail_scroll(app, max_detail_scroll);
         }
     } else {
         f.render_widget(Paragraph::new("\n\n No jobs loaded.\n Press 'p' to manually enter a pipeline ID to fetch jobs for,\n or view a pipeline in Pipelines tab and press Enter.").alignment(Alignment::Center).block(main_block).style(Style::default().fg(theme.text_muted)), content_area);
@@ -2106,6 +1980,98 @@ pub(crate) fn render_tab_jobs(
             detail_rect,
         );
     }
+}
+
+fn job_trace_block(title_suffix: &str, theme: &crate::config::Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Trace{title_suffix} "))
+        .title_style(
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(theme.border))
+}
+
+/// Draws the shown job log in `area`, scrolled to `app.detail_scroll` or to
+/// the line a jump asked for.
+fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::config::Theme) {
+    let width = area.width.saturating_sub(2) as usize;
+    let height = area.height.saturating_sub(2) as usize;
+    let wrap_width = app.job_trace_wrap.then_some(width);
+    let Some(view) = app.job_trace.as_mut() else {
+        return;
+    };
+    let total_lines = view.rows(theme, wrap_width);
+    let is_truncated = view.trace().is_truncated();
+    if let Some(line) = app.job_trace_scroll_to_line.take() {
+        let row = view.jump_to_line(theme, wrap_width, line);
+        app.detail_scroll = u16::try_from(row).unwrap_or(u16::MAX);
+    }
+
+    let max_scroll = u16::try_from(total_lines.saturating_sub(height)).unwrap_or(u16::MAX);
+    settle_detail_scroll(app, max_scroll);
+
+    let mut title_suffix = String::new();
+    if total_lines > height {
+        let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
+        title_suffix.push_str(&format!(" [j/k | {}%] ", percent.min(100)));
+    }
+    if is_truncated {
+        title_suffix.push_str(&format!(
+            " [TRUNCATED: first {} MiB]",
+            crate::domain::job_trace::JOB_TRACE_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+    if !app.job_trace_search_query.is_empty() {
+        title_suffix.push_str(&format!(" [Search: {}]", app.job_trace_search_query));
+    }
+    if app.job_trace_follow {
+        title_suffix.push_str(" [FOLLOW]");
+    }
+
+    let scroll = usize::from(app.detail_scroll);
+    let Some(view) = app.job_trace.as_mut() else {
+        return;
+    };
+    let (visible_lines, rows_above) = view.visible_lines(theme, wrap_width, scroll, height);
+    let mut paragraph = Paragraph::new(visible_lines)
+        .block(job_trace_block(&title_suffix, theme))
+        .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
+    if app.job_trace_wrap {
+        paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
+    }
+    f.render_widget(paragraph, area);
+}
+
+/// Per-stage success rates on GitLab, per-job statuses on GitHub, whose jobs
+/// have no stages.
+fn job_summary_lines(
+    jobs: &[crate::domain::pipelines::Job],
+    is_github: bool,
+    theme: &crate::config::Theme,
+) -> Vec<Line<'static>> {
+    let heading = if is_github {
+        "Jobs Status:"
+    } else {
+        "Stages Success Rate:"
+    };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            heading,
+            Style::default()
+                .fg(theme.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    if is_github {
+        super::helpers::append_job_summaries(&mut lines, jobs);
+    } else {
+        super::helpers::append_stage_summaries(&mut lines, jobs);
+    }
+    lines
 }
 
 pub(crate) fn render_tab_runners(
@@ -2828,68 +2794,217 @@ pub(crate) fn render_tab_environments(
                 query: &app.search_query,
             },
         );
-        let shown_deployments = app
+        let has_deployments = app
             .environment_deployments
-            .as_mut()
-            .map(|shown| &mut shown.table)
-            .filter(|table| !table.items.is_empty());
-        if let Some(deployments) = shown_deployments {
-            let deploy_rows: Vec<Row> = deployments
-                .items
-                .iter()
-                .map(|d| {
-                    let status_color = match d.status.as_str() {
-                        "success" => theme.green,
-                        "failed" => theme.red,
-                        "running" => theme.blue,
-                        "canceled" => theme.text_muted,
-                        _ => theme.text_muted,
-                    };
-                    let cells = vec![
-                        Cell::from(Span::styled(
-                            d.status.as_str(),
-                            Style::default()
-                                .fg(status_color)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::raw(crate::utils::format::truncate(&d.ref_name, 20))),
-                        Cell::from(Span::raw(crate::utils::format::truncate(&d.sha, 10))),
-                        Cell::from(Span::raw(crate::utils::format::time_ago(&d.created_at))),
-                    ];
-                    Row::new(cells)
-                })
-                .collect();
-            let deploy_widths = [
-                Constraint::Length(14),
-                Constraint::Fill(1),
-                Constraint::Length(14),
-                Constraint::Length(20),
-            ];
-            let deploy_table = Table::new(deploy_rows, deploy_widths)
-                .header(
-                    Row::new(
-                        ["Status", "Ref", "SHA", "Date"]
-                            .iter()
-                            .map(|h| Cell::from(*h).style(header_style)),
-                    )
-                    .style(Style::default().add_modifier(Modifier::BOLD)),
-                )
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(format!(" {} Deployments ", icons.label_deployment))
-                        .border_style(Style::default().fg(theme.border)),
-                )
-                .row_highlight_style(highlight_style);
-            f.render_stateful_widget(deploy_table, detail_rect, &mut deployments.state);
+            .as_ref()
+            .is_some_and(|shown| !shown.table.items.is_empty());
+        if has_deployments {
+            render_environment_deployments(
+                f,
+                app,
+                detail_rect,
+                highlight_style,
+                header_style,
+                &theme,
+                &icons,
+            );
         } else {
+            let keys = &app.config.keybindings.environments;
+            let is_github = app.is_github();
             let doc = app
                 .environments
                 .cursor_row()
-                .map(crate::entity_editor::build_environment_document);
+                .map(|env| crate::entity_editor::build_environment_document(env, keys, is_github));
             render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
         }
     }
+}
+
+/// Rows the deployments table takes in the detail pane: all of them when
+/// they fit in half the pane, so the selected deployment's details always
+/// keep the other half.
+fn deployments_table_height(deployment_count: usize, pane_height: u16) -> u16 {
+    const BORDERS_AND_HEADER: u16 = 3;
+    let wanted = u16::try_from(deployment_count)
+        .unwrap_or(u16::MAX)
+        .saturating_add(BORDERS_AND_HEADER);
+    wanted.min(pane_height / 2).max(BORDERS_AND_HEADER + 1)
+}
+
+/// A column of the deployments table in the Environments detail pane.
+#[derive(Clone, Copy)]
+enum DeploymentColumn {
+    Status,
+    Id,
+    Sha,
+    Ref,
+    Deployer,
+    Created,
+}
+
+impl DeploymentColumn {
+    /// Narrower panes drop the ID and deployer, which the details below
+    /// the table show anyway, so the ref keeps room to be read.
+    const WIDE: &'static [Self] = &[
+        Self::Status,
+        Self::Id,
+        Self::Sha,
+        Self::Ref,
+        Self::Deployer,
+        Self::Created,
+    ];
+    const NARROW: &'static [Self] = &[Self::Status, Self::Sha, Self::Created, Self::Ref];
+    const WIDE_PANE_MIN_WIDTH: u16 = 80;
+
+    fn fitting(pane_width: u16) -> &'static [Self] {
+        if pane_width >= Self::WIDE_PANE_MIN_WIDTH {
+            Self::WIDE
+        } else {
+            Self::NARROW
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Status => "Status",
+            Self::Id => "ID",
+            Self::Sha => "SHA",
+            Self::Ref => "Ref",
+            Self::Deployer => "Deployer",
+            Self::Created => "Created",
+        }
+    }
+
+    fn width(self) -> Constraint {
+        match self {
+            Self::Status => Constraint::Length(12),
+            Self::Id => Constraint::Length(5),
+            Self::Sha => Constraint::Length(8),
+            Self::Ref => Constraint::Fill(1),
+            Self::Deployer => Constraint::Length(16),
+            Self::Created => Constraint::Length(13),
+        }
+    }
+
+    fn cell(
+        self,
+        deployment: &crate::domain::deployments::Deployment,
+        is_selected: bool,
+        theme: &crate::config::Theme,
+        icons: &crate::config::Icons,
+    ) -> Cell<'static> {
+        match self {
+            Self::Status => {
+                let (fg, bg, is_bold, text) = super::helpers::badge_style_for(
+                    "Deploy Status",
+                    &deployment.status,
+                    is_selected,
+                    theme.bg,
+                    theme,
+                    icons,
+                );
+                let mut style = Style::default().fg(fg);
+                if let Some(bg) = bg {
+                    style = style.bg(bg);
+                }
+                if is_bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                let text =
+                    text.unwrap_or_else(|| sanitize_untrusted(&deployment.status).into_owned());
+                Cell::from(Span::styled(text, style))
+            }
+            Self::Id => Cell::from(format!("#{}", deployment.iid)),
+            Self::Sha => Cell::from(deployment.short_sha().to_string()),
+            Self::Ref => Cell::from(sanitize_untrusted(&deployment.ref_name).into_owned()),
+            Self::Deployer => Cell::from(
+                deployment
+                    .user
+                    .as_ref()
+                    .map(|user| format!("@{}", sanitize_untrusted(&user.username)))
+                    .unwrap_or_default(),
+            ),
+            Self::Created => Cell::from(time_ago(&deployment.created_at)),
+        }
+    }
+}
+
+/// The shown deployments as a table over the selected deployment's details.
+fn render_environment_deployments(
+    f: &mut Frame,
+    app: &mut App,
+    detail_rect: Rect,
+    highlight_style: Style,
+    header_style: Style,
+    theme: &crate::config::Theme,
+    icons: &crate::config::Icons,
+) {
+    let Some(shown) = app.environment_deployments.as_mut() else {
+        return;
+    };
+    let [table_rect, inspector_rect] = ratatui::layout::Layout::vertical([
+        Constraint::Length(deployments_table_height(
+            shown.table.items.len(),
+            detail_rect.height,
+        )),
+        Constraint::Fill(1),
+    ])
+    .areas(detail_rect);
+
+    let columns = DeploymentColumn::fitting(table_rect.width);
+    let selected = shown.table.state.selected();
+    let rows: Vec<Row> = shown
+        .table
+        .items
+        .iter()
+        .enumerate()
+        .map(|(idx, deployment)| {
+            let is_selected = selected == Some(idx) && shown.is_focused;
+            Row::new(
+                columns
+                    .iter()
+                    .map(|column| column.cell(deployment, is_selected, theme, icons)),
+            )
+        })
+        .collect();
+    let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
+    let (border_color, focus_hint) = if shown.is_focused {
+        (theme.border_focused, "")
+    } else {
+        (theme.border, " (unfocused)")
+    };
+    let title = format!(
+        " {} Deployments of {}{focus_hint} ",
+        icons.label_deployment,
+        sanitize_untrusted(&shown.environment)
+    );
+    let table = Table::new(rows, widths)
+        .header(
+            Row::new(
+                columns
+                    .iter()
+                    .map(|column| Cell::from(column.label()).style(header_style)),
+            )
+            .style(Style::default().add_modifier(Modifier::BOLD)),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        )
+        .row_highlight_style(if shown.is_focused {
+            highlight_style
+        } else {
+            Style::default().add_modifier(Modifier::BOLD)
+        })
+        .highlight_symbol(format!(" {} ", icons.highlight_arrow));
+    f.render_stateful_widget(table, table_rect, &mut shown.table.state);
+
+    let doc = shown
+        .selected()
+        .map(crate::entity_editor::build_deployment_document);
+    render_list_preview(f, app, inspector_rect, doc, theme, &icons.label_deployment);
 }
 
 pub(crate) fn render_tab_terminal(
@@ -2938,17 +3053,23 @@ pub(crate) fn render_tab_terminal(
     };
     let scroll = app.terminal_scroll.min(max_scroll);
 
-    let filter_count = if app.search_query.trim().is_empty() {
+    let status_filter = app.terminal_status_filter;
+    let filter_label = if status_filter == StatusFilter::All {
+        String::new()
+    } else {
+        format!(" · {}", status_filter.label())
+    };
+    let filter_count = if app.search_query.trim().is_empty() && status_filter == StatusFilter::All {
         String::new()
     } else {
         format!(" [{}/{}]", num_cmds, app.terminal_commands.len())
     };
     let block_title = if app.terminal_wrap {
-        format!(" Terminal (Wrap){filter_count} [{total_lines} lines] ")
+        format!(" Terminal (Wrap){filter_label}{filter_count} [{total_lines} lines] ")
     } else if scroll > 0 {
-        format!(" Terminal (Scroll: {scroll}/{max_scroll}){filter_count} ")
+        format!(" Terminal (Scroll: {scroll}/{max_scroll}){filter_label}{filter_count} ")
     } else {
-        format!(" Terminal{filter_count} ")
+        format!(" Terminal{filter_label}{filter_count} ")
     };
     let custom_main_block = base_block.clone().title(block_title).title_style(
         Style::default()
@@ -3330,7 +3451,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: vec![],
+            ..Default::default()
         }];
         app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(trace));
         app
@@ -3387,12 +3508,147 @@ mod tests {
 
         let terminal = render_jobs_with_trace_pane(&mut app);
 
-        let title = " Preview [TRUNCATED: first 16 MiB] ";
+        let title = " Trace [TRUNCATED: first 16 MiB] ";
         assert_eq!(
             buffer_row(&terminal, 10),
             format!("┌{title}{}┐", "─".repeat(98 - title.len()))
         );
         assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "first part"));
+    }
+
+    #[test]
+    fn render_tab_jobs_shows_the_selected_jobs_metadata_above_its_trace() {
+        let trace = crate::domain::job_trace::JobTrace::from_read(b"first part\n", false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.jobs.items[0].runner = Some("gitlab-runner-7".to_string());
+        app.jobs.items[0].web_url = Some("https://gitlab.com/o/r/-/jobs/1".to_string());
+        app.jobs.state.select(Some(0));
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 30),
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let rows = buffer_rows(&terminal);
+        assert!(rows[10].contains("Preview: Job #1"), "{:?}", rows[10]);
+        let header: Vec<(&str, &str)> = rows[11..17]
+            .iter()
+            .map(|row| {
+                let cells: Vec<&str> = row
+                    .split(['│', ' '])
+                    .filter(|cell| !cell.is_empty())
+                    .collect();
+                (cells[1], cells[cells.len() - 1])
+            })
+            .collect();
+        assert_eq!(
+            header,
+            [
+                ("ID", "#1"),
+                ("Name", "job1"),
+                ("Status", "SUCCESS"),
+                ("Stage", "test"),
+                ("Runner", "gitlab-runner-7"),
+                ("URL", "https://gitlab.com/o/r/-/jobs/1"),
+            ]
+        );
+        assert_eq!(rows[18], format!("┌ Trace {}┐", "─".repeat(91)));
+        assert_eq!(rows[19], format!("│{:<98}│", "first part"));
+        // 30 rows less the 8-row header and the trace pane's two borders.
+        assert_eq!(app.job_trace.as_ref().unwrap().viewport_height(), 20);
+    }
+
+    #[test]
+    fn render_tab_jobs_header_keeps_a_wrapped_url_in_the_side_pane() {
+        let trace = crate::domain::job_trace::JobTrace::from_read(b"first part\n", false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.jobs.items[0].runner = Some("gitlab-runner-7".to_string());
+        app.jobs.items[0].web_url = Some("https://gitlab.com/o/r/-/jobs/1".to_string());
+        app.jobs.state.select(Some(0));
+        let mut terminal = Terminal::new(TestBackend::new(45, 40)).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 30),
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        // The 45-column side pane wraps the URL onto a second row, which the
+        // header must leave room for.
+        let rows = buffer_rows(&terminal);
+        let url: Vec<&str> = rows[16]
+            .split(['│', ' '])
+            .filter(|cell| !cell.is_empty())
+            .collect();
+        assert_eq!(
+            (url[1], url[url.len() - 1]),
+            ("URL", "https://gitlab.com/o/r/-/jobs")
+        );
+        assert_eq!(rows[17], format!("│{:<43}│", format!("{:11}/1", "")));
+        assert_eq!(rows[18], format!("└{}┘", "─".repeat(43)));
+        assert_eq!(rows[19], format!("┌ Trace {}┐", "─".repeat(36)));
+        assert_eq!(rows[20], format!("│{:<43}│", "first part"));
+    }
+
+    #[test]
+    fn jump_to_trace_failure_scrolls_a_wrapped_trace_to_the_failure_row() {
+        let mut log = format!("{}\nok\nERROR: Job failed: exit code 1\n", "x".repeat(250));
+        log.push_str(&"after\n".repeat(50));
+        let trace = crate::domain::job_trace::JobTrace::from_read(log.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.job_trace_wrap = true;
+
+        app.jump_to_trace_failure(None);
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        // At 98 cells the first line takes rows 0-2 and "ok" row 3.
+        assert_eq!(app.detail_scroll, 4);
+        assert_eq!(
+            buffer_row(&terminal, 11),
+            format!("│{:<98}│", "ERROR: Job failed: exit code 1")
+        );
+    }
+
+    #[test]
+    fn jump_to_trace_failure_moves_past_failures_on_the_last_page_and_wraps() {
+        let mut log = "fatal: early\n".to_string();
+        log.push_str(&"ok\n".repeat(50));
+        log.push_str("error: late\nok\nERROR: Job failed: exit code 1\n");
+        let trace = crate::domain::job_trace::JobTrace::from_read(log.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+
+        // 54 lines in an 8-row pane: the last page starts at line 46, below
+        // both late failures (lines 51 and 53).
+        let mut scrolls = Vec::new();
+        let mut search_starts = Vec::new();
+        for _ in 0..3 {
+            let after = app.job_trace.as_ref().unwrap().failure_search_start();
+            app.jump_to_trace_failure(Some(after));
+            render_jobs_with_trace_pane(&mut app);
+            scrolls.push(app.detail_scroll);
+            search_starts.push(app.job_trace.as_ref().unwrap().failure_search_start());
+        }
+
+        assert_eq!(scrolls, vec![46, 46, 0]);
+        assert_eq!(search_starts, vec![51, 53, 0]);
     }
 
     fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
@@ -3422,6 +3678,7 @@ mod tests {
                 "\u{1b}[31mbuild\u{1b}[0m".to_string(),
                 "\u{9b}2Jlint".to_string(),
             ],
+            ..Default::default()
         }];
         app.enabled_columns
             .entry(Tab::Jobs)
@@ -3497,13 +3754,14 @@ mod tests {
             .find(|row| row.contains("production"))
             .expect("environment row rendered");
         let cells: Vec<_> = env_row.split_whitespace().collect();
-        let highlight_arrow = crate::config::ICONS.read().unwrap().highlight_arrow.clone();
+        let icons = crate::config::ICONS.read().unwrap();
         assert_eq!(
             cells,
             [
-                highlight_arrow.as_str(),
+                icons.highlight_arrow.as_str(),
                 "production",
-                "available",
+                icons.state_open.as_str(),
+                "AVAILABLE",
                 "N/A",
                 "https://prod.example"
             ],
@@ -3521,6 +3779,7 @@ mod tests {
                     timestamp: String::new(),
                     command: command.to_string(),
                     status: "Success".to_string(),
+                    ..Default::default()
                 });
         }
         app.terminal_scroll = usize::MAX;

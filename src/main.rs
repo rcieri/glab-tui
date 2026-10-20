@@ -276,6 +276,16 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         }
                         return;
                     }
+                    OverlayKind::TerminalInspector => {
+                        if let Some(inspector) = &mut app.terminal_inspector {
+                            inspector.scroll = if scroll_down {
+                                inspector.scroll.saturating_add(1)
+                            } else {
+                                inspector.scroll.saturating_sub(1)
+                            };
+                        }
+                        return;
+                    }
                     // Consume scroll on non-scrollable modals
                     _ => return,
                 }
@@ -359,6 +369,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         }
                         return;
                     }
+                    OverlayKind::TerminalInspector => return,
                 }
             }
 
@@ -1011,6 +1022,7 @@ async fn main() -> Result<()> {
                 timestamp,
                 command: "Initialization: gitlab client".to_string(),
                 status: "Failed: Failed to initialize GitLab client".to_string(),
+                ..Default::default()
             });
         app.show_error("Failed to initialize GitLab client".to_string());
     }
@@ -1025,6 +1037,7 @@ async fn main() -> Result<()> {
                     timestamp,
                     command: "Startup: Not in a git repository".to_string(),
                     status: "Failed: No repo detected — select one below or press Esc".to_string(),
+                    ..Default::default()
                 });
             let mut switch_repo_paths = std::collections::HashMap::new();
             for entry in &switchable {
@@ -1417,6 +1430,10 @@ async fn main() -> Result<()> {
                     if opens_editor {
                         app.pending_job_trace_editor = None;
                     }
+                    let jumps_to_failure = app.pending_job_trace_failure == Some(job_id);
+                    if jumps_to_failure {
+                        app.pending_job_trace_failure = None;
+                    }
                     if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(trace) => {
@@ -1426,6 +1443,9 @@ async fn main() -> Result<()> {
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
+                                if jumps_to_failure {
+                                    app.jump_to_trace_failure(None);
+                                }
                                 if opens_editor {
                                     crate::handlers::tabs::open_job_trace_in_editor(
                                         &mut app,
@@ -1610,6 +1630,7 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Pipelines);
                     app.refreshed_tabs.insert(app::Tab::Pipelines);
                     app.stale_tabs.remove(&app::Tab::Pipelines);
+                    app.drop_jobs_of_changed_pipelines(&pipelines);
                     if app.nav_depth() > 0 {
                         // Inside a descent the visible list belongs to a child
                         // level. A freshly fetched top-level list belongs to
@@ -2048,15 +2069,33 @@ async fn main() -> Result<()> {
                     environment,
                     deployments,
                 } => {
-                    if app.is_highlighted_environment(&environment) {
-                        let mut table = crate::utils::ui::StatefulTable::with_items(deployments);
-                        table.state.select(Some(0));
-                        app.environment_deployments =
-                            Some(app::EnvironmentDeployments { environment, table });
-                    }
                     app.status_message = None;
+                    if deployments.is_empty() {
+                        app.show_notice(format!("No deployments for {environment}"));
+                    }
+                    app.show_deployments(environment, deployments);
                     app.update_filter_selection();
                 }
+                Event::DeploymentLogFetched {
+                    deployment_id,
+                    result,
+                } if app.take_pending_deployment_log(deployment_id) => match result {
+                    Ok(trace) => {
+                        let prefix = format!("deployment_{deployment_id}_log_");
+                        if let Err(error) =
+                            crate::editor::view_in_editor(trace.text(), &prefix, &mut terminal)
+                        {
+                            app.show_error(format!(
+                                "Failed to open deployment log in editor: {error}"
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        app.show_error(format!("Failed to fetch deployment log: {error}"));
+                        app.error_has_cli_detail = true;
+                    }
+                },
+                Event::DeploymentLogFetched { .. } => {}
                 Event::RelatedMrsFetched { issue_iid, result } => {
                     app.fetching_related_mrs.remove(&issue_iid);
                     let new_state = match result {
@@ -2135,7 +2174,14 @@ async fn main() -> Result<()> {
                         });
                         app.error_has_cli_detail = false;
                     }
-                    app.current_comments = comments;
+                    match comments {
+                        Ok(comments) => app.current_comments = comments,
+                        Err(err) => {
+                            app.current_comments.clear();
+                            app.raise_error_toast(format!("Failed to load review comments: {err}"));
+                            app.error_has_cli_detail = true;
+                        }
+                    }
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())
                     {
@@ -2158,45 +2204,19 @@ async fn main() -> Result<()> {
                     app.show_error(err_msg);
                     app.error_has_cli_detail = true;
                 }
-                Event::TerminalCommandLogged {
-                    timestamp,
-                    command,
+                Event::TerminalCommandLogged(entry) => {
+                    app.log_cli_command(*entry);
+                }
+                Event::CommandRerun {
+                    row,
                     status,
+                    execution,
                 } => {
-                    if status == "Running" {
-                        app.terminal_commands
-                            .push(crate::command_log::TerminalCommand {
-                                timestamp,
-                                command,
-                                status,
-                            });
-                    } else if let Some(row) = app
-                        .terminal_commands
-                        .find_latest(|cmd| cmd.command == command && cmd.status == "Running")
-                    {
-                        app.terminal_commands.set_status(row, status);
-                    } else if let Some(row) = app.latest_running_cli_command() {
-                        // fallback: update most recent Running entry when
-                        // command strings differ (e.g. CommandStarted vs backend log)
-                        app.terminal_commands.set_status(row, status);
-                    } else {
-                        app.terminal_commands
-                            .push(crate::command_log::TerminalCommand {
-                                timestamp,
-                                command,
-                                status,
-                            });
-                    }
+                    app.finish_rerun(row, status, *execution);
                 }
                 Event::CommandStarted(msg) => {
                     app.show_notice(msg.clone());
-                    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                    app.terminal_commands
-                        .push(crate::command_log::TerminalCommand {
-                            timestamp,
-                            command: msg,
-                            status: "Running".to_string(),
-                        });
+                    app.start_command(msg);
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     app.sync_list_views();
@@ -2304,6 +2324,7 @@ async fn main() -> Result<()> {
                         && app.selector.is_none()
                         && !app.show_help
                         && app.review_threads.is_none()
+                        && app.terminal_inspector.is_none()
                         && !app.focus_column_checklist
                         && !app.is_typing_search
                         && !app.job_trace_searching
@@ -2320,6 +2341,7 @@ async fn main() -> Result<()> {
                         || handle_refresh(&mut app, &key_event, &mut last_refresh, events.sender())
                         || handle_date_picker(&mut app, &key_event, events.sender())
                         || handle_review_threads(&mut app, &key_event)
+                        || handlers::terminal::handle_inspector_key(&mut app, &key_event)
                     {
                         continue;
                     }
@@ -2483,8 +2505,9 @@ async fn main() -> Result<()> {
                                                 let client_clone = client.clone();
                                                 let project_context =
                                                     app.project_path_for_pipeline(pipeline_id);
-                                                app.active_pipeline_project =
-                                                    Some(project_context.clone());
+                                                app.active_pipeline_project = app
+                                                    .pipeline_project(pipeline_id)
+                                                    .map(str::to_owned);
                                                 let tx = app.scoped_sender(events.sender());
                                                 tokio::spawn(async move {
                                                     match domain::pipelines::list_pipeline_jobs(
@@ -3357,9 +3380,10 @@ async fn main() -> Result<()> {
                                                     if let Some(client) = &app.gitlab_client {
                                                         let project_context = app
                                                             .project_path_for_pipeline(pipeline_id);
+                                                        app.active_pipeline_project = app
+                                                            .pipeline_project(pipeline_id)
+                                                            .map(str::to_owned);
                                                         app.active_pipeline_id = Some(pipeline_id);
-                                                        app.active_pipeline_project =
-                                                            Some(project_context.clone());
                                                         app.jobs.state.select(Some(0));
                                                         app.jobs.items.clear();
                                                         app.loading_tabs.insert(app::Tab::Jobs);
@@ -7884,6 +7908,7 @@ async fn main() -> Result<()> {
                         && app.text_input.is_none()
                         && app.edit_menu.is_none()
                         && app.selector.is_none()
+                        && !app.is_deployments_focus_key(&key_event)
                     {
                         app.focus_column_checklist = true;
                         app.column_checklist_idx = 0;

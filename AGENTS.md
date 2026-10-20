@@ -42,19 +42,20 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/backend/](src/backend/): CLI backend layer.
     * [bounded_output.rs](src/backend/bounded_output.rs): `output_bounded`, the subprocess reader behind the command runners. Keeps at most a given number of stdout bytes and kills a child that writes more.
     * [rate_limit.rs](src/backend/rate_limit.rs): `ApiRateLimiter` — automatic 429/graphql rate-limit detection and retry with exponential backoff plus bulk-operation pacing (`pace_bulk_operation`).
-    * [subprocess.rs](src/backend/subprocess.rs): `subprocess::output(&mut Command, input)` — the one way to run a `gh`/`glab` call: pipes stdout/stderr, writes `input` to stdin, and kills the child once it outlives `command_timeout_seconds` (`config::command_timeout()`), returning an error that names the command.
+    * [subprocess.rs](src/backend/subprocess.rs): `subprocess::output(&mut Command, input)` — the one way to run a `gh`/`glab` call: pipes stdout/stderr, writes `input` to stdin, and kills the child once it outlives `command_timeout_seconds` (`config::command_timeout()`), returning an error that names the command. `output_capped` does the same keeping at most a given number of bytes of each stream and draining the rest, so the child still runs to completion.
+    * [logged_command.rs](src/backend/logged_command.rs): `LoggedCommand`, how every runner reports a finished `glab`/`gh`/`git` call to the Terminal tab: `start` before spawning, `finish(tx, status, ChildOutput)` sends `Event::TerminalCommandLogged` with the entry's `Execution` (start time, duration, exit code, stdout/stderr cut to `MAX_CAPTURED_OUTPUT_BYTES`, and the `Invocation`). `failure_reason(&ChildOutput)` is the reason every runner and `rerun` put after `Failed: ` (trimmed stderr, else the command and how it ended, plus GitHub's error details from the body of a `gh api` call). `rerun(invocation)` runs a recorded call again through `subprocess::output_capped` (one byte past `MAX_CAPTURED_OUTPUT_BYTES` per stream) under one `RATE_LIMITER` slot. New runners must log through it so their entries can be inspected and re-run.
     * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits and `NewIssue`/`NewMr`/`MergeOptions` for creation and merge calls.
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
     * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
-    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode.
+    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode. `JobTrace::next_failure_line` finds the next line reporting a failure (`FAILURE_WORDS` in the line's `trace_line_content`, whole words that keep `-`, `.` and `/`, not next to a zero count) for the Jobs tab's `jump_to_failure` key.
     * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
     * [review_threads.rs](src/domain/review_threads.rs): `ReviewThread` / `ThreadAnchor` and `group_threads()` — groups MR/PR notes into discussion threads and classifies each as general, in-diff, or outdated.
-    * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job structures and job deduplication logic.
+    * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job and `CommitSummary` structures, job deduplication logic, and `triggering_commit()` (GitHub lists a run's commit with the run, GitLab only with each job, so the inspector reads it from the pipeline's jobs on GitLab).
     * [runners.rs](src/domain/runners.rs): Runner structures.
     * [releases.rs](src/domain/releases.rs): Release structures.
     * [notifications.rs](src/domain/notifications.rs): Notification structures (GitLab todos + GitHub notifications).
@@ -64,8 +65,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches (routed through `&Scope`); `spawn_refresh_all_tabs()` — background tab prefetcher when `config.prefetch_tabs` is enabled; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
 * [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_project_path_from_web_url`, `parse_group`, `parse_remote_host`, `get_current_branch`, `repo_root`, `slugify`, `get_workflow_files`.
-* [src/custom_commands.rs](src/custom_commands.rs): User-defined `[[custom_keybindings.<pane>]]` commands — `CustomCommands::load` (validation, built-in shadow detection, `ConfigProblem` reports), `CommandPane` (universal / issues / mrs / diff and their template arguments), gh-dash style `{{.Name}}` templating (`render`, `TemplateValues`, `GLAB_TUI_*` environment) and `shell_process` (`$SHELL -c`).
-* [src/command_log.rs](src/command_log.rs): `CommandLog`, the Terminal tab's history behind `App::terminal_commands`. It keeps the newest `MAX_LOG_ENTRIES` (1,000) `TerminalCommand`s and hands out `LogRow` handles that stay valid while older entries are dropped or the log is cleared. Update entries through `find_latest` / `set_status` / `App::settle_command`, never by position, since positions shift on every eviction. The Terminal tab filters it with the global search bar (`App::filtered_terminal_commands`), copies the bottom row of the view (`App::terminal_cursor`, `App::copy_terminal_command`, `copy_command` key) and clears it (`clear_log` key).
+* [src/custom_commands.rs](src/custom_commands.rs): User-defined `[[custom_keybindings.<pane>]]` commands — `CustomCommands::load` (validation, built-in shadow detection, `ConfigProblem` reports), `CommandPane` (universal / issues / mrs / jobs / diff and their template arguments), gh-dash style `{{.Name}}` templating (`render`, `TemplateValues`, `GLAB_TUI_*` environment) and `shell_process` (`$SHELL -c`).
+* [src/command_log.rs](src/command_log.rs): `CommandLog`, the Terminal tab's history behind `App::terminal_commands`. It keeps the newest `MAX_LOG_ENTRIES` (1,000) `TerminalCommand`s and hands out `LogRow` handles that stay valid while older entries are dropped or the log is cleared. Update entries through `find_latest` / `set_status` / `settle` / `App::settle_command`, never by position, since positions shift on every eviction. Each entry carries an `Execution` (`started_at`, `duration`, `exit_code`, captured `stdout`/`stderr`, and the `Invocation` that makes it re-runnable; entries that only describe an action have no invocation). The Terminal tab filters it with the global search bar and `StatusFilter` (`App::filtered_terminal_commands`, `cycle_status_filter` key), acts on the bottom row of the view (`App::terminal_cursor` / `selected_terminal_row`), or on the inspected entry while the inspector is open: copy command (`copy_command`), copy output (`copy_output`), re-run (`rerun_command`), and clears it (`clear_log`).
 * [src/scope.rs](src/scope.rs): `Scope` enum (`Repository` / `Group`) — `as_str()`, `is_group()`/`is_repository()`, `cli_repo_arg()`/`cli_group_arg()` (glab/gh flag injection), `api_path_prefix()` (with `%2F` URL encoding), and `Display`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
@@ -73,9 +74,10 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
     * [custom_commands.rs](src/handlers/custom_commands.rs): `run_bound_command` — resolves the highlighted row's template values, runs the custom command through `editor::suspend_while` (or a background thread) and logs the outcome.
     * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle). Every mutation goes through `spawn_todo_change`, which reports `Event::TodoChanged`.
+    * [terminal.rs](src/handlers/terminal.rs): Terminal tab keys (`handle_tab_key`), the command inspector's keys (`handle_inspector_key`, before the tab handler in the main loop) and `rerun`, which logs a `RERUN_LOG_PREFIX` row and settles it from `Event::CommandRerun`.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
-    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
+    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`). `trace_line_content` is a job log line without the GitLab Runner timestamp or the `<job>\t<step>\t` prefix of `gh run view --log` (only split off when a GitHub timestamp follows it), the same split `parse_ansi_trace` renders.
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [private_fs.rs](src/utils/private_fs.rs): Owner-only `create_dir_all` (`0700`), `create_owned_dir` (`0700`, also tightening an existing directory) and `write` (`0600`, also tightening an existing file) for everything glab-tui persists; plain `std::fs` off Unix.
@@ -88,10 +90,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/ui/](src/ui/): Ratatui render functions.
     * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
     * [inspector.rs](src/ui/inspector.rs): Unified entity inspector component (`render_entity_inspector`, `EntityDocument`, `InspectorMode`). Drives both read-only detail previews and interactive edit/create forms in a single-column layout.
-    * [job_trace.rs](src/ui/job_trace.rs): `JobTraceView`, the Jobs pane's job log with its lines parsed incrementally and only the visible ones handed to the renderer.
+    * [job_trace.rs](src/ui/job_trace.rs): `JobTraceView`, the Jobs pane's job log with its lines parsed incrementally and only the visible ones handed to the renderer. `row_of_line()` maps a log line to its (wrapped) row, and `jump_to_line()` does the same for a jump while remembering the line. `failure_search_start()` is that line while the last draw kept it on screen, else the line the last draw put at the top of the pane. `viewport_height()` is the rows the last draw gave the log, which the page-scroll keys step by on the Jobs tab, since the job header above the log takes part of `detail_rect`.
     * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
     * [overlays.rs](src/ui/overlays.rs): Overlay render functions (`SubmitDialog`, selectors, date picker, help).
     * [review_threads.rs](src/ui/review_threads.rs): Review threads overlay (thread list + full-thread preview) opened with `T` from the diff view.
+    * [terminal_inspector.rs](src/ui/terminal_inspector.rs): The Terminal tab's command inspector (`App::terminal_inspector`, opened with `Enter`/`P`): status, exit code, full command, start time, duration, error, stderr and stdout. It follows its `LogRow` and closes once that entry leaves the log.
     * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers (`badge_style_for`, `render_fuzzy_cell`).
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
@@ -152,6 +155,22 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 ### Jobs Tab (current branch)
 * `fetch::fetch_current_branch_jobs` reads the branch with `git_helpers::get_current_branch`, then asks `Backend::find_branch_pipeline_id` for the newest pipeline of that branch (on GitLab also its open MR's `refs/merge-requests/<iid>/head` pipeline). Never list every MR or pipeline to find it.
 * Starting a manual job is GitLab only. On GitHub the `start_job` key is omitted from the help overlay and does nothing when pressed (it is still consumed, so the custom-command shadow report stays accurate).
+* The preview goes through `render_entity_inspector` with `entity_editor::build_job_document`: the highlighted job's metadata above the pipeline's stage summary, or, while a trace is open or loading, as a fields-only header above the separate `Trace` pane (`render_job_trace`). The header is sized from its wrapped field rows (`inspector::read_only_fields_height`, since a `List` drops an item that does not fit whole) and capped at half the pane, so the log keeps most rows.
+* Scrolling the log to a line goes through `App::job_trace_scroll_to_line`, resolved by `render_job_trace` with `JobTraceView::jump_to_line`, because only the draw knows the wrapped width. `jump_to_failure` (`E`) searches from `JobTraceView::failure_search_start()`, so a failure on the last page, which the scroll clamp keeps from reaching the top of the pane, is passed on the next press; without a trace it fetches one and sets `App::pending_job_trace_failure`, consumed on `JobTraceFetched` like `pending_job_trace_editor`.
+* `copy_url` (`y`) copies `Job::web_url` (GitLab `web_url`, GitHub `url` from `gh run view --json jobs`) and `copy_id` (`Y`) the job id. `copy_sha` defaults to `Alt+y` on this tab.
+
+### Environments Tab (deployments, rollback, stop)
+* `view_deployments` (`Enter`) fetches the highlighted environment's deployments, and `Event::DeploymentsFetched` goes through `App::show_deployments`, which ignores an environment no longer highlighted and keeps the focus and the selected deployment (by id) when the shown environment is refetched. `App::discard_stale_deployments` drops them once another environment is highlighted.
+* `EnvironmentDeployments::is_focused` decides where navigation goes: `handlers::tabs::handle_focused_deployments_key` takes `j`/`k`/arrows/`Home`/`End` and `Esc`/`Backspace` (unfocus) before the environment list sees them. Focus only counts while the detail pane is on screen (`detail_visible` and a `detail_rect` from the last frame), so hiding it with `q` or a terminal under 90 columns hands the keys back to the environment list. `focus_deployments` defaults to `Tab`, which is also `global.configure`, so the event loop skips the configure check while `App::is_deployments_focus_key` holds (deployments listed on the Environments tab). `,` still opens the Configure View there.
+* The detail pane shows the deployments table over `build_deployment_document` for the selected one. Without listed deployments it shows `build_environment_document`, whose content lists the configured action keys.
+* `rollback_deployment` (`R`) and `stop_environment` (`d`) open `ConfirmAction::RollbackDeployment` / `StopEnvironment` (both default to Cancel). GitLab rolls back by re-running the deployment's job (`Deployment::job_id`), so a deployment without one is refused before the dialog opens. GitHub rolls back by creating a deployment of the commit, which deploys nothing by itself: it only takes effect once a workflow running `on: deployment` picks it up, and the dialog says so. A successful rollback refetches the environment list and its deployments.
+* `view_deployment_log` (`e`) fetches the deployment job's trace and opens it in the editor from `Event::DeploymentLogFetched`. Like `pending_job_trace_editor` on the Jobs tab, `App::pending_deployment_log` records the request: a second `e` while it is in flight starts no second fetch, and `App::take_pending_deployment_log` opens the log only while that deployment is still selected on the Environments tab. GitHub deployments carry no job, so like `start_job` the key is left out of the help overlay and of `build_environment_document`'s action list there, and pressing it is still consumed and raises an error.
+
+### Pipelines Tab
+* `Enter` descends into a pipeline, so the inspector is opened with `toggle_preview` (`i`). `build_pipeline_document` ([src/entity_editor.rs](src/entity_editor.rs)) shows the triggering commit, a red `Failed Jobs` count, and `InspectorContent::PipelineStages` lists each failed job with `Job::failure_reason` above the stage list. GitLab fills `failure_reason` from the jobs API (`script_failure` → `script failure`), GitHub from the job's timeout or its first failed step (`github_job_failure_reason`).
+* The inspector's failed jobs and the `Stages` dots come from `app.pipeline_jobs`, which the highlight prefetch fills only for pipelines it does not hold. `PipelinesFetched` calls `App::drop_jobs_of_changed_pipelines` (compared against the root level, also inside a descent) to forget the jobs of every pipeline whose status changed, and `spawn_pipeline_retry` forgets the retried ones, so neither shows the previous outcome.
+* `r` and `R` share `spawn_pipeline_retry` (`PipelineRetry::Pipeline` / `FailedJobs`) in [src/handlers/tabs.rs](src/handlers/tabs.rs). `Backend::retry_failed_jobs` is `gh run rerun --failed` on GitHub. On GitLab it lists the pipeline's failed jobs and retries each one, because the pipeline retry endpoint also reruns canceled jobs.
+* `s` steps the Pipelines `Status` column filter through `PIPELINE_STATUS_FILTER_CYCLE` with `App::cycle_pipeline_status_filter`; it reuses `column_filters`, so the Configure View picker shows and clears the same filter.
 
 ### Rate Limiting (`src/backend/rate_limit.rs`)
 * `ApiRateLimiter` is a global (`RATE_LIMITER`) that shields every `glab`/`gh` CLI call from HTTP 429 and GitLab GraphQL rate-limit errors.
@@ -238,11 +257,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Custom Keybindings (`[[custom_keybindings.<pane>]]`)
 * User-defined shell commands bound to keys, modelled on gh-dash including its template argument names (`prs` is a serde alias of `mrs`; `normalize_custom_keybindings` renames it per file before the global and repo-local files are merged, since both keys in one merged value is a duplicate field). `Config::custom_keybindings` holds the raw entries; `App::load_custom_commands()` validates them into `App::custom_commands` at startup and after the repo switcher reloads the config, logging every `ConfigProblem` as a failed Terminal-tab entry plus one toast.
-* Panes: `universal` (every tab), `issues`, `mrs`, and `diff` (the MR/PR diff view, dispatched from the catch-all arm of the diff key handler in [src/main.rs](src/main.rs); `FilePath`/`LineNumber` come from `DiffView::cursor_file_position()`). `diff_view_action()` lists the diff view's own keys for shadow reports — it matches key codes regardless of modifiers, so keep it in sync when adding a diff-view key. Template arguments per pane live in `CommandPane::template_arguments()`; row values are resolved in [src/handlers/custom_commands.rs](src/handlers/custom_commands.rs) from the highlighted row. `RepoPath` is `git_helpers::repo_root()` in repository scope and `cache::find_local_checkout()` (recent repos by `origin`) in group scope.
+* Panes: `universal` (every tab), `issues`, `mrs`, `pipelines` (`PipelineId`, `Ref`, `Sha`), `jobs` (the Jobs tab: `JobId`, `JobName`, `Stage`, `Status`; `JobName` is `Job::api_name`, the name the API reported before `process_pipeline_jobs` split off the matrix; `Stage` is unavailable for GitHub jobs and the repository comes from `App::jobs_project`, then the job's web URL, then the repository scope, through `row_project` like issues and MRs), and `diff` (the MR/PR diff view, dispatched from the catch-all arm of the diff key handler in [src/main.rs](src/main.rs); `FilePath`/`LineNumber` come from `DiffView::cursor_file_position()`). `diff_view_action()` lists the diff view's own keys for shadow reports — it matches key codes regardless of modifiers, so keep it in sync when adding a diff-view key. Template arguments per pane live in `CommandPane::template_arguments()`; row values are resolved in [src/handlers/custom_commands.rs](src/handlers/custom_commands.rs) from the highlighted row. `RepoPath` is `git_helpers::repo_root()` in repository scope and `cache::find_local_checkout()` (recent repos by `origin`) in group scope.
 * Dispatch happens in the last arm of the list-view fallback in `handle_active_tab_key`, so every built-in, configured or hard-wired, wins. `builtin_action()` in [src/custom_commands.rs](src/custom_commands.rs) mirrors that precedence to report shadowed keys; when you hard-wire a new list-view key, add it to `LIST_VIEW_CODE_KEYS` / `tab_hardwired_keys()` when the arm compares only `key_event.code` (any modifier is taken), or to `LIST_VIEW_EXACT_KEYS` / `tab_hardwired_exact_keys()` when it goes through `keybinding_matches` or checks modifiers. Pane-specific custom bindings win over universal ones.
-* A non-empty `selected_issues` / `selected_mrs` turns an `issues` / `mrs` command into a bulk run: `targets()` yields one `Target` per selected item (sorted by project and number), and all renderable runs execute inside one `editor::suspend_while` handoff. Each run is logged with `App::record_command_outcome`; failures raise a single summary toast via `App::raise_error_toast`.
+* A non-empty `selected_issues` / `selected_mrs` / `selected_pipelines` / `selected_jobs` turns an `issues` / `mrs` / `pipelines` / `jobs` command into a bulk run: `targets()` yields one `Target` per selected item (sorted by project and number, jobs by id), and all renderable runs execute inside one `editor::suspend_while` handoff. `run_all` times each run (`FinishedRun::execution`: start time and duration), and each run is logged with that timing through `App::record_command_outcome` (terminal runs) or `App::settle_command` (background runs); failures raise a single summary toast via `App::raise_error_toast`.
 * `background = true` entries skip the handoff: `execute()` runs them on a thread with stdin/stdout detached (`Handoff::Background`) and sends `Event::CustomCommandFinished(RunReport)`; the main loop logs it through `report_runs()`, the same path terminal runs use. Stderr is always collected so a failure names its cause; it is only echoed to the screen for terminal runs. `detach_from_terminal()` starts background runs with `setsid(2)` (Unix): Go/termenv tools open `/dev/tty` and query the background colour even with stdio redirected, and the terminal's reply would otherwise arrive as keypresses. `tests/e2e/custom_keybindings.rs` guards this.
-* Feedback while a command works: a background run logs each rendered command as `Running` up front (`App::start_command`) and `report_runs()` settles those rows through their `LogRow` handles (`RunReport::log_rows`, `App::settle_command`); a terminal run prints `glab-tui: running "<label>": <command>` to stderr before starting, so a silent command does not leave a blank screen. Custom-command log rows start with `CUSTOM_COMMAND_LOG_PREFIX`, and the generic "most recent `Running` entry" fallbacks (`show_error`, `CommandCompleted`, `TerminalCommandLogged`) go through `App::latest_running_cli_command()`, which skips them so an unrelated completion cannot stamp a background command finished.
+* Feedback while a command works: a background run logs each rendered command as `Running` up front (`App::start_command`) and `report_runs()` settles those rows through their `LogRow` handles (`RunReport::log_rows`, `App::settle_command`); a terminal run prints `glab-tui: running "<label>": <command>` to stderr before starting, so a silent command does not leave a blank screen. Custom-command log rows start with `CUSTOM_COMMAND_LOG_PREFIX` (Terminal-tab re-runs with `RERUN_LOG_PREFIX`), and the generic "most recent `Running` entry" fallbacks (`show_error`, `CommandCompleted`, `TerminalCommandLogged`) go through `App::latest_running_cli_command()`, which skips them so an unrelated completion cannot stamp a background command finished.
 * `render()` splices a value into `sh -c` only when it is a single plain word: it refuses values starting with `-` or `+` (vim/nvim/less run `+cmd` as a command, and `FilePath` comes from the PR diff) and values containing whitespace, control characters or a `SHELL_SIGNIFICANT_CHARACTERS` entry (quoting, substitution, separators, redirection, glob, brace/tilde expansion, `#`, `=`). Every value is also exported as `GLAB_TUI_<NAME>`, the only safe way to pass free text such as titles. Keep that guard when adding arguments.
 * Keys are parsed with `keybinding::binding_key_event`, the inverse of `keybinding_matches`; a key it rejects is reported as unbindable.
 
@@ -252,11 +271,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
 ### Submit Dialog & Confirmations (`SubmitDialog`)
-* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review, cancel pipeline, bulk job cancel) open a `SubmitDialog` ([src/app.rs](src/app.rs)). Confirmed bulk job cancels are paced with `pace_bulk_operation()`.
-* Pipeline and job actions resolve their project through `App::project_path_for_pipeline(id)` (the listed row's `project_path`, then `active_pipeline_project` for the active pipeline, then the scope) or `App::project_path_for_jobs()` for the Jobs tab. Never pass `app.scope.as_str()` as a pipeline/job project: in group scope it is the group path.
+* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review, cancel pipeline, bulk job cancel, stop environment, roll back deployment, re-run of a Terminal-tab command) open a `SubmitDialog` ([src/app.rs](src/app.rs)). Confirmed bulk job cancels are paced with `pace_bulk_operation()`.
+* Pipeline and job actions resolve their project through `App::project_path_for_pipeline(id)` (the listed row's `project_path`, then `active_pipeline_project` for the active pipeline, then the scope) or `App::project_path_for_jobs()` for the Jobs tab. `App::pipeline_project(id)` / `App::jobs_project()` are the same lookups without the scope fallback, and `active_pipeline_project` only ever holds what `pipeline_project` resolved, never the scope. Never pass `app.scope.as_str()` as a pipeline/job project: in group scope it is the group path.
 * Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons. `SubmitDialog::extra_buttons` (`DialogChoice`) adds buttons between them; the submit-review dialog uses it for `Keep drafts` / `Discard`.
 * Navigation: `h`/`l` / Left/Right move to the neighbouring button, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel. Cancel never has side effects.
-* Destructive actions (close, delete, revoke, cancel pipeline/jobs) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
+* Destructive actions (close, delete, revoke, cancel pipeline/jobs) default the cursor to Cancel; reversible actions (merge, rebase, review) and re-runs (the user asked for that exact call, shown in full in the body) default to Submit.
 * Mouse clicks on button boxes or option rows are supported.
 
 ### Mouse Support
@@ -310,7 +329,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Get single MR | `glab mr view <iid> --output json -R <repo>` | N/A |
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
-| List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
+| List MR notes | `glab mr note list <iid> --output json -R <repo>` (prints discussions `{id, notes: [...]}`, which `parse_mr_discussions` flattens into notes tagged with their discussion id) | glab fetches every page itself |
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Current branch's pipeline (Jobs tab) | `glab ci list --output json -R <repo> --ref <branch> --per-page 1` and `glab mr list --output json -R <repo> --source-branch <branch> --per-page 1`, then `glab ci list … --ref refs/merge-requests/<iid>/head --per-page 1` when the branch has an open MR. Newest id wins | Single targeted calls, never a full MR or pipeline listing |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call (then one GraphQL query fills tags, version, last contact and IP — see Runner details below) |
@@ -332,8 +351,10 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Delete milestone | `glab milestone delete <iid> -R <repo> -y` |
 | Cancel pipeline | `glab ci cancel pipeline <id> -R <repo>` |
 | Retry job | `glab ci retry <job_id> -R <repo>` |
+| Retry failed jobs (`R`) | `glab ci retry <job_id> -R <repo>` for each job the failed-jobs listing below returns, paced with `pace_bulk_operation()` |
 | Cancel job | `glab ci cancel job <id> -R <repo>` |
 | Start manual job | `glab ci retry <job_id> -R <repo>` |
+| Roll back deployment | `glab ci retry <deployment job id> -R <repo>` (re-runs the selected deployment's `deployable` job) |
 | Run pipeline (variables/inputs) | `glab ci run [--branch <ref>] [--mr] [--variables k:v ...] [--input k:v ...]` |
 | Mark todo done | `glab todo done <id>` |
 | Mark all todos done | `glab todo done --all` |
@@ -349,7 +370,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Endpoint | Why raw API |
 |---|---|---|
-| List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
+| List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` (reads `failure_reason` and `commit`) | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
+| List a pipeline's failed jobs (`R`) | `GET /projects/{}/pipelines/{}/jobs?scope[]=failed&per_page=100&page=<P>` | Same as above. Returns the latest attempt of each failed job. Pages are read until a short one, all before the first retry, since a retried job leaves the listing |
 | Get job trace | `GET /projects/{}/jobs/{}/trace` (read up to `JOB_TRACE_MAX_BYTES`) | `glab ci trace` is interactive/streaming; we need programmatic text output |
 | Follow job trace (follow mode poll) | `GET /projects/{}/jobs/{}/trace?byte_offset=<N>&byte_limit=<≤500 KiB>` | Only the bytes after what is shown; a server that ignores the parameters is detected and polled with full (bounded) reads |
 | List done todos | `GET todos?state=done` | `glab todo list` only shows pending |
@@ -357,7 +379,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Create branch | `POST /projects/{}/repository/branches?branch=...&ref=...` | No `glab branch` command |
 | Delete branch | `DELETE /projects/{}/repository/branches/{}` | No `glab branch` command |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
-| List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
+| List deployments | `GET /projects/{}/deployments?per_page=<N>&order_by=id&sort=desc[&environment=<name>]` | No native command. The API sorts oldest first by default, which would cut the newest deployments off the page |
+| Stop environment | `POST /projects/{}/environments/{}/stop` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
 | Runner details (tags, version, last contact, IP) | `glab api graphql` over `project(fullPath:).runners { id tagList contactedAt managers { version ipAddress contactedAt } }`, one query after `glab runner list` | `glab runner list` returns none of these fields and `glab runner` has no view subcommand. GitLab deprecated the runner's own `version` and stopped returning its `ip_address` in 17.0 in favour of the runner managers. A runner the query does not return (a group or project runner the token cannot read) still lists, with those fields unknown |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
@@ -368,7 +391,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List group milestones | `GET /groups/{}/milestones?per_page=<N>` | Native `glab milestone list --group` returns only the group's own milestones per project |
 | List group labels | `GET /groups/{}/labels?per_page=<N>` | `glab label list -g` has no pagination control |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
-| List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
+| List deployments | `GET /projects/{}/deployments?per_page=<N>&order_by=id&sort=desc[&environment=<name>]` | No native command |
 | Review draft notes | `POST /projects/{}/merge_requests/{}/draft_notes` per comment, then one `POST .../draft_notes/bulk_publish` | `glab mr note create` posts one note at a time and cannot batch them into a review |
 
 ### GhBackend (`src/backend/gh.rs`)
@@ -385,7 +408,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
 | Current branch's run (Jobs tab) | `gh run list -R <repo> --branch <branch> --limit 1 --json databaseId` | Single call. PR runs carry the head branch |
-| List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
+| List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` (each job's `steps` name its failed step) | Single call |
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
 | List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
@@ -396,6 +419,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Operation | Command |
 |---|---|
 | Retry run | `gh run rerun <id> -R <repo>` |
+| Retry failed jobs (`R`) | `gh run rerun <id> --failed -R <repo>` |
 | Cancel run | `gh run cancel <id> -R <repo>` |
 | Retry job | `gh run rerun --job <id> -R <repo>` |
 | Create release | `gh release create <tag> -R <repo> -t <name> -n <notes>` |
@@ -409,7 +433,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Endpoint | Why raw API |
 |---|---|---|
-| List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
+| List PR review comments | `gh api --paginate /repos/{}/pulls/{}/comments?per_page=100`, plus `gh api graphql --paginate` over `reviewThreads(first:100, after:$endCursor) { pageInfo nodes { isResolved comments(first:1) } }` for the resolution state | `gh pr view --json comments` lacks inline line/position fields needed for diff review, and REST comments carry no resolution state. Every page is read: `page_size` does not bound them. A reply takes its thread's state through `in_reply_to_id`, which always names the thread's first comment |
 | Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
 | PR stack positions (Stack column) | `gh api graphql` with one aliased `pullRequest(number: N) { stack stackEntry }` per listed PR | `gh pr list --json` has no stack fields. Runs once per PR-list fetch, only while `App::is_stack_column_needed()` (Stack column shown or grouped by), via `spawn_fetch_pr_stack_summaries` after `MrsFetched` |
 | One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
@@ -426,12 +450,14 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Create branch | `POST /repos/{}/git/refs` | No native command |
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |
 | List environments | `GET /repos/{}/environments?per_page=<N>` | No native command |
-| List deployments | `GET /repos/{}/deployments?per_page=<N>` | No native command |
+| List deployments | `GET /repos/{}/deployments?per_page=<N>[&environment=<name>]` | No native command |
+| Stop environment | `GET /repos/{}/deployments?per_page=30&environment=<name>`, then `GET /repos/{}/deployments/{}/statuses?per_page=1` for each, newest first, until one is `success`, then `POST /repos/{}/deployments/{}/statuses` with `state: inactive` on that one | GitHub has no environment stop: deactivating the live deployment (the newest whose latest status is `success`) is its equivalent. The deployment list carries no status, so each one is asked |
+| Roll back deployment | `POST /repos/{}/deployments` with `ref: <sha>`, `environment`, `auto_merge: false`, `required_contexts: []` | No native command. Empty `required_contexts` skips GitHub's commit-status check, which would refuse an already deployed SHA whose statuses are not all green |
 | List members | `GET /repos/{}/assignees?per_page=100` | No native command |
 | Update milestone | `PATCH repos/{}/milestones/{}` | No `gh milestone` command |
 | Delete milestone | `DELETE repos/{}/milestones/{}` | No `gh milestone` command |
 | List environments | `GET /repos/{}/environments?per_page=<N>` | No native command |
-| List deployments | `GET /repos/{}/deployments?per_page=<N>` | No native command |
+| List deployments | `GET /repos/{}/deployments?per_page=<N>[&environment=<name>]` | No native command |
 | List members | `GET /repos/{}/assignees?per_page=100` | No native command |
 | Submit review | `POST /repos/{}/pulls/{}/reviews` (`body`, `event`, `comments[]` with `side`/`start_line`) | `gh pr review` has no inline comments; one call carries the whole review |
 | Reply to review thread | `POST /repos/{}/pulls/{}/comments` with `in_reply_to` | `gh pr comment` cannot reply to a review comment |

@@ -1,5 +1,7 @@
 use super::Backend;
 use super::bounded_output::{CapturedStdout, output_bounded};
+use super::logged_command::{ChildOutput, LoggedCommand};
+use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
@@ -26,6 +28,9 @@ use tokio::task::JoinSet;
 
 /// GitLab rejects a job log `byte_limit` above 500 KiB.
 const GITLAB_TRACE_RANGE_MAX_BYTES: usize = 500 * 1024;
+
+/// GitLab caps `per_page` at 100.
+const GITLAB_MAX_PER_PAGE: usize = 100;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -408,43 +413,28 @@ async fn run_glab_command_inner(
     desc: String,
     max_stdout_bytes: Option<usize>,
 ) -> Result<CapturedStdout> {
-    let label = desc.to_uppercase();
-    let cmd_str = format!("glab {}", args.join(" "));
+    let logged = LoggedCommand::start(&desc, Invocation::new(Program::Glab, &args));
 
     let output = match output_bounded(Command::new("glab").args(&args), max_stdout_bytes).await {
         Ok(output) => output,
         Err(e) => {
-            if let Some(tx) = &tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-                    command: format!("{label}: {cmd_str}"),
-                    status: format!("Failed: {e}"),
-                });
-            }
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
             return Err(e.into());
         }
     };
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     if output.succeeded() {
-        if let Some(tx) = &tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{label}: {cmd_str}"),
-                status: "Success".to_string(),
-            });
-        }
+        logged.finish(tx.as_ref(), "Success".to_string(), output.child_output());
         Ok(output.stdout)
     } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if let Some(tx) = &tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{label}: {cmd_str}"),
-                status: format!("Failed: {err_msg}"),
-            });
-        }
-        anyhow::bail!("glab command failed: {err_msg}")
+        let child_output = output.child_output();
+        let reason = logged.failure_reason(&child_output);
+        logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+        anyhow::bail!("glab command failed: {reason}")
     }
 }
 
@@ -987,6 +977,86 @@ fn gitlab_draft_note_payload(comment: &DraftComment, diff_refs: &GiDiffRefs) -> 
     serde_json::json!({ "note": comment.body, "position": position })
 }
 
+/// One element of `glab mr note list --output json`: a discussion with its
+/// notes. GitLab does not repeat the discussion id on its notes.
+#[derive(Deserialize)]
+struct GiDiscussion {
+    id: String,
+    notes: Vec<GiNote>,
+}
+
+#[derive(Deserialize)]
+struct GiNote {
+    id: u64,
+    body: String,
+    author: GiNoteAuthor,
+    created_at: String,
+    system: bool,
+    #[serde(default)]
+    position: Option<GiNotePosition>,
+    #[serde(default)]
+    resolved: Option<bool>,
+    #[serde(default)]
+    resolvable: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct GiNoteAuthor {
+    username: String,
+}
+
+#[derive(Deserialize)]
+struct GiNotePosition {
+    #[serde(default)]
+    new_path: Option<String>,
+    #[serde(default)]
+    old_path: Option<String>,
+    #[serde(default)]
+    new_line: Option<u64>,
+    #[serde(default)]
+    old_line: Option<u64>,
+    #[serde(default)]
+    start_line: Option<u64>,
+    #[serde(default)]
+    line_range: Option<serde_json::Value>,
+}
+
+/// Flattens the discussions `glab mr note list` prints into notes, each
+/// tagged with the id of the discussion it belongs to.
+fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
+    let discussions: Vec<GiDiscussion> =
+        serde_json::from_str(raw).context("parsing MR discussions")?;
+    Ok(discussions
+        .into_iter()
+        .flat_map(|discussion| {
+            let discussion_id = discussion.id;
+            discussion
+                .notes
+                .into_iter()
+                .map(move |note| DiscussionNote {
+                    id: note.id,
+                    body: note.body,
+                    author: crate::domain::mr::Author {
+                        username: note.author.username,
+                    },
+                    created_at: note.created_at,
+                    system: note.system,
+                    position: note.position.map(|p| crate::domain::mr::NotePosition {
+                        new_path: p.new_path,
+                        old_path: p.old_path,
+                        new_line: p.new_line,
+                        old_line: p.old_line,
+                        start_line: p.start_line,
+                        line_range: p.line_range,
+                    }),
+                    discussion_id: Some(discussion_id.clone()),
+                    resolved: note.resolved,
+                    resolvable: note.resolvable,
+                })
+        })
+        .collect())
+}
+
 #[async_trait]
 impl Backend for GlabBackend {
     fn kind(&self) -> super::BackendKind {
@@ -1406,6 +1476,7 @@ impl Backend for GlabBackend {
                                 source: None,
                                 project_path: String::new(),
                                 web_url: p.web_url,
+                                commit: None,
                             }),
                             blocking_discussions_resolved: m.blocking_discussions_resolved,
                             approval: None,
@@ -1582,6 +1653,7 @@ impl Backend for GlabBackend {
                 source: None,
                 project_path: String::new(),
                 web_url: p.web_url,
+                commit: None,
             }),
             blocking_discussions_resolved: m.blocking_discussions_resolved,
             approval: None,
@@ -1607,12 +1679,7 @@ impl Backend for GlabBackend {
         Ok(String::from_utf8(diff.bytes)?)
     }
 
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        _page_size: usize,
-    ) -> Result<Vec<DiscussionNote>> {
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
         let raw = self
             .run_glab(
                 &[
@@ -1628,65 +1695,7 @@ impl Backend for GlabBackend {
                 "Fetching MR Notes",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GiNote {
-            id: u64,
-            body: String,
-            author: GiAuthor,
-            created_at: String,
-            system: bool,
-            #[serde(default)]
-            position: Option<GiPosition>,
-            #[serde(default)]
-            discussion_id: Option<String>,
-            #[serde(default)]
-            resolved: Option<bool>,
-            #[serde(default)]
-            resolvable: Option<bool>,
-        }
-        #[derive(Deserialize)]
-        struct GiAuthor {
-            username: String,
-        }
-        #[derive(Deserialize)]
-        struct GiPosition {
-            #[serde(default)]
-            new_path: Option<String>,
-            #[serde(default)]
-            old_path: Option<String>,
-            #[serde(default)]
-            new_line: Option<u64>,
-            #[serde(default)]
-            old_line: Option<u64>,
-            #[serde(default)]
-            start_line: Option<u64>,
-            #[serde(default)]
-            line_range: Option<serde_json::Value>,
-        }
-        let notes: Vec<GiNote> = serde_json::from_str(&raw)?;
-        Ok(notes
-            .into_iter()
-            .map(|n| DiscussionNote {
-                id: n.id,
-                body: n.body,
-                author: crate::domain::mr::Author {
-                    username: n.author.username,
-                },
-                created_at: n.created_at,
-                system: n.system,
-                position: n.position.map(|p| crate::domain::mr::NotePosition {
-                    new_path: p.new_path,
-                    old_path: p.old_path,
-                    new_line: p.new_line,
-                    old_line: p.old_line,
-                    start_line: p.start_line,
-                    line_range: p.line_range,
-                }),
-                discussion_id: n.discussion_id,
-                resolved: n.resolved,
-                resolvable: n.resolvable,
-            })
-            .collect())
+        parse_mr_discussions(&raw)
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -2132,6 +2141,7 @@ impl Backend for GlabBackend {
                             source: p.source,
                             project_path: project.to_string(),
                             web_url: p.web_url,
+                            commit: None,
                         }
                     }));
                 }
@@ -2209,19 +2219,58 @@ impl Backend for GlabBackend {
             status: String,
             stage: String,
             name: String,
+            #[serde(default)]
+            duration: Option<f64>,
+            #[serde(default)]
+            queued_duration: Option<f64>,
+            #[serde(default)]
+            runner: Option<GiRunner>,
+            #[serde(default)]
+            web_url: Option<String>,
+            #[serde(default)]
+            failure_reason: Option<String>,
+            #[serde(default)]
+            artifacts: Option<Vec<GiArtifact>>,
+            #[serde(default)]
+            commit: Option<crate::domain::pipelines::CommitSummary>,
+        }
+        #[derive(Deserialize)]
+        struct GiRunner {
+            #[serde(default)]
+            description: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct GiArtifact {
+            file_type: String,
         }
         let jobs: Vec<GiJob> = serde_json::from_str(&raw)?;
         let all_jobs: Vec<Job> = jobs
             .into_iter()
             .map(|j| Job {
+                failure_reason: j
+                    .failure_reason
+                    .filter(|_| j.status == "failed")
+                    .map(|reason| reason.replace('_', " ")),
                 id: j.id,
                 status: j.status,
                 stage: j.stage,
                 name: j.name,
+                api_name: String::new(),
                 matrix: None,
-                duration_seconds: None,
-                runner: None,
+                duration_seconds: j.duration.map(|seconds| seconds.max(0.0) as u64),
+                runner: j.runner.and_then(|runner| runner.description),
                 needs: Vec::new(),
+                web_url: j.web_url,
+                queued_seconds: j.queued_duration.map(|seconds| seconds.max(0.0) as u64),
+                artifact_file_types: j
+                    .artifacts
+                    .into_iter()
+                    .flatten()
+                    .map(|artifact| artifact.file_type)
+                    // GitLab lists every finished job's own log as a `trace` artifact.
+                    .filter(|file_type| file_type != "trace")
+                    .collect(),
+                commit: j.commit,
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
@@ -2276,6 +2325,55 @@ impl Backend for GlabBackend {
         let endpoint = format!("/projects/{encoded}/pipelines/{pipeline_id}/retry");
         self.raw_api(&endpoint, "POST", None, "Retrying Pipeline")
             .await?;
+        Ok(())
+    }
+
+    /// Retries each failed job on its own: GitLab's pipeline retry endpoint
+    /// also reruns canceled jobs. Without `include_retried` the listing holds
+    /// only the latest attempt of each job, so a retried job leaves it and
+    /// shifts the pages after it: every page is read before the first retry.
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()> {
+        #[derive(Deserialize)]
+        struct FailedJob {
+            id: u64,
+        }
+        let encoded = Self::encode_path(project);
+        let mut failed: Vec<FailedJob> = Vec::new();
+        for page in 1.. {
+            let endpoint = format!(
+                "/projects/{encoded}/pipelines/{pipeline_id}/jobs?scope[]=failed&per_page={GITLAB_MAX_PER_PAGE}&page={page}"
+            );
+            let raw = self
+                .raw_api(&endpoint, "GET", None, "Fetching Failed Jobs")
+                .await?;
+            let batch: Vec<FailedJob> =
+                serde_json::from_str(&raw).context("parsing the failed jobs of a pipeline")?;
+            let is_last_page = batch.len() < GITLAB_MAX_PER_PAGE;
+            failed.extend(batch);
+            if is_last_page {
+                break;
+            }
+        }
+        if failed.is_empty() {
+            anyhow::bail!("pipeline #{pipeline_id} has no failed jobs to retry");
+        }
+        let mut errors = Vec::new();
+        for (i, job) in failed.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
+            if let Err(error) = self.retry_job(project, job.id).await {
+                errors.push(format!("job #{}: {error}", job.id));
+            }
+        }
+        if !errors.is_empty() {
+            anyhow::bail!(
+                "retried {} of {} failed jobs: {}",
+                failed.len() - errors.len(),
+                failed.len(),
+                errors.join("; ")
+            );
+        }
         Ok(())
     }
 
@@ -3055,7 +3153,8 @@ impl Backend for GlabBackend {
             }
         };
         let encoded = Self::encode_path(project);
-        let mut endpoint = format!("/projects/{encoded}/deployments?per_page={page_size}");
+        let mut endpoint =
+            format!("/projects/{encoded}/deployments?per_page={page_size}&order_by=id&sort=desc");
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={env}"));
         }
@@ -3100,6 +3199,31 @@ impl Backend for GlabBackend {
                 user: d.user,
             })
             .collect())
+    }
+
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!("/projects/{encoded}/environments/{}/stop", environment.id);
+        self.raw_api(&endpoint, "POST", None, "Stopping Environment")
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        _environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()> {
+        let job_id = deployment.job_id().ok_or_else(|| {
+            anyhow::anyhow!("deployment #{} has no deploy job to re-run", deployment.iid)
+        })?;
+        self.run_glab(
+            &["ci", "retry", &job_id.to_string(), "-R", project],
+            "Rolling Back Deployment",
+        )
+        .await
+        .map(|_| ())
     }
 
     // ── Labels / Members / Misc ──
@@ -3328,64 +3452,41 @@ async fn run_glab_raw_api(
     body: Option<&str>,
     desc: &str,
 ) -> Result<String> {
-    let mut cmd_args: Vec<String> = vec!["api".into()];
-    if method != "GET" {
-        cmd_args.push("-X".into());
-        cmd_args.push(method.into());
-    }
-    cmd_args.push(endpoint.into());
-    let cmd_str = format!("glab {}", cmd_args.join(" "));
-    let label = desc.to_uppercase();
-
-    let mut cmd = Command::new("glab");
-    cmd.arg("api");
-    if method != "GET" {
-        cmd.arg("-X");
-        cmd.arg(method);
-    }
     let input = body.filter(|b| !b.is_empty());
-    if input.is_some() {
-        cmd.arg("--input");
-        cmd.arg("-");
+    let mut args = vec!["api"];
+    if method != "GET" {
+        args.extend(["-X", method]);
     }
-    cmd.arg(endpoint);
+    if input.is_some() {
+        args.extend(["--input", "-"]);
+    }
+    args.push(endpoint);
+    let logged = LoggedCommand::start(
+        desc,
+        Invocation::new(Program::Glab, &args).with_stdin(input),
+    );
 
-    let output = super::subprocess::output(&mut cmd, input.map(str::as_bytes)).await;
+    let output =
+        super::subprocess::output(Command::new("glab").args(&args), input.map(str::as_bytes)).await;
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     match output {
         Ok(out) => {
             if out.status.success() {
-                let s = String::from_utf8(out.stdout)?;
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{label}: {cmd_str}"),
-                        status: "Success".to_string(),
-                    });
-                }
-                Ok(s)
+                logged.finish(tx.as_ref(), "Success".to_string(), (&out).into());
+                Ok(String::from_utf8(out.stdout)?)
             } else {
-                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{label}: {cmd_str}"),
-                        status: format!("Failed: {err_msg}"),
-                    });
-                }
-                anyhow::bail!("glab api failed: {err_msg}")
+                let child_output = ChildOutput::from(&out);
+                let reason = logged.failure_reason(&child_output);
+                logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+                anyhow::bail!("glab api failed: {reason}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{e}");
-            if let Some(ref tx) = tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{label}: {cmd_str}"),
-                    status: format!("Failed: {err_msg}"),
-                });
-            }
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
             Err(e)
         }
     }
@@ -3444,22 +3545,21 @@ async fn open_in_web_browser(
     tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     label: &str,
 ) -> Result<()> {
+    let logged = LoggedCommand::start(label, Invocation::new(Program::Git, &["web--browse", url]));
     let output = tokio::process::Command::new("git")
         .args(["web--browse", url])
         .output()
         .await;
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    let status = match &output {
-        Ok(out) if out.status.success() => "Success".to_string(),
-        _ => "Success".to_string(),
+    let (status, child_output) = match &output {
+        Ok(out) if out.status.success() => ("Success".to_string(), ChildOutput::from(out)),
+        Ok(out) => {
+            let child_output = ChildOutput::from(out);
+            let reason = logged.failure_reason(&child_output);
+            (format!("Failed: {reason}"), child_output)
+        }
+        Err(error) => (format!("Failed: {error}"), ChildOutput::NOT_STARTED),
     };
-    if let Some(ref tx) = tx {
-        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-            timestamp,
-            command: format!("{label}: git web--browse {url}"),
-            status,
-        });
-    }
+    logged.finish(tx.as_ref(), status, child_output);
     Ok(())
 }
 
@@ -4386,6 +4486,49 @@ mod tests {
         assert_eq!(
             classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
             RangedReply::Misaligned
+        );
+    }
+
+    #[test]
+    fn mr_discussions_flatten_into_notes_tagged_with_their_discussion() {
+        let raw = r#"[
+            {"id":"6a9c1750","individual_note":false,"notes":[
+                {"id":1,"type":"DiffNote","body":"Rename this","author":{"id":7,"username":"alice"},
+                 "created_at":"2026-07-06T09:00:00.000Z","system":false,
+                 "position":{"position_type":"text","new_path":"src/a.rs","old_path":"src/a.rs","new_line":12},
+                 "resolvable":true,"resolved":true},
+                {"id":2,"type":"DiffNote","body":"Done","author":{"id":8,"username":"bob"},
+                 "created_at":"2026-07-06T10:00:00.000Z","system":false,
+                 "position":{"position_type":"text","new_path":"src/a.rs","old_path":"src/a.rs","new_line":12},
+                 "resolvable":true,"resolved":true}
+            ]},
+            {"id":"f00dfeed","individual_note":true,"notes":[
+                {"id":3,"type":null,"body":"added 1 commit","author":{"id":8,"username":"bob"},
+                 "created_at":"2026-07-06T11:00:00.000Z","system":true,"position":null,
+                 "resolvable":false,"resolved":false}
+            ]}
+        ]"#;
+        let notes = parse_mr_discussions(raw).unwrap();
+        let summary: Vec<_> = notes
+            .iter()
+            .map(|n| {
+                (
+                    n.id,
+                    n.discussion_id.as_deref(),
+                    n.author.username.as_str(),
+                    n.system,
+                    n.position.as_ref().and_then(|p| p.new_line),
+                    n.resolved,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (1, Some("6a9c1750"), "alice", false, Some(12), Some(true)),
+                (2, Some("6a9c1750"), "bob", false, Some(12), Some(true)),
+                (3, Some("f00dfeed"), "bob", true, None, Some(false)),
+            ]
         );
     }
 }

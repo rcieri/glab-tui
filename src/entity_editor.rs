@@ -592,6 +592,70 @@ pub fn build_pipeline_document(
     }
 }
 
+/// Metadata of one job, above its log or the pipeline's stage summary
+/// (`content`). GitHub jobs carry no stage, so none is shown for them.
+pub fn build_job_document(
+    job: &crate::domain::pipelines::Job,
+    content: crate::app::InspectorContent,
+) -> crate::app::EntityDocument {
+    let status_tone = match job.status.as_str() {
+        "success" => crate::app::FieldTone::Green,
+        "failed" => crate::app::FieldTone::Red,
+        "running" => crate::app::FieldTone::Blue,
+        "pending" | "preparing" | "waiting_for_resource" => crate::app::FieldTone::Yellow,
+        _ => crate::app::FieldTone::Muted,
+    };
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("#{}", job.id)),
+        crate::app::Field::read_only("Name", job.name.clone()),
+        crate::app::Field::read_only_toned("Status", job.status.to_uppercase(), status_tone),
+    ];
+    if !job.stage.is_empty() {
+        fields.push(crate::app::Field::read_only("Stage", job.stage.clone()));
+    }
+    if let Some(matrix) = &job.matrix {
+        fields.push(crate::app::Field::read_only("Matrix", matrix.clone()));
+    }
+    if let Some(failure_reason) = &job.failure_reason {
+        fields.push(crate::app::Field::read_only(
+            "Failure",
+            failure_reason.replace('_', " "),
+        ));
+    }
+    if let Some(runner) = &job.runner {
+        fields.push(crate::app::Field::read_only("Runner", runner.clone()));
+    }
+    if let Some(queued) = job.queued_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Queued",
+            format!("{}m {}s", queued / 60, queued % 60),
+        ));
+    }
+    if let Some(duration) = job.duration_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Duration",
+            format!("{}m {}s", duration / 60, duration % 60),
+        ));
+    }
+    if !job.needs.is_empty() {
+        fields.push(crate::app::Field::read_only("Needs", job.needs.join(", ")));
+    }
+    if !job.artifact_file_types.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Artifacts",
+            job.artifact_file_types.join(", "),
+        ));
+    }
+    if let Some(url) = &job.web_url {
+        fields.push(crate::app::Field::read_only("URL", url.clone()));
+    }
+    crate::app::EntityDocument {
+        title: format!("Job #{}", job.id),
+        fields,
+        content,
+    }
+}
+
 pub fn build_milestone_document(
     milestone: &crate::domain::milestones::Milestone,
     issues: Option<&[crate::domain::issues::Issue]>,

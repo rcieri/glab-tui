@@ -3897,6 +3897,12 @@ pub struct App {
     /// Deployment whose job log opens in the editor once its in-flight fetch
     /// lands.
     pub pending_deployment_log: Option<u64>,
+    /// Job whose log scrolls to its first failure once its in-flight fetch
+    /// lands.
+    pub pending_job_trace_failure: Option<u64>,
+    /// Log line the job trace pane scrolls to on its next draw, which alone
+    /// knows the row a line starts at once wrapped.
+    pub job_trace_scroll_to_line: Option<usize>,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
@@ -4054,6 +4060,8 @@ impl Default for App {
             job_trace_loading: false,
             pending_job_trace_editor: None,
             pending_deployment_log: None,
+            pending_job_trace_failure: None,
+            job_trace_scroll_to_line: None,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),
             job_trace_searching: false,
@@ -4300,6 +4308,7 @@ impl App {
         self.pending_pipeline_select = None;
         self.pending_job_trace_editor = None;
         self.pending_deployment_log = None;
+        self.pending_job_trace_failure = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
@@ -4546,11 +4555,11 @@ impl App {
         }
     }
 
-    /// The project a pipeline belongs to: its own row's path, then the
-    /// project the Jobs tab was opened with when `id` is the active pipeline,
-    /// then the scope. A listed row always wins so an older Jobs-tab project
-    /// never redirects actions on other pipelines.
-    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+    /// The project a pipeline belongs to, when known: its own row's path,
+    /// then the project the Jobs tab was opened with when `id` is the active
+    /// pipeline. A listed row always wins so an older Jobs-tab project never
+    /// redirects actions on other pipelines.
+    pub fn pipeline_project(&self, id: u64) -> Option<&str> {
         self.pipelines
             .items
             .iter()
@@ -4562,14 +4571,24 @@ impl App {
                     .as_deref()
                     .filter(|p| !p.is_empty() && self.active_pipeline_id == Some(id))
             })
-            .unwrap_or_else(|| self.scope.as_str())
+    }
+
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        self.pipeline_project(id)
+            .unwrap_or(self.scope.as_str())
             .to_string()
     }
 
-    /// The project of the jobs on the Jobs tab. Jobs carry no project of
-    /// their own: they all belong to the active pipeline.
+    /// The project of the jobs on the Jobs tab, when known. Jobs carry no
+    /// project of their own: they all belong to the active pipeline.
+    pub fn jobs_project(&self) -> Option<&str> {
+        self.pipeline_project(self.active_pipeline_id?)
+    }
+
     pub fn project_path_for_jobs(&self) -> String {
-        self.project_path_for_pipeline(self.active_pipeline_id.unwrap_or(0))
+        self.jobs_project()
+            .unwrap_or(self.scope.as_str())
+            .to_string()
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -4895,6 +4914,46 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Jobs tab"))?;
         self.clipboard.set_text(sha)?;
         Ok(())
+    }
+
+    /// The highlighted row of the Jobs tab.
+    pub fn selected_job(&self) -> Option<&crate::domain::pipelines::Job> {
+        let index = self.jobs.state.selected()?;
+        self.filtered_jobs().get(index).copied()
+    }
+
+    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_job()
+            .and_then(|job| job.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_job_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .selected_job()
+            .map(|job| job.id)
+            .ok_or_else(|| anyhow::anyhow!("No job is selected"))?;
+        self.clipboard.set_text(id.to_string())?;
+        Ok(())
+    }
+
+    /// Scrolls the shown job log to the first failure line after line
+    /// `after` (from the top when `None`), wrapping around.
+    pub fn jump_to_trace_failure(&mut self, after: Option<usize>) {
+        let Some(view) = &self.job_trace else {
+            return;
+        };
+        match view.trace().next_failure_line(after) {
+            Some(line) => {
+                self.job_trace_scroll_to_line = Some(line);
+                self.detail_scroll_to_bottom = false;
+            }
+            None => self.show_notice("No failure line in the job log"),
+        }
     }
 
     pub fn selected_branch_name(&self) -> Option<String> {
@@ -8527,6 +8586,58 @@ mod tests {
     }
 
     #[test]
+    fn job_url_and_id_are_copied_from_the_highlighted_job() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.active_tab = Tab::Jobs;
+        app.jobs.items = serde_json::from_str(
+            r#"[
+                {"id": 11, "status": "success", "stage": "build", "name": "compile",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/11"},
+                {"id": 12, "status": "failed", "stage": "test", "name": "rspec",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/12"}
+            ]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(1));
+
+        app.copy_selected_job_url().unwrap();
+        app.copy_selected_job_id().unwrap();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec!["https://gitlab.com/acme/app/-/jobs/12", "12"]
+        );
+    }
+
+    #[test]
+    fn job_url_copy_fails_when_the_job_has_no_url() {
+        let mut app = App::default();
+        app.jobs.items = serde_json::from_str(
+            r#"[{"id": 11, "status": "success", "stage": "build", "name": "compile"}]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(0));
+
+        assert_eq!(
+            app.copy_selected_job_url().unwrap_err().to_string(),
+            "Job URL unavailable; refresh the Jobs tab"
+        );
+    }
+
+    #[test]
     fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
         let mut app = App {
             scope: crate::scope::Scope::Repository("owner/repo".to_string()),
@@ -8972,7 +9083,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: vec![],
+            ..Default::default()
         };
         app.jobs.items = vec![job];
         app.active_tab = Tab::Jobs;
@@ -9312,7 +9423,13 @@ diff --git a/Makefile b/Makefile
         assert_eq!(app.project_path_for_pipeline(7), "acme/project-b");
         assert_eq!(app.project_path_for_pipeline(5), "acme/project-a");
         assert_eq!(app.project_path_for_pipeline(9), "acme");
+        assert_eq!(app.pipeline_project(9), None);
         assert_eq!(app.project_path_for_jobs(), "acme/project-a");
+        assert_eq!(app.jobs_project(), Some("acme/project-a"));
+
+        app.active_pipeline_id = None;
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
     #[test]

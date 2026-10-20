@@ -538,13 +538,25 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
 /// Scrolls the detail pane by a full or half page for the
 /// `scroll_page_down`/`scroll_page_up`/`scroll_half_page_down`/
 /// `scroll_half_page_up` bindings, against the usable height of
-/// `detail_rect` (its height minus the two border rows). `pending` is the
+/// `detail_rect` (its height minus the two border rows), or of the trace pane
+/// below the job header while the Jobs tab shows a log. `pending` is the
 /// character captured on a previous keystroke, if any (see
 /// `matches_with_pending`); pass `None` when there is no pending sequence.
 /// Returns true if a page scroll action matched and was applied.
 fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent) -> bool {
     if let Some(rect) = app.detail_rect.filter(|_| app.detail_visible) {
-        let full_page = rect.height.saturating_sub(2).max(1);
+        let trace_rows = app
+            .job_trace
+            .as_ref()
+            .filter(|_| app.active_tab == crate::app::Tab::Jobs)
+            .map(|view| view.viewport_height())
+            .filter(|&rows| rows > 0);
+        let full_page = trace_rows
+            .map_or_else(
+                || rect.height.saturating_sub(2),
+                |rows| u16::try_from(rows).unwrap_or(u16::MAX),
+            )
+            .max(1);
         let half_page = full_page / 2;
         if crate::keybinding::matches_with_pending(
             &app.config.keybindings.global.scroll_page_down,
@@ -2134,6 +2146,36 @@ pub async fn handle_active_tab_key(
                                 app.show_error(format!("Failed to copy commit SHA: {error}"));
                             }
                         }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.copy_url,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_job_url() {
+                                app.show_error(format!("Failed to copy job URL: {error}"));
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.copy_id,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_job_id() {
+                                app.show_error(format!("Failed to copy job ID: {error}"));
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.jump_to_failure,
+                            key_event,
+                        ) =>
+                        {
+                            if let Some(view) = &app.job_trace {
+                                let after = view.failure_search_start();
+                                app.jump_to_trace_failure(Some(after));
+                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
+                                app.pending_job_trace_failure = Some(job_id);
+                            }
+                        }
                         _ => handled = false,
                     }
                 } else {
@@ -2698,6 +2740,7 @@ pub async fn handle_active_tab_key(
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                     app.pending_job_trace_editor = None;
+                    app.pending_job_trace_failure = None;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;
                     app.job_trace = None;
@@ -3317,7 +3360,7 @@ pub fn apply_opened_pipeline(
             }
             let has_jobs = !jobs.is_empty();
             app.jobs.items = jobs;
-            app.active_pipeline_project = Some(app.project_path_for_pipeline(pipeline_id));
+            app.active_pipeline_project = app.pipeline_project(pipeline_id).map(str::to_owned);
             app.active_pipeline_id = Some(pipeline_id);
             app.jobs.state.select(Some(0));
             app.detail_scroll = 0;
@@ -3618,6 +3661,30 @@ mod tests {
         assert_eq!(app.detail_scroll, 25);
     }
 
+    /// While the Jobs tab shows a log under the job header, a page is the
+    /// log pane's height, not the whole detail column's. A log left open on
+    /// the Jobs tab does not change paging on other tabs.
+    #[tokio::test]
+    async fn page_down_on_a_shown_job_log_moves_by_the_log_pane_rows() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Jobs;
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 30));
+        let mut view = crate::ui::job_trace::JobTraceView::new(
+            crate::domain::job_trace::JobTrace::from_read("l\n".repeat(200).as_bytes(), false),
+        );
+        view.visible_lines(&crate::config::Theme::default(), None, 0, 20);
+        app.job_trace = Some(view);
+        let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
+
+        dispatch(&mut app, &page_down).await;
+        assert_eq!(app.detail_scroll, 20);
+
+        app.active_tab = crate::app::Tab::Issues;
+        dispatch(&mut app, &page_down).await;
+        assert_eq!(app.detail_scroll, 48);
+    }
+
     /// `PageUp` is the symmetric `PageDown` — subtracts the same page size.
     #[tokio::test]
     async fn page_up_scrolls_detail_pane_back_by_one_viewport() {
@@ -3816,7 +3883,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         };
         let mut app = App::default();
         app.active_tab = crate::app::Tab::Jobs;
@@ -4446,6 +4513,28 @@ mod tests {
         let cached: Vec<u64> = app.pipeline_jobs[&7].iter().map(|j| j.id()).collect();
         assert_eq!(cached, vec![70]);
         assert!(!app.loading_tabs.contains(&crate::app::Tab::Jobs));
+    }
+
+    /// A group-scope pipeline with no project of its own must not record the
+    /// group as the Jobs tab's project: the jobs' web URLs name it instead.
+    #[test]
+    fn opening_a_pipeline_without_a_project_records_none_in_group_scope() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![listed_pipeline(7)];
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_pipeline_id, Some(7));
+        assert_eq!(app.active_pipeline_project, None);
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
     /// Enter pressed twice before the first reply: the first reply descends,

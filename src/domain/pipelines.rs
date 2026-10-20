@@ -70,12 +70,16 @@ impl Pipeline {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct Job {
     pub id: u64,
     pub status: String,
     pub stage: String,
     pub name: String,
+    /// The name the API reported, before `process_pipeline_jobs` splits a
+    /// matrix job's name into `name` and `matrix`.
+    #[serde(default)]
+    pub api_name: String,
     #[serde(skip)]
     pub matrix: Option<String>,
     #[serde(default)]
@@ -84,6 +88,14 @@ pub struct Job {
     pub runner: Option<String>,
     #[serde(default)]
     pub needs: Vec<String>,
+    #[serde(default)]
+    pub web_url: Option<String>,
+    #[serde(default)]
+    pub queued_seconds: Option<u64>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub artifact_file_types: Vec<String>,
 }
 
 impl Job {
@@ -223,6 +235,7 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
                     job_item.matrix = Some(matrix_content);
                 }
             }
+            job_item.api_name = name;
             job_item
         })
         .collect();
@@ -381,7 +394,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 102,
@@ -391,7 +404,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 103,
@@ -401,7 +414,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 104,
@@ -411,7 +424,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -441,7 +454,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 202,
@@ -451,7 +464,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 203,
@@ -461,7 +474,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
             Job {
                 id: 204,
@@ -471,7 +484,7 @@ mod tests {
                 matrix: None,
                 duration_seconds: None,
                 runner: None,
-                needs: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -483,6 +496,7 @@ mod tests {
             .find(|j| j.matrix.as_deref() == Some("ubuntu, unit"))
             .unwrap();
         assert_eq!(ubuntu.name, "run-tests");
+        assert_eq!(ubuntu.api_name, "run-tests [ubuntu, unit]");
         assert_eq!(ubuntu.id, 203);
 
         let windows = processed
@@ -503,12 +517,13 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         }];
         let processed = process_pipeline_jobs(input_jobs);
         assert_eq!(processed.len(), 1);
         assert_eq!(processed[0].name, "test-matrix");
         assert_eq!(processed[0].matrix.as_deref(), Some("ubuntu-latest, 20"));
+        assert_eq!(processed[0].api_name, "test-matrix (ubuntu-latest, 20)");
     }
 
     #[test]

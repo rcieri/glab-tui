@@ -1417,6 +1417,10 @@ async fn main() -> Result<()> {
                     if opens_editor {
                         app.pending_job_trace_editor = None;
                     }
+                    let jumps_to_failure = app.pending_job_trace_failure == Some(job_id);
+                    if jumps_to_failure {
+                        app.pending_job_trace_failure = None;
+                    }
                     if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(trace) => {
@@ -1426,6 +1430,9 @@ async fn main() -> Result<()> {
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
+                                if jumps_to_failure {
+                                    app.jump_to_trace_failure(None);
+                                }
                                 if opens_editor {
                                     crate::handlers::tabs::open_job_trace_in_editor(
                                         &mut app,
@@ -2153,7 +2160,14 @@ async fn main() -> Result<()> {
                         });
                         app.error_has_cli_detail = false;
                     }
-                    app.current_comments = comments;
+                    match comments {
+                        Ok(comments) => app.current_comments = comments,
+                        Err(err) => {
+                            app.current_comments.clear();
+                            app.raise_error_toast(format!("Failed to load review comments: {err}"));
+                            app.error_has_cli_detail = true;
+                        }
+                    }
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())
                     {
@@ -2501,8 +2515,9 @@ async fn main() -> Result<()> {
                                                 let client_clone = client.clone();
                                                 let project_context =
                                                     app.project_path_for_pipeline(pipeline_id);
-                                                app.active_pipeline_project =
-                                                    Some(project_context.clone());
+                                                app.active_pipeline_project = app
+                                                    .pipeline_project(pipeline_id)
+                                                    .map(str::to_owned);
                                                 let tx = app.scoped_sender(events.sender());
                                                 tokio::spawn(async move {
                                                     match domain::pipelines::list_pipeline_jobs(
@@ -3375,9 +3390,10 @@ async fn main() -> Result<()> {
                                                     if let Some(client) = &app.gitlab_client {
                                                         let project_context = app
                                                             .project_path_for_pipeline(pipeline_id);
+                                                        app.active_pipeline_project = app
+                                                            .pipeline_project(pipeline_id)
+                                                            .map(str::to_owned);
                                                         app.active_pipeline_id = Some(pipeline_id);
-                                                        app.active_pipeline_project =
-                                                            Some(project_context.clone());
                                                         app.jobs.state.select(Some(0));
                                                         app.jobs.items.clear();
                                                         app.loading_tabs.insert(app::Tab::Jobs);

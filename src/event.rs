@@ -56,10 +56,11 @@ pub enum Event {
     /// rows the handler shows the offline badge and drops the message.
     FetchFailed(crate::app::Tab, String),
     /// The view is built off the event loop: parsing and highlighting a large
-    /// diff takes seconds.
+    /// diff takes seconds. `comments` fails on its own, leaving the diff
+    /// viewable.
     DiffFetched {
         diff_view: Box<crate::app::DiffView>,
-        comments: Vec<crate::domain::mr::DiscussionNote>,
+        comments: Result<Vec<crate::domain::mr::DiscussionNote>, String>,
     },
     DiffFetchFailed(String),
     /// `show_read` is the filter the list was requested with. A result for a

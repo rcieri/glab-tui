@@ -1787,7 +1787,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         };
         let mut app = App::default();
         app.active_pipeline_id = Some(7);

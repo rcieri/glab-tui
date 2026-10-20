@@ -104,8 +104,13 @@ if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"baseRefOid,headRefOid"* ]]; th
 fi
 
 if [[ "$*" == *"api"* ]]; then
+    # Review threads and comments span two pages. Only `--paginate` gets the
+    # second one, printed right after the first as its own JSON document.
     if [[ "$*" == *"reviewThreads"* ]]; then
         cat "$FIXTURES_DIR/gh_review_threads.json"
+        if [[ " $* " == *" --paginate "* ]]; then
+            cat "$FIXTURES_DIR/gh_review_threads_page2.json"
+        fi
     elif [[ "$*" == *"/pulls/"*"/reviews"* ]]; then
         echo '{"id": 1}'
     elif [[ "$*" == *"/pulls/"*"/comments"* ]]; then
@@ -113,6 +118,9 @@ if [[ "$*" == *"api"* ]]; then
             echo '{"id": 1}'
         else
             cat "$FIXTURES_DIR/gh_pr_comments.json"
+            if [[ " $* " == *" --paginate "* ]]; then
+                cat "$FIXTURES_DIR/gh_pr_comments_page2.json"
+            fi
         fi
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
@@ -120,8 +128,19 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
-    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
-        cat "$FIXTURES_DIR/deployments.json"
+    elif [[ "$*" == *"/deployments/"*"/statuses"* ]]; then
+        if [[ " $* " == *" -X POST "* ]]; then
+            echo '{"id": 1}'
+        elif [[ "$*" == *"/deployments/100/"* ]]; then
+            # The newest deployment failed, so the older one is still live.
+            echo '[{"state": "failure"}]'
+        else
+            echo '[{"state": "success"}]'
+        fi
+    elif [[ "$*" == *"/environments"* ]]; then
+        cat "$FIXTURES_DIR/gh_environments.json"
+    elif [[ "$*" == *"/deployments"* ]]; then
+        cat "$FIXTURES_DIR/gh_deployments.json"
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         # For Github actions runs, we wrap pipelines.json into GithubWorkflowRuns
         # pipelines.json is: [{"id": 12345, "status": "success", "ref": "main", "updated_at": "..."}]

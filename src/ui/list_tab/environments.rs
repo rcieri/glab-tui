@@ -1,14 +1,40 @@
 use std::borrow::Cow;
 
 use ratatui::layout::{Alignment, Constraint};
-use ratatui::style::Style;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Cell;
 
 use super::{CellContext, ColumnDef, Row};
 use crate::domain::deployments::Environment;
-use crate::ui::helpers::render_fuzzy_cell;
+use crate::ui::helpers::{badge_style_for, render_fuzzy_cell};
 use crate::utils::format::sanitize_untrusted;
+
+/// `value` as the pill `badge_style_for` gives `label`, or plain text for
+/// a value it has no pill for.
+fn badge_cell(label: &str, value: &str, ctx: &CellContext) -> Cell<'static> {
+    let row_bg = ctx.row_style.bg.unwrap_or(Color::Reset);
+    let (fg, bg, is_bold, text) = badge_style_for(
+        label,
+        value,
+        ctx.is_highlighted,
+        row_bg,
+        ctx.theme,
+        ctx.icons,
+    );
+    let mut style = ctx.row_style.fg(fg).bg(bg.unwrap_or(row_bg));
+    if is_bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    render_fuzzy_cell(
+        &text.unwrap_or_else(|| value.to_string()),
+        ctx.query,
+        ctx.is_highlighted,
+        false,
+        style,
+        Alignment::Left,
+    )
+}
 
 impl Row for Environment {
     type Key = u64;
@@ -71,7 +97,7 @@ impl ColumnDef for EnvironmentColumn {
                 sanitize_untrusted(&self.text(row)).into_owned(),
                 Style::default().fg(ctx.theme.blue),
             )),
-            Self::Name | Self::State | Self::DeploymentStatus => render_fuzzy_cell(
+            Self::Name => render_fuzzy_cell(
                 &self.text(row),
                 ctx.query,
                 ctx.is_highlighted,
@@ -79,6 +105,8 @@ impl ColumnDef for EnvironmentColumn {
                 ctx.row_style,
                 Alignment::Left,
             ),
+            Self::State => badge_cell("State", &row.state, ctx),
+            Self::DeploymentStatus => badge_cell("Deploy Status", &self.text(row), ctx),
         }
     }
 

@@ -556,36 +556,58 @@ fn format_linked_issues_value(
 pub fn build_pipeline_document(
     pipeline: &crate::domain::pipelines::Pipeline,
     jobs: &[crate::domain::pipelines::Job],
+    is_github: bool,
 ) -> crate::app::EntityDocument {
+    use crate::app::Field;
     let mut fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", pipeline.id)),
-        crate::app::Field::read_only("Status", pipeline.status.to_uppercase()),
-        crate::app::Field::read_only("Ref", pipeline.r#ref.clone()),
-        crate::app::Field::read_only("SHA", crate::utils::format::truncate(&pipeline.head_sha, 8)),
+        Field::read_only("ID", format!("#{}", pipeline.id)),
+        Field::read_only("Status", pipeline.status.to_uppercase()),
     ];
-    if !pipeline.project_path.is_empty() {
-        fields.push(crate::app::Field::read_only(
-            "Project",
-            pipeline.project_path.clone(),
+    let failed_jobs = jobs.iter().filter(|job| job.is_failed()).count();
+    if failed_jobs > 0 {
+        fields.push(Field::read_only_toned(
+            "Failed Jobs",
+            format!("{failed_jobs} of {}", jobs.len()),
+            crate::app::FieldTone::Red,
         ));
     }
+    fields.push(Field::read_only("Ref", pipeline.r#ref.clone()));
+    fields.push(Field::read_only(
+        "SHA",
+        crate::utils::format::truncate(&pipeline.head_sha, 8),
+    ));
+    let commit = crate::domain::pipelines::triggering_commit(pipeline, jobs);
+    if let Some(commit) = commit.filter(|commit| !commit.title.is_empty()) {
+        fields.push(Field::read_only("Commit", commit.title.clone()));
+    }
+    if let Some(commit) = commit.filter(|commit| !commit.author_name.is_empty()) {
+        fields.push(Field::read_only(
+            "Commit Author",
+            commit.author_name.clone(),
+        ));
+    }
+    let differs_from_commit = commit.is_none_or(|commit| commit.title != pipeline.display_title);
+    if !pipeline.display_title.is_empty() && differs_from_commit {
+        fields.push(Field::read_only("Title", pipeline.display_title.clone()));
+    }
+    if !pipeline.project_path.is_empty() {
+        fields.push(Field::read_only("Project", pipeline.project_path.clone()));
+    }
     if let Some(source) = &pipeline.source {
-        fields.push(crate::app::Field::read_only("Source", source.clone()));
+        let label = if is_github { "Event" } else { "Source" };
+        fields.push(Field::read_only(label, source.clone()));
     }
     if !pipeline.actor_login.is_empty() {
-        fields.push(crate::app::Field::read_only(
-            "Author",
+        fields.push(Field::read_only(
+            "Actor",
             format!("@{}", pipeline.actor_login),
         ));
     }
     if let Some(duration) = pipeline.duration_seconds {
-        fields.push(crate::app::Field::read_only(
-            "Duration",
-            format!("{duration}s"),
-        ));
+        fields.push(Field::read_only("Duration", format!("{duration}s")));
     }
     if let Some(created) = &pipeline.created_at {
-        fields.push(crate::app::Field::read_only(
+        fields.push(Field::read_only(
             "Created",
             crate::utils::format::time_ago(created),
         ));
@@ -594,6 +616,70 @@ pub fn build_pipeline_document(
         title: format!("Pipeline #{}", pipeline.id),
         fields,
         content: crate::app::InspectorContent::PipelineStages(jobs.to_vec()),
+    }
+}
+
+/// Metadata of one job, above its log or the pipeline's stage summary
+/// (`content`). GitHub jobs carry no stage, so none is shown for them.
+pub fn build_job_document(
+    job: &crate::domain::pipelines::Job,
+    content: crate::app::InspectorContent,
+) -> crate::app::EntityDocument {
+    let status_tone = match job.status.as_str() {
+        "success" => crate::app::FieldTone::Green,
+        "failed" => crate::app::FieldTone::Red,
+        "running" => crate::app::FieldTone::Blue,
+        "pending" | "preparing" | "waiting_for_resource" => crate::app::FieldTone::Yellow,
+        _ => crate::app::FieldTone::Muted,
+    };
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("#{}", job.id)),
+        crate::app::Field::read_only("Name", job.name.clone()),
+        crate::app::Field::read_only_toned("Status", job.status.to_uppercase(), status_tone),
+    ];
+    if !job.stage.is_empty() {
+        fields.push(crate::app::Field::read_only("Stage", job.stage.clone()));
+    }
+    if let Some(matrix) = &job.matrix {
+        fields.push(crate::app::Field::read_only("Matrix", matrix.clone()));
+    }
+    if let Some(failure_reason) = &job.failure_reason {
+        fields.push(crate::app::Field::read_only(
+            "Failure",
+            failure_reason.replace('_', " "),
+        ));
+    }
+    if let Some(runner) = &job.runner {
+        fields.push(crate::app::Field::read_only("Runner", runner.clone()));
+    }
+    if let Some(queued) = job.queued_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Queued",
+            format!("{}m {}s", queued / 60, queued % 60),
+        ));
+    }
+    if let Some(duration) = job.duration_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Duration",
+            format!("{}m {}s", duration / 60, duration % 60),
+        ));
+    }
+    if !job.needs.is_empty() {
+        fields.push(crate::app::Field::read_only("Needs", job.needs.join(", ")));
+    }
+    if !job.artifact_file_types.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Artifacts",
+            job.artifact_file_types.join(", "),
+        ));
+    }
+    if let Some(url) = &job.web_url {
+        fields.push(crate::app::Field::read_only("URL", url.clone()));
+    }
+    crate::app::EntityDocument {
+        title: format!("Job #{}", job.id),
+        fields,
+        content,
     }
 }
 
@@ -877,6 +963,8 @@ pub fn build_branch_document(
 
 pub fn build_environment_document(
     env: &crate::domain::deployments::Environment,
+    keys: &crate::config::KeybindingEnvironments,
+    is_github: bool,
 ) -> crate::app::EntityDocument {
     let mut fields = vec![
         crate::app::Field::read_only("Environment", env.name.clone()),
@@ -901,7 +989,7 @@ pub fn build_environment_document(
         ));
         fields.push(crate::app::Field::read_only(
             "Deploy SHA",
-            crate::utils::format::truncate(&dep.sha, 8),
+            dep.short_sha().to_string(),
         ));
         if let Some(user) = &dep.user {
             fields.push(crate::app::Field::read_only(
@@ -914,10 +1002,82 @@ pub fn build_environment_document(
             crate::utils::format::time_ago(&dep.created_at),
         ));
     }
+    let mut action_lines = vec![format!(
+        "- `{}` rolls back to the selected deployment",
+        keys.rollback_deployment
+    )];
+    if !is_github {
+        action_lines.push(format!(
+            "- `{}` opens the selected deployment's job log",
+            keys.view_deployment_log
+        ));
+    }
+    action_lines.push(format!(
+        "- `{}` stops the environment",
+        keys.stop_environment
+    ));
+    action_lines.push(format!("- `{}` copies its URL", keys.copy_url));
+    let actions = format!(
+        "Press `{}` to list this environment's deployments and `{}` to move between them and \
+         the environment list.\n\n{}",
+        keys.view_deployments,
+        keys.focus_deployments,
+        action_lines.join("\n"),
+    );
     crate::app::EntityDocument {
         title: format!("Environment {}", env.name),
         fields,
-        content: crate::app::InspectorContent::Empty("Environment details"),
+        content: crate::app::InspectorContent::Markdown(actions),
+    }
+}
+
+pub fn build_deployment_document(
+    deployment: &crate::domain::deployments::Deployment,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("Deployment", format!("#{}", deployment.iid)),
+        crate::app::Field::read_only("Deploy Status", deployment.status.to_uppercase()),
+        crate::app::Field::read_only(
+            if deployment.tag { "Tag" } else { "Ref" },
+            deployment.ref_name.clone(),
+        ),
+        crate::app::Field::read_only("Commit", deployment.sha.clone()),
+    ];
+    if let Some(user) = &deployment.user {
+        fields.push(crate::app::Field::read_only(
+            "Deployer",
+            format!("@{}", user.username),
+        ));
+    }
+    if let Some(job) = &deployment.deployable {
+        fields.push(crate::app::Field::read_only(
+            "Job",
+            format!("{} (#{})", job.name, job.id),
+        ));
+        if let Some(status) = &job.status {
+            fields.push(crate::app::Field::read_only(
+                "Status",
+                status.to_uppercase(),
+            ));
+        }
+    }
+    fields.push(crate::app::Field::read_only(
+        "Created",
+        crate::utils::format::time_ago(&deployment.created_at),
+    ));
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&deployment.updated_at),
+    ));
+    let content = if deployment.description.trim().is_empty() {
+        crate::app::InspectorContent::Empty("No deployment notes")
+    } else {
+        crate::app::InspectorContent::Markdown(deployment.description.clone())
+    };
+    crate::app::EntityDocument {
+        title: format!("Deployment #{}", deployment.iid),
+        fields,
+        content,
     }
 }
 
@@ -1661,6 +1821,79 @@ mod tests {
         assert!(
             gh_doc.fields.iter().any(|f| f.label == "Pull Requests"),
             "GitHub issues must label the row 'Pull Requests'"
+        );
+    }
+
+    fn field_values(doc: &crate::app::EntityDocument) -> Vec<(&str, &str)> {
+        doc.fields
+            .iter()
+            .map(|f| (f.label.as_str(), f.value.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn gitlab_pipeline_document_takes_the_commit_from_its_jobs_and_counts_failures() {
+        let pipeline: crate::domain::pipelines::Pipeline =
+            serde_json::from_value(serde_json::json!({
+                "id": 88, "status": "failed", "ref": "main", "updated_at": "",
+                "head_sha": "0123456789abcdef", "actor_login": "deployer", "source": "push"
+            }))
+            .unwrap();
+        let jobs: Vec<crate::domain::pipelines::Job> = serde_json::from_value(serde_json::json!([
+            {"id": 1, "status": "success", "stage": "build", "name": "compile",
+             "commit": {"title": "Bump parser", "author_name": "Grace Hopper"}},
+            {"id": 2, "status": "failed", "stage": "test", "name": "rspec",
+             "failure_reason": "script failure",
+             "commit": {"title": "Bump parser", "author_name": "Grace Hopper"}}
+        ]))
+        .unwrap();
+
+        let doc = build_pipeline_document(&pipeline, &jobs, false);
+
+        assert_eq!(
+            field_values(&doc),
+            vec![
+                ("ID", "#88"),
+                ("Status", "FAILED"),
+                ("Failed Jobs", "1 of 2"),
+                ("Ref", "main"),
+                ("SHA", "01234567..."),
+                ("Commit", "Bump parser"),
+                ("Commit Author", "Grace Hopper"),
+                ("Source", "push"),
+                ("Actor", "@deployer"),
+            ]
+        );
+    }
+
+    #[test]
+    fn github_run_title_is_shown_only_when_it_differs_from_the_commit() {
+        let run = |display_title: &str| -> crate::domain::pipelines::Pipeline {
+            serde_json::from_value(serde_json::json!({
+                "id": 5, "status": "success", "ref": "main", "updated_at": "",
+                "display_title": display_title,
+                "commit": {"title": "Fix login", "author_name": "Ada"}
+            }))
+            .unwrap()
+        };
+        let title = |doc: &crate::app::EntityDocument| {
+            doc.fields
+                .iter()
+                .find(|f| f.label == "Title")
+                .map(|f| f.value.clone())
+        };
+
+        assert_eq!(
+            title(&build_pipeline_document(&run("Fix login"), &[], true)),
+            None
+        );
+        assert_eq!(
+            title(&build_pipeline_document(
+                &run("Release 2.0 (#40)"),
+                &[],
+                true
+            )),
+            Some("Release 2.0 (#40)".to_string())
         );
     }
 

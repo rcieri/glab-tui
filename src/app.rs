@@ -1,5 +1,5 @@
 use crate::backend::BackendKind;
-use crate::command_log::{CommandLog, LogRow, TerminalCommand};
+use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
 use crate::config::{Config, KeybindingConfig, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
@@ -752,6 +752,28 @@ impl Selector {
 }
 
 const COMMENT_EXCERPT_CHARS: usize = 40;
+
+/// The Terminal tab's detail modal over one log entry. It follows `row`, so
+/// it keeps showing the same entry while newer ones are logged, and closes
+/// once that entry leaves the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalInspector {
+    pub row: LogRow,
+    /// First visible line; the render clamps it to the content.
+    pub scroll: usize,
+    /// Text rows visible at the last render, the step of a half-page scroll.
+    pub page_height: usize,
+}
+
+impl TerminalInspector {
+    pub fn new(row: LogRow) -> Self {
+        Self {
+            row,
+            scroll: 0,
+            page_height: 0,
+        }
+    }
+}
 
 /// The review threads overlay opened from the diff view. `threads` is a
 /// snapshot of the MR's notes classified against the loaded diff; it is
@@ -2949,6 +2971,21 @@ impl DatePicker {
 /// Prefix of every terminal-log entry written for a custom keybinding.
 pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 
+/// Prefix of every terminal-log entry written for a re-run from the Terminal
+/// tab. Like custom commands, those entries settle their own row.
+pub const RERUN_LOG_PREFIX: &str = "Rerun: ";
+
+fn settles_own_row(cmd: &TerminalCommand) -> bool {
+    cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX) || cmd.command.starts_with(RERUN_LOG_PREFIX)
+}
+
+fn outcome_status(outcome: &Result<(), String>) -> String {
+    match outcome {
+        Ok(()) => "Success".to_string(),
+        Err(error) => format!("Failed: {error}"),
+    }
+}
+
 #[derive(Debug)]
 pub enum GroupItem {
     Header(String),
@@ -2966,6 +3003,7 @@ pub enum OverlayKind {
     ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
+    TerminalInspector,
 }
 
 /// A PR action that needs the PR's stack, so it waits for an on-demand stack
@@ -3000,7 +3038,16 @@ pub enum ConfirmAction {
     SubmitReview(u64), // mr iid
     MarkAllTodosRead,
     CancelPipeline(u64), // pipeline id
-    CancelJobs { pipeline_id: u64, job_ids: Vec<u64> },
+    CancelJobs {
+        pipeline_id: u64,
+        job_ids: Vec<u64>,
+    },
+    RerunCommand(Invocation),
+    StopEnvironment(Box<crate::domain::deployments::Environment>),
+    RollbackDeployment {
+        environment: String,
+        deployment: Box<crate::domain::deployments::Deployment>,
+    },
 }
 
 impl ConfirmAction {
@@ -3023,6 +3070,8 @@ impl ConfirmAction {
                 | Self::MarkAllTodosRead
                 | Self::CancelPipeline(_)
                 | Self::CancelJobs { .. }
+                | Self::StopEnvironment(_)
+                | Self::RollbackDeployment { .. }
         )
     }
 }
@@ -3537,6 +3586,23 @@ impl SubmitDialog {
                     true,
                 )
             }
+            ConfirmAction::RerunCommand(invocation) => {
+                let body_note = if invocation.stdin.is_some() {
+                    " with its recorded request body"
+                } else {
+                    ""
+                };
+                (
+                    "Re-run Command".to_string(),
+                    format!(
+                        "Run again{body_note}: {}",
+                        crate::utils::format::sanitize_untrusted(&invocation.command_line())
+                    ),
+                    "Re-run".to_string(),
+                    vec![],
+                    false,
+                )
+            }
             ConfirmAction::MarkAllTodosRead => {
                 let todos = kind.term("todo_plural");
                 let body = if kind.is_github() {
@@ -3549,6 +3615,55 @@ impl SubmitDialog {
                     format!("Mark All {todos} Read"),
                     body,
                     "Mark All".to_string(),
+                    vec![],
+                    true,
+                )
+            }
+            ConfirmAction::StopEnvironment(environment) => {
+                let name = crate::utils::format::sanitize_untrusted(&environment.name);
+                let body = if kind.is_github() {
+                    format!(
+                        "Mark environment '{name}' inactive? GitHub has no stop action, so its \
+                         live deployment, the newest that succeeded, is marked inactive."
+                    )
+                } else {
+                    format!(
+                        "Stop environment '{name}'? GitLab runs its stop action, which tears \
+                         down review and other ephemeral environments."
+                    )
+                };
+                (
+                    format!("Stop Environment '{name}'"),
+                    body,
+                    "Stop".to_string(),
+                    vec![],
+                    true,
+                )
+            }
+            ConfirmAction::RollbackDeployment {
+                environment,
+                deployment,
+            } => {
+                let environment = crate::utils::format::sanitize_untrusted(environment);
+                let sha = deployment.short_sha();
+                let ref_name = crate::utils::format::sanitize_untrusted(&deployment.ref_name);
+                let how = match &deployment.deployable {
+                    Some(job) if !kind.is_github() => format!(
+                        "re-runs its job '{}'",
+                        crate::utils::format::sanitize_untrusted(&job.name)
+                    ),
+                    _ => "creates a deployment record of that commit, which only deploys if a \
+                          workflow runs on the `deployment` event"
+                        .to_string(),
+                };
+                (
+                    format!("Roll Back '{environment}' to {sha}"),
+                    format!(
+                        "Re-deploy {sha} ({ref_name}) from deployment #{} to '{environment}'? \
+                         This {how}.",
+                        deployment.iid
+                    ),
+                    "Roll Back".to_string(),
                     vec![],
                     true,
                 )
@@ -3692,6 +3807,18 @@ impl StaleData {
 pub struct EnvironmentDeployments {
     pub environment: String,
     pub table: StatefulTable<crate::domain::deployments::Deployment>,
+    /// Navigation keys move through the deployments instead of the
+    /// environment list.
+    pub is_focused: bool,
+}
+
+impl EnvironmentDeployments {
+    pub fn selected(&self) -> Option<&crate::domain::deployments::Deployment> {
+        self.table
+            .state
+            .selected()
+            .and_then(|idx| self.table.items.get(idx))
+    }
 }
 
 pub struct App {
@@ -3726,6 +3853,8 @@ pub struct App {
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
     pub terminal_commands: CommandLog,
     pub terminal_wrap: bool,
+    pub terminal_status_filter: StatusFilter,
+    pub terminal_inspector: Option<TerminalInspector>,
     pub issues: StatefulTable<crate::domain::issues::Issue>,
     pub mrs: StatefulTable<crate::domain::mr::MergeRequest>,
     pub pipelines: StatefulTable<crate::domain::pipelines::Pipeline>,
@@ -3837,6 +3966,15 @@ pub struct App {
     pub job_trace_loading: bool,
     /// Job whose trace opens in the editor once its in-flight fetch lands.
     pub pending_job_trace_editor: Option<u64>,
+    /// Deployment whose job log opens in the editor once its in-flight fetch
+    /// lands.
+    pub pending_deployment_log: Option<u64>,
+    /// Job whose log scrolls to its first failure once its in-flight fetch
+    /// lands.
+    pub pending_job_trace_failure: Option<u64>,
+    /// Log line the job trace pane scrolls to on its next draw, which alone
+    /// knows the row a line starts at once wrapped.
+    pub job_trace_scroll_to_line: Option<usize>,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
@@ -3938,6 +4076,8 @@ impl Default for App {
             gitlab_client: None,
             terminal_commands: CommandLog::default(),
             terminal_wrap: false,
+            terminal_status_filter: StatusFilter::default(),
+            terminal_inspector: None,
             issues: StatefulTable::with_items(vec![]),
             mrs: StatefulTable::with_items(vec![]),
             pipelines: StatefulTable::with_items(vec![]),
@@ -3994,6 +4134,9 @@ impl Default for App {
             detail_scroll_to_bottom: false,
             job_trace_loading: false,
             pending_job_trace_editor: None,
+            pending_deployment_log: None,
+            pending_job_trace_failure: None,
+            job_trace_scroll_to_line: None,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),
             job_trace_searching: false,
@@ -4090,6 +4233,11 @@ pub(crate) fn runner_status_display(raw: &str) -> &'static str {
         _ => "UNKNOWN",
     }
 }
+
+const PIPELINE_STATUS_COLUMN: &str = "Status";
+
+/// The Status cell texts the pipeline status filter key steps through.
+const PIPELINE_STATUS_FILTER_CYCLE: [&str; 3] = ["RUNNING", "FAILED", "SUCCESS"];
 
 /// Whether a row whose `col` cell has `values` passes the column filter
 /// `selected`. Text columns match case-insensitive substrings; the rest
@@ -4240,6 +4388,8 @@ impl App {
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;
         self.pending_job_trace_editor = None;
+        self.pending_deployment_log = None;
+        self.pending_job_trace_failure = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
@@ -4486,11 +4636,11 @@ impl App {
         }
     }
 
-    /// The project a pipeline belongs to: its own row's path, then the
-    /// project the Jobs tab was opened with when `id` is the active pipeline,
-    /// then the scope. A listed row always wins so an older Jobs-tab project
-    /// never redirects actions on other pipelines.
-    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+    /// The project a pipeline belongs to, when known: its own row's path,
+    /// then the project the Jobs tab was opened with when `id` is the active
+    /// pipeline. A listed row always wins so an older Jobs-tab project never
+    /// redirects actions on other pipelines.
+    pub fn pipeline_project(&self, id: u64) -> Option<&str> {
         self.pipelines
             .items
             .iter()
@@ -4502,14 +4652,24 @@ impl App {
                     .as_deref()
                     .filter(|p| !p.is_empty() && self.active_pipeline_id == Some(id))
             })
-            .unwrap_or_else(|| self.scope.as_str())
+    }
+
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        self.pipeline_project(id)
+            .unwrap_or(self.scope.as_str())
             .to_string()
     }
 
-    /// The project of the jobs on the Jobs tab. Jobs carry no project of
-    /// their own: they all belong to the active pipeline.
+    /// The project of the jobs on the Jobs tab, when known. Jobs carry no
+    /// project of their own: they all belong to the active pipeline.
+    pub fn jobs_project(&self) -> Option<&str> {
+        self.pipeline_project(self.active_pipeline_id?)
+    }
+
     pub fn project_path_for_jobs(&self) -> String {
-        self.project_path_for_pipeline(self.active_pipeline_id.unwrap_or(0))
+        self.jobs_project()
+            .unwrap_or(self.scope.as_str())
+            .to_string()
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -4819,11 +4979,13 @@ impl App {
         Ok(())
     }
 
+    fn cursor_pipeline(&self) -> Option<&crate::domain::pipelines::Pipeline> {
+        let index = self.pipelines.state.selected()?;
+        self.filtered_pipelines().get(index).copied()
+    }
+
     pub fn selected_pipeline_sha(&self) -> Option<String> {
-        self.pipelines
-            .state
-            .selected()
-            .and_then(|index| self.filtered_pipelines().get(index).copied())
+        self.cursor_pipeline()
             .map(|p| p.head_sha().to_string())
             .filter(|sha| !sha.is_empty())
     }
@@ -4834,6 +4996,59 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Pipelines tab"))?;
         self.clipboard.set_text(sha)?;
         Ok(())
+    }
+
+    pub fn copy_selected_pipeline_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .cursor_pipeline()
+            .and_then(|p| p.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Pipeline URL unavailable; refresh the Pipelines tab")
+            })?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_pipeline_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .cursor_pipeline()
+            .map(|p| format!("#{}", p.id()))
+            .ok_or_else(|| anyhow::anyhow!("No pipeline is selected"))?;
+        self.clipboard.set_text(id)?;
+        Ok(())
+    }
+
+    /// Moves the Pipelines Status filter to the next step of
+    /// `PIPELINE_STATUS_FILTER_CYCLE`, after its last step back to every
+    /// status. A filter set from the column picker that is not one of the
+    /// steps counts as every status. Returns the status now shown.
+    pub fn cycle_pipeline_status_filter(&mut self) -> Option<&'static str> {
+        let current = self
+            .get_column_filter(Tab::Pipelines, PIPELINE_STATUS_COLUMN)
+            .filter(|selected| selected.len() == 1)
+            .and_then(|selected| selected.iter().next())
+            .and_then(|value| {
+                let value = Self::normalize_filter_value(value);
+                PIPELINE_STATUS_FILTER_CYCLE
+                    .iter()
+                    .position(|status| *status == value)
+            });
+        let next = match current {
+            None => PIPELINE_STATUS_FILTER_CYCLE.first(),
+            Some(index) => PIPELINE_STATUS_FILTER_CYCLE.get(index + 1),
+        }
+        .copied();
+        match next {
+            Some(status) => self.set_column_filter(
+                Tab::Pipelines,
+                PIPELINE_STATUS_COLUMN,
+                std::collections::HashSet::from([status.to_string()]),
+            ),
+            None => self.remove_column_filter(Tab::Pipelines, PIPELINE_STATUS_COLUMN),
+        }
+        self.update_filter_selection();
+        next
     }
 
     /// The job a fetched log is shown for: the selected job of the Jobs tab,
@@ -4862,6 +5077,46 @@ impl App {
         Ok(())
     }
 
+    /// The highlighted row of the Jobs tab.
+    pub fn selected_job(&self) -> Option<&crate::domain::pipelines::Job> {
+        let index = self.jobs.state.selected()?;
+        self.filtered_jobs().get(index).copied()
+    }
+
+    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_job()
+            .and_then(|job| job.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_job_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .selected_job()
+            .map(|job| job.id)
+            .ok_or_else(|| anyhow::anyhow!("No job is selected"))?;
+        self.clipboard.set_text(id.to_string())?;
+        Ok(())
+    }
+
+    /// Scrolls the shown job log to the first failure line after line
+    /// `after` (from the top when `None`), wrapping around.
+    pub fn jump_to_trace_failure(&mut self, after: Option<usize>) {
+        let Some(view) = &self.job_trace else {
+            return;
+        };
+        match view.trace().next_failure_line(after) {
+            Some(line) => {
+                self.job_trace_scroll_to_line = Some(line);
+                self.detail_scroll_to_bottom = false;
+            }
+            None => self.show_notice("No failure line in the job log"),
+        }
+    }
+
     pub fn selected_branch_name(&self) -> Option<String> {
         self.branches
             .cursor_row()
@@ -4874,6 +5129,25 @@ impl App {
             .selected_branch_name()
             .ok_or_else(|| anyhow::anyhow!("Branch name unavailable; refresh the Branches tab"))?;
         self.clipboard.set_text(branch)?;
+        Ok(())
+    }
+
+    /// The highlighted environment's external URL, stripped of escape
+    /// sequences: it is set by whoever writes the CI config and ends up pasted
+    /// into a terminal.
+    pub fn selected_environment_url(&self) -> Option<String> {
+        self.environments
+            .cursor_row()
+            .and_then(|env| env.external_url.as_deref())
+            .map(|url| crate::utils::format::sanitize_untrusted(url).into_owned())
+            .filter(|url| !url.is_empty())
+    }
+
+    pub fn copy_selected_environment_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_environment_url()
+            .ok_or_else(|| anyhow::anyhow!("environment has no external URL"))?;
+        self.clipboard.set_text(url)?;
         Ok(())
     }
 
@@ -4930,7 +5204,7 @@ impl App {
                     || cmd.command.contains("submit")
                     || cmd.command.contains("bulk"))
                     && cmd.status == "Running"
-                    && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+                    && !settles_own_row(cmd)
             })
             .or_else(|| self.latest_running_cli_command());
         if let Some(row) = row {
@@ -4949,65 +5223,112 @@ impl App {
     /// the error toast; unlike `show_error`, the entry it marks failed is
     /// this one rather than whichever command is still running.
     pub fn log_command_outcome(&mut self, command: String, outcome: Result<(), String>) {
-        self.record_command_outcome(command, &outcome);
+        self.record_command_outcome(command, &outcome, crate::command_log::Execution::default());
         if let Err(error) = outcome {
             self.raise_error_toast(error);
         }
     }
 
     /// Appends a finished command to the terminal log without a toast.
-    pub fn record_command_outcome(&mut self, command: String, outcome: &Result<(), String>) {
-        let row = self.start_command(command);
-        self.settle_command(row, outcome);
+    /// `execution` holds when it ran; a command refused before running has
+    /// none.
+    pub fn record_command_outcome(
+        &mut self,
+        command: String,
+        outcome: &Result<(), String>,
+        execution: crate::command_log::Execution,
+    ) {
+        self.terminal_commands.push(TerminalCommand {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            command,
+            status: outcome_status(outcome),
+            execution,
+        });
     }
 
     /// Appends a command still running to the terminal log and returns its
     /// row for `settle_command`. The row stays valid when older entries are
     /// dropped; it stops resolving once its own entry is dropped or cleared.
     pub fn start_command(&mut self, command: String) -> LogRow {
+        let started_at = chrono::Local::now();
         self.terminal_commands.push(TerminalCommand {
-            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            timestamp: started_at.format("%H:%M:%S").to_string(),
             command,
             status: "Running".to_string(),
+            execution: crate::command_log::Execution {
+                started_at: Some(started_at),
+                ..Default::default()
+            },
         })
     }
 
-    /// Stamps the outcome on a row returned by `start_command`.
-    pub fn settle_command(&mut self, row: LogRow, outcome: &Result<(), String>) {
-        let status = match outcome {
-            Ok(()) => "Success".to_string(),
-            Err(error) => format!("Failed: {error}"),
-        };
-        self.terminal_commands.set_status(row, status);
+    /// Stamps the outcome, and when the command ran, on a row returned by
+    /// `start_command`.
+    pub fn settle_command(
+        &mut self,
+        row: LogRow,
+        outcome: &Result<(), String>,
+        execution: crate::command_log::Execution,
+    ) {
+        self.terminal_commands
+            .settle(row, outcome_status(outcome), Some(execution));
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands are skipped: they settle their own row, and
-    /// an unrelated completion must not stamp a background command finished.
+    /// Custom commands and re-runs are skipped: they settle their own row,
+    /// and an unrelated completion must not stamp them finished.
     pub fn latest_running_cli_command(&self) -> Option<LogRow> {
-        self.terminal_commands.find_latest(|cmd| {
-            cmd.status == "Running" && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+        self.terminal_commands
+            .find_latest(|cmd| cmd.status == "Running" && !settles_own_row(cmd))
+    }
+
+    /// Logs a call a backend finished. It settles the running entry with the
+    /// same text. Otherwise the call is appended as its own row, and the most
+    /// recent running CLI entry (an action logged by `CommandStarted`) only
+    /// takes its status: nothing ties that action to this particular call, so
+    /// its invocation and output stay on the call's row.
+    pub fn log_cli_command(&mut self, entry: TerminalCommand) {
+        if entry.status == "Running" {
+            self.terminal_commands.push(entry);
+            return;
+        }
+        match self
+            .terminal_commands
+            .find_latest(|cmd| cmd.command == entry.command && cmd.status == "Running")
+        {
+            Some(row) => self
+                .terminal_commands
+                .settle(row, entry.status, Some(entry.execution)),
+            None => {
+                if let Some(action) = self.latest_running_cli_command() {
+                    self.terminal_commands
+                        .set_status(action, entry.status.clone());
+                }
+                self.terminal_commands.push(entry);
+            }
+        }
+    }
+
+    /// Terminal-log entries the Terminal tab lists: those passing the status
+    /// filter and matching the search bar, oldest first.
+    fn filtered_terminal_rows(&self) -> impl Iterator<Item = (LogRow, &TerminalCommand)> {
+        let query = self.search_query.trim();
+        let status_filter = self.terminal_status_filter;
+        let matcher = &*FUZZY_MATCHER;
+        self.terminal_commands.rows().filter(move |(_, cmd)| {
+            status_filter.admits(cmd)
+                && (query.is_empty()
+                    || matcher.fuzzy_match(&cmd.command, query).is_some()
+                    || matcher.fuzzy_match(&cmd.status, query).is_some())
         })
     }
 
-    /// Terminal-log entries matching the search bar, oldest first.
     pub fn filtered_terminal_commands(&self) -> Vec<&TerminalCommand> {
-        let query = self.search_query.trim();
-        if query.is_empty() {
-            return self.terminal_commands.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        self.terminal_commands
-            .iter()
-            .filter(|cmd| {
-                matcher.fuzzy_match(&cmd.command, query).is_some()
-                    || matcher.fuzzy_match(&cmd.status, query).is_some()
-            })
-            .collect()
+        self.filtered_terminal_rows().map(|(_, cmd)| cmd).collect()
     }
 
-    /// Position, within `filtered_terminal_commands`, of the entry the copy
-    /// key acts on: the bottom row of the unwrapped view, which is the newest
+    /// Position, within `filtered_terminal_commands`, of the highlighted
+    /// entry: the bottom row of the unwrapped view, which is the newest
     /// entry unless the log is scrolled back. Wrapped mode scrolls by screen
     /// line rather than by entry, so there it is always the newest entry.
     pub fn terminal_cursor(&self, filtered_len: usize) -> Option<usize> {
@@ -5019,15 +5340,85 @@ impl App {
         filtered_len.checked_sub(scrolled_back + 1)
     }
 
+    pub fn selected_terminal_row(&self) -> Option<LogRow> {
+        let rows: Vec<LogRow> = self.filtered_terminal_rows().map(|(row, _)| row).collect();
+        self.terminal_cursor(rows.len())
+            .and_then(|index| rows.get(index).copied())
+    }
+
+    /// The entry the Terminal tab's actions apply to: the inspected one
+    /// while the inspector is open, else the highlighted one.
+    fn terminal_action_target(&self) -> anyhow::Result<&TerminalCommand> {
+        let row = match self.terminal_inspector {
+            Some(inspector) => Some(inspector.row),
+            None => self.selected_terminal_row(),
+        };
+        row.and_then(|row| self.terminal_commands.get(row))
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry selected"))
+    }
+
     pub fn copy_terminal_command(&mut self) -> anyhow::Result<()> {
-        let entries = self.filtered_terminal_commands();
-        let line = self
-            .terminal_cursor(entries.len())
-            .and_then(|index| entries.get(index))
-            .map(|cmd| cmd.command_line().to_string())
-            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to copy"))?;
+        let line = self.terminal_action_target()?.command_line().into_owned();
         self.clipboard.set_text(line)?;
         Ok(())
+    }
+
+    pub fn copy_terminal_output(&mut self) -> anyhow::Result<()> {
+        let output = self
+            .terminal_action_target()?
+            .output()
+            .ok_or_else(|| anyhow::anyhow!("the command has no captured output"))?;
+        self.clipboard.set_text(output)?;
+        Ok(())
+    }
+
+    pub fn open_terminal_inspector(&mut self) -> anyhow::Result<()> {
+        let row = self
+            .selected_terminal_row()
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to inspect"))?;
+        self.terminal_inspector = Some(TerminalInspector::new(row));
+        Ok(())
+    }
+
+    /// Asks to run the selected entry's CLI call again.
+    pub fn confirm_terminal_rerun(&mut self) -> anyhow::Result<()> {
+        let invocation = self
+            .terminal_action_target()?
+            .execution
+            .invocation
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("this entry records no glab, gh or git call to re-run")
+            })?;
+        self.submit_dialog = Some(SubmitDialog::build(
+            ConfirmAction::RerunCommand(invocation),
+            self,
+        ));
+        Ok(())
+    }
+
+    /// Logs a re-run as running and returns its row for `finish_rerun`.
+    pub fn start_rerun(&mut self, invocation: &Invocation) -> LogRow {
+        self.start_command(format!("{RERUN_LOG_PREFIX}{}", invocation.command_line()))
+    }
+
+    pub fn finish_rerun(
+        &mut self,
+        row: LogRow,
+        status: String,
+        execution: crate::command_log::Execution,
+    ) {
+        let failure = status.strip_prefix("Failed: ").map(str::to_string);
+        self.terminal_commands.settle(row, status, Some(execution));
+        match failure {
+            Some(reason) => self.raise_error_toast(format!("Re-run failed: {reason}")),
+            None => self.show_notice("Re-run succeeded"),
+        }
+    }
+
+    pub fn cycle_terminal_status_filter(&mut self) {
+        self.terminal_status_filter = self.terminal_status_filter.next();
+        self.terminal_scroll = 0;
     }
 
     pub fn clear_terminal_log(&mut self) {
@@ -5049,6 +5440,7 @@ impl App {
                 timestamp: timestamp.clone(),
                 command: format!("Custom keybinding: {}", problem.binding),
                 status: format!("Failed: {}", problem.problem),
+                ..Default::default()
             });
         }
         if !problems.is_empty() {
@@ -5420,6 +5812,29 @@ impl App {
         match self.pipeline_nav.first_mut() {
             Some(root) => root.items = pipelines,
             None => self.pipelines.items = pipelines,
+        }
+    }
+
+    /// Forgets the cached jobs of every listed pipeline whose status differs in
+    /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
+    pub fn drop_jobs_of_changed_pipelines(
+        &mut self,
+        fetched: &[crate::domain::pipelines::Pipeline],
+    ) {
+        let root = self
+            .pipeline_nav
+            .first()
+            .map_or(&self.pipelines.items, |frame| &frame.items);
+        let changed: Vec<u64> = fetched
+            .iter()
+            .filter(|new| {
+                root.iter()
+                    .any(|old| old.id() == new.id() && old.status() != new.status())
+            })
+            .map(|pipeline| pipeline.id())
+            .collect();
+        for id in changed {
+            self.pipeline_jobs.remove(&id);
         }
     }
 
@@ -6911,6 +7326,88 @@ impl App {
                 .is_some_and(|env| env.name == name)
     }
 
+    /// Shows `deployments` in the detail pane while `environment` is still
+    /// the highlighted row, focused so the keys navigate them. A refetch for
+    /// the environment already shown keeps its focus and selected deployment.
+    pub fn show_deployments(
+        &mut self,
+        environment: String,
+        deployments: Vec<crate::domain::deployments::Deployment>,
+    ) {
+        if !self.is_highlighted_environment(&environment) {
+            return;
+        }
+        let previous = self
+            .environment_deployments
+            .take()
+            .filter(|shown| shown.environment == environment);
+        let selected_id = previous
+            .as_ref()
+            .and_then(EnvironmentDeployments::selected)
+            .map(|deployment| deployment.id);
+        let mut table = StatefulTable::with_items(deployments);
+        if !table.items.is_empty() {
+            let idx = selected_id
+                .and_then(|id| table.items.iter().position(|d| d.id == id))
+                .unwrap_or(0);
+            table.state.select(Some(idx));
+        }
+        let is_focused = !table.items.is_empty() && previous.is_none_or(|shown| shown.is_focused);
+        self.environment_deployments = Some(EnvironmentDeployments {
+            environment,
+            table,
+            is_focused,
+        });
+    }
+
+    /// The shown deployments, when the navigation keys belong to them.
+    pub fn focused_deployments_mut(&mut self) -> Option<&mut EnvironmentDeployments> {
+        if self.active_tab != Tab::Environments || !self.is_detail_pane_on_screen() {
+            return None;
+        }
+        self.environment_deployments
+            .as_mut()
+            .filter(|shown| shown.is_focused)
+    }
+
+    /// Whether the last frame drew the detail pane. `detail_rect` covers the
+    /// terminal being too narrow for it, `detail_visible` a `q` pressed since.
+    fn is_detail_pane_on_screen(&self) -> bool {
+        self.detail_visible && self.detail_rect.is_some()
+    }
+
+    pub fn selected_deployment(&self) -> Option<&crate::domain::deployments::Deployment> {
+        self.environment_deployments.as_ref()?.selected()
+    }
+
+    /// Consumes the pending log request for `deployment_id` and says whether
+    /// its log should open, which it does only while that deployment is still
+    /// selected on the Environments tab.
+    pub fn take_pending_deployment_log(&mut self, deployment_id: u64) -> bool {
+        if self.pending_deployment_log != Some(deployment_id) {
+            return false;
+        }
+        self.pending_deployment_log = None;
+        self.active_tab == Tab::Environments
+            && self.selected_deployment().map(|d| d.id) == Some(deployment_id)
+    }
+
+    /// Whether `key` moves focus between the environment list and the shown
+    /// deployments. The event loop asks before the global configure key,
+    /// which is also bound to Tab by default.
+    pub fn is_deployments_focus_key(&self, key: &crossterm::event::KeyEvent) -> bool {
+        self.active_tab == Tab::Environments
+            && self.is_detail_pane_on_screen()
+            && self
+                .environment_deployments
+                .as_ref()
+                .is_some_and(|shown| !shown.table.items.is_empty())
+            && crate::keybinding::keybinding_matches(
+                &self.config.keybindings.environments.focus_deployments,
+                key,
+            )
+    }
+
     /// Canonicalise a saved filter value to the display string that
     /// `mr_filter_values` / issue filter functions now produce.
     ///
@@ -8393,6 +8890,58 @@ mod tests {
     }
 
     #[test]
+    fn job_url_and_id_are_copied_from_the_highlighted_job() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.active_tab = Tab::Jobs;
+        app.jobs.items = serde_json::from_str(
+            r#"[
+                {"id": 11, "status": "success", "stage": "build", "name": "compile",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/11"},
+                {"id": 12, "status": "failed", "stage": "test", "name": "rspec",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/12"}
+            ]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(1));
+
+        app.copy_selected_job_url().unwrap();
+        app.copy_selected_job_id().unwrap();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec!["https://gitlab.com/acme/app/-/jobs/12", "12"]
+        );
+    }
+
+    #[test]
+    fn job_url_copy_fails_when_the_job_has_no_url() {
+        let mut app = App::default();
+        app.jobs.items = serde_json::from_str(
+            r#"[{"id": 11, "status": "success", "stage": "build", "name": "compile"}]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(0));
+
+        assert_eq!(
+            app.copy_selected_job_url().unwrap_err().to_string(),
+            "Job URL unavailable; refresh the Jobs tab"
+        );
+    }
+
+    #[test]
     fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
         let mut app = App {
             scope: crate::scope::Scope::Repository("owner/repo".to_string()),
@@ -8452,6 +9001,7 @@ mod tests {
             source: None,
             project_path: "acme/project".to_string(),
             web_url: None,
+            commit: None,
         }];
         app.pipelines.state.select(Some(0));
 
@@ -8840,7 +9390,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: vec![],
+            ..Default::default()
         };
         app.jobs.items = vec![job];
         app.active_tab = Tab::Jobs;
@@ -9180,7 +9730,13 @@ diff --git a/Makefile b/Makefile
         assert_eq!(app.project_path_for_pipeline(7), "acme/project-b");
         assert_eq!(app.project_path_for_pipeline(5), "acme/project-a");
         assert_eq!(app.project_path_for_pipeline(9), "acme");
+        assert_eq!(app.pipeline_project(9), None);
         assert_eq!(app.project_path_for_jobs(), "acme/project-a");
+        assert_eq!(app.jobs_project(), Some("acme/project-a"));
+
+        app.active_pipeline_id = None;
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
     #[test]
@@ -11310,6 +11866,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -11326,6 +11883,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -11521,6 +12079,7 @@ index 123456..789012 100644
                 source: Some("push".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -11537,6 +12096,7 @@ index 123456..789012 100644
                 source: Some("schedule".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             },
         ];
         app.column_filters
@@ -11563,11 +12123,8 @@ index 123456..789012 100644
     #[test]
     fn show_error_sets_toast_and_marks_running_command() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "glab mr list".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("glab mr list", "Running"));
 
         app.show_error("boom".to_string());
 
@@ -11579,16 +12136,10 @@ index 123456..789012 100644
     #[test]
     fn show_error_prefers_cli_command_over_older_running() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "deferred task".to_string(),
-            status: "Running".to_string(),
-        });
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "gh pr list".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("deferred task", "Running"));
+        app.terminal_commands
+            .push(log_entry("gh pr list", "Running"));
 
         app.show_error("boom".to_string());
 
@@ -11598,11 +12149,8 @@ index 123456..789012 100644
     #[test]
     fn show_error_falls_back_to_most_recent_running_when_no_cli() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "deferred task".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("deferred task", "Running"));
 
         app.show_error("boom".to_string());
 
@@ -11612,11 +12160,8 @@ index 123456..789012 100644
     #[test]
     fn show_error_leaves_completed_commands_untouched() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "glab mr list".to_string(),
-            status: "Success".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("glab mr list", "Success"));
 
         app.show_error("boom".to_string());
 
@@ -11635,6 +12180,7 @@ index 123456..789012 100644
             timestamp: String::new(),
             command: command.to_string(),
             status: status.to_string(),
+            ..Default::default()
         }
     }
 
@@ -11720,10 +12266,209 @@ index 123456..789012 100644
     fn copy_terminal_command_on_an_empty_log_is_an_error() {
         let (mut app, copied) = app_with_recording_clipboard();
 
-        let error = app.copy_terminal_command().unwrap_err();
-
-        assert_eq!(error.to_string(), "no terminal log entry to copy");
+        assert!(app.copy_terminal_command().is_err());
         assert_eq!(*copied.borrow(), None);
+    }
+
+    fn executed_entry(command: &str, status: &str, stdout: &str, stderr: &str) -> TerminalCommand {
+        let line = command.split_once(": ").map_or(command, |(_, line)| line);
+        TerminalCommand {
+            execution: crate::command_log::Execution {
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+                invocation: Some(Invocation::new(
+                    crate::command_log::Program::Glab,
+                    &line.split(' ').skip(1).collect::<Vec<_>>(),
+                )),
+                ..Default::default()
+            },
+            ..log_entry(command, status)
+        }
+    }
+
+    #[test]
+    fn status_filter_cycles_through_errors_and_successes_and_combines_with_search() {
+        let mut app = App::default();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Failed: HTTP 502"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Running"));
+        app.terminal_commands
+            .push(log_entry("Fetch runs: glab ci list", "Failed: HTTP 401"));
+        app.terminal_scroll = 2;
+        let listed = |app: &App| -> Vec<String> {
+            app.filtered_terminal_commands()
+                .iter()
+                .map(|cmd| cmd.command.clone())
+                .collect()
+        };
+
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::Failed);
+        assert_eq!(app.terminal_scroll, 0);
+        assert_eq!(
+            listed(&app),
+            ["Fetch PRs: gh pr list", "Fetch runs: glab ci list"]
+        );
+
+        app.search_query = "glab".to_string();
+        assert_eq!(listed(&app), ["Fetch runs: glab ci list"]);
+
+        app.search_query.clear();
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::Succeeded);
+        assert_eq!(listed(&app), ["Fetch issues: glab issue list"]);
+
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::All);
+        assert_eq!(listed(&app).len(), 4);
+    }
+
+    #[test]
+    fn copy_terminal_output_copies_stdout_then_stderr_of_the_highlighted_entry() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands.push(executed_entry(
+            "FETCH: glab issue list",
+            "Failed: exit 1",
+            "[]",
+            "warning: deprecated flag",
+        ));
+
+        app.copy_terminal_output().unwrap();
+
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some("[]\nwarning: deprecated flag")
+        );
+    }
+
+    #[test]
+    fn copy_terminal_output_falls_back_to_the_failure_reason() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Creating branch: x", "Failed: branch exists"));
+        app.terminal_commands
+            .push(log_entry("Creating branch: y", "Success"));
+
+        assert!(app.copy_terminal_output().is_err());
+        assert_eq!(*copied.borrow(), None);
+
+        app.terminal_scroll = 1;
+        app.copy_terminal_output().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("branch exists"));
+    }
+
+    #[test]
+    fn actions_follow_the_inspected_entry_while_newer_entries_arrive() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(executed_entry("FETCH: glab mr list", "Success", "", ""));
+        app.open_terminal_inspector().unwrap();
+        app.terminal_commands
+            .push(executed_entry("FETCH: glab issue list", "Success", "", ""));
+
+        app.copy_terminal_command().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("glab mr list"));
+
+        app.terminal_inspector = None;
+        app.copy_terminal_command().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("glab issue list"));
+    }
+
+    #[test]
+    fn rerun_asks_for_confirmation_with_the_recorded_invocation() {
+        let mut app = App::default();
+        app.terminal_commands.push(executed_entry(
+            "DELETE BRANCH: glab api -X DELETE projects/1/repository/branches/x",
+            "Success",
+            "",
+            "",
+        ));
+
+        app.confirm_terminal_rerun().unwrap();
+
+        let dialog = app.submit_dialog.expect("confirmation is open");
+        let crate::app::ConfirmAction::RerunCommand(invocation) = dialog.action else {
+            panic!("expected a rerun confirmation, got {:?}", dialog.action);
+        };
+        assert_eq!(
+            invocation.command_line(),
+            "glab api -X DELETE projects/1/repository/branches/x"
+        );
+        assert_eq!(
+            dialog.body,
+            "Run again: glab api -X DELETE projects/1/repository/branches/x"
+        );
+    }
+
+    #[test]
+    fn rerun_of_an_entry_without_a_recorded_call_is_refused() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+
+        assert!(app.confirm_terminal_rerun().is_err());
+        assert!(app.submit_dialog.is_none());
+    }
+
+    #[test]
+    fn backend_log_stamps_the_running_action_and_keeps_its_call_on_its_own_row() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+        let logged = executed_entry("CREATE BRANCH: glab api -X POST b", "Success", "{}", "");
+
+        app.log_cli_command(logged.clone());
+
+        let entries: Vec<&TerminalCommand> = app.terminal_commands.iter().collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].command, "Creating branch: x from main");
+        assert_eq!(entries[0].status, "Success");
+        assert_eq!(entries[0].execution.invocation, None);
+        assert_eq!(entries[0].execution.stdout, "");
+        assert_eq!(entries[1].command, logged.command);
+        assert_eq!(entries[1].execution, logged.execution);
+    }
+
+    #[test]
+    fn backend_log_never_settles_a_running_rerun() {
+        let mut app = App::default();
+        let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
+        let rerun_row = app.start_rerun(&invocation);
+
+        app.log_cli_command(executed_entry("FETCH: glab mr list", "Success", "", ""));
+
+        assert_eq!(app.terminal_commands.len(), 2);
+        assert_eq!(
+            app.terminal_commands
+                .get(rerun_row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+    }
+
+    #[test]
+    fn finished_rerun_settles_its_row_and_toasts_a_failure() {
+        let mut app = App::default();
+        let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
+        let row = app.start_rerun(&invocation);
+        let execution = crate::command_log::Execution {
+            exit_code: Some(1),
+            stderr: "HTTP 401".to_string(),
+            invocation: Some(invocation),
+            ..Default::default()
+        };
+
+        app.finish_rerun(row, "Failed: HTTP 401".to_string(), execution.clone());
+
+        let entry = app.terminal_commands.get(row).expect("row is still logged");
+        assert_eq!(entry.command, "Rerun: gh pr list");
+        assert_eq!(entry.status, "Failed: HTTP 401");
+        assert_eq!(entry.execution, execution);
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("Re-run failed: HTTP 401")
+        );
     }
 
     #[test]
@@ -11733,7 +12478,7 @@ index 123456..789012 100644
         app.terminal_scroll = 3;
 
         app.clear_terminal_log();
-        app.settle_command(row, &Ok(()));
+        app.settle_command(row, &Ok(()), crate::command_log::Execution::default());
 
         assert!(app.terminal_commands.is_empty());
         assert_eq!(app.terminal_scroll, 0);
@@ -11761,6 +12506,7 @@ index 123456..789012 100644
             source: Some("merge_request_event".to_string()),
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -12058,6 +12804,7 @@ index 123456..789012 100644
             source: None,
             project_path: "owner/repo".to_string(),
             web_url: Some(String::new()),
+            commit: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -12085,6 +12832,101 @@ index 123456..789012 100644
             app.filtered_pipelines().len(),
             2,
             "removing the filter must restore every row"
+        );
+    }
+
+    fn pipeline_with_status(id: u64, status: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": status, "ref": "main", "updated_at": "",
+            "web_url": format!("https://gitlab.example.com/acme/app/-/pipelines/{id}")
+        }))
+        .expect("pipeline json")
+    }
+
+    fn visible_pipeline_ids(app: &App) -> Vec<u64> {
+        app.filtered_pipelines().iter().map(|p| p.id).collect()
+    }
+
+    #[test]
+    fn status_filter_cycles_running_failed_success_then_all() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            pipeline_with_status(1, "running"),
+            pipeline_with_status(2, "failed"),
+            pipeline_with_status(3, "success"),
+            pipeline_with_status(4, "canceled"),
+        ];
+
+        let mut steps = Vec::new();
+        for _ in 0..4 {
+            let shown = app.cycle_pipeline_status_filter();
+            steps.push((shown, visible_pipeline_ids(&app)));
+        }
+
+        assert_eq!(
+            steps,
+            vec![
+                (Some("RUNNING"), vec![1]),
+                (Some("FAILED"), vec![2]),
+                (Some("SUCCESS"), vec![3]),
+                (None, vec![1, 2, 3, 4]),
+            ]
+        );
+    }
+
+    #[test]
+    fn status_filter_cycle_restarts_from_a_picker_filter_it_does_not_step_through() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            pipeline_with_status(1, "running"),
+            pipeline_with_status(2, "canceled"),
+        ];
+        app.set_column_filter(
+            Tab::Pipelines,
+            "Status",
+            std::collections::HashSet::from(["CANCEL".to_string()]),
+        );
+
+        assert_eq!(app.cycle_pipeline_status_filter(), Some("RUNNING"));
+        assert_eq!(visible_pipeline_ids(&app), vec![1]);
+    }
+
+    #[test]
+    fn pipeline_url_and_id_are_copied_from_the_highlighted_row() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.pipelines.items = vec![pipeline_with_status(41, "success"), {
+            let mut no_url = pipeline_with_status(42, "failed");
+            no_url.web_url = None;
+            no_url
+        }];
+        app.pipelines.state.select(Some(0));
+
+        app.copy_selected_pipeline_url().unwrap();
+        app.copy_selected_pipeline_id().unwrap();
+        app.pipelines.state.select(Some(1));
+        let missing_url = app.copy_selected_pipeline_url().unwrap_err();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec![
+                "https://gitlab.example.com/acme/app/-/pipelines/41".to_string(),
+                "#41".to_string(),
+            ]
+        );
+        assert_eq!(
+            missing_url.to_string(),
+            "Pipeline URL unavailable; refresh the Pipelines tab"
         );
     }
 
@@ -12185,6 +13027,7 @@ index 123456..789012 100644
                 source: None,
                 project_path: "owner/repo".to_string(),
                 web_url: None,
+                commit: None,
             })
             .collect();
         app.pipelines.state.select(Some(2));
@@ -12302,6 +13145,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }
     }
 
@@ -12388,6 +13232,33 @@ index 123456..789012 100644
             Some(1),
             "the cursor still points at the pipeline we descended from"
         );
+    }
+
+    #[test]
+    fn refetched_pipelines_drop_the_cached_jobs_of_those_whose_status_changed() {
+        let mut app = App::default();
+        app.pipelines.items = vec![nav_pipe(1001), nav_pipe(1002)];
+        app.pipelines.state.select(Some(1));
+        app.descend_into(
+            1002,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![nav_pipe(2001)],
+                pending: Vec::new(),
+            },
+        );
+        for id in [1001, 1002, 2001] {
+            app.pipeline_jobs.insert(id, Vec::new());
+        }
+        let failed = crate::domain::pipelines::Pipeline {
+            status: "failed".to_string(),
+            ..nav_pipe(1002)
+        };
+
+        app.drop_jobs_of_changed_pipelines(&[nav_pipe(1001), failed]);
+
+        let mut cached: Vec<u64> = app.pipeline_jobs.keys().copied().collect();
+        cached.sort_unstable();
+        assert_eq!(cached, vec![1001, 2001]);
     }
 
     #[test]
@@ -13058,6 +13929,7 @@ index 123456..789012 100644
         app.environment_deployments = Some(EnvironmentDeployments {
             environment: environment.to_string(),
             table: StatefulTable::with_items(deployments),
+            is_focused: false,
         });
         app
     }
@@ -13105,6 +13977,163 @@ index 123456..789012 100644
         app.active_tab = Tab::Environments;
         app.discard_stale_deployments();
         assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    fn deployments(ids: &[u64]) -> Vec<crate::domain::deployments::Deployment> {
+        ids.iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "id": id, "iid": id, "ref_name": "main", "tag": false, "sha": "abc123",
+                    "status": "success",
+                    "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"
+                }))
+                .expect("deployment fixture parses")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fetched_deployments_open_focused_on_the_newest() {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+
+        app.show_deployments("production".to_string(), deployments(&[3, 2, 1]));
+
+        let shown = app
+            .environment_deployments
+            .as_ref()
+            .expect("deployments shown");
+        assert!(shown.is_focused);
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(3));
+    }
+
+    #[test]
+    fn refetched_deployments_keep_the_selected_deployment_and_the_focus() {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[2, 1]));
+        let shown = app
+            .environment_deployments
+            .as_mut()
+            .expect("deployments shown");
+        shown.table.next_item();
+        shown.is_focused = false;
+
+        app.show_deployments("production".to_string(), deployments(&[3, 2, 1]));
+
+        let shown = app
+            .environment_deployments
+            .as_ref()
+            .expect("deployments shown");
+        assert!(!shown.is_focused);
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(1));
+    }
+
+    #[test]
+    fn deployments_fetched_for_an_environment_no_longer_highlighted_are_dropped() {
+        let mut app = app_showing_deployments_for("production");
+
+        app.show_deployments("staging".to_string(), deployments(&[1]));
+
+        assert_eq!(shown_deployments_environment(&app), Some("production"));
+    }
+
+    /// Production's deployments 11 (selected) and 10.
+    fn app_selecting_deployment_11() -> App {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[11, 10]));
+        app
+    }
+
+    #[test]
+    fn requested_deployment_log_opens_once() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+
+        assert!(app.take_pending_deployment_log(11));
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn deployment_log_for_a_deployment_no_longer_selected_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(10);
+
+        assert!(!app.take_pending_deployment_log(10));
+        assert_eq!(app.pending_deployment_log, None);
+    }
+
+    #[test]
+    fn deployment_log_landing_on_another_tab_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+        app.active_tab = Tab::Issues;
+
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn rollback_dialog_strips_escape_sequences_from_third_party_names() {
+        let deployment: crate::domain::deployments::Deployment =
+            serde_json::from_value(serde_json::json!({
+                "id": 10, "iid": 1, "ref_name": "main\u{1b}[2J", "tag": false,
+                "sha": "abc123", "status": "success",
+                "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z",
+                "deployable": { "id": 500, "name": "deploy\u{1b}]8;;https://evil.example\u{7}" }
+            }))
+            .expect("deployment fixture parses");
+
+        let dialog = SubmitDialog::build(
+            ConfirmAction::RollbackDeployment {
+                environment: "prod\u{1b}[31m".to_string(),
+                deployment: Box::new(deployment),
+            },
+            &App::default(),
+        );
+
+        assert_eq!(dialog.title, "Roll Back 'prod' to abc123");
+        assert_eq!(
+            dialog.body,
+            "Re-deploy abc123 (main) from deployment #1 to 'prod'? This re-runs its job 'deploy'."
+        );
+    }
+
+    #[test]
+    fn copying_the_environment_url_strips_escape_sequences() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([{
+                "id": 1, "name": "production", "state": "available",
+                "external_url": "\u{1b}]8;;https://evil.example\u{7}https://prod.example\u{1b}]8;;\u{7}"
+            }]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+
+        app.copy_selected_environment_url()
+            .expect("the URL is copied");
+
+        assert_eq!(copied.borrow().as_deref(), Some("https://prod.example"));
+    }
+
+    #[test]
+    fn copying_the_url_of_an_environment_without_one_is_an_error() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([
+                {"id": 1, "name": "production", "state": "available"}
+            ]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+
+        let error = app.copy_selected_environment_url().unwrap_err();
+
+        assert_eq!(error.to_string(), "environment has no external URL");
+        assert_eq!(*copied.borrow(), None);
     }
 
     #[test]

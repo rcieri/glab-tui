@@ -74,6 +74,7 @@ fn tab_hardwired_keys(tab: Tab) -> &'static [(&'static str, &'static str)] {
             ("W", "open workflow"),
         ],
         Tab::Jobs => &[("S", "start job")],
+        Tab::Terminal => &[("P", "inspect command")],
         _ => &[],
     }
 }
@@ -225,6 +226,8 @@ pub enum CommandPane {
     Universal,
     Issues,
     MergeRequests,
+    Pipelines,
+    Jobs,
     Branches,
     /// The MR/PR diff view, which is not a tab.
     Diff,
@@ -233,9 +236,11 @@ pub enum CommandPane {
 impl CommandPane {
     /// Pane-specific tables first: on a shared key the more specific binding
     /// wins over a universal one.
-    const LOOKUP_ORDER: [CommandPane; 5] = [
+    const LOOKUP_ORDER: [CommandPane; 7] = [
         CommandPane::Issues,
         CommandPane::MergeRequests,
+        CommandPane::Pipelines,
+        CommandPane::Jobs,
         CommandPane::Branches,
         CommandPane::Diff,
         CommandPane::Universal,
@@ -246,6 +251,8 @@ impl CommandPane {
             CommandPane::Universal => "custom_keybindings.universal",
             CommandPane::Issues => "custom_keybindings.issues",
             CommandPane::MergeRequests => "custom_keybindings.mrs",
+            CommandPane::Pipelines => "custom_keybindings.pipelines",
+            CommandPane::Jobs => "custom_keybindings.jobs",
             CommandPane::Branches => "custom_keybindings.branches",
             CommandPane::Diff => "custom_keybindings.diff",
         }
@@ -270,6 +277,10 @@ impl CommandPane {
                 "BaseRefName",
                 "Author",
             ],
+            CommandPane::Pipelines => &["RepoName", "RepoPath", "PipelineId", "Ref", "Sha"],
+            CommandPane::Jobs => &[
+                "RepoName", "RepoPath", "JobId", "JobName", "Stage", "Status",
+            ],
             CommandPane::Branches => &["RepoName", "RepoPath", "BranchName", "CommitSha"],
             CommandPane::Diff => &[
                 "RepoName",
@@ -290,6 +301,8 @@ impl CommandPane {
             CommandPane::Universal => true,
             CommandPane::Issues => tab == Tab::Issues,
             CommandPane::MergeRequests => tab == Tab::MergeRequests,
+            CommandPane::Pipelines => tab == Tab::Pipelines,
+            CommandPane::Jobs => tab == Tab::Jobs,
             CommandPane::Branches => tab == Tab::Branches,
             CommandPane::Diff => false,
         }
@@ -301,6 +314,8 @@ impl CommandPane {
             CommandPane::Universal => &tables.universal,
             CommandPane::Issues => &tables.issues,
             CommandPane::MergeRequests => &tables.mrs,
+            CommandPane::Pipelines => &tables.pipelines,
+            CommandPane::Jobs => &tables.jobs,
             CommandPane::Branches => &tables.branches,
             CommandPane::Diff => &tables.diff,
         }
@@ -357,7 +372,8 @@ impl CustomCommands {
             .keys()
             .map(|pane| ConfigProblem {
                 binding: format!("[custom_keybindings.{pane}]"),
-                problem: "unsupported pane; use universal, issues, mrs or diff".to_string(),
+                problem: "unsupported pane; use universal, issues, mrs, pipelines, jobs or diff"
+                    .to_string(),
             })
             .collect();
 
@@ -856,6 +872,36 @@ command = "true"
         );
     }
 
+    #[test]
+    fn jobs_binding_runs_only_on_the_jobs_tab_and_yields_to_its_builtins() {
+        let config = config_with(
+            r#"
+[[jobs]]
+key = "L"
+command = "echo {{.JobId}} {{.Stage}}"
+[[jobs]]
+key = "E"
+command = "true"
+[[jobs]]
+key = "X"
+command = "echo {{.PrNumber}}"
+"#,
+        );
+        let (commands, problems) = CustomCommands::load(&config);
+
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                "never runs: keybindings.jobs.jump_to_failure takes the key first",
+                "{{.PrNumber}} is not available in custom_keybindings.jobs; \
+                 use RepoName, RepoPath, JobId, JobName, Stage, Status",
+            ]
+        );
+        assert!(commands.find(Tab::Jobs, &key('L')).is_some());
+        assert!(commands.find(Tab::Pipelines, &key('L')).is_none());
+    }
+
     /// The list view matches these keys by key code alone, so `Ctrl+q`
     /// quits and `Alt+r` retries a pipeline instead of running the command.
     #[test]
@@ -974,7 +1020,7 @@ command = "echo one"
 [[issues]]
 key = "Z"
 command = "echo two"
-[[pipelines]]
+[[runners]]
 key = "p"
 command = "true"
 "#,
@@ -985,7 +1031,7 @@ command = "true"
         assert_eq!(
             reasons,
             vec![
-                "unsupported pane; use universal, issues, mrs or diff",
+                "unsupported pane; use universal, issues, mrs, pipelines, jobs or diff",
                 "missing `key`",
                 "\"gg\" is not a key glab-tui can bind",
                 "{{.PrNumber}} is not available in custom_keybindings.issues; \
@@ -1026,6 +1072,36 @@ command = "nvim {{.FilePath}}"
             vec![
                 "{{.FilePath}} is not available in custom_keybindings.mrs; \
                  use RepoName, RepoPath, PrNumber, HeadRefName, BaseRefName, Author"
+            ]
+        );
+    }
+
+    #[test]
+    fn pipelines_bindings_run_only_on_the_pipelines_tab_with_pipeline_arguments() {
+        let config = config_with(
+            r#"
+[[pipelines]]
+key = "x"
+command = "open-ci {{.RepoName}} {{.PipelineId}} {{.Ref}} {{.Sha}}"
+[[pipelines]]
+key = "z"
+command = "echo {{.PrNumber}}"
+[[pipelines]]
+key = "R"
+command = "true"
+"#,
+        );
+        let (commands, problems) = CustomCommands::load(&config);
+
+        assert!(commands.find(Tab::Pipelines, &key('x')).is_some());
+        assert!(commands.find(Tab::Jobs, &key('x')).is_none());
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                "{{.PrNumber}} is not available in custom_keybindings.pipelines; \
+                 use RepoName, RepoPath, PipelineId, Ref, Sha",
+                "never runs: keybindings.pipelines.retry_failed takes the key first",
             ]
         );
     }

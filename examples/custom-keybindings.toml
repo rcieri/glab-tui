@@ -13,6 +13,7 @@
 #   issues:    RepoName RepoPath IssueNumber IssueTitle Author
 #   mrs:       RepoName RepoPath PrNumber HeadRefName BaseRefName Author
 #   diff:      the mrs arguments + FilePath LineNumber (under the diff cursor)
+#   pipelines: RepoName RepoPath PipelineId Ref Sha
 #
 # Every argument is also exported as GLAB_TUI_<NAME> (GLAB_TUI_PR_NUMBER,
 # GLAB_TUI_ISSUE_TITLE, ...). A {{.Arg}} is only spliced in when its value is a
@@ -22,8 +23,8 @@
 # titles must go through the quoted variable, after -- when it could start with
 # '-' or '+'.
 #
-# With issues or MRs selected (Space, or v select mode), an issues/mrs binding
-# runs once per selected item.
+# With issues, MRs or pipelines selected (Space, or v select mode), an
+# issues/mrs/pipelines binding runs once per selected item.
 #
 # `background = true` keeps the TUI on screen: the command gets no input, its
 # output is not shown, and it is logged when it finishes (with its last error
@@ -80,6 +81,15 @@ command = '''pane=$(herdr pane split --current --direction right --no-focus --en
 key = "x"
 name = "print issue title"
 command = "echo \"#$GLAB_TUI_ISSUE_NUMBER: $GLAB_TUI_ISSUE_TITLE\"; read -r _"
+
+# --- Pipelines ----------------------------------------------------------------
+
+# The commit a pipeline ran on, one after another for selected pipelines.
+# Fetching by SHA also finds commits whose branch is gone.
+[[custom_keybindings.pipelines]]
+key = "x"
+name = "show pipeline commit"
+command = "cd {{.RepoPath}} && git fetch --quiet origin {{.Sha}} && git --no-pager show --stat {{.Sha}}; read -r _"
 
 # --- Every tab ----------------------------------------------------------------
 

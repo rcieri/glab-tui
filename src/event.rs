@@ -56,10 +56,11 @@ pub enum Event {
     /// rows the handler shows the offline badge and drops the message.
     FetchFailed(crate::app::Tab, String),
     /// The view is built off the event loop: parsing and highlighting a large
-    /// diff takes seconds.
+    /// diff takes seconds. `comments` fails on its own, leaving the diff
+    /// viewable.
     DiffFetched {
         diff_view: Box<crate::app::DiffView>,
-        comments: Vec<crate::domain::mr::DiscussionNote>,
+        comments: Result<Vec<crate::domain::mr::DiscussionNote>, String>,
     },
     DiffFetchFailed(String),
     /// `show_read` is the filter the list was requested with. A result for a
@@ -76,10 +77,14 @@ pub enum Event {
     Notice(String),
     /// A background custom command finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
-    TerminalCommandLogged {
-        timestamp: String,
-        command: String,
+    /// A `glab`/`gh`/`git` call a backend finished.
+    TerminalCommandLogged(Box<crate::command_log::TerminalCommand>),
+    /// A command re-run from the Terminal tab finished; `row` is the entry
+    /// logged when it started.
+    CommandRerun {
+        row: crate::command_log::LogRow,
         status: String,
+        execution: Box<crate::command_log::Execution>,
     },
     MilestonesFetched(Vec<crate::domain::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::domain::issues::Issue>),
@@ -99,6 +104,11 @@ pub enum Event {
     DeploymentsFetched {
         environment: String,
         deployments: Vec<crate::domain::deployments::Deployment>,
+    },
+    /// The log of a deployment's job, fetched to open in the editor.
+    DeploymentLogFetched {
+        deployment_id: u64,
+        result: Result<crate::domain::job_trace::JobTrace, String>,
     },
     /// Result of fetching MRs/PRs that close an issue. `Ok(vec![])` is
     /// legitimate (the issue has no closing MRs) and is not an error.

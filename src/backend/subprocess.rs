@@ -1,18 +1,36 @@
 use anyhow::Result;
 use std::process::{Output, Stdio};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::time::Duration;
 
 /// Runs `command` to completion like `Command::output`, writing `input` to its
 /// stdin, and kills it once it outlives `command_timeout_seconds`.
 pub async fn output(command: &mut Command, input: Option<&[u8]>) -> Result<Output> {
-    output_within(command, input, crate::config::command_timeout()).await
+    output_within(command, input, None, crate::config::command_timeout()).await
+}
+
+/// `output`, keeping at most `max_bytes_per_stream` of stdout and of stderr.
+/// The rest is drained rather than the child killed, so a mutation still
+/// finishes.
+pub(crate) async fn output_capped(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    max_bytes_per_stream: usize,
+) -> Result<Output> {
+    output_within(
+        command,
+        input,
+        Some(max_bytes_per_stream),
+        crate::config::command_timeout(),
+    )
+    .await
 }
 
 async fn output_within(
     command: &mut Command,
     input: Option<&[u8]>,
+    max_bytes_per_stream: Option<usize>,
     timeout: Duration,
 ) -> Result<Output> {
     let invocation = describe(command);
@@ -32,7 +50,12 @@ async fn output_within(
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to execute: {invocation}: {e}"))?;
 
-    match tokio::time::timeout(timeout, collect_output(&mut child, input)).await {
+    match tokio::time::timeout(
+        timeout,
+        collect_output(&mut child, input, max_bytes_per_stream),
+    )
+    .await
+    {
         Ok(output) => output.map_err(|e| anyhow::anyhow!("Failed to execute: {invocation}: {e}")),
         Err(_) => {
             // Awaiting `kill` reaps the direct child only. Processes it spawned are not signalled.
@@ -45,12 +68,14 @@ async fn output_within(
     }
 }
 
-async fn collect_output(child: &mut Child, input: Option<&[u8]>) -> std::io::Result<Output> {
+async fn collect_output(
+    child: &mut Child,
+    input: Option<&[u8]>,
+    max_bytes_per_stream: Option<usize>,
+) -> std::io::Result<Output> {
     let stdin = child.stdin.take();
-    let mut stdout_pipe = child.stdout.take().expect("stdout is piped above");
-    let mut stderr_pipe = child.stderr.take().expect("stderr is piped above");
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
+    let stdout_pipe = child.stdout.take().expect("stdout is piped above");
+    let stderr_pipe = child.stderr.take().expect("stderr is piped above");
 
     let feed_stdin = async move {
         if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
@@ -59,20 +84,32 @@ async fn collect_output(child: &mut Child, input: Option<&[u8]>) -> std::io::Res
         }
         Ok::<_, std::io::Error>(())
     };
-    let (status, fed, read_stdout, read_stderr) = tokio::join!(
+    let (status, fed, stdout, stderr) = tokio::join!(
         child.wait(),
         feed_stdin,
-        stdout_pipe.read_to_end(&mut stdout),
-        stderr_pipe.read_to_end(&mut stderr),
+        read_stream(stdout_pipe, max_bytes_per_stream),
+        read_stream(stderr_pipe, max_bytes_per_stream),
     );
     fed?;
-    read_stdout?;
-    read_stderr?;
     Ok(Output {
         status: status?,
-        stdout,
-        stderr,
+        stdout: stdout?,
+        stderr: stderr?,
     })
+}
+
+async fn read_stream(
+    mut reader: impl AsyncRead + Unpin,
+    limit: Option<usize>,
+) -> std::io::Result<Vec<u8>> {
+    match limit {
+        Some(limit) => super::bounded_output::read_prefix_draining(reader, limit).await,
+        None => {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await?;
+            Ok(bytes)
+        }
+    }
 }
 
 pub(crate) fn describe(command: &Command) -> String {
@@ -98,6 +135,7 @@ mod tests {
 
         let err = output_within(
             Command::new("sh").args(["-c", &script]),
+            None,
             None,
             Duration::from_millis(500),
         )
@@ -126,6 +164,7 @@ mod tests {
         let output = output_within(
             &mut Command::new("cat"),
             Some(b"{\"body\":\"hi\"}"),
+            None,
             Duration::from_secs(10),
         )
         .await
@@ -133,5 +172,24 @@ mod tests {
 
         assert!(output.status.success());
         assert_eq!(output.stdout, b"{\"body\":\"hi\"}");
+    }
+
+    #[tokio::test]
+    async fn capped_output_keeps_a_prefix_of_each_stream_and_lets_the_child_finish() {
+        let output = output_within(
+            Command::new("sh").args([
+                "-c",
+                "head -c 200000 /dev/zero | tr '\\0' o; head -c 200000 /dev/zero | tr '\\0' e >&2; exit 3",
+            ]),
+            None,
+            Some(1000),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(output.stdout, b"o".repeat(1000));
+        assert_eq!(output.stderr, b"e".repeat(1000));
     }
 }

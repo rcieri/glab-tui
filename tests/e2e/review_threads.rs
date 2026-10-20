@@ -17,7 +17,10 @@ const CURSOR_MARKER: &str = "❯";
 
 /// Launch, switch to the MRs tab and open the fixture MR's diff.
 fn session_in_diff_view() -> TestSession {
-    let mut session = TestSession::new(false, 40, 140);
+    open_diff_view(TestSession::new(false, 40, 140))
+}
+
+fn open_diff_view(mut session: TestSession) -> TestSession {
     session
         .wait_for_screen_contains("Issues", 30000)
         .expect("app should reach the Issues tab");
@@ -30,6 +33,20 @@ fn session_in_diff_view() -> TestSession {
         .wait_for_screen_contains("Merge Request Diff #2", 15000)
         .expect("D should open the MR diff");
     session
+}
+
+#[test]
+fn test_failed_review_comments_fetch_is_reported_beside_the_diff() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_FAIL_MATCH", "mr note list")]);
+    let mut session = open_diff_view(session);
+
+    session
+        .wait_for_screen_contains("Failed to load review comments", 5000)
+        .expect("a failed notes fetch raises a toast instead of an empty thread list");
+    session
+        .wait_for_screen_contains("+Documents page_size.", 5000)
+        .expect("the diff stays viewable without its comments");
 }
 
 /// Feeds pending output to the emulator until a screen row satisfies

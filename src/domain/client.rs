@@ -59,6 +59,12 @@ impl GitlabClient {
         self.backend.retry_pipeline(project_path, pipeline_id).await
     }
 
+    pub async fn retry_failed_jobs(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
+        self.backend
+            .retry_failed_jobs(project_path, pipeline_id)
+            .await
+    }
+
     pub async fn cancel_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
         self.backend
             .cancel_pipeline(project_path, pipeline_id)
@@ -199,9 +205,7 @@ impl GitlabClient {
         project: &str,
         mr_iid: u64,
     ) -> Result<Vec<crate::domain::mr::DiscussionNote>> {
-        self.backend
-            .list_mr_notes(project, mr_iid, self.page_size)
-            .await
+        self.backend.list_mr_notes(project, mr_iid).await
     }
 
     pub async fn list_mr_state(

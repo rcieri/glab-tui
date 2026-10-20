@@ -15,8 +15,9 @@ const OVERLAP_BYTES: usize = 1024;
 const RANGE_MAX_BYTES: usize = 500 * 1024;
 const TRACE_ENDPOINT: &str = "glab api /projects/test-owner%2Ftest-repo/jobs/54321/trace";
 /// Lines of a log that, with the `follow line N` lines the job writes, fits
-/// the 36 rows of the zoomed log pane in a 40-row terminal.
-const PANE_FITTING_LINES: usize = 32;
+/// the 25 rows the zoomed log pane keeps under the job's metadata in a
+/// 40-row terminal.
+const PANE_FITTING_LINES: usize = 20;
 /// Bytes of each of those lines, so the re-requested overlap spans 16 whole
 /// lines: appending it again would push lines off screen and show others twice.
 const PANE_FITTING_LINE_BYTES: usize = 64;
@@ -30,8 +31,9 @@ fn trace_calls(session: &TestSession) -> Vec<String> {
         .collect()
 }
 
-/// Launches glab-tui with `log` as the job's log and opens it.
-fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
+/// Launches glab-tui with `log` as the job's log and lists the job, its log
+/// not fetched yet.
+fn list_job(log: &str, extra: &[(&str, &str)]) -> TestSession {
     let sandbox = Sandbox::new(false).unwrap();
     let trace_file = sandbox.temp_dir.path().join("job.log");
     std::fs::write(&trace_file, log).unwrap();
@@ -51,11 +53,28 @@ fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
     session
         .wait_for_screen_contains("rspec", 15000)
         .expect("the pipeline's job is listed");
+    session
+}
+
+/// Launches glab-tui with `log` as the job's log and opens it.
+fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
+    let mut session = list_job(log, extra);
     session.send_input(b"\r");
     session
         .wait_for_screen_contains("build output line 000", 15000)
         .expect("the job log is shown");
     session
+}
+
+/// A log whose one failure, line 80, is more than a log pane away from both
+/// its start and its end.
+fn failing_log() -> String {
+    let mut log: String = (0..80)
+        .map(|line| format!("build output line {line:03}\n"))
+        .collect();
+    log.push_str("ERROR: Job failed: exit code 1\n");
+    log.push_str(&"cleanup line\n".repeat(60));
+    log
 }
 
 fn ranged_read_after(log: &str) -> String {
@@ -118,4 +137,46 @@ fn follow_mode_reads_whole_logs_once_the_server_ignores_ranges() {
     let screen = session.emulator.get_text();
     assert_eq!(screen.matches("follow line 1").count(), 1, "{screen}");
     assert_eq!(screen.matches("follow line 2").count(), 1, "{screen}");
+}
+
+#[test]
+fn failure_key_scrolls_the_log_to_its_failure_under_the_job_metadata() {
+    let mut session = show_job_log(&failing_log(), &[]);
+
+    let screen = session.emulator.get_text();
+    for metadata in [
+        "Preview: Job #54321",
+        "shared-runner-7",
+        "1m 35s",
+        "archive, junit",
+        "https://gitlab.com/test-owner/test-repo/-/jobs/54321",
+    ] {
+        assert!(screen.contains(metadata), "{metadata} in\n{screen}");
+    }
+
+    session.send_input(b"E");
+    session
+        .wait_for_screen_contains("ERROR: Job failed: exit code 1", 15000)
+        .expect("the failure line is scrolled into view");
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("build output line 079"),
+        "the failure line tops the log pane:\n{screen}"
+    );
+}
+
+#[test]
+fn failure_key_fetches_an_unshown_log_and_scrolls_it_to_its_failure() {
+    let mut session = list_job(&failing_log(), &[]);
+
+    session.send_input(b"E");
+    session
+        .wait_for_screen_contains("ERROR: Job failed: exit code 1", 15000)
+        .expect("the fetched log is scrolled to its failure");
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("build output line 079"),
+        "the failure line tops the log pane:\n{screen}"
+    );
+    assert_eq!(trace_calls(&session), [TRACE_ENDPOINT], "one fetch");
 }

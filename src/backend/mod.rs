@@ -1,6 +1,7 @@
 mod bounded_output;
 pub mod gh;
 pub mod glab;
+pub(crate) mod logged_command;
 pub mod rate_limit;
 pub mod subprocess;
 
@@ -337,12 +338,7 @@ pub trait Backend: Send + Sync {
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        page_size: usize,
-    ) -> Result<Vec<DiscussionNote>>;
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;
@@ -580,7 +576,10 @@ pub trait Backend: Send + Sync {
     }
 
     // ── Pipeline / Job actions ──
+    /// Reruns the pipeline: on GitLab its failed and canceled jobs, on GitHub the whole run.
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
+    /// Reruns only the jobs of `pipeline_id` that failed; errors when none did.
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()>;
     async fn start_job(&self, project: &str, job_id: u64) -> Result<()>;
@@ -683,6 +682,19 @@ pub trait Backend: Send + Sync {
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>>;
+    /// GitLab runs the environment's stop action. GitHub has no stop, so it
+    /// marks the deployment serving the environment, the newest one whose
+    /// latest status is `success`, inactive.
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()>;
+    /// Deploys `deployment`'s commit to `environment` again: GitLab re-runs the
+    /// deployment's job, GitHub records a new deployment of its SHA, which only
+    /// deploys once a workflow running on the `deployment` event picks it up.
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()>;
 
     // ── Labels / Members / Misc ──
     async fn fetch_labels(

@@ -12,6 +12,7 @@ mod keybindings;
 mod layout;
 mod list_tab;
 mod pagination;
+mod pipelines;
 mod pr_diff_fallback;
 mod review_cli;
 mod review_threads;

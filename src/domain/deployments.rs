@@ -2,6 +2,8 @@ use crate::domain::client::GitlabClient;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+const SHORT_SHA_LEN: usize = 8;
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Environment {
     pub id: u64,
@@ -53,6 +55,19 @@ pub struct DeploymentUser {
     pub username: String,
 }
 
+impl Deployment {
+    /// The CI job that ran this deployment, the one a rollback re-runs on
+    /// GitLab. GitHub deployments carry none.
+    pub fn job_id(&self) -> Option<u64> {
+        self.deployable.as_ref().map(|job| job.id)
+    }
+
+    /// The SHA abbreviated the way GitLab and GitHub show it.
+    pub fn short_sha(&self) -> &str {
+        self.sha.get(..SHORT_SHA_LEN).unwrap_or(&self.sha)
+    }
+}
+
 pub async fn list_environments(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
@@ -71,5 +86,25 @@ pub async fn list_deployments(
     client
         .backend
         .list_deployments(scope, client.page_size, environment)
+        .await
+}
+
+pub async fn stop_environment(
+    client: &GitlabClient,
+    project: &str,
+    environment: &Environment,
+) -> Result<()> {
+    client.backend.stop_environment(project, environment).await
+}
+
+pub async fn rollback_deployment(
+    client: &GitlabClient,
+    project: &str,
+    environment: &str,
+    deployment: &Deployment,
+) -> Result<()> {
+    client
+        .backend
+        .rollback_deployment(project, environment, deployment)
         .await
 }

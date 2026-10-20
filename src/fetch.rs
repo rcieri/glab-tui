@@ -7,12 +7,16 @@ use crate::git_helpers::get_current_branch;
 /// Fetches an MR/PR diff with its review comments and builds the `DiffView`
 /// on a blocking thread, so the event loop keeps drawing (and the loading
 /// overlay stays up) while a large diff is parsed and highlighted. Comments
-/// that fail to load leave the diff viewable without them.
+/// that fail to load come back as their error beside the diff, which stays
+/// viewable without them.
 pub async fn fetch_diff_view(
     client: &domain::client::GitlabClient,
     project_path: &str,
     mr_iid: u64,
-) -> anyhow::Result<(Box<app::DiffView>, Vec<domain::mr::DiscussionNote>)> {
+) -> anyhow::Result<(
+    Box<app::DiffView>,
+    Result<Vec<domain::mr::DiscussionNote>, String>,
+)> {
     let (diff_res, comments_res) = tokio::join!(
         client.get_mr_diff(project_path, mr_iid),
         client.list_mr_notes(project_path, mr_iid)
@@ -23,7 +27,7 @@ pub async fn fetch_diff_view(
         Box::new(app::DiffView::new(mr_iid, project_path, raw_diff))
     })
     .await?;
-    Ok((diff_view, comments_res.unwrap_or_default()))
+    Ok((diff_view, comments_res.map_err(|err| format!("{err:#}"))))
 }
 
 /// Derive `workflow` for every MR in place.

@@ -1,5 +1,7 @@
 use super::Backend;
 use super::bounded_output::{CapturedStdout, output_bounded};
+use super::logged_command::{ChildOutput, LoggedCommand};
+use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
@@ -10,7 +12,7 @@ use crate::domain::mr::{
     DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NotePosition, ensure_complete_diff,
 };
 use crate::domain::notifications::{Notification, NotificationDetail};
-use crate::domain::pipelines::{Job, Pipeline};
+use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
@@ -628,38 +630,28 @@ async fn run_gh_command(
     desc: &str,
     max_stdout_bytes: Option<usize>,
 ) -> Result<CapturedStdout> {
-    let cmd_str = format!("gh {}", args.join(" "));
+    let logged = LoggedCommand::start(desc, Invocation::new(Program::Gh, args));
 
     let output = match output_bounded(Command::new("gh").args(args), max_stdout_bytes).await {
         Ok(output) => output,
         Err(e) => {
-            log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {e}"));
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
             return Err(e.into());
         }
     };
 
     if output.succeeded() {
-        log_terminal_command(tx.as_ref(), desc, &cmd_str, "Success".to_string());
+        logged.finish(tx.as_ref(), "Success".to_string(), output.child_output());
         Ok(output.stdout)
     } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {err_msg}"));
-        anyhow::bail!("gh command failed: {err_msg}")
-    }
-}
-
-fn log_terminal_command(
-    tx: Option<&UnboundedSender<Event>>,
-    desc: &str,
-    cmd_str: &str,
-    status: String,
-) {
-    if let Some(tx) = tx {
-        let _ = tx.send(Event::TerminalCommandLogged {
-            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-            command: format!("{}: {}", desc.to_uppercase(), cmd_str),
-            status,
-        });
+        let child_output = output.child_output();
+        let reason = logged.failure_reason(&child_output);
+        logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+        anyhow::bail!("gh command failed: {reason}")
     }
 }
 
@@ -711,17 +703,22 @@ async fn run_git_command(
     desc: &str,
     max_stdout_bytes: Option<usize>,
 ) -> Result<CapturedStdout> {
-    let cmd_str = format!("git -C {checkout} {}", args.join(" "));
+    let git_args: Vec<&str> = ["-C", checkout]
+        .into_iter()
+        .chain(args.iter().copied())
+        .collect();
+    let logged = LoggedCommand::start(desc, Invocation::new(Program::Git, &git_args));
     let output = output_bounded(git_in(checkout).args(args), max_stdout_bytes)
         .await
-        .with_context(|| format!("Failed to execute: {cmd_str}"))?;
+        .with_context(|| format!("Failed to execute: {}", logged.command_line()))?;
     if output.succeeded() {
-        log_terminal_command(tx, desc, &cmd_str, "Success".to_string());
+        logged.finish(tx, "Success".to_string(), output.child_output());
         Ok(output.stdout)
     } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log_terminal_command(tx, desc, &cmd_str, format!("Failed: {err_msg}"));
-        anyhow::bail!("git command failed: {err_msg}")
+        let child_output = output.child_output();
+        let reason = logged.failure_reason(&child_output);
+        logged.finish(tx, format!("Failed: {reason}"), child_output);
+        anyhow::bail!("git command failed: {reason}")
     }
 }
 
@@ -1085,6 +1082,22 @@ fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
     }
 }
 
+/// How many of an environment's newest deployments a stop searches for the
+/// one GitHub still serves.
+const STOP_DEPLOYMENT_LOOKBACK: usize = 30;
+
+/// State of a deployment's newest status (GitHub lists them newest first),
+/// `None` while it has no status yet.
+fn parse_latest_deployment_state(raw: &str) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct GhDeploymentStatus {
+        state: String,
+    }
+    let statuses: Vec<GhDeploymentStatus> =
+        serde_json::from_str(raw).context("parsing GitHub deployment statuses")?;
+    Ok(statuses.into_iter().next().map(|status| status.state))
+}
+
 /// Build the GraphQL query that finds the issues which a PR closes.
 fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1132,40 +1145,124 @@ mod related_issues_types {
 
 /// The REST review-comments endpoint carries no resolution state; only the
 /// GraphQL `reviewThreads` connection exposes `isResolved`. A comment's REST
-/// `id` is its GraphQL `databaseId`.
+/// `id` is its GraphQL `databaseId`, and every REST reply names its thread's
+/// first comment in `in_reply_to_id`, so that first comment is enough to
+/// resolve the whole thread. `gh api graphql --paginate` feeds `$endCursor`
+/// back in until `pageInfo.hasNextPage` is false.
 fn review_thread_resolution_graphql_query(owner: &str, repo: &str, pr_number: u64) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{pr_number}) {{ \
-         reviewThreads(first:100) {{ nodes {{ isResolved \
-         comments(first:100) {{ nodes {{ databaseId }} }} }} }} }} }} }}"
+        "query($endCursor: String) {{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
+         pullRequest(number:{pr_number}) {{ reviewThreads(first:100, after:$endCursor) {{ \
+         pageInfo {{ hasNextPage endCursor }} \
+         nodes {{ isResolved comments(first:1) {{ nodes {{ databaseId }} }} }} }} }} }} }}"
     )
 }
 
-/// Maps every review comment id to the resolution state of its thread.
+/// Maps the first comment of every review thread to the thread's resolution
+/// state, across every page `gh api graphql --paginate` printed (one JSON
+/// object per page, back to back).
 fn parse_review_thread_resolution(raw: &str) -> Result<HashMap<u64, bool>> {
     use review_threads_types::*;
-    let resp: GhResponse = serde_json::from_str(raw)?;
-    if let Some(error) = resp.errors.first() {
-        anyhow::bail!("GraphQL error: {}", error.message);
+    let mut resolution = HashMap::new();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
+        let page = page.context("parsing review threads")?;
+        if let Some(error) = page.errors.first() {
+            anyhow::bail!("GraphQL error: {}", error.message);
+        }
+        let threads = page
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .map(|pr| pr.review_threads.nodes)
+            .unwrap_or_default();
+        resolution.extend(threads.into_iter().filter_map(|thread| {
+            let first = thread.comments.nodes.first()?;
+            Some((first.database_id, thread.is_resolved))
+        }));
     }
-    let threads = resp
-        .data
-        .and_then(|d| d.repository)
-        .and_then(|r| r.pull_request)
-        .map(|pr| pr.review_threads.nodes)
-        .unwrap_or_default();
-    Ok(threads
-        .into_iter()
-        .flat_map(|thread| {
-            thread
-                .comments
-                .nodes
-                .into_iter()
-                .map(move |c| (c.database_id, thread.is_resolved))
-        })
-        .collect())
+    Ok(resolution)
+}
+
+#[derive(Deserialize)]
+struct GhReviewComment {
+    id: u64,
+    body: String,
+    user: Option<GhReviewCommentUser>,
+    created_at: String,
+    path: Option<String>,
+    line: Option<u64>,
+    #[serde(default = "default_review_comment_side")]
+    side: String,
+    start_line: Option<u64>,
+    in_reply_to_id: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct GhReviewCommentUser {
+    login: String,
+}
+
+fn default_review_comment_side() -> String {
+    "RIGHT".to_string()
+}
+
+/// Builds the notes of a PR from its REST review comments, reading every
+/// array `gh api --paginate` printed: it may print one array per page instead
+/// of a single merged one. A comment takes the resolution state of its
+/// thread, which `resolution` keys by the thread's first comment.
+fn parse_pr_review_comments(
+    raw: &str,
+    resolution: &HashMap<u64, bool>,
+) -> Result<Vec<DiscussionNote>> {
+    let mut notes = Vec::new();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<Vec<GhReviewComment>>() {
+        let page = page.context("parsing PR review comments")?;
+        notes.extend(
+            page.into_iter()
+                .map(|comment| review_comment_note(comment, resolution)),
+        );
+    }
+    Ok(notes)
+}
+
+fn review_comment_note(
+    comment: GhReviewComment,
+    resolution: &HashMap<u64, bool>,
+) -> DiscussionNote {
+    let position = comment.path.map(|path| {
+        let (new_line, old_line) = if comment.side == "LEFT" {
+            (None, comment.line)
+        } else {
+            (comment.line, None)
+        };
+        NotePosition {
+            new_path: Some(path.clone()),
+            old_path: Some(path),
+            new_line,
+            old_line,
+            start_line: comment.start_line,
+            line_range: None,
+        }
+    });
+    let thread_id = comment.in_reply_to_id.unwrap_or(comment.id);
+    let resolved = resolution.get(&thread_id).copied();
+    DiscussionNote {
+        id: comment.id,
+        body: comment.body,
+        author: crate::domain::mr::Author {
+            username: comment.user.map(|u| u.login).unwrap_or_default(),
+        },
+        created_at: comment.created_at,
+        system: false,
+        position,
+        discussion_id: Some(thread_id.to_string()),
+        resolved,
+        // A comment GraphQL does not list under any thread has no known
+        // state; it is shown as a plain note rather than as open.
+        resolvable: Some(resolved.is_some()),
+    }
 }
 
 mod review_threads_types {
@@ -2151,89 +2248,22 @@ impl Backend for GhBackend {
         }
     }
 
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        page_size: usize,
-    ) -> Result<Vec<DiscussionNote>> {
-        let endpoint = format!("/repos/{project}/pulls/{mr_iid}/comments?per_page={page_size}");
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
+        let endpoint = format!("/repos/{project}/pulls/{mr_iid}/comments?per_page=100");
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
         let query_arg = format!(
             "query={}",
             review_thread_resolution_graphql_query(owner, repo, mr_iid)
         );
-        let graphql_args = ["api", "graphql", "-f", query_arg.as_str()];
-        let (raw, raw_threads) = tokio::try_join!(
-            self.raw_api(&endpoint, "GET", None, "Fetching MR Notes"),
+        let comments_args = ["api", "--paginate", endpoint.as_str()];
+        let graphql_args = ["api", "graphql", "--paginate", "-f", query_arg.as_str()];
+        let (raw_comments, raw_threads) = tokio::try_join!(
+            self.run_gh(&comments_args, "Fetching MR Notes"),
             self.run_gh(&graphql_args, "Fetching Review Threads"),
         )?;
         let resolution = parse_review_thread_resolution(&raw_threads)?;
-
-        #[derive(Deserialize)]
-        struct GhComment {
-            id: u64,
-            body: String,
-            user: Option<GhLogin>,
-            created_at: String,
-            path: Option<String>,
-            line: Option<u64>,
-            #[serde(default = "default_side")]
-            side: String,
-            start_line: Option<u64>,
-            in_reply_to_id: Option<u64>,
-        }
-        fn default_side() -> String {
-            "RIGHT".to_string()
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-
-        let gh_comments: Vec<GhComment> = serde_json::from_str(&raw)?;
-        Ok(gh_comments
-            .into_iter()
-            .map(|gc| {
-                let username = gc.user.map(|u| u.login).unwrap_or_default();
-                let position = if let Some(p) = gc.path {
-                    let (new_line, old_line) = if gc.side == "LEFT" {
-                        (None, gc.line)
-                    } else {
-                        (gc.line, None)
-                    };
-                    Some(NotePosition {
-                        new_path: Some(p.clone()),
-                        old_path: Some(p),
-                        new_line,
-                        old_line,
-                        start_line: gc.start_line,
-                        line_range: None,
-                    })
-                } else {
-                    None
-                };
-                let disc_id = gc
-                    .in_reply_to_id
-                    .map(|rid| rid.to_string())
-                    .unwrap_or_else(|| gc.id.to_string());
-                let resolved = resolution.get(&gc.id).copied();
-                DiscussionNote {
-                    id: gc.id,
-                    body: gc.body,
-                    author: crate::domain::mr::Author { username },
-                    created_at: gc.created_at,
-                    system: false,
-                    position,
-                    discussion_id: Some(disc_id),
-                    resolved,
-                    // Past the first 100 threads the state is unknown; such a
-                    // comment is shown as a plain note rather than as open.
-                    resolvable: Some(resolved.is_some()),
-                }
-            })
-            .collect())
+        parse_pr_review_comments(&raw_comments, &resolution)
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -2720,6 +2750,16 @@ impl Backend for GhBackend {
             completed_at: Option<String>,
             #[serde(default, deserialize_with = "deserialize_needs")]
             needs: Vec<String>,
+            #[serde(default)]
+            steps: Vec<GhStep>,
+            #[serde(default)]
+            url: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct GhStep {
+            name: String,
+            conclusion: Option<String>,
         }
 
         let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
@@ -2744,6 +2784,16 @@ impl Backend for GhBackend {
                     (Some(start), Some(end)) => chrono_duration(start, end),
                     _ => None,
                 };
+                let failure_reason = (status == "failed")
+                    .then(|| {
+                        github_job_failure_reason(
+                            j.conclusion.as_deref(),
+                            j.steps
+                                .iter()
+                                .map(|step| (step.name.as_str(), step.conclusion.as_deref())),
+                        )
+                    })
+                    .flatten();
                 Job {
                     id: j.id,
                     status,
@@ -2752,10 +2802,16 @@ impl Backend for GhBackend {
                     // cannot imply semantics that do not exist.
                     stage: String::new(),
                     name: j.name,
+                    api_name: String::new(),
                     matrix: None,
                     duration_seconds: duration,
                     runner: j.runner_name,
                     needs: j.needs,
+                    web_url: j.url,
+                    queued_seconds: None,
+                    failure_reason,
+                    artifact_file_types: Vec::new(),
+                    commit: None,
                 }
             })
             .collect();
@@ -2796,6 +2852,22 @@ impl Backend for GhBackend {
         self.run_gh(
             &["run", "rerun", &pipeline_id.to_string(), "-R", project],
             "Retrying Action",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()> {
+        self.run_gh(
+            &[
+                "run",
+                "rerun",
+                &pipeline_id.to_string(),
+                "--failed",
+                "-R",
+                project,
+            ],
+            "Retrying Failed Jobs",
         )
         .await?;
         Ok(())
@@ -3489,6 +3561,12 @@ impl Backend for GhBackend {
             updated_at: String,
             #[serde(default)]
             status: Option<String>,
+            #[serde(default)]
+            creator: Option<GhCreator>,
+        }
+        #[derive(Deserialize)]
+        struct GhCreator {
+            login: String,
         }
         let deploys: Vec<GhDeploy> = serde_json::from_str(&raw)?;
         Ok(deploys
@@ -3510,9 +3588,77 @@ impl Backend for GhBackend {
                     }),
                 deployable: None,
                 description: d.description,
-                user: None,
+                user: d
+                    .creator
+                    .map(|c| crate::domain::deployments::DeploymentUser { username: c.login }),
             })
             .collect())
+    }
+
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
+        let name = &environment.name;
+        let deployments = self
+            .list_deployments(
+                &Scope::Repository(project.to_string()),
+                STOP_DEPLOYMENT_LOOKBACK,
+                Some(name),
+            )
+            .await?;
+        // GitHub serves an environment from its newest deployment whose
+        // latest status is `success`: a newer failed, pending or status-less
+        // one (such as a rollback no workflow picked up) is not live.
+        for deployment in &deployments {
+            let statuses = self
+                .raw_api(
+                    &format!(
+                        "/repos/{project}/deployments/{}/statuses?per_page=1",
+                        deployment.id
+                    ),
+                    "GET",
+                    None,
+                    "Fetching Deployment Status",
+                )
+                .await?;
+            if parse_latest_deployment_state(&statuses)?.as_deref() != Some("success") {
+                continue;
+            }
+            let endpoint = format!("/repos/{project}/deployments/{}/statuses", deployment.id);
+            let body = serde_json::json!({ "state": "inactive" }).to_string();
+            return self
+                .raw_api(&endpoint, "POST", Some(&body), "Stopping Environment")
+                .await
+                .map(|_| ());
+        }
+        Err(anyhow::anyhow!(
+            "environment {name} has no active deployment to mark inactive"
+        ))
+    }
+
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()> {
+        // By default GitHub verifies every status context on the commit and
+        // refuses the deployment when one is not green. This SHA was already
+        // deployed once, so the check is skipped.
+        let body = serde_json::json!({
+            "ref": deployment.sha,
+            "environment": environment,
+            "auto_merge": false,
+            "required_contexts": [],
+            "description": format!("Rollback to deployment #{}", deployment.id),
+        })
+        .to_string();
+        self.raw_api(
+            &format!("/repos/{project}/deployments"),
+            "POST",
+            Some(&body),
+            "Rolling Back Deployment",
+        )
+        .await
+        .map(|_| ())
     }
 
     // ── Labels / Members / Misc ──
@@ -3739,94 +3885,41 @@ async fn run_gh_raw_api(
     body: Option<&str>,
     desc: &str,
 ) -> Result<String> {
-    let mut cmd_args: Vec<String> = vec!["api".into()];
-    if method != "GET" {
-        cmd_args.push("-X".into());
-        cmd_args.push(method.into());
-    }
-    cmd_args.push(endpoint.into());
-    let cmd_str = format!("gh {}", cmd_args.join(" "));
-    let label = desc.to_uppercase();
-
-    let mut cmd = Command::new("gh");
-    cmd.arg("api");
-    if method != "GET" {
-        cmd.arg("-X");
-        cmd.arg(method);
-    }
     let input = body.filter(|b| !b.is_empty());
-    if input.is_some() {
-        cmd.arg("--input");
-        cmd.arg("-");
+    let mut args = vec!["api"];
+    if method != "GET" {
+        args.extend(["-X", method]);
     }
-    cmd.arg(endpoint);
+    if input.is_some() {
+        args.extend(["--input", "-"]);
+    }
+    args.push(endpoint);
+    let logged = LoggedCommand::start(desc, Invocation::new(Program::Gh, &args).with_stdin(input));
 
-    let output = super::subprocess::output(&mut cmd, input.map(str::as_bytes)).await;
+    let output =
+        super::subprocess::output(Command::new("gh").args(&args), input.map(str::as_bytes)).await;
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     match output {
         Ok(out) => {
             if out.status.success() {
-                let s = String::from_utf8(out.stdout)?;
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{label}: {cmd_str}"),
-                        status: "Success".to_string(),
-                    });
-                }
-                Ok(s)
+                logged.finish(tx.as_ref(), "Success".to_string(), (&out).into());
+                Ok(String::from_utf8(out.stdout)?)
             } else {
-                let mut err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                // `gh api` prints only the HTTP status on stderr; GitHub's reason
-                // (e.g. "Can not approve your own pull request") is in the body on stdout.
-                if let Some(details) = github_error_details(&out.stdout) {
-                    err_msg = format!("{err_msg}: {details}");
-                }
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{label}: {cmd_str}"),
-                        status: format!("Failed: {err_msg}"),
-                    });
-                }
-                anyhow::bail!("gh api failed: {err_msg}")
+                let child_output = ChildOutput::from(&out);
+                let reason = logged.failure_reason(&child_output);
+                logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+                anyhow::bail!("gh api failed: {reason}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{e}");
-            if let Some(ref tx) = tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{label}: {cmd_str}"),
-                    status: format!("Failed: {err_msg}"),
-                });
-            }
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
             Err(e)
         }
     }
-}
-
-fn github_error_details(body: &[u8]) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let details: Vec<String> = value
-        .get("errors")?
-        .as_array()?
-        .iter()
-        .filter_map(|e| {
-            let text = |key| e.get(key).and_then(serde_json::Value::as_str);
-            match (
-                e.as_str().or_else(|| text("message")),
-                text("field"),
-                text("code"),
-            ) {
-                (Some(message), _, _) => Some(message.to_string()),
-                (None, Some(field), Some(code)) => Some(format!("{field} {code}")),
-                _ => None,
-            }
-        })
-        .collect();
-    (!details.is_empty()).then(|| details.join("; "))
 }
 
 /// Compute duration in seconds between two ISO 8601 timestamps.
@@ -3850,23 +3943,36 @@ async fn open_github_url(
     tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     label: &str,
 ) -> anyhow::Result<()> {
+    let logged = LoggedCommand::start(label, Invocation::new(Program::Git, &["web--browse", url]));
     let output = tokio::process::Command::new("git")
         .args(["web--browse", url])
         .output()
         .await;
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    let status = match &output {
-        Ok(out) if out.status.success() => "Success".to_string(),
-        _ => "Success".to_string(),
+    let (status, child_output) = match &output {
+        Ok(out) if out.status.success() => ("Success".to_string(), ChildOutput::from(out)),
+        Ok(out) => {
+            let child_output = ChildOutput::from(out);
+            let reason = logged.failure_reason(&child_output);
+            (format!("Failed: {reason}"), child_output)
+        }
+        Err(error) => (format!("Failed: {error}"), ChildOutput::NOT_STARTED),
     };
-    if let Some(ref tx) = tx {
-        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-            timestamp,
-            command: format!("{label}: git web--browse {url}"),
-            status,
-        });
-    }
+    logged.finish(tx.as_ref(), status, child_output);
     Ok(())
+}
+
+/// Why a failed GitHub job failed: its timeout, else the first failed step.
+/// A job that fails before any step runs (a bad runner label) has neither.
+fn github_job_failure_reason<'a>(
+    conclusion: Option<&str>,
+    mut steps: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Option<String> {
+    if conclusion.is_some_and(|c| c.eq_ignore_ascii_case("timed_out")) {
+        return Some("timed out".to_string());
+    }
+    steps
+        .find(|(_, conclusion)| conclusion.is_some_and(|c| c.eq_ignore_ascii_case("failure")))
+        .map(|(name, _)| format!("step \"{name}\" failed"))
 }
 
 /// Parse the JSON response from `gh api repos/{owner}/{repo}/actions/runs`.
@@ -3906,6 +4012,22 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
         html_url: Option<String>,
         #[serde(default)]
         repository: Option<GhRepo>,
+        #[serde(default)]
+        head_commit: Option<GhHeadCommit>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhHeadCommit {
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        author: Option<GhCommitAuthor>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhCommitAuthor {
+        #[serde(default)]
+        name: String,
     }
 
     #[derive(Deserialize)]
@@ -3951,6 +4073,15 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     .or_else(|| r.actor.and_then(|a| a.login))
                     .unwrap_or_default();
                 let project_path = r.repository.map(|repo| repo.full_name).unwrap_or_default();
+                let commit = r.head_commit.map(|commit| CommitSummary {
+                    title: commit
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_name: commit.author.map(|author| author.name).unwrap_or_default(),
+                });
                 Pipeline {
                     id: r.id,
                     status,
@@ -3966,6 +4097,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     source: r.event,
                     project_path,
                     web_url: r.html_url,
+                    commit,
                 }
             })
             .collect();
@@ -4089,19 +4221,6 @@ mod tests {
         ] {
             assert_eq!(native_detail_args(raw_only), None, "{raw_only}");
         }
-    }
-
-    #[test]
-    fn github_error_details_reads_string_and_object_errors() {
-        let body = br#"{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request",{"resource":"PullRequestReviewComment","code":"custom","message":"line must be part of the diff"},{"resource":"PullRequestReviewComment","field":"in_reply_to","code":"invalid"}],"status":"422"}"#;
-        assert_eq!(
-            github_error_details(body).as_deref(),
-            Some(
-                "Review Can not approve your own pull request; line must be part of the diff; in_reply_to invalid"
-            )
-        );
-        assert_eq!(github_error_details(br#"{"message":"Not Found"}"#), None);
-        assert_eq!(github_error_details(b"not json"), None);
     }
 
     #[test]
@@ -4804,6 +4923,47 @@ mod tests {
     }
 
     #[test]
+    fn run_head_commit_becomes_the_pipeline_commit_headline_and_author() {
+        let json = r#"{"workflow_runs": [{
+            "id": 7, "status": "completed", "conclusion": "failure", "updated_at": "",
+            "head_commit": {
+                "message": "Fix flaky login test\n\nThe retry hid a race.",
+                "author": { "name": "Ada Lovelace", "email": "ada@example.com" }
+            }
+        }]}"#;
+
+        let pipelines = parse_github_actions_runs(json).unwrap();
+
+        assert_eq!(
+            pipelines[0].commit,
+            Some(CommitSummary {
+                title: "Fix flaky login test".to_string(),
+                author_name: "Ada Lovelace".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn failed_job_reason_names_its_timeout_or_its_first_failed_step() {
+        let steps = [
+            ("Checkout", Some("success")),
+            ("Run tests", Some("failure")),
+            ("Upload", Some("failure")),
+        ];
+        let reason = |conclusion| github_job_failure_reason(conclusion, steps.iter().copied());
+
+        assert_eq!(
+            reason(Some("failure")).as_deref(),
+            Some("step \"Run tests\" failed")
+        );
+        assert_eq!(reason(Some("timed_out")).as_deref(), Some("timed out"));
+        assert_eq!(
+            github_job_failure_reason(Some("failure"), std::iter::empty()),
+            None
+        );
+    }
+
+    #[test]
     fn test_parse_org_repos() {
         let json = r#"[
             {"full_name": "myorg/repo1"},
@@ -4868,16 +5028,64 @@ mod tests {
     }
 
     #[test]
-    fn review_thread_resolution_maps_every_comment_to_its_thread_state() {
-        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
-            {"isResolved":true,"comments":{"nodes":[{"databaseId":11},{"databaseId":12}]}},
+    fn review_thread_resolution_reads_every_page_gh_paginate_prints() {
+        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[
+            {"isResolved":true,"comments":{"nodes":[{"databaseId":11}]}},
             {"isResolved":false,"comments":{"nodes":[{"databaseId":21}]}}
+        ]}}}}}
+        {"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
+            {"isResolved":false,"comments":{"nodes":[{"databaseId":31}]}},
+            {"isResolved":true,"comments":{"nodes":[]}}
         ]}}}}}"#;
         let map = parse_review_thread_resolution(raw).unwrap();
-        assert_eq!(map.get(&11), Some(&true));
-        assert_eq!(map.get(&12), Some(&true));
-        assert_eq!(map.get(&21), Some(&false));
-        assert_eq!(map.get(&99), None);
+        assert_eq!(map, HashMap::from([(11, true), (21, false), (31, false)]));
+    }
+
+    #[test]
+    fn review_thread_resolution_graphql_error_on_a_later_page_is_an_error() {
+        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+            {"data":null,"errors":[{"message":"API rate limit exceeded"}]}"#;
+        let err = parse_review_thread_resolution(raw).unwrap_err();
+        assert_eq!(err.to_string(), "GraphQL error: API rate limit exceeded");
+    }
+
+    fn review_comment_json(id: u64, in_reply_to_id: Option<u64>) -> String {
+        let in_reply_to_id = in_reply_to_id.map_or("null".to_string(), |id| id.to_string());
+        format!(
+            r#"{{"id":{id},"body":"comment {id}","user":{{"login":"octo"}},
+            "created_at":"2026-07-06T09:00:00Z","path":"src/lib.rs","line":3,
+            "side":"RIGHT","start_line":null,"in_reply_to_id":{in_reply_to_id}}}"#
+        )
+    }
+
+    #[test]
+    fn review_comments_on_every_page_take_their_threads_resolution() {
+        let raw = format!(
+            "[{},{}]\n[{},{},{}]",
+            review_comment_json(11, None),
+            review_comment_json(21, None),
+            review_comment_json(12, Some(11)),
+            review_comment_json(31, None),
+            review_comment_json(41, None),
+        );
+        let resolution = HashMap::from([(11, true), (21, false), (31, false)]);
+        let notes = parse_pr_review_comments(&raw, &resolution).unwrap();
+        let states: Vec<_> = notes
+            .iter()
+            .map(|n| (n.id, n.discussion_id.as_deref(), n.resolvable, n.resolved))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                (11, Some("11"), Some(true), Some(true)),
+                (21, Some("21"), Some(true), Some(false)),
+                (12, Some("11"), Some(true), Some(true)),
+                (31, Some("31"), Some(true), Some(false)),
+                (41, Some("41"), Some(false), None),
+            ]
+        );
     }
 
     #[test]

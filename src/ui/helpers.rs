@@ -431,6 +431,16 @@ pub(crate) fn append_job_summaries(
     }
 }
 
+/// Badge text and color of a terminal-log entry's status.
+pub(crate) fn log_status_badge(status: &str, icons: &Icons, theme: &Theme) -> (String, Color) {
+    match status {
+        "Success" => (format!("{} SUCCESS", icons.status_success), theme.green),
+        "Running" => (format!("{} RUNNING", icons.status_running), theme.yellow),
+        s if s.starts_with("Failed") => (format!("{} FAILED ", icons.status_failed), theme.red),
+        _ => (format!("{} PENDING", icons.status_pending), theme.yellow),
+    }
+}
+
 pub(crate) fn build_log_line(
     cmd: &crate::command_log::TerminalCommand,
     width: usize,
@@ -446,25 +456,11 @@ pub(crate) fn build_log_line(
         cmd.timestamp.clone()
     };
 
-    let icons = crate::config::ICONS.read().unwrap();
-    let (status_text, status_color) = match cmd.status.as_str() {
-        "Success" => (
-            format!("{} SUCCESS", icons.status_success),
-            THEME.read().unwrap().green,
-        ),
-        "Running" => (
-            format!("{} RUNNING", icons.status_running),
-            THEME.read().unwrap().yellow,
-        ),
-        s if s.starts_with("Failed") => (
-            format!("{} FAILED ", icons.status_failed),
-            THEME.read().unwrap().red,
-        ),
-        _ => (
-            format!("{} PENDING", icons.status_pending),
-            THEME.read().unwrap().yellow,
-        ),
-    };
+    let (status_text, status_color) = log_status_badge(
+        &cmd.status,
+        &crate::config::ICONS.read().unwrap(),
+        &THEME.read().unwrap(),
+    );
 
     let err_detail = if cmd.status.starts_with("Failed: ") {
         Some(&cmd.status[8..])
@@ -661,6 +657,24 @@ pub(crate) fn badge_style_for(
                 false,
                 Some(format!(" {} READ ", icons.todo_read)),
             ),
+            "available" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} AVAILABLE ", icons.state_open)),
+            ),
+            "stopping" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} STOPPING ", icons.status_pending)),
+            ),
+            "stopped" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} STOPPED ", icons.state_closed)),
+            ),
             _ => (theme.text_normal, None, false, None),
         },
         "Type" => match val {
@@ -707,6 +721,24 @@ pub(crate) fn badge_style_for(
                 active_bg(theme.yellow_bg),
                 true,
                 Some(format!(" {} PENDING ", icons.status_pending)),
+            ),
+            "created" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} CREATED ", icons.status_pending)),
+            ),
+            "blocked" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} BLOCKED ", icons.status_pending)),
+            ),
+            "skipped" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} SKIPPED ", icons.status_canceled)),
             ),
             "canceled" | "cancelled" => (
                 theme.text_muted,
@@ -929,7 +961,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: Vec::new(),
+            ..Default::default()
         }
     }
 

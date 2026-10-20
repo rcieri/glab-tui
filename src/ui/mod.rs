@@ -7,6 +7,7 @@ pub(crate) mod modal;
 mod overlays;
 mod review_threads;
 mod tabs;
+mod terminal_inspector;
 
 use ratatui::{
     Frame,

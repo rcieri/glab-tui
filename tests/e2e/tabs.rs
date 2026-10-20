@@ -591,6 +591,70 @@ fn test_terminal_log_filters_with_search_and_clears() {
         "the clear key empties the log: {text}"
     );
 }
+
+/// A failed command can be found with the status filter, inspected in full
+/// (command line and the CLI's stderr), and run again from the inspector.
+#[test]
+fn test_terminal_inspects_filters_and_reruns_a_failed_command() {
+    let mut session =
+        TestSession::with_envs(false, 30, 160, &[("TEST_GLAB_FAIL_MATCH", "mr list")]);
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"l");
+    session
+        .wait_for_cli_call("mr list", 5000)
+        .expect("the MR fetch runs and fails");
+    session.send_input(b"hh");
+    session
+        .wait_for_screen_contains("┌ Terminal ─", 5000)
+        .expect("the Terminal tab opens");
+
+    session.press_keys(b"s");
+    session
+        .wait_for_screen_contains("┌ Terminal · Errors [", 5000)
+        .expect("the title names the status filter");
+    session
+        .wait_for_screen_contains("FAILED", 5000)
+        .expect("the failed MR fetch is listed under Errors");
+    let text = session.emulator.get_text();
+    assert!(
+        !text.contains("SUCCESS"),
+        "the Errors filter hides successful commands: {text}"
+    );
+
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("Command Details", 5000)
+        .expect("Enter opens the inspector");
+    session
+        .wait_for_screen_contains("mock: 404 Not Found", 5000)
+        .expect("the inspector shows the command's stderr");
+    let text = session.emulator.get_text();
+    assert!(text.contains("Command    glab mr list"), "{text}");
+    assert!(text.contains("Exit code  1"), "{text}");
+
+    let runs_before = session.get_cli_calls().matches("mr list").count();
+    session.press_keys(b"r");
+    session
+        .wait_for_screen_contains("Re-run Command", 5000)
+        .expect("re-running asks for confirmation");
+    session.press_keys(b"\r");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while session.get_cli_calls().matches("mr list").count() <= runs_before {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the confirmed re-run never called glab:\n{}",
+            session.get_cli_calls()
+        );
+        session.settle(50);
+    }
+
+    session.press_keys(b"\x1b");
+    session
+        .wait_for_screen_contains("RERUN", 5000)
+        .expect("the re-run is logged as its own entry");
+}
 // --- Tier 1: Feature Coverage (5 cases) ---
 
 #[test]

@@ -82,6 +82,10 @@ fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
 /// Offline before showing every runner again.
 #[test]
 fn test_runners_preview_shows_metadata_and_s_cycles_the_status_filter() {
+    std::panic::set_hook(Box::new(|info| {
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr(), "RUNNERS_DEBUG {info}");
+    }));
     let mut session =
         TestSession::with_config_and_args(false, 40, 180, Some(ASCII_ICONS), &["--tab", "runners"]);
 

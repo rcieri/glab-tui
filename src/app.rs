@@ -7215,18 +7215,26 @@ impl App {
         }
     }
 
-    /// Recompute `milestone_progress_cache` from `issues.items`. Walks the
-    /// issue list once and groups by `issue.milestone.iid`, counting closed
-    /// vs total. Issues without a milestone (or with iid == 0) are skipped.
-    /// Cheap enough to call on every IssuesFetched and on cache load.
+    /// Recompute `milestone_progress_cache`. Prefers the authoritative per-milestone
+    /// issue lists in `milestone_issues_cache` where available, and supplements from
+    /// `issues.items` for any milestones not yet loaded into `milestone_issues_cache`.
+    /// Cheap enough to call on every IssuesFetched, MilestonesFetched, and cache load.
     pub fn rebuild_milestone_progress_cache(&mut self) {
         let mut map: std::collections::HashMap<u64, (usize, usize)> =
             std::collections::HashMap::new();
+        for (&iid, issues) in &self.milestone_issues_cache {
+            if iid == 0 {
+                continue;
+            }
+            let total = issues.len();
+            let closed = issues.iter().filter(|i| i.state == "closed").count();
+            map.insert(iid, (closed, total));
+        }
         for issue in &self.issues.items {
             let Some(m) = issue.milestone.as_ref() else {
                 continue;
             };
-            if m.iid == 0 {
+            if m.iid == 0 || self.milestone_issues_cache.contains_key(&m.iid) {
                 continue;
             }
             let entry = map.entry(m.iid).or_insert((0, 0));
@@ -8541,6 +8549,30 @@ mod tests {
         ];
         app.rebuild_milestone_progress_cache();
         assert_eq!(app.milestone_progress_cache.get(&7), Some(&(3, 5)));
+        assert_eq!(app.milestone_progress_cache.get(&8), Some(&(0, 1)));
+    }
+
+    #[test]
+    fn rebuild_milestone_progress_cache_prefers_milestone_issues_cache() {
+        let mut app = App::default();
+        // General issues tab only has 1 issue for milestone 7
+        app.issues.items = vec![
+            issue_with_milestone(101, "opened", 7),
+            issue_with_milestone(110, "opened", 8),
+        ];
+        // But milestone_issues_cache has the authoritative full list for milestone 7
+        app.milestone_issues_cache.insert(
+            7,
+            vec![
+                issue_with_milestone(101, "opened", 7),
+                issue_with_milestone(102, "closed", 7),
+                issue_with_milestone(103, "closed", 7),
+            ],
+        );
+        app.rebuild_milestone_progress_cache();
+        // Milestone 7 reflects authoritative cache: (2 closed, 3 total)
+        assert_eq!(app.milestone_progress_cache.get(&7), Some(&(2, 3)));
+        // Milestone 8 falls back to issues.items: (0 closed, 1 total)
         assert_eq!(app.milestone_progress_cache.get(&8), Some(&(0, 1)));
     }
 

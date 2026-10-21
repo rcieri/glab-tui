@@ -967,7 +967,7 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo nextest run --test e2e`, which needs `cargo-nextest`).
 
 ### Development & Tasks (`just`)
 
@@ -983,7 +983,7 @@ Available recipes:
 - `just fmt` / `just fmt-check` — format code or verify formatting
 - `just lint` — run Clippy with `-Dwarnings`
 - `just test` — run unit tests (`cargo test --lib --bin glab-tui`)
-- `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
+- `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e`, requires `cargo-nextest`)
 - `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
 - `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
 - `just check` — run the full CI check matrix locally

@@ -87,6 +87,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories), `review` (read threads and post review comments as JSON, for scripts and agents)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 38 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
+- **Sidebar or top-bar navigation** — set `[ui] nav_position = "top"` in `config.toml` to replace the left sidebar with a horizontal, clickable tab bar
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
@@ -291,6 +292,14 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # the glyphs fall back to other fonts, often double-width, and borders and
 # columns drift out of line. "ascii" draws every icon as one ASCII character.
 # icons = "nerd"
+
+# Layout. nav_position = "top" swaps the left sidebar for a horizontal tab bar
+# across the top of the workspace (it scrolls to keep the active tab visible).
+# [ui]
+# nav_position = "left"      # left | top
+# sidebar_width = 22         # left nav only
+# sidebar_visible = true     # false hides the navigation in either position
+# terminal_pane_visible = true
 
 # Override individual colors (takes precedence over theme_preset)
 # [theme]

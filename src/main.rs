@@ -373,7 +373,15 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                 }
             }
 
-            // Fallback: sidebar / content clicks
+            // Fallback: nav / content clicks
+            if let Some(&(_, tab)) = app
+                .top_nav_hits
+                .iter()
+                .find(|(r, _)| rect_contains(*r, row, col))
+            {
+                app.active_tab = tab;
+                return;
+            }
             if let Some(sidebar_rect) = app.sidebar_rect {
                 if rect_contains(sidebar_rect, row, col) {
                     let tab_idx = (row - sidebar_rect.y - 1) as usize;

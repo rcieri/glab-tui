@@ -1805,9 +1805,20 @@ fn def_command_timeout_seconds() -> u64 {
     120
 }
 
+/// Where the tab navigation is drawn: a vertical sidebar on the left or a
+/// horizontal tab bar across the top of the workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NavPosition {
+    #[default]
+    Left,
+    Top,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
+    pub nav_position: NavPosition,
     pub sidebar_width: u16,
     pub sidebar_visible: bool,
     pub terminal_pane_visible: bool,
@@ -1816,6 +1827,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
+            nav_position: NavPosition::default(),
             sidebar_width: 22,
             sidebar_visible: true,
             terminal_pane_visible: true,
@@ -2138,9 +2150,16 @@ inspect_command = "Enter"
 rerun_command = "r"
 cycle_status_filter = "s"
 
-# Tabs to disable/hide from the sidebar.
+# Tabs to disable/hide from the navigation.
 # Uncomment to disable specific tabs:
 # disabled_tabs = ["Runners", "Terminal"]
+
+# Layout options
+# [ui]
+# nav_position = "left"  # "left" (sidebar) or "top" (tab bar)
+# sidebar_width = 22
+# sidebar_visible = true  # hides the sidebar or top tab bar
+# terminal_pane_visible = true
 
 # Per-pane column config (unset = show all columns)
 # [issues]
@@ -2516,6 +2535,14 @@ pub fn set_theme_preset(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_nav_position_parses_and_defaults_to_left() {
+        assert_eq!(UiConfig::default().nav_position, NavPosition::Left);
+        let ui: UiConfig = toml::from_str("nav_position = \"top\"").unwrap();
+        assert_eq!(ui.nav_position, NavPosition::Top);
+        assert_eq!(ui.sidebar_width, 22);
+    }
 
     #[test]
     fn ascii_icon_set_uses_only_single_width_ascii() {

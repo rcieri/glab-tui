@@ -4038,6 +4038,8 @@ pub struct App {
     >,
     pub column_filter_context: Option<(Tab, String)>,
     pub sidebar_rect: Option<Rect>,
+    /// Click targets for each tab label when navigation is drawn as a top tab bar.
+    pub top_nav_hits: Vec<(Rect, Tab)>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
@@ -4196,6 +4198,7 @@ impl Default for App {
             column_filters: std::collections::HashMap::new(),
             column_filter_context: None,
             sidebar_rect: None,
+            top_nav_hits: Vec::new(),
             content_rect: None,
             detail_rect: None,
             overlay_stack: vec![],

@@ -205,6 +205,70 @@ fn merge_syntax_with_fuzzy<'a>(
     result
 }
 
+/// Draw the horizontal tab bar used when `ui.nav_position = "top"` and return
+/// the click target of every visible tab label. When the labels overflow the
+/// bar, the visible window is shifted so the active tab is always shown.
+fn render_top_nav(f: &mut Frame, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+    let theme = THEME.read().unwrap();
+    let kind = app.kind();
+    let tabs = app.available_tabs();
+    let labels: Vec<String> = tabs
+        .iter()
+        .map(|t| format!(" {} ", t.title(kind).to_uppercase()))
+        .collect();
+    let widths: Vec<u16> = labels.iter().map(|l| l.chars().count() as u16).collect();
+    const GAP: u16 = 1;
+
+    // Pick the first visible tab so that the active one fits in the bar.
+    let active = tabs.iter().position(|t| *t == app.active_tab).unwrap_or(0);
+    let span_width = |from: usize, to: usize| -> u16 {
+        widths[from..=to].iter().sum::<u16>() + GAP * (to - from) as u16
+    };
+    let mut start = 0;
+    while start < active && span_width(start, active) > area.width {
+        start += 1;
+    }
+
+    let mut spans = Vec::new();
+    let mut hits = Vec::new();
+    let mut x = area.x;
+    let right = area.x + area.width;
+    for (i, (tab, label)) in tabs.iter().zip(labels).enumerate().skip(start) {
+        if i > start {
+            if x + GAP > right {
+                break;
+            }
+            spans.push(Span::raw(" ".repeat(GAP as usize)));
+            x += GAP;
+        }
+        let w = widths[i].min(right - x);
+        if w == 0 {
+            break;
+        }
+        let style = if *tab == app.active_tab {
+            Style::default()
+                .bg(theme.border_focused)
+                .fg(theme.highlight_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_muted)
+        };
+        let text: String = label.chars().take(w as usize).collect();
+        spans.push(Span::styled(text, style));
+        hits.push((Rect::new(x, area.y, w, 1), *tab));
+        x += w;
+    }
+
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg)),
+        area,
+    );
+    hits
+}
+
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let cursor_marker = format!(" {} ", ICONS.read().unwrap().pointer);
@@ -353,7 +417,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Middle: Sidebar | Main Area | Preview Area
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
-    let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
+    let nav_top = app.config.ui.nav_position == crate::config::NavPosition::Top;
+    let sidebar_width = if !nav_top && size.width >= 80 && app.config.ui.sidebar_visible {
         Constraint::Length(app.config.ui.sidebar_width)
     } else {
         Constraint::Length(0)
@@ -372,8 +437,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // When an edit/create menu is active, force the detail pane to full-zoom
     // (exactly like the preview's zoomed state) so the form fills the workspace.
     let edit_zoomed = app.edit_menu.is_some();
+    let zoomed = (app.details_zoomed && can_zoom) || edit_zoomed;
 
-    let middle_chunks_raw = if (app.details_zoomed && can_zoom) || edit_zoomed {
+    // Top navigation: carve a one-row tab bar off the top of the workspace.
+    let (top_nav_rect, workspace) = if nav_top && app.config.ui.sidebar_visible && !zoomed {
+        let v = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(chunks[1]);
+        (v[0], v[1])
+    } else {
+        (Rect::default(), chunks[1])
+    };
+
+    let middle_chunks_raw = if zoomed {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -381,17 +458,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Constraint::Length(0),
                 Constraint::Min(0),
             ])
-            .split(chunks[1])
+            .split(workspace)
     } else if app.active_tab == Tab::Terminal {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([sidebar_width, Constraint::Min(0), Constraint::Length(0)])
-            .split(chunks[1])
+            .split(workspace)
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([sidebar_width, Constraint::Min(0), details_width])
-            .split(chunks[1])
+            .split(workspace)
     };
     let [sidebar_rect, content_rect, mut detail_rect] = [
         middle_chunks_raw[0],
@@ -461,6 +538,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ),
     );
     f.render_widget(sidebar, sidebar_rect);
+    app.top_nav_hits = render_top_nav(f, app, top_nav_rect);
 
     // Main Area Title
     // Inside a pipeline descent the tab name alone no longer says where you
@@ -1934,6 +2012,65 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        buffer
+            .content()
+            .chunks(buffer.area.width as usize)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn top_nav_renders_tab_bar_and_registers_click_targets() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.active_tab = Tab::MergeRequests;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        let rows = buffer_rows(&terminal);
+        assert!(!rows.iter().any(|r| r.contains("Navigation")));
+        let nav_row = &rows[2];
+        assert!(nav_row.contains("ISSUES"), "{nav_row}");
+        assert_eq!(app.sidebar_rect.map(|r| r.width), Some(0));
+        let (hit, _) = app
+            .top_nav_hits
+            .iter()
+            .find(|(_, t)| *t == Tab::MergeRequests)
+            .expect("active tab has a click target");
+        assert_eq!(hit.y, 2);
+    }
+
+    #[test]
+    fn top_nav_scrolls_to_keep_active_tab_visible() {
+        let mut terminal = Terminal::new(TestBackend::new(60, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.active_tab = *app.available_tabs().last().unwrap();
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        assert!(app.top_nav_hits.iter().any(|(_, t)| *t == app.active_tab));
+        assert!(app.top_nav_hits.iter().all(|(r, _)| r.right() <= 60));
+    }
+
+    #[test]
+    fn left_nav_is_default_and_registers_no_top_targets() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        assert!(app.top_nav_hits.is_empty());
+        assert!(
+            buffer_rows(&terminal)
+                .iter()
+                .any(|r| r.contains("Navigation"))
+        );
+    }
 
     #[test]
     fn error_toast_strips_escape_sequences_from_cli_stderr() {

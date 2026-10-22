@@ -228,6 +228,7 @@ pub enum CommandPane {
     MergeRequests,
     Pipelines,
     Jobs,
+    Branches,
     /// The MR/PR diff view, which is not a tab.
     Diff,
 }
@@ -235,11 +236,12 @@ pub enum CommandPane {
 impl CommandPane {
     /// Pane-specific tables first: on a shared key the more specific binding
     /// wins over a universal one.
-    const LOOKUP_ORDER: [CommandPane; 6] = [
+    const LOOKUP_ORDER: [CommandPane; 7] = [
         CommandPane::Issues,
         CommandPane::MergeRequests,
         CommandPane::Pipelines,
         CommandPane::Jobs,
+        CommandPane::Branches,
         CommandPane::Diff,
         CommandPane::Universal,
     ];
@@ -251,6 +253,7 @@ impl CommandPane {
             CommandPane::MergeRequests => "custom_keybindings.mrs",
             CommandPane::Pipelines => "custom_keybindings.pipelines",
             CommandPane::Jobs => "custom_keybindings.jobs",
+            CommandPane::Branches => "custom_keybindings.branches",
             CommandPane::Diff => "custom_keybindings.diff",
         }
     }
@@ -278,6 +281,7 @@ impl CommandPane {
             CommandPane::Jobs => &[
                 "RepoName", "RepoPath", "JobId", "JobName", "Stage", "Status",
             ],
+            CommandPane::Branches => &["RepoName", "RepoPath", "BranchName", "CommitSha"],
             CommandPane::Diff => &[
                 "RepoName",
                 "RepoPath",
@@ -299,6 +303,7 @@ impl CommandPane {
             CommandPane::MergeRequests => tab == Tab::MergeRequests,
             CommandPane::Pipelines => tab == Tab::Pipelines,
             CommandPane::Jobs => tab == Tab::Jobs,
+            CommandPane::Branches => tab == Tab::Branches,
             CommandPane::Diff => false,
         }
     }
@@ -311,6 +316,7 @@ impl CommandPane {
             CommandPane::MergeRequests => &tables.mrs,
             CommandPane::Pipelines => &tables.pipelines,
             CommandPane::Jobs => &tables.jobs,
+            CommandPane::Branches => &tables.branches,
             CommandPane::Diff => &tables.diff,
         }
     }

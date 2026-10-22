@@ -19,7 +19,7 @@ use std::hash::Hash;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Rect};
 use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Row as TableRow, Table, TableState};
 
 use crate::config::{Icons, Theme};
@@ -253,6 +253,10 @@ impl<C: ColumnDef> ListTab<C> {
         self.table_state = TableState::default();
     }
 
+    pub fn cursor_pos(&self) -> Option<usize> {
+        self.cursor_pos
+    }
+
     pub fn cursor_row(&self) -> Option<&C::Row> {
         self.cursor.as_ref().and_then(|key| self.get(key))
     }
@@ -292,8 +296,9 @@ impl<C: ColumnDef> ListTab<C> {
         values.into_iter().collect()
     }
 
-    pub fn render(&mut self, f: &mut Frame, area: Rect, table: TableContext) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect, table: TableContext<'_, C::Row>) {
         let columns: Vec<C> = self.visible_columns().collect();
+        let show_checked_column = table.is_checked.is_some();
         let rows = self.view.iter().enumerate().map(|(pos, &idx)| {
             let is_highlighted = self.cursor_pos == Some(pos);
             let row_style = if is_highlighted {
@@ -309,25 +314,44 @@ impl<C: ColumnDef> ListTab<C> {
                 row_style,
             };
             let row = &self.items[idx];
-            TableRow::new(columns.iter().map(|col| col.cell(row, &ctx)))
-                .style(row_style)
-                .height(1)
+            let mut cells: Vec<Cell> = columns.iter().map(|col| col.cell(row, &ctx)).collect();
+            if let Some(is_checked_fn) = table.is_checked {
+                let is_checked = is_checked_fn(row);
+                let bar_cell = Cell::from(Span::styled(
+                    " ",
+                    if is_checked {
+                        Style::default().bg(table.theme.checked_bg)
+                    } else {
+                        Style::default()
+                    },
+                ));
+                cells.insert(0, bar_cell);
+            }
+            TableRow::new(cells).style(row_style).height(1)
         });
         let sort = self
             .spec
             .as_ref()
             .and_then(|spec| spec.sort.as_ref())
             .map(|(col, ascending)| (col.as_str(), *ascending));
-        let header = TableRow::new(columns.iter().map(|col| {
-            let label = sort_header_label(col.label(), sort, table.icons);
-            Cell::from(Line::from(label).alignment(col.header_alignment()))
-        }))
-        .style(table.header_style)
-        .height(1);
+        let mut header_cells: Vec<Cell> = columns
+            .iter()
+            .map(|col| {
+                let label = sort_header_label(col.label(), sort, table.icons);
+                Cell::from(Line::from(label).alignment(col.header_alignment()))
+            })
+            .collect();
         let mut widths: Vec<Constraint> = columns.iter().map(|col| col.width()).collect();
+        if show_checked_column {
+            header_cells.insert(0, Cell::from(""));
+            widths.insert(0, Constraint::Length(1));
+        }
         if widths.is_empty() {
             widths.push(Constraint::Min(0));
         }
+        let header = TableRow::new(header_cells)
+            .style(table.header_style)
+            .height(1);
         let widget = Table::new(rows, widths)
             .header(header)
             .block(table.block)
@@ -339,13 +363,14 @@ impl<C: ColumnDef> ListTab<C> {
 }
 
 /// Everything a list-tab table needs from the frame being drawn.
-pub struct TableContext<'a> {
+pub struct TableContext<'a, R = ()> {
     pub block: Block<'a>,
     pub header_style: Style,
     pub highlight_style: Style,
     pub theme: &'a Theme,
     pub icons: &'a Icons,
     pub query: &'a str,
+    pub is_checked: Option<&'a dyn Fn(&R) -> bool>,
 }
 
 fn build_view<C: ColumnDef>(items: &[C::Row], spec: &ViewSpec) -> Vec<usize> {

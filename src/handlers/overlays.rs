@@ -294,6 +294,8 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteBranch(branch_name) => {
+            app.selected_branches.remove(&branch_name);
+            app.branches.retain(|b| b.name != branch_name);
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res =
@@ -309,6 +311,35 @@ fn run_submit_action(
                             Err(format!("Failed to delete branch: {e}")),
                         ));
                     }
+                }
+            });
+        }
+        crate::app::ConfirmAction::BulkDeleteBranches(branch_names) => {
+            app.selected_branches.clear();
+            app.branches.retain(|b| !branch_names.contains(&b.name));
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut errors = Vec::new();
+                for (i, branch_name) in branch_names.iter().enumerate() {
+                    if i > 0 {
+                        crate::backend::rate_limit::pace_bulk_operation().await;
+                    }
+                    if let Err(e) =
+                        crate::domain::branches::delete_branch(&client, &project_path, branch_name)
+                            .await
+                    {
+                        errors.push(format!("{branch_name}: {e}"));
+                    }
+                }
+                if errors.is_empty() {
+                    let _ = tx.send(Event::CommandCompleted(crate::app::Tab::Branches, Ok(())));
+                } else {
+                    let _ = tx.send(Event::CommandCompleted(
+                        crate::app::Tab::Branches,
+                        Err(format!("Failed to delete branches: {}", errors.join("; "))),
+                    ));
                 }
             });
         }

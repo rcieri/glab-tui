@@ -971,6 +971,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             crate::app::ConfirmAction::DeleteMilestone(_)
             | crate::app::ConfirmAction::DeleteRelease(_)
             | crate::app::ConfirmAction::DeleteBranch(_)
+            | crate::app::ConfirmAction::BulkDeleteBranches(_)
             | crate::app::ConfirmAction::DeleteIssue(_)
             | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
             crate::app::ConfirmAction::CloseIssue(_)
@@ -1990,6 +1991,35 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Branches",
             key: d(app.config.keybindings.branches.delete_branch.clone()),
             action: "Delete selected branch",
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.checkout_branch.clone()),
+            action: "Checkout selected branch",
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.create_mr.clone()),
+            action: if is_github {
+                "Create Pull Request from selected branch"
+            } else {
+                "Create Merge Request from selected branch"
+            },
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.select_branch.clone()),
+            action: "Toggle branch selection",
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.selection_toggle.clone()),
+            action: "Toggle visual select mode",
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.select_all.clone()),
+            action: "Select all visible branches",
         },
         Shortcut {
             category: "Branches",

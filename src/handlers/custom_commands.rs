@@ -512,6 +512,43 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
                 .map(|job| job_target(app, job, &mut checkouts))
                 .collect()
         }
+        CommandPane::Branches => {
+            let branches: Vec<&crate::domain::branches::Branch> =
+                if app.selected_branches.is_empty() {
+                    let branch = app
+                        .branches
+                        .cursor_row()
+                        .ok_or_else(|| "no branch is selected".to_string())?;
+                    vec![branch]
+                } else {
+                    let loaded: Vec<_> = app
+                        .branches
+                        .items()
+                        .iter()
+                        .filter(|b| app.selected_branches.contains(&b.name))
+                        .collect();
+                    let loaded_names: std::collections::HashSet<&str> =
+                        loaded.iter().map(|b| b.name.as_str()).collect();
+                    let mut missing: Vec<String> = app
+                        .selected_branches
+                        .iter()
+                        .filter(|name| !loaded_names.contains(name.as_str()))
+                        .cloned()
+                        .collect();
+                    missing.sort();
+                    missing_rows = missing;
+                    let mut sorted = loaded;
+                    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+                    sorted
+                };
+            if branches.is_empty() {
+                return Err("the selected branches are no longer loaded".to_string());
+            }
+            branches
+                .into_iter()
+                .map(|branch| branch_target(app, branch, &mut checkouts))
+                .collect()
+        }
         CommandPane::Diff => vec![Target {
             row: String::new(),
             values: diff_values(app, &mut checkouts)?,
@@ -626,6 +663,25 @@ fn job_target(
     insert_repo_values(&mut values, app, project, checkouts);
     Target {
         row: format!("#{}", job.id),
+        values,
+    }
+}
+
+fn branch_target(
+    app: &App,
+    branch: &crate::domain::branches::Branch,
+    checkouts: &mut CheckoutCache,
+) -> Target {
+    let mut values = TemplateValues::default();
+    values.insert("BranchName", branch.name.clone());
+    values.insert("CommitSha", branch.commit_sha.clone());
+    let project = app
+        .scope
+        .is_repository()
+        .then(|| app.scope.as_str().to_string());
+    insert_repo_values(&mut values, app, project, checkouts);
+    Target {
+        row: branch.name.clone(),
         values,
     }
 }
@@ -1085,6 +1141,54 @@ mod tests {
             Err(
                 "{{.RepoPath}} is unavailable: the group acme has no single repository".to_string()
             )
+        );
+    }
+
+    #[test]
+    fn branches_custom_command_resolves_branch_and_commit_sha() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Branches;
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.branches.set_items(vec![
+            crate::domain::branches::Branch {
+                name: "feat/cool-branch".to_string(),
+                commit_sha: "1234567890abcdef".to_string(),
+                ..Default::default()
+            },
+            crate::domain::branches::Branch {
+                name: "main".to_string(),
+                commit_sha: "fedcba0987654321".to_string(),
+                ..Default::default()
+            },
+        ]);
+        app.sync_list_views();
+
+        // Single cursor target
+        let values = single_values(&app, CommandPane::Branches).unwrap();
+        assert_eq!(
+            render("git checkout {{.BranchName}} # {{.CommitSha}}", &values).as_deref(),
+            Ok("git checkout feat/cool-branch # 1234567890abcdef")
+        );
+
+        // Multi selection
+        app.selected_branches.insert("feat/cool-branch".to_string());
+        app.selected_branches.insert("main".to_string());
+        let selection = targets(&app, CommandPane::Branches).unwrap();
+        assert_eq!(selection.targets.len(), 2);
+        assert_eq!(selection.targets[0].row, "feat/cool-branch");
+        assert_eq!(selection.targets[1].row, "main");
+    }
+
+    #[test]
+    fn branches_custom_command_without_selection_or_cursor_fails() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.branches.set_items(vec![]);
+        app.branches.reset_cursor();
+
+        assert_eq!(
+            single_values(&app, CommandPane::Branches),
+            Err("no branch is selected".to_string())
         );
     }
 

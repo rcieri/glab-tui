@@ -965,13 +965,10 @@ pub(crate) fn build_field_list_items(
                                 ));
                             }
                         } else {
-                            let (val_fg, badge_bg, is_bold, formatted_val) = if (label
-                                == "Approval"
-                                || label == "Mergeable")
-                                && f.tone.is_some()
+                            let (val_fg, badge_bg, is_bold, formatted_val) = if let Some(tone) =
+                                &f.tone
                             {
-                                let (fg, bg, bold) =
-                                    tone_badge_style(f.tone.as_ref().unwrap(), is_selected, &theme);
+                                let (fg, bg, bold) = tone_badge_style(tone, is_selected, &theme);
                                 (fg, bg, bold, None)
                             } else {
                                 crate::ui::helpers::badge_style_for(

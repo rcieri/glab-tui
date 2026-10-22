@@ -57,7 +57,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
 - **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
-- **Bulk editing & Visual Select Mode** — select multiple issues or merge requests with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
+- **Bulk editing & Visual Select Mode** — select multiple issues, merge requests, or branches with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
 - **Custom commands** — bind a key to your own shell command with the highlighted issue, MR/PR or pipeline as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.PipelineId}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
 - **Single-Column Inspector** — unified fullscreen details preview and inline editing with full-width markdown description on top and stacked metadata fields below
 - **Interactive Submit Dialogs** — explicit Submit/Cancel confirmations with configurable options (squash, delete source branch, auto-merge) for mutating actions
@@ -71,7 +71,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Releases** — browse, create, and edit project releases directly in the terminal
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
-- **Branches** — browse branches with default/protected markers; create and delete branches inline
+- **Branches** — browse branches with commit details, ahead/behind status, and default/protected markers; switch/checkout (`C`), create MR/PR from branch (`m`), visual and bulk selection (`Space`, `v`, `Ctrl+a`), create and bulk delete branches inline
 - **Environments & Deployments** — browse environments and their deployment status, walk an environment's deployment history with `Enter`, inspect each deployment's commit, deployer, job and notes, roll back with `R`, stop an environment with `d` and copy its URL with `y`
 - **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status and unified error toasts
 - **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
@@ -370,6 +370,7 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 | `custom_keybindings.issues` | `RepoName`, `RepoPath`, `IssueNumber`, `IssueTitle`, `Author` |
 | `custom_keybindings.pipelines` | `RepoName`, `RepoPath`, `PipelineId`, `Ref`, `Sha` |
 | `custom_keybindings.jobs` | `RepoName`, `RepoPath`, `JobId`, `JobName`, `Stage`, `Status` |
+| `custom_keybindings.branches` | `RepoName`, `RepoPath`, `BranchName`, `CommitSha` |
 | `custom_keybindings.universal` | `RepoName`, `RepoPath` |
 | `custom_keybindings.diff` (diff view) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author`, `FilePath`, `LineNumber` |
 
@@ -383,9 +384,9 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
   command = "lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec 'nvim +{{.LineNumber}} {{.FilePath}}'"
   ```
 - `background = true` runs the command without handing over the terminal: the TUI stays on screen, the command gets no input, its output is not shown, and the Terminal tab logs it when it finishes; a failure toasts its last stderr line (e.g. `lazyworktree` refusing a closed issue). Use it for commands that open their own window or pane, such as `tmux new-window` or `herdr pane split`. Background commands run in their own session without a controlling terminal, so tools that query the terminal through `/dev/tty` (lazyworktree, gh) cannot inject the reply into glab-tui as keypresses. Place new herdr panes with `--pane "$HERDR_PANE_ID"` (glab-tui's own pane): `--current` follows whichever pane is focused in the herdr UI.
-- **Bulk runs:** with issues, MRs/PRs, pipelines or jobs selected (`Space`, or `v` select mode), an `issues`/`mrs`/`pipelines`/`jobs` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
-- Row arguments come from the highlighted issue, MR/PR, pipeline or job. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project. GitHub jobs have no stage, so `{{.Stage}}` is refused there. `JobName` is the full name GitLab or GitHub reports, so a matrix job's (`rspec: [3.2, pg]`, `build (ubuntu, 3.2)`) holds spaces and brackets: pass it as `"$GLAB_TUI_JOB_NAME"`.
-- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_PIPELINE_ID`, `GLAB_TUI_REF`, `GLAB_TUI_SHA`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`, `GLAB_TUI_JOB_ID`, `GLAB_TUI_JOB_NAME`, `GLAB_TUI_STAGE`, `GLAB_TUI_STATUS`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
+- **Bulk runs:** with issues, MRs/PRs, pipelines, jobs, or branches selected (`Space`, or `v` select mode), an `issues`/`mrs`/`pipelines`/`jobs`/`branches` binding runs once per selected item, in number/name order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
+- Row arguments come from the highlighted issue, MR/PR, pipeline, job, or branch. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project. GitHub jobs have no stage, so `{{.Stage}}` is refused there. `JobName` is the full name GitLab or GitHub reports, so a matrix job's (`rspec: [3.2, pg]`, `build (ubuntu, 3.2)`) holds spaces and brackets: pass it as `"$GLAB_TUI_JOB_NAME"`.
+- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_PIPELINE_ID`, `GLAB_TUI_REF`, `GLAB_TUI_SHA`, `GLAB_TUI_BRANCH_NAME`, `GLAB_TUI_COMMIT_SHA`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`, `GLAB_TUI_JOB_ID`, `GLAB_TUI_JOB_NAME`, `GLAB_TUI_STAGE`, `GLAB_TUI_STATUS`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
 - Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
 - Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
@@ -793,7 +794,12 @@ Select items with `Space`, or with `v` and the cursor (yazi-style), then press `
 | Key | Action | Config |
 |---|---|---|
 | `n` | Create a new branch (prompts for name; based on the selected branch) | `create_branch` |
-| `d` | Delete selected branch (with confirmation) | `delete_branch` |
+| `d` | Delete selected branch or bulk delete marked branches (with confirmation) | `delete_branch` |
+| `C` | Checkout / switch to branch | `checkout_branch` |
+| `m` | Create Merge Request / Pull Request from branch | `create_mr` |
+| `Space` | Toggle branch selection | `select_branch` |
+| `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
+| `Ctrl+a` | Select all visible branches | `select_all` |
 | `y` | Copy selected branch name | `copy_branch` |
 | `o` | Open branch in browser | `open_in_browser` |
 

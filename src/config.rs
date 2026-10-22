@@ -1311,6 +1311,16 @@ pub struct KeybindingBranches {
     pub open_in_browser: String,
     #[serde(default = "def_copy_branch")]
     pub copy_branch: String,
+    #[serde(default = "def_checkout_branch")]
+    pub checkout_branch: String,
+    #[serde(default = "def_create_mr_branch")]
+    pub create_mr: String,
+    #[serde(default = "def_select_branch")]
+    pub select_branch: String,
+    #[serde(default = "def_selection_toggle")]
+    pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1408,6 +1418,7 @@ pub struct CustomKeybindingConfig {
     pub pipelines: Vec<CustomKeybinding>,
     /// Run from the Jobs tab, with the highlighted job or every selected one.
     pub jobs: Vec<CustomKeybinding>,
+    pub branches: Vec<CustomKeybinding>,
     /// Panes that take no custom keybindings, kept only to report them.
     #[serde(flatten, skip_serializing)]
     pub unsupported_panes: std::collections::BTreeMap<String, toml::Value>,
@@ -1510,6 +1521,9 @@ keybind_defaults! {
     def_toggle_todo_preview = "p",
     def_create_branch = "n",
     def_delete_branch = "d",
+    def_checkout_branch = "C",
+    def_create_mr_branch = "m",
+    def_select_branch = "Space",
     def_view_deployments = "Enter",
     def_focus_deployments = "Tab",
     def_rollback_deployment = "R",
@@ -1727,6 +1741,11 @@ impl Default for KeybindingBranches {
             delete_branch: def_delete_branch(),
             open_in_browser: def_open_in_browser(),
             copy_branch: def_copy_branch(),
+            checkout_branch: def_checkout_branch(),
+            create_mr: def_create_mr_branch(),
+            select_branch: def_select_branch(),
+            selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
         }
     }
 }
@@ -2119,6 +2138,11 @@ toggle_preview = "p"
 [keybindings.branches]
 create_branch = "n"
 delete_branch = "d"
+checkout_branch = "C"
+create_mr = "m"
+select_branch = "Space"
+selection_toggle = "v"
+select_all = "Ctrl+a"
 
 [keybindings.environments]
 view_deployments = "Enter"
@@ -2735,6 +2759,11 @@ page_size = 250
     #[test]
     fn mr_keybindings_do_not_collide() {
         assert_no_duplicate_bindings("mrs", &Config::default().keybindings.mrs);
+    }
+
+    #[test]
+    fn branches_keybindings_do_not_collide() {
+        assert_no_duplicate_bindings("branches", &Config::default().keybindings.branches);
     }
 
     #[test]

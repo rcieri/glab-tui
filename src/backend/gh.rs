@@ -3443,6 +3443,11 @@ impl Backend for GhBackend {
                 name: b.name,
                 can_push: false,
                 commit_sha: b.commit.as_ref().map(|c| c.sha.clone()).unwrap_or_default(),
+                commit_message: None,
+                author_name: None,
+                author_email: None,
+                commit_date: None,
+                ahead_behind: None,
             })
             .collect();
         Ok(branches)

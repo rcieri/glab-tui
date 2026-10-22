@@ -6188,17 +6188,7 @@ impl App {
         }
         let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
         let next_index = (current_index + 1) % tabs.len();
-        self.active_tab = tabs[next_index];
-        self.selected_pipelines.clear();
-        self.selected_jobs.clear();
-        self.selected_issues.clear();
-        self.selected_mrs.clear();
-        self.selected_todos.clear();
-        self.select_mode = false;
-        self.select_anchor = None;
-        self.details_zoomed = false;
-        self.detail_visible = false;
-        self.update_filter_selection();
+        self.switch_to_tab(tabs[next_index]);
     }
 
     pub fn previous_tab(&mut self) {
@@ -6212,7 +6202,13 @@ impl App {
         } else {
             current_index - 1
         };
-        self.active_tab = tabs[prev_index];
+        self.switch_to_tab(tabs[prev_index]);
+    }
+
+    /// Make `tab` active and drop the per-tab selection and preview state, as
+    /// every tab switch (keyboard or mouse) does.
+    pub fn switch_to_tab(&mut self, tab: Tab) {
+        self.active_tab = tab;
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
         self.selected_issues.clear();

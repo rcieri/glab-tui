@@ -429,6 +429,39 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
 /// The `tx` parameter is accepted (not consumed) so existing keypress handler
 /// call sites keep passing their sender without churn; the dispatcher is what
 /// ultimately drives `spawn_fetch_related_mrs`.
+/// Switch to `tab` from a nav click, exactly as the next/previous-tab keys do.
+pub fn activate_tab(app: &mut App, tab: Tab, tx: &UnboundedSender<Event>) {
+    app.switch_to_tab(tab);
+    load_active_tab(app, tx);
+}
+
+/// After a tab switch: start the active tab's first fetch unless it is already
+/// loading or was refreshed, and load the Issues/MRs cross-references.
+fn load_active_tab(app: &mut App, tx: &UnboundedSender<Event>) {
+    if let Some(client) = &app.gitlab_client {
+        if !app.loading_tabs.contains(&app.active_tab)
+            && !app.refreshed_tabs.contains(&app.active_tab)
+        {
+            if !app.loaded_tabs.contains(&app.active_tab) {
+                app.loading_tabs.insert(app.active_tab);
+            }
+            spawn_refresh_active_tab(
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
+    }
+    if app.active_tab == Tab::Issues {
+        maybe_fetch_related_mrs(app, tx);
+    }
+    if app.active_tab == Tab::MergeRequests {
+        maybe_fetch_mr_related_issues(app, tx);
+    }
+}
+
 pub fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .issues
@@ -3052,56 +3085,14 @@ pub async fn handle_active_tab_key(
                 || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, &tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, &tx);
-                }
+                load_active_tab(app, &tx);
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
                 || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, &tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, &tx);
-                }
+                load_active_tab(app, &tx);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if app.details_zoomed {
@@ -3513,6 +3504,28 @@ mod tests {
     use crate::event::ScopeGeneration;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::collections::{HashMap, HashSet};
+
+    #[tokio::test]
+    async fn activating_a_tab_starts_its_first_fetch_and_resets_tab_state() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+            show_read_notifications: false,
+        });
+        app.details_zoomed = true;
+        app.select_mode = true;
+
+        activate_tab(&mut app, Tab::Releases, &tx);
+
+        assert_eq!(app.active_tab, Tab::Releases);
+        assert!(app.loading_tabs.contains(&Tab::Releases));
+        assert!(!app.details_zoomed && !app.select_mode);
+    }
 
     #[tokio::test]
     async fn failed_bulk_mutation_reverts_only_failed_rows_and_reports_once() {

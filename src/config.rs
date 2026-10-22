@@ -1819,6 +1819,9 @@ pub enum NavPosition {
 #[serde(default)]
 pub struct UiConfig {
     pub nav_position: NavPosition,
+    /// Whether the next/previous-tab keys switch tabs while a preview is
+    /// zoomed. When off, the top tab bar also hides while zoomed.
+    pub tab_switch_in_zoom: bool,
     pub sidebar_width: u16,
     pub sidebar_visible: bool,
     pub terminal_pane_visible: bool,
@@ -1828,6 +1831,7 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             nav_position: NavPosition::default(),
+            tab_switch_in_zoom: true,
             sidebar_width: 22,
             sidebar_visible: true,
             terminal_pane_visible: true,
@@ -2157,6 +2161,7 @@ cycle_status_filter = "s"
 # Layout options
 # [ui]
 # nav_position = "left"  # "left" (sidebar) or "top" (tab bar)
+# tab_switch_in_zoom = true  # false: the tab keys do nothing in a zoomed preview
 # sidebar_width = 22
 # sidebar_visible = true  # hides the sidebar or top tab bar
 # terminal_pane_visible = true
@@ -2542,6 +2547,9 @@ mod tests {
         let ui: UiConfig = toml::from_str("nav_position = \"top\"").unwrap();
         assert_eq!(ui.nav_position, NavPosition::Top);
         assert_eq!(ui.sidebar_width, 22);
+        assert!(ui.tab_switch_in_zoom);
+        let ui: UiConfig = toml::from_str("tab_switch_in_zoom = false").unwrap();
+        assert!(!ui.tab_switch_in_zoom);
     }
 
     #[test]

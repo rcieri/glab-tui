@@ -297,6 +297,7 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # across the top of the workspace (it scrolls to keep the active tab centred).
 # [ui]
 # nav_position = "left"      # left | top
+# tab_switch_in_zoom = true  # false: ←/→ (and h/l) do nothing in a zoomed preview
 # sidebar_width = 22         # left nav only
 # sidebar_visible = true     # false hides the navigation in either position
 # terminal_pane_visible = true

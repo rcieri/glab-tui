@@ -427,7 +427,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
     );
 
     // Middle: Sidebar | Main Area | Preview Area
-    let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
     let nav_top = app.config.ui.nav_position == crate::config::NavPosition::Top;
     let sidebar_width = if !nav_top && size.width >= 80 && app.config.ui.sidebar_visible {
@@ -449,20 +448,22 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // When an edit/create menu is active, force the detail pane to full-zoom
     // (exactly like the preview's zoomed state) so the form fills the workspace.
     let edit_zoomed = app.edit_menu.is_some();
-    let zoomed = (app.details_zoomed && can_zoom) || edit_zoomed;
+    let zoomed = app.preview_zoomed() || edit_zoomed;
 
     // Top navigation: carve a one-row tab bar off the top of the workspace.
-    // It stays up wherever the next/previous-tab keys switch tabs, which
-    // includes a zoomed preview; only edit/create forms take those keys.
-    let (top_nav_rect, workspace) = if nav_top && app.config.ui.sidebar_visible && !edit_zoomed {
-        let v = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0)])
-            .split(chunks[1]);
-        (v[0], v[1])
-    } else {
-        (Rect::default(), chunks[1])
-    };
+    // It shows wherever the next/previous-tab keys switch tabs: a zoomed
+    // preview unless `tab_switch_in_zoom` is off, never an edit/create form,
+    // which takes those keys for its own fields.
+    let (top_nav_rect, workspace) =
+        if nav_top && app.config.ui.sidebar_visible && app.tab_switch_enabled() && !edit_zoomed {
+            let v = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(chunks[1]);
+            (v[0], v[1])
+        } else {
+            (Rect::default(), chunks[1])
+        };
 
     let middle_chunks_raw = if zoomed {
         Layout::default()
@@ -2117,6 +2118,21 @@ mod tests {
         });
         terminal.draw(|f| render(f, &mut app)).unwrap();
         assert!(app.top_nav_hits.is_empty());
+    }
+
+    #[test]
+    fn top_nav_hides_in_a_zoomed_preview_when_tab_switching_is_off_there() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.config.ui.tab_switch_in_zoom = false;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(!app.top_nav_hits.is_empty(), "shown when not zoomed");
+
+        app.details_zoomed = true;
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.top_nav_hits.is_empty(), "hidden while zoomed");
     }
 
     #[test]

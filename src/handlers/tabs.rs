@@ -3080,16 +3080,18 @@ pub async fn handle_active_tab_key(
                     }
                 }
             },
-            _ if (key_event.code == KeyCode::Right
-                || key_event.code == KeyCode::Char('l')
-                || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
+            _ if app.tab_switch_enabled()
+                && (key_event.code == KeyCode::Right
+                    || key_event.code == KeyCode::Char('l')
+                    || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
                 load_active_tab(app, &tx);
             }
-            _ if (key_event.code == KeyCode::Left
-                || key_event.code == KeyCode::Char('h')
-                || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
+            _ if app.tab_switch_enabled()
+                && (key_event.code == KeyCode::Left
+                    || key_event.code == KeyCode::Char('h')
+                    || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
                 load_active_tab(app, &tx);
@@ -3711,6 +3713,31 @@ mod tests {
         )
         .await;
         assert_eq!(app.detail_scroll, 7);
+    }
+
+    #[tokio::test]
+    async fn tab_keys_in_a_zoomed_preview_follow_tab_switch_in_zoom() {
+        let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        let mut app = App::default();
+        app.active_tab = Tab::Issues;
+        app.details_zoomed = true;
+        app.config.ui.tab_switch_in_zoom = false;
+        for code in [
+            KeyCode::Right,
+            KeyCode::Char('l'),
+            KeyCode::Left,
+            KeyCode::Char('h'),
+        ] {
+            dispatch(&mut app, &press(code)).await;
+            assert_eq!(app.active_tab, Tab::Issues, "{code:?}");
+            assert!(app.details_zoomed, "{code:?}");
+        }
+
+        app.config.ui.tab_switch_in_zoom = true;
+        dispatch(&mut app, &press(KeyCode::Right)).await;
+        assert_ne!(app.active_tab, Tab::Issues);
+        assert!(!app.details_zoomed);
     }
 
     #[tokio::test]

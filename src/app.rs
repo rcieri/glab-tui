@@ -6205,6 +6205,17 @@ impl App {
         self.switch_to_tab(tabs[prev_index]);
     }
 
+    /// Whether the preview pane fills the workspace. A zoom request on the
+    /// Pipelines tab only takes effect once a pipeline's jobs are listed.
+    pub fn preview_zoomed(&self) -> bool {
+        self.details_zoomed && (self.active_tab != Tab::Pipelines || !self.jobs.items.is_empty())
+    }
+
+    /// Whether the next/previous-tab keys switch tabs right now.
+    pub fn tab_switch_enabled(&self) -> bool {
+        self.config.ui.tab_switch_in_zoom || !self.preview_zoomed()
+    }
+
     /// Make `tab` active and drop the per-tab selection and preview state, as
     /// every tab switch (keyboard or mouse) does.
     pub fn switch_to_tab(&mut self, tab: Tab) {

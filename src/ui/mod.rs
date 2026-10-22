@@ -216,15 +216,13 @@ fn render_top_nav(f: &mut Frame, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
     let theme = THEME.read().unwrap();
     let kind = app.kind();
     let tabs = app.available_tabs();
-    const GAP: usize = 1;
 
     // Lay every label out on a virtual strip: (tab, label, start column).
+    // Labels carry a space of padding on each side, so adjacent tabs sit two
+    // columns apart with no extra gap.
     let mut strip = Vec::with_capacity(tabs.len());
     let mut strip_width = 0;
     for tab in &tabs {
-        if strip_width > 0 {
-            strip_width += GAP;
-        }
         let label = format!(" {} ", tab.title(kind).to_uppercase());
         let width = label.chars().count();
         strip.push((*tab, label, strip_width));
@@ -405,21 +403,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     }
 
-    // Top banner split into left content and a right-aligned mode indicator.
+    // Top banner: a text row (left content and a right-aligned mode
+    // indicator) above a separator that spans the full width.
+    let header_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(title_area);
     let banner = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Length(12)])
-        .split(title_area);
+        .split(header_rows[0]);
 
     let title = Paragraph::new(Line::from(title_spans))
-        .style(Style::default().bg(THEME.read().unwrap().bg))
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(THEME.read().unwrap().border)),
-        );
+        .style(Style::default().bg(THEME.read().unwrap().bg));
     f.render_widget(title, banner[0]);
     render_mode_indicator(f, app, banner[1]);
+    f.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(THEME.read().unwrap().border))
+            .style(Style::default().bg(THEME.read().unwrap().bg)),
+        header_rows[1],
+    );
 
     // Middle: Sidebar | Main Area | Preview Area
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
@@ -2082,6 +2087,23 @@ mod tests {
         let (last, last_tab) = hits.last().unwrap();
         assert_eq!(*last_tab, tab);
         assert_eq!(last.right(), 60);
+    }
+
+    #[test]
+    fn header_separator_spans_the_full_width() {
+        for nav in [
+            crate::config::NavPosition::Left,
+            crate::config::NavPosition::Top,
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+            let mut app = App::default();
+            app.config.ui.nav_position = nav;
+
+            terminal.draw(|f| render(f, &mut app)).unwrap();
+
+            let separator = &buffer_rows(&terminal)[1];
+            assert!(separator.chars().all(|c| c == '─'), "{nav:?}: {separator}");
+        }
     }
 
     #[test]

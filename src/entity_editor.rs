@@ -1684,11 +1684,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
-            let issues: Option<Vec<crate::domain::issues::Issue>> = app
-                .selected_milestone_issues
-                .clone()
-                .or_else(|| app.milestone_issues_cache.get(&milestone.iid).cloned());
-            let issues_ref: Option<&[crate::domain::issues::Issue]> = issues.as_deref();
+            let issues_ref = app.milestone_issues(milestone.iid);
             let progress = app.milestone_progress_cache.get(&milestone.iid).copied();
             let mut doc = build_milestone_document(&milestone, issues_ref, progress, is_github);
             doc.fields.push(crate::app::Field::text(

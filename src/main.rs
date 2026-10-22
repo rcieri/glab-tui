@@ -718,6 +718,7 @@ fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &Eve
     app.branches.set_items(cache.branches);
     app.environments.set_items(cache.environments);
     app.milestone_issues_cache = cache.milestone_issues;
+    app.rebuild_milestone_progress_cache();
     app.cached_labels = cache.labels;
     app.cached_members = cache.members;
 
@@ -936,6 +937,7 @@ async fn main() -> Result<()> {
     app.branches.set_items(cache.branches);
     app.environments.set_items(cache.environments);
     app.milestone_issues_cache = cache.milestone_issues;
+    app.rebuild_milestone_progress_cache();
     app.cached_labels = cache.labels;
     if app.config.fetch_label_colors {
         app.label_colors = cache
@@ -1179,10 +1181,7 @@ async fn main() -> Result<()> {
                                 // actual issue list — so it does NOT suppress the
                                 // fetch: the milestone preview renders the issues,
                                 // not just their counts.
-                                let cached = app
-                                    .milestone_issues_cache
-                                    .get(&milestone_iid)
-                                    .filter(|c| !c.is_empty());
+                                let cached = app.milestone_issues_cache.get(&milestone_iid);
                                 if let Some(cached) = cached {
                                     app.selected_milestone_issues = Some(cached.clone());
                                 } else {
@@ -1718,57 +1717,38 @@ async fn main() -> Result<()> {
                     app.milestones.items = milestones;
                     app.update_filter_selection();
                     app.project_cache.milestones = app.milestones.items.clone();
-                    app.milestone_issues_cache.clear();
-                    app.selected_milestone_issues = None;
-                    app.selected_milestone_iid = None;
-                    app.project_cache.milestone_issues.clear();
+                    let active_iids: std::collections::HashSet<u64> =
+                        app.milestones.items.iter().map(|m| m.iid).collect();
+                    app.milestone_issues_cache
+                        .retain(|iid, _| active_iids.contains(iid));
+                    app.project_cache
+                        .milestone_issues
+                        .retain(|iid, _| active_iids.contains(iid));
+                    app.rebuild_milestone_progress_cache();
+                    if let Some(iid) = app.selected_milestone_iid {
+                        if !active_iids.contains(&iid) {
+                            app.selected_milestone_iid = None;
+                            app.selected_milestone_issues = None;
+                        } else if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                            app.selected_milestone_issues = Some(cached.clone());
+                        }
+                    }
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneIssuesFetched(iid, issues) => {
-                    let mut fallback_success = false;
-                    if issues.is_empty() {
-                        // Only fall back to a cached list that actually has data;
-                        // a cached empty list is indistinguishable from a failed
-                        // fetch and must not mask a real 0% progress display.
-                        if let Some(cached) = app
-                            .project_cache
-                            .milestone_issues
-                            .get(&iid)
-                            .filter(|c| !c.is_empty())
-                        {
-                            app.milestone_issues_cache.insert(iid, cached.clone());
-                            if app.selected_milestone_iid == Some(iid) {
-                                app.selected_milestone_issues = Some(cached.clone());
-                                app.show_notice(
-                                    "Offline fallback: loaded cached milestone issues.",
-                                );
-                            }
-                            fallback_success = true;
-                        }
+                    let total = issues.len();
+                    let closed = issues.iter().filter(|i| i.state == "closed").count();
+                    app.milestone_progress_cache.insert(iid, (closed, total));
+                    app.milestone_issues_cache.insert(iid, issues.clone());
+                    if app.selected_milestone_iid == Some(iid) {
+                        app.selected_milestone_issues = Some(issues.clone());
                     }
-                    if !fallback_success {
-                        let total = issues.len();
-                        let closed = issues.iter().filter(|i| i.state == "closed").count();
-                        app.milestone_progress_cache.insert(iid, (closed, total));
-                        app.milestone_issues_cache.insert(iid, issues.clone());
-                        if app.selected_milestone_iid == Some(iid) {
-                            app.selected_milestone_issues = Some(issues.clone());
-                        }
-                        app.project_cache.milestone_issues.insert(iid, issues);
-                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
-                    } else if let Some(cached) = app.milestone_issues_cache.get(&iid) {
-                        let total = cached.len();
-                        let closed = cached.iter().filter(|i| i.state == "closed").count();
-                        app.milestone_progress_cache.insert(iid, (closed, total));
-                    }
+                    app.project_cache.milestone_issues.insert(iid, issues);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
                     app.status_message = None;
                     app.project_cache.milestones = app.milestones.items.clone();
-                    app.milestone_issues_cache.clear();
-                    app.selected_milestone_issues = None;
-                    app.selected_milestone_iid = None;
-                    app.project_cache.milestone_issues.clear();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneDeleted => {
@@ -1778,7 +1758,15 @@ async fn main() -> Result<()> {
                         if let Some(pos) = app.milestone_index(&project_path, iid) {
                             app.milestones.items.remove(pos);
                         }
+                        app.milestone_issues_cache.remove(&iid);
+                        app.project_cache.milestone_issues.remove(&iid);
+                        app.milestone_progress_cache.remove(&iid);
+                        if app.selected_milestone_iid == Some(iid) {
+                            app.selected_milestone_iid = None;
+                            app.selected_milestone_issues = None;
+                        }
                     }
+                    app.rebuild_milestone_progress_cache();
                     app.project_cache.milestones = app.milestones.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
@@ -2974,6 +2962,7 @@ async fn main() -> Result<()> {
                                                 app.branches.set_items(cache.branches);
                                                 app.environments.set_items(cache.environments);
                                                 app.milestone_issues_cache = cache.milestone_issues;
+                                                app.rebuild_milestone_progress_cache();
                                                 app.start_loading_tab(app.active_tab);
                                                 spawn_client_for_scope(&mut app, &events);
                                                 continue;
@@ -3045,6 +3034,7 @@ async fn main() -> Result<()> {
                                                     app.environments.set_items(cache.environments);
                                                     app.milestone_issues_cache =
                                                         cache.milestone_issues;
+                                                    app.rebuild_milestone_progress_cache();
                                                     app.cached_labels = cache.labels;
                                                     app.cached_members = cache.members;
 

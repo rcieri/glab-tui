@@ -142,9 +142,7 @@ pub(crate) fn render_entity_inspector(
             match &doc.content {
                 InspectorContent::Empty(_) => false,
                 InspectorContent::Markdown(m) => !m.trim().is_empty(),
-                InspectorContent::MilestoneRelated { description, .. } => {
-                    !description.trim().is_empty()
-                }
+                InspectorContent::MilestoneRelated { .. } => true,
                 InspectorContent::PipelineStages(jobs) => !jobs.is_empty(),
                 InspectorContent::Custom(lines) => !lines.is_empty(),
             },
@@ -1991,6 +1989,53 @@ mod tests {
         assert!(
             rendered.contains("(loading issues…)"),
             "preview should advertise the in-flight fetch: got\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_entity_inspector_renders_milestone_related_even_with_empty_description() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let doc = EntityDocument {
+            title: "Milestone %19".into(),
+            fields: vec![Field::read_only("State", "ACTIVE".into())],
+            content: InspectorContent::MilestoneRelated {
+                description: String::new(),
+                issues: Some(vec![]),
+            },
+        };
+
+        terminal
+            .draw(|f| {
+                render_entity_inspector(
+                    f,
+                    &doc,
+                    f.area(),
+                    InspectorMode::ReadOnly {
+                        scroll: 0,
+                        title_suffix: "",
+                    },
+                    &HashMap::new(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            rendered.contains("Related Issues"),
+            "inspector should render Related Issues header even with empty description: got\n{rendered}"
+        );
+        assert!(
+            rendered.contains("No issues in this milestone."),
+            "inspector should render issues state even with empty description: got\n{rendered}"
         );
     }
 }

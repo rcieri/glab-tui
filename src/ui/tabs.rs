@@ -2656,7 +2656,9 @@ pub(crate) fn render_tab_milestones(
                                     ),
                                     color,
                                 )
-                            } else if app.selected_milestone_iid == Some(m.iid) {
+                            } else if app.selected_milestone_iid == Some(m.iid)
+                                && !app.milestone_issues_cache.contains_key(&m.iid)
+                            {
                                 ("Loading...".to_string(), theme.text_muted)
                             } else {
                                 ("-".to_string(), theme.text_muted)
@@ -2702,10 +2704,7 @@ pub(crate) fn render_tab_milestones(
         if let Some(selected_idx) = app.milestones.state.selected() {
             if let Some(m) = filtered_milestones.get(selected_idx) {
                 let is_github = app.is_github();
-                let issues = app
-                    .selected_milestone_issues
-                    .as_deref()
-                    .or_else(|| app.milestone_issues_cache.get(&m.iid).map(|v| v.as_slice()));
+                let issues = app.milestone_issues(m.iid);
                 let progress = app.milestone_progress_cache.get(&m.iid).copied();
                 let doc =
                     crate::entity_editor::build_milestone_document(m, issues, progress, is_github);
@@ -3339,6 +3338,92 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn render_milestone_progress_cached_zero_issues_does_not_show_loading() {
+        use crate::domain::milestones::Milestone;
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.milestones.items = vec![Milestone {
+            id: 0,
+            iid: 5,
+            title: "v0.5".to_string(),
+            description: None,
+            state: "active".to_string(),
+            start_date: None,
+            due_date: None,
+            created_at: String::new(),
+            project_path: String::new(),
+        }];
+        app.milestones.state.select(Some(0));
+        app.selected_milestone_iid = Some(5);
+        app.milestone_issues_cache.insert(5, vec![]);
+        app.milestone_progress_cache.insert(5, (0, 0));
+        app.active_tab = Tab::Milestones;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 40);
+                let detail_rect = Rect::new(0, 40, area.width, 30);
+                render_tab_milestones(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(!content.contains("Loading..."));
+    }
+
+    #[test]
+    fn render_milestone_progress_unfetched_selected_shows_loading() {
+        use crate::domain::milestones::Milestone;
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.milestones.items = vec![Milestone {
+            id: 0,
+            iid: 6,
+            title: "v0.6".to_string(),
+            description: None,
+            state: "active".to_string(),
+            start_date: None,
+            due_date: None,
+            created_at: String::new(),
+            project_path: String::new(),
+        }];
+        app.milestones.state.select(Some(0));
+        app.selected_milestone_iid = Some(6);
+        app.active_tab = Tab::Milestones;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 40);
+                let detail_rect = Rect::new(0, 40, area.width, 30);
+                render_tab_milestones(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Loading..."));
     }
 
     #[test]

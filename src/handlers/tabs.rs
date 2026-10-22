@@ -2561,11 +2561,7 @@ pub async fn handle_active_tab_key(
                         .get(selected_idx)
                         .map(|m| (*m).clone());
                     if let Some(m) = milestone_opt {
-                        let issues: Option<Vec<crate::domain::issues::Issue>> = app
-                            .selected_milestone_issues
-                            .clone()
-                            .or_else(|| app.milestone_issues_cache.get(&m.iid).cloned());
-                        let issues_ref: Option<&[crate::domain::issues::Issue]> = issues.as_deref();
+                        let issues_ref = app.milestone_issues(m.iid);
                         let progress = app.milestone_progress_cache.get(&m.iid).copied();
                         let mut doc = crate::entity_editor::build_milestone_document(
                             &m, issues_ref, progress, is_github,
@@ -2996,14 +2992,7 @@ pub async fn handle_active_tab_key(
                                     let filtered = app.filtered_milestones();
                                     if let Some(m) = filtered.get(selected_idx) {
                                         let is_github = app.is_github();
-                                        let issues = app
-                                            .selected_milestone_issues
-                                            .as_deref()
-                                            .or_else(|| {
-                                                app.milestone_issues_cache
-                                                    .get(&m.iid)
-                                                    .map(|v| v.as_slice())
-                                            });
+                                        let issues = app.milestone_issues(m.iid);
                                         let progress =
                                             app.milestone_progress_cache.get(&m.iid).copied();
                                         let mut doc =

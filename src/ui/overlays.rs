@@ -1331,6 +1331,19 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Global & Nav",
             key: d(format!(
+                "{} / {}",
+                app.config.keybindings.global.sort_next, app.config.keybindings.global.sort_prev
+            )),
+            action: "Sort list by next / previous column",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(app.config.keybindings.global.sort_reverse.to_string()),
+            action: "Reverse sort order",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!(
                 "F5 / Ctrl+R / {}",
                 app.config.keybindings.global.refresh
             )),

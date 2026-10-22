@@ -913,12 +913,44 @@ pub(crate) fn rendered_line_count(lines: &[Line], width: usize, wrap: bool) -> u
         .sum()
 }
 
+pub(crate) fn sort_header_label(label: &str, sort: Option<(&str, bool)>, icons: &Icons) -> String {
+    match sort {
+        Some((col, ascending)) if col == label => {
+            let arrow = if ascending {
+                &icons.sort_asc
+            } else {
+                &icons.sort_desc
+            };
+            format!("{label}{arrow}")
+        }
+        _ => label.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::pipelines::Job;
     use crate::ui::diff::count_wrapped_lines;
     use crate::ui::diff::{CommentAnchor, format_comment_with_suggestions};
+
+    #[test]
+    fn sort_header_label_marks_only_the_sorted_column() {
+        let icons = Icons::ascii();
+        assert_eq!(
+            sort_header_label("State", Some(("State", true)), &icons),
+            "State^"
+        );
+        assert_eq!(
+            sort_header_label("State", Some(("State", false)), &icons),
+            "Statev"
+        );
+        assert_eq!(
+            sort_header_label("Title", Some(("State", true)), &icons),
+            "Title"
+        );
+        assert_eq!(sort_header_label("Title", None, &icons), "Title");
+    }
 
     fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {
         Job {

@@ -529,6 +529,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `Enter` / `Esc` (in search) | Close search bar | — |
 | `?` / `F1` | Show help: type to filter; `↑`/`↓`, `Ctrl+N`/`Ctrl+P`, `PgUp`/`PgDn`, `Ctrl+D`/`Ctrl+U`, `Home`/`End` or the mouse wheel scroll the list | `help` |
 | `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
+| `>` / `<` | Sort list by next / previous visible column | `sort_next` / `sort_prev` |
+| `=` | Reverse sort order | `sort_reverse` |
 | `Ctrl+S` | Switch repository | — |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
 | `u` | Check for updates | — |
@@ -976,6 +978,9 @@ just check      # runs fmt check, clippy, unit tests, and single-threaded e2e te
 ```
 
 Available recipes:
+- `just run [args]` — run a debug build, passing `args` to glab-tui
+- `just build` — build the release binary (`target/release/glab-tui`)
+- `just install` — build, then copy the binary to the first directory in `PATH`
 - `just fmt` / `just fmt-check` — format code or verify formatting
 - `just lint` — run Clippy with `-Dwarnings`
 - `just test` — run unit tests (`cargo test --lib --bin glab-tui`)

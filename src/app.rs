@@ -5626,6 +5626,53 @@ impl App {
         }
     }
 
+    /// The tab's sort column and whether it is ascending.
+    pub fn sort_for(&self, tab: Tab) -> Option<(&str, bool)> {
+        let col = self.group_by_column.get(&tab)?.as_deref()?;
+        Some((col, self.group_ascending.get(&tab).copied().unwrap_or(true)))
+    }
+
+    /// Moves the active tab's sort to the next (or previous) visible column.
+    /// "Unsorted" sits between the last and the first column.
+    pub fn cycle_sort_column(&mut self, forward: bool) {
+        let tab = self.active_tab;
+        let mut options: Vec<Option<&str>> = vec![None];
+        options.extend(
+            tab.columns(self.kind(), self.scope.is_group())
+                .into_iter()
+                .filter(|col| self.is_column_visible(tab, col))
+                .map(Some),
+        );
+        if options.len() == 1 {
+            return;
+        }
+        let current = self.group_by_column.get(&tab).cloned().flatten();
+        let pos = options
+            .iter()
+            .position(|opt| *opt == current.as_deref())
+            .unwrap_or(0);
+        let len = options.len();
+        let next = if forward {
+            (pos + 1) % len
+        } else {
+            (pos + len - 1) % len
+        };
+        let next = options[next].map(str::to_string);
+        self.group_by_column.insert(tab, next);
+        self.update_filter_selection();
+    }
+
+    /// Does nothing while the tab is unsorted: the flip would be invisible
+    /// and surprise the user on the next `cycle_sort_column`.
+    pub fn reverse_sort_order(&mut self) {
+        if self.sort_for(self.active_tab).is_none() {
+            return;
+        }
+        let ascending = self.group_ascending.entry(self.active_tab).or_insert(true);
+        *ascending = !*ascending;
+        self.update_filter_selection();
+    }
+
     pub fn available_tabs(&self) -> Vec<Tab> {
         let kind = self.kind();
         let mut tabs: Vec<Tab> = Tab::ALL
@@ -8569,6 +8616,46 @@ mod tests {
         app.group_by_column
             .insert(Tab::Environments, Some("URL".to_string()));
         assert_eq!(names(&mut app), vec!["review", "production", "staging"]);
+    }
+
+    #[test]
+    fn cycle_sort_column_walks_visible_columns_and_wraps_through_unsorted() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.enabled_columns.insert(
+            Tab::Branches,
+            ["Name", "Default"].map(String::from).into_iter().collect(),
+        );
+        let sort = |app: &App| app.group_by_column.get(&Tab::Branches).cloned().flatten();
+
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Name"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Default"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app), None);
+        app.cycle_sort_column(false);
+        assert_eq!(sort(&app).as_deref(), Some("Default"));
+    }
+
+    #[test]
+    fn reverse_sort_order_flips_the_active_tab_only() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.reverse_sort_order();
+        assert_eq!(app.group_ascending.get(&Tab::Branches), None);
+
+        app.group_by_column
+            .insert(Tab::Branches, Some("Name".to_string()));
+        app.reverse_sort_order();
+        assert_eq!(app.group_ascending.get(&Tab::Branches), Some(&false));
+        app.reverse_sort_order();
+        assert_eq!(app.group_ascending.get(&Tab::Branches), Some(&true));
+        assert_eq!(app.group_ascending.get(&Tab::Issues), None);
     }
 
     #[test]

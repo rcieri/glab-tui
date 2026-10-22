@@ -1,6 +1,7 @@
 use crate::app::{App, EntityDocument, InspectorContent, Tab};
 use crate::command_log::StatusFilter;
 use crate::config::THEME;
+use crate::ui::helpers::sort_header_label;
 use crate::ui::list_tab::TableContext;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 use ratatui::{
@@ -377,47 +378,53 @@ pub(crate) fn render_tab_issues(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
+        let sort = app.sort_for(Tab::Issues);
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header = |name: &str| Cell::from(header_line(name));
+
         if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
-            header_cells.push(Cell::from("Project"));
+            header_cells.push(header("Project"));
             widths.push(col_w(content_area.width, 30));
         }
 
         if app.is_column_visible(Tab::Issues, "ID") {
-            header_cells.push(Cell::from("ID"));
+            header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::Issues, "State") {
-            header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
+            header_cells.push(Cell::from(
+                header_line("State").alignment(Alignment::Center),
+            ));
             widths.push(Constraint::Length(10));
         }
         if app.is_column_visible(Tab::Issues, "Title") {
-            header_cells.push(Cell::from("Title"));
+            header_cells.push(header("Title"));
             widths.push(Constraint::Fill(1));
         }
         if app.is_column_visible(Tab::Issues, "Assignees") {
-            header_cells.push(Cell::from("Assignees"));
+            header_cells.push(header("Assignees"));
             widths.push(col_w(content_area.width, 22));
         }
         if app.is_column_visible(Tab::Issues, "Labels") {
-            header_cells.push(Cell::from("Labels"));
+            header_cells.push(header("Labels"));
             widths.push(col_w(content_area.width, 26));
         }
         if app.is_column_visible(Tab::Issues, "Milestone") {
-            header_cells.push(Cell::from("Milestone"));
+            header_cells.push(header("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
         let show_related_mrs =
             app.is_column_visible(Tab::Issues, if app.is_github() { "PRs" } else { "MRs" });
         if show_related_mrs {
-            header_cells.push(Cell::from(if app.is_github() { "PRs" } else { "MRs" }));
+            header_cells.push(header(if app.is_github() { "PRs" } else { "MRs" }));
             widths.push(col_w(content_area.width, 16));
         }
         if app.is_column_visible(Tab::Issues, "Due Date") {
-            header_cells.push(Cell::from("Due Date"));
+            header_cells.push(header("Due Date"));
             widths.push(col_w(content_area.width, 20));
         }
         if app.is_column_visible(Tab::Issues, "Author") {
-            header_cells.push(Cell::from("Author"));
+            header_cells.push(header("Author"));
             widths.push(col_w(content_area.width, 18));
         }
 
@@ -1069,57 +1076,63 @@ pub(crate) fn render_tab_merge_requests(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
+        let sort = app.sort_for(Tab::MergeRequests);
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header = |name: &str| Cell::from(header_line(name));
+
         if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
-            header_cells.push(Cell::from("Project"));
+            header_cells.push(header("Project"));
             widths.push(col_w(content_area.width, 30));
         }
 
         if app.is_column_visible(Tab::MergeRequests, "ID") {
-            header_cells.push(Cell::from("ID"));
+            header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::MergeRequests, "State") {
-            header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
+            header_cells.push(Cell::from(
+                header_line("State").alignment(Alignment::Center),
+            ));
             widths.push(Constraint::Length(10));
         }
         if app.is_column_visible(Tab::MergeRequests, "Status") {
             header_cells.push(Cell::from(
-                Line::from("Status").alignment(Alignment::Center),
+                header_line("Status").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
             header_cells.push(Cell::from(
-                Line::from("Mergeable").alignment(Alignment::Center),
+                header_line("Mergeable").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Approval") {
             header_cells.push(Cell::from(
-                Line::from("Approval").alignment(Alignment::Center),
+                header_line("Approval").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 12));
         }
         if app.is_column_visible(Tab::MergeRequests, "Title") {
-            header_cells.push(Cell::from("Title"));
+            header_cells.push(header("Title"));
             widths.push(Constraint::Fill(1));
         }
         if app.is_column_visible(Tab::MergeRequests, "Assignees") {
-            header_cells.push(Cell::from("Assignees"));
+            header_cells.push(header("Assignees"));
             widths.push(col_w(content_area.width, 22));
         }
         if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
-            header_cells.push(Cell::from("Reviewers"));
+            header_cells.push(header("Reviewers"));
             widths.push(col_w(content_area.width, 22));
         }
         if app.is_column_visible(Tab::MergeRequests, "Workflow") {
             header_cells.push(Cell::from(
-                Line::from("Workflow").alignment(Alignment::Center),
+                header_line("Workflow").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
-            header_cells.push(Cell::from("Labels"));
+            header_cells.push(header("Labels"));
             widths.push(col_w(content_area.width, 26));
         }
         let is_github = app.is_github();
@@ -1128,25 +1141,27 @@ pub(crate) fn render_tab_merge_requests(
             if is_github { "Action" } else { "Pipeline" },
         ) {
             header_cells.push(Cell::from(
-                Line::from(if is_github { "Action" } else { "Pipeline" })
+                header_line(if is_github { "Action" } else { "Pipeline" })
                     .alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::MergeRequests, "Stack") {
-            header_cells.push(Cell::from(Line::from("Stack").alignment(Alignment::Center)));
+            header_cells.push(Cell::from(
+                header_line("Stack").alignment(Alignment::Center),
+            ));
             widths.push(col_w(content_area.width, 14));
         }
         if app.is_column_visible(Tab::MergeRequests, "Milestone") {
-            header_cells.push(Cell::from("Milestone"));
+            header_cells.push(header("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
         if app.is_column_visible(Tab::MergeRequests, "Closes") {
-            header_cells.push(Cell::from("Closes"));
+            header_cells.push(header("Closes"));
             widths.push(col_w(content_area.width, 16));
         }
         if app.is_column_visible(Tab::MergeRequests, "Author") {
-            header_cells.push(Cell::from("Author"));
+            header_cells.push(header("Author"));
             widths.push(col_w(content_area.width, 18));
         }
 
@@ -1512,55 +1527,59 @@ pub(crate) fn render_tab_pipelines(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
+        let sort = app.sort_for(Tab::Pipelines);
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header = |name: &str| Cell::from(header_line(name));
+
         if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
-            header_cells.push(Cell::from("Project"));
+            header_cells.push(header("Project"));
             widths.push(col_w(content_area.width, 30));
         }
 
         if app.is_column_visible(Tab::Pipelines, "ID") {
-            header_cells.push(Cell::from("ID"));
+            header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::Pipelines, "Status") {
             header_cells.push(Cell::from(
-                Line::from("Status").alignment(Alignment::Center),
+                header_line("Status").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::Pipelines, "Stages") {
-            header_cells.push(Cell::from("Stages"));
+            header_cells.push(header("Stages"));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Pipelines, "Source") {
-            header_cells.push(Cell::from("Source"));
+            header_cells.push(header("Source"));
             widths.push(Constraint::Length(16));
         }
         if app.is_column_visible(Tab::Pipelines, "Name") {
-            header_cells.push(Cell::from("Name"));
+            header_cells.push(header("Name"));
             widths.push(Constraint::Length(22));
         }
         if app.is_column_visible(Tab::Pipelines, "Event") {
-            header_cells.push(Cell::from("Event"));
+            header_cells.push(header("Event"));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Pipelines, "SHA") {
-            header_cells.push(Cell::from("SHA"));
+            header_cells.push(header("SHA"));
             widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::Pipelines, "Actor") {
-            header_cells.push(Cell::from("Actor"));
+            header_cells.push(header("Actor"));
             widths.push(Constraint::Length(18));
         }
         if app.is_column_visible(Tab::Pipelines, "Created") {
-            header_cells.push(Cell::from("Created"));
+            header_cells.push(header("Created"));
             widths.push(Constraint::Length(15));
         }
         if app.is_column_visible(Tab::Pipelines, "Duration") {
-            header_cells.push(Cell::from("Duration"));
+            header_cells.push(header("Duration"));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Pipelines, "Ref") {
-            header_cells.push(Cell::from("Ref"));
+            header_cells.push(header("Ref"));
             widths.push(Constraint::Fill(1));
         }
 
@@ -1834,38 +1853,42 @@ pub(crate) fn render_tab_jobs(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
+        let sort = app.sort_for(Tab::Jobs);
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header = |name: &str| Cell::from(header_line(name));
+
         if app.is_column_visible(Tab::Jobs, "ID") {
-            header_cells.push(Cell::from("ID"));
+            header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::Jobs, "Stage") {
-            header_cells.push(Cell::from("Stage"));
+            header_cells.push(header("Stage"));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Jobs, "Status") {
             header_cells.push(Cell::from(
-                Line::from("Status").alignment(Alignment::Center),
+                header_line("Status").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::Jobs, "Name") {
-            header_cells.push(Cell::from("Name"));
+            header_cells.push(header("Name"));
             widths.push(Constraint::Fill(1));
         }
         if app.is_column_visible(Tab::Jobs, "Matrix") {
-            header_cells.push(Cell::from("Matrix"));
+            header_cells.push(header("Matrix"));
             widths.push(Constraint::Length(20));
         }
         if app.is_column_visible(Tab::Jobs, "Runner") {
-            header_cells.push(Cell::from("Runner"));
+            header_cells.push(header("Runner"));
             widths.push(Constraint::Length(18));
         }
         if app.is_column_visible(Tab::Jobs, "Needs") {
-            header_cells.push(Cell::from("Needs"));
+            header_cells.push(header("Needs"));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Jobs, "Duration") {
-            header_cells.push(Cell::from("Duration"));
+            header_cells.push(header("Duration"));
             widths.push(Constraint::Length(14));
         }
 
@@ -2353,28 +2376,34 @@ pub(crate) fn render_tab_todos(
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
 
+        let sort = app.sort_for(Tab::Todos);
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header = |name: &str| Cell::from(header_line(name));
+
         if app.is_column_visible(Tab::Todos, "State") {
-            header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
+            header_cells.push(Cell::from(
+                header_line("State").alignment(Alignment::Center),
+            ));
             widths.push(Constraint::Length(6));
         }
         if app.is_column_visible(Tab::Todos, "Project") {
-            header_cells.push(Cell::from("Project"));
+            header_cells.push(header("Project"));
             widths.push(Constraint::Length(24));
         }
         if app.is_column_visible(Tab::Todos, "Type") {
-            header_cells.push(Cell::from("Type"));
+            header_cells.push(header("Type"));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Todos, "ID") {
-            header_cells.push(Cell::from("ID"));
+            header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::Todos, "Title") {
-            header_cells.push(Cell::from("Title"));
+            header_cells.push(header("Title"));
             widths.push(Constraint::Fill(1));
         }
         if app.is_column_visible(Tab::Todos, "Updated") {
-            header_cells.push(Cell::from("Updated"));
+            header_cells.push(header("Updated"));
             widths.push(Constraint::Length(16));
         }
 
@@ -2484,9 +2513,10 @@ pub(crate) fn render_tab_milestones(
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
         let cols = Tab::Milestones.columns(app.kind(), app.scope.is_group());
+        let sort = app.sort_for(Tab::Milestones);
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
-                header_cells.push(Cell::from(*col));
+                header_cells.push(Cell::from(sort_header_label(col, sort, &icons)));
                 match *col {
                     "ID" => widths.push(Constraint::Length(8)),
                     "Title" => widths.push(Constraint::Fill(1)),
@@ -3711,6 +3741,93 @@ mod tests {
         assert!(
             job_row.trim_end().ends_with(" build, lint"),
             "row: {job_row:?}"
+        );
+    }
+
+    #[test]
+    fn sorted_column_header_carries_the_sort_arrow() {
+        let sort_desc = crate::config::ICONS.read().unwrap().sort_desc.clone();
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.issues.items = vec![Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: Author {
+                username: "u1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        }];
+        app.group_by_column
+            .insert(Tab::Issues, Some("Title".to_string()));
+        app.group_ascending.insert(Tab::Issues, false);
+        app.environments
+            .set_items(vec![crate::domain::deployments::Environment {
+                id: 1,
+                name: "production".to_string(),
+                state: "available".to_string(),
+                external_url: None,
+                last_deployment: None,
+            }]);
+        app.group_by_column
+            .insert(Tab::Environments, Some("Name".to_string()));
+        app.group_ascending.insert(Tab::Environments, false);
+        app.active_tab = Tab::Environments;
+        app.sync_list_views();
+
+        let headers = |terminal: &Terminal<TestBackend>| buffer_rows(terminal)[0].clone();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_issues(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 10),
+                    Block::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+        let issue_header = headers(&terminal);
+        assert!(
+            issue_header.contains(&format!("Title{sort_desc}")),
+            "{issue_header}"
+        );
+        assert!(
+            !issue_header.contains(&format!("ID{sort_desc}")),
+            "{issue_header}"
+        );
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_environments(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 10),
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+        let env_header = headers(&terminal);
+        assert!(
+            env_header.contains(&format!("Name{sort_desc}")),
+            "{env_header}"
         );
     }
 

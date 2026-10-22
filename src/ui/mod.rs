@@ -207,7 +207,8 @@ fn merge_syntax_with_fuzzy<'a>(
 
 /// Draw the horizontal tab bar used when `ui.nav_position = "top"` and return
 /// the click target of every visible tab label. When the labels overflow the
-/// bar, the visible window is shifted so the active tab is always shown.
+/// bar, the strip scrolls so the active tab stays centred, only drifting
+/// toward an edge once the first or last tab is reached.
 fn render_top_nav(f: &mut Frame, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
     if area.width == 0 || area.height == 0 {
         return Vec::new();
@@ -215,40 +216,45 @@ fn render_top_nav(f: &mut Frame, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
     let theme = THEME.read().unwrap();
     let kind = app.kind();
     let tabs = app.available_tabs();
-    let labels: Vec<String> = tabs
-        .iter()
-        .map(|t| format!(" {} ", t.title(kind).to_uppercase()))
-        .collect();
-    let widths: Vec<u16> = labels.iter().map(|l| l.chars().count() as u16).collect();
-    const GAP: u16 = 1;
+    const GAP: usize = 1;
 
-    // Pick the first visible tab so that the active one fits in the bar.
-    let active = tabs.iter().position(|t| *t == app.active_tab).unwrap_or(0);
-    let span_width = |from: usize, to: usize| -> u16 {
-        widths[from..=to].iter().sum::<u16>() + GAP * (to - from) as u16
-    };
-    let mut start = 0;
-    while start < active && span_width(start, active) > area.width {
-        start += 1;
+    // Lay every label out on a virtual strip: (tab, label, start column).
+    let mut strip = Vec::with_capacity(tabs.len());
+    let mut strip_width = 0;
+    for tab in &tabs {
+        if strip_width > 0 {
+            strip_width += GAP;
+        }
+        let label = format!(" {} ", tab.title(kind).to_uppercase());
+        let width = label.chars().count();
+        strip.push((*tab, label, strip_width));
+        strip_width += width;
     }
+
+    let view = area.width as usize;
+    let offset = strip
+        .iter()
+        .find(|(t, _, _)| *t == app.active_tab)
+        .map(|(_, label, start)| start + label.chars().count() / 2)
+        .map_or(0, |center| {
+            center
+                .saturating_sub(view / 2)
+                .min(strip_width.saturating_sub(view))
+        });
 
     let mut spans = Vec::new();
     let mut hits = Vec::new();
-    let mut x = area.x;
-    let right = area.x + area.width;
-    for (i, (tab, label)) in tabs.iter().zip(labels).enumerate().skip(start) {
-        if i > start {
-            if x + GAP > right {
-                break;
-            }
-            spans.push(Span::raw(" ".repeat(GAP as usize)));
-            x += GAP;
+    let mut cursor = offset;
+    for (tab, label, start) in strip {
+        let end = start + label.chars().count();
+        let (from, to) = (start.max(offset), end.min(offset + view));
+        if from >= to {
+            continue;
         }
-        let w = widths[i].min(right - x);
-        if w == 0 {
-            break;
+        if from > cursor {
+            spans.push(Span::raw(" ".repeat(from - cursor)));
         }
-        let style = if *tab == app.active_tab {
+        let style = if tab == app.active_tab {
             Style::default()
                 .bg(theme.border_focused)
                 .fg(theme.highlight_bg)
@@ -256,10 +262,11 @@ fn render_top_nav(f: &mut Frame, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
         } else {
             Style::default().fg(theme.text_muted)
         };
-        let text: String = label.chars().take(w as usize).collect();
+        let text: String = label.chars().skip(from - start).take(to - from).collect();
         spans.push(Span::styled(text, style));
-        hits.push((Rect::new(x, area.y, w, 1), *tab));
-        x += w;
+        let x = area.x + (from - offset) as u16;
+        hits.push((Rect::new(x, area.y, (to - from) as u16, 1), tab));
+        cursor = to;
     }
 
     f.render_widget(
@@ -2044,17 +2051,37 @@ mod tests {
         assert_eq!(hit.y, 2);
     }
 
-    #[test]
-    fn top_nav_scrolls_to_keep_active_tab_visible() {
-        let mut terminal = Terminal::new(TestBackend::new(60, 30)).unwrap();
+    fn top_nav_hits_at(width: u16, active: usize) -> (Vec<(Rect, Tab)>, Tab) {
+        let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
         let mut app = App::default();
         app.config.ui.nav_position = crate::config::NavPosition::Top;
-        app.active_tab = *app.available_tabs().last().unwrap();
-
+        app.active_tab = app.available_tabs()[active];
         terminal.draw(|f| render(f, &mut app)).unwrap();
+        (app.top_nav_hits, app.active_tab)
+    }
 
-        assert!(app.top_nav_hits.iter().any(|(_, t)| *t == app.active_tab));
-        assert!(app.top_nav_hits.iter().all(|(r, _)| r.right() <= 60));
+    #[test]
+    fn top_nav_keeps_active_tab_centred_while_scrolling() {
+        let count = App::default().available_tabs().len();
+        for active in [count / 2 - 1, count / 2, count / 2 + 1] {
+            let (hits, tab) = top_nav_hits_at(60, active);
+            let (rect, _) = hits.iter().find(|(_, t)| *t == tab).unwrap();
+            let center = rect.x + rect.width / 2;
+            assert!(center.abs_diff(30) <= 1, "{tab:?} centred at {center}");
+            assert!(hits.iter().all(|(r, _)| r.right() <= 60));
+        }
+    }
+
+    #[test]
+    fn top_nav_pins_to_the_ends() {
+        let count = App::default().available_tabs().len();
+        let (hits, tab) = top_nav_hits_at(60, 0);
+        assert_eq!(hits[0], (Rect::new(0, 2, hits[0].0.width, 1), tab));
+
+        let (hits, tab) = top_nav_hits_at(60, count - 1);
+        let (last, last_tab) = hits.last().unwrap();
+        assert_eq!(*last_tab, tab);
+        assert_eq!(last.right(), 60);
     }
 
     #[test]

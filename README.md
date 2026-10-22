@@ -294,7 +294,7 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # icons = "nerd"
 
 # Layout. nav_position = "top" swaps the left sidebar for a horizontal tab bar
-# across the top of the workspace (it scrolls to keep the active tab visible).
+# across the top of the workspace (it scrolls to keep the active tab centred).
 # [ui]
 # nav_position = "left"      # left | top
 # sidebar_width = 22         # left nav only

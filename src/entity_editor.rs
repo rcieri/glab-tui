@@ -798,21 +798,42 @@ pub fn build_release_document(
 pub fn build_runner_document(
     runner: &crate::domain::runners::Runner,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
+    let or_placeholder =
+        |value: Option<&str>| value.filter(|v| !v.is_empty()).unwrap_or("--").to_string();
+    let mut fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", runner.id)),
-        crate::app::Field::read_only(
-            "Description",
-            runner
-                .description
-                .clone()
-                .unwrap_or_else(|| "--".to_string()),
-        ),
-        crate::app::Field::read_only("Status", runner.status.to_uppercase()),
+        crate::app::Field::read_only("Description", or_placeholder(runner.description.as_deref())),
+        crate::app::Field::read_only("Status", runner.status_kind().label().to_string()),
         crate::app::Field::read_only(
             "Active",
             crate::app::runner_active_display(runner.active).to_string(),
         ),
+        crate::app::Field::read_only(
+            "Type",
+            or_placeholder(runner.runner_type.map(|kind| kind.label())),
+        ),
+        crate::app::Field::read_only(
+            "Tags",
+            or_placeholder(Some(runner.tags.join(", ").as_str())),
+        ),
+        crate::app::Field::read_only("Version", or_placeholder(runner.version.as_deref())),
+        crate::app::Field::read_only(
+            "Last Contact",
+            or_placeholder(
+                runner
+                    .contacted_at
+                    .as_deref()
+                    .map(crate::utils::format::time_ago)
+                    .as_deref(),
+            ),
+        ),
     ];
+    if let Some(ip) = runner.ip_address.as_deref().filter(|ip| !ip.is_empty()) {
+        fields.push(crate::app::Field::read_only("IP Address", ip.to_string()));
+    }
+    if let Some(url) = &runner.web_url {
+        fields.push(crate::app::Field::read_only("URL", url.clone()));
+    }
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),
         fields,
@@ -822,28 +843,52 @@ pub fn build_runner_document(
 
 pub fn build_todo_document(
     todo: &crate::domain::notifications::Notification,
+    kind: crate::backend::BackendKind,
+    detail_fetch_error: Option<&str>,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", todo.id)),
+    let mut fields = vec![
         crate::app::Field::text("Title", todo.title.clone()),
-        crate::app::Field::read_only(
-            "Target",
-            if todo.target_type == "MergeRequest" {
-                format!("!{}", todo.target_iid)
-            } else if todo.target_type == "Issue" {
-                format!("#{}", todo.target_iid)
-            } else {
-                format!("{} #{}", todo.target_type, todo.target_iid)
-            },
-        ),
-        crate::app::Field::read_only("State", todo.state.to_uppercase()),
-        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&todo.updated_at)),
-        crate::app::Field::read_only("Project", todo.project_path.clone()),
+        crate::app::Field::read_only("Type", todo.type_label(kind).to_string()),
+        crate::app::Field::read_only("State", todo.state.clone()),
     ];
+    if !todo.reason.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Reason",
+            todo.reason.replace('_', " "),
+        ));
+    }
+    if !todo.author.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Author",
+            format!("@{}", todo.author),
+        ));
+    }
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&todo.updated_at),
+    ));
+    fields.push(crate::app::Field::read_only(
+        "Project",
+        todo.project_path.clone(),
+    ));
+    let content = match (&todo.body, detail_fetch_error) {
+        (Some(body), _) => crate::app::InspectorContent::Markdown(body.clone()),
+        (None, Some(error)) => {
+            crate::app::InspectorContent::Markdown(format!("_Could not load details: {error}_"))
+        }
+        (None, None) if todo.detail_api_path.is_some() => {
+            crate::app::InspectorContent::Empty("Loading details…")
+        }
+        (None, None) => crate::app::InspectorContent::Markdown(String::new()),
+    };
+    let title = match todo.reference(kind) {
+        Some(reference) => format!("{} {reference}", todo.type_label(kind)),
+        None => todo.type_label(kind).to_string(),
+    };
     crate::app::EntityDocument {
-        title: format!("Notification {}", todo.id),
+        title,
         fields,
-        content: crate::app::InspectorContent::Empty("Notification details"),
+        content,
     }
 }
 

@@ -3,12 +3,18 @@
     "id": 9876,
     "description": "Shared Runner 1",
     "status": "online",
-    "active": true
+    "active": true,
+    "paused": false,
+    "runner_type": "project_type",
+    "ip_address": ""
   },
   {
     "id": 9877,
     "description": "Docker Runner 2",
     "status": "offline",
-    "active": true
+    "active": true,
+    "paused": false,
+    "runner_type": "instance_type",
+    "ip_address": ""
   }
 ]

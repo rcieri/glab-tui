@@ -1,0 +1,4 @@
+{"data":{"project":{"runners":{"nodes":[
+  {"id":"gid://gitlab/Ci::Runner/9876","tagList":["docker","linux"],"contactedAt":"2026-01-02T03:04:05.000Z","managers":{"nodes":[{"version":"17.4.0","ipAddress":"10.0.0.7","contactedAt":"2026-01-02T03:04:05.000Z"},{"version":"17.3.1","ipAddress":"10.0.0.8","contactedAt":"2025-12-31T00:00:00.000Z"}]}},
+  {"id":"gid://gitlab/Ci::Runner/9877","tagList":[],"contactedAt":null,"managers":{"nodes":[]}}
+]}}}}

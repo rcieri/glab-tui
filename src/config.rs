@@ -193,6 +193,8 @@ pub struct Icons {
     pub runner_paused: String,
     pub runner_offline: String,
     pub highlight_arrow: String,
+    pub sort_asc: String,
+    pub sort_desc: String,
     pub separator: String,
     pub check_on: String,
     pub check_off: String,
@@ -255,6 +257,8 @@ pub struct Icons {
     pub nav_next: String,
     pub comment_bubble: String,
     pub pointer: String,
+    pub todo_unread: String,
+    pub todo_read: String,
 }
 
 impl Icons {
@@ -309,6 +313,8 @@ impl Icons {
             runner_paused: "\u{f46e}".to_string(),
             runner_offline: "\u{f4c3}".to_string(),
             highlight_arrow: "\u{f44a}".to_string(),
+            sort_asc: "\u{2191}".to_string(),
+            sort_desc: "\u{2193}".to_string(),
             separator: "\u{f460}".to_string(),
             check_on: "\u{f4a7}".to_string(),
             check_off: "\u{f51d}".to_string(),
@@ -371,6 +377,8 @@ impl Icons {
             nav_next: "▶".to_string(),
             comment_bubble: "💬".to_string(),
             pointer: "❯".to_string(),
+            todo_unread: "\u{f0e0}".to_string(),
+            todo_read: "\u{f2b6}".to_string(),
         }
     }
 
@@ -427,6 +435,8 @@ impl Icons {
             runner_paused: "=".to_string(),
             runner_offline: ".".to_string(),
             highlight_arrow: ">".to_string(),
+            sort_asc: "^".to_string(),
+            sort_desc: "v".to_string(),
             separator: ">".to_string(),
             check_on: "+".to_string(),
             check_off: "-".to_string(),
@@ -489,6 +499,8 @@ impl Icons {
             nav_next: ">".to_string(),
             comment_bubble: "\"".to_string(),
             pointer: ">".to_string(),
+            todo_unread: "*".to_string(),
+            todo_read: ".".to_string(),
         }
     }
 }
@@ -1044,6 +1056,12 @@ pub struct KeybindingGlobal {
     pub jump_to_id: String,
     #[serde(default = "def_submit_edit")]
     pub submit_edit: String,
+    #[serde(default = "def_sort_next")]
+    pub sort_next: String,
+    #[serde(default = "def_sort_prev")]
+    pub sort_prev: String,
+    #[serde(default = "def_sort_reverse")]
+    pub sort_reverse: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1245,6 +1263,12 @@ pub struct KeybindingRunners {
     pub edit_description: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_cycle_runner_status")]
+    pub cycle_status: String,
+    #[serde(default = "def_copy_runner_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_runner_id")]
+    pub copy_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1261,6 +1285,20 @@ pub struct KeybindingTodos {
     pub unsubscribe: String,
     #[serde(default = "def_toggle_show_read")]
     pub toggle_show_read: String,
+    #[serde(default = "def_select_todo")]
+    pub select_todo: String,
+    #[serde(default = "def_selection_toggle")]
+    pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
+    #[serde(default = "def_copy_todo_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_todo_reference")]
+    pub copy_reference: String,
+    /// Shows or hides the inspector, which `Enter` cannot open on this tab
+    /// because it opens the todo's target.
+    #[serde(default = "def_toggle_todo_preview")]
+    pub toggle_preview: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1457,12 +1495,19 @@ keybind_defaults! {
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
+    def_cycle_runner_status = "s",
+    def_copy_runner_url = "y",
+    def_copy_runner_id = "Y",
     def_mark_as_read = "Enter",
     def_open_in_browser_todo = "o",
     def_mark_as_done = "d",
     def_mark_all_as_read = "A",
     def_unsubscribe = "U",
     def_toggle_show_read = "r",
+    def_select_todo = "Space",
+    def_copy_todo_url = "y",
+    def_copy_todo_reference = "Y",
+    def_toggle_todo_preview = "p",
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
@@ -1481,6 +1526,9 @@ keybind_defaults! {
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
+    def_sort_next = ">",
+    def_sort_prev = "<",
+    def_sort_reverse = "=",
     def_submit_edit = "Ctrl+x",
     def_copy_branch = "y",
     def_retry_failed = "R",
@@ -1512,6 +1560,9 @@ impl Default for KeybindingGlobal {
             switch_repo: def_switch_repo(),
             jump_to_id: def_jump_to_id(),
             submit_edit: def_submit_edit(),
+            sort_next: def_sort_next(),
+            sort_prev: def_sort_prev(),
+            sort_reverse: def_sort_reverse(),
         }
     }
 }
@@ -1643,6 +1694,9 @@ impl Default for KeybindingRunners {
             resume: def_resume_runner(),
             edit_description: def_edit_description(),
             open_in_browser: def_open_in_browser(),
+            cycle_status: def_cycle_runner_status(),
+            copy_url: def_copy_runner_url(),
+            copy_id: def_copy_runner_id(),
         }
     }
 }
@@ -1656,6 +1710,12 @@ impl Default for KeybindingTodos {
             mark_all_as_read: def_mark_all_as_read(),
             unsubscribe: def_unsubscribe(),
             toggle_show_read: def_toggle_show_read(),
+            select_todo: def_select_todo(),
+            selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
+            copy_url: def_copy_todo_url(),
+            copy_reference: def_copy_todo_reference(),
+            toggle_preview: def_toggle_todo_preview(),
         }
     }
 }
@@ -1953,6 +2013,9 @@ scroll_half_page_up = "Ctrl+u"
 scroll_to_end = "End"
 scroll_top = "Home"
 jump_to_id = "g"
+sort_next = ">"
+sort_prev = "<"
+sort_reverse = "="
 
 [keybindings.issues]
 create_issue = "n"
@@ -2035,6 +2098,9 @@ selection_toggle = "v"
 pause = "p"
 resume = "r"
 edit_description = "e"
+cycle_status = "s"
+copy_url = "y"
+copy_id = "Y"
 
 [keybindings.todos]
 mark_as_read = "Enter"
@@ -2043,6 +2109,12 @@ mark_as_done = "d"
 mark_all_as_read = "A"
 unsubscribe = "U"
 toggle_show_read = "r"
+select_todo = "Space"
+selection_toggle = "v"
+select_all = "Ctrl+a"
+copy_url = "y"
+copy_reference = "Y"
+toggle_preview = "p"
 
 [keybindings.branches]
 create_branch = "n"
@@ -2637,33 +2709,37 @@ page_size = 250
         assert_eq!(global.scroll_half_page_up, "Ctrl+u");
     }
 
-    #[test]
-    fn mr_keybindings_do_not_collide() {
-        let cfg = Config::default();
-
-        // Enumerate fields via the struct's own `Serialize` impl instead of a
-        // hand-maintained array: a manually listed array silently excludes
-        // whatever field the author forgot to add (this happened once
-        // already -- `select_mr` was missing), so a newly added
-        // `KeybindingMrs` field is picked up automatically here with no
-        // extra step required.
-        let value = serde_json::to_value(&cfg.keybindings.mrs).expect("serialize KeybindingMrs");
+    /// Panics when two fields of a keybinding table share a default key.
+    /// Fields are enumerated through the table's own `Serialize` impl, so a
+    /// newly added field is checked without being listed anywhere.
+    fn assert_no_duplicate_bindings(table: &str, bindings: &impl Serialize) {
+        let value = serde_json::to_value(bindings).expect("serialize keybinding table");
         let fields = value
             .as_object()
-            .expect("KeybindingMrs serializes to a JSON object");
-        assert!(!fields.is_empty(), "KeybindingMrs serialized to no fields");
+            .expect("a keybinding table serializes to a JSON object");
+        assert!(!fields.is_empty(), "{table} serialized to no fields");
 
         let mut seen: HashMap<&str, &str> = HashMap::new();
         for (field, binding) in fields {
             let binding = binding
                 .as_str()
-                .expect("every KeybindingMrs field is a string");
+                .expect("every keybinding field is a string");
             if let Some(other_field) = seen.insert(binding, field) {
                 panic!(
-                    "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
+                    "duplicate {table} keybinding {binding:?}: used by both `{other_field}` and `{field}`"
                 );
             }
         }
+    }
+
+    #[test]
+    fn mr_keybindings_do_not_collide() {
+        assert_no_duplicate_bindings("mrs", &Config::default().keybindings.mrs);
+    }
+
+    #[test]
+    fn todo_keybindings_do_not_collide() {
+        assert_no_duplicate_bindings("todos", &Config::default().keybindings.todos);
     }
 
     #[test]

@@ -645,6 +645,18 @@ pub(crate) fn badge_style_for(
                 true,
                 Some(format!(" {} MERGED ", icons.state_merged)),
             ),
+            "unread" | "pending" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} NEW ", icons.todo_unread)),
+            ),
+            "read" | "done" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} READ ", icons.todo_read)),
+            ),
             "available" => (
                 theme.green,
                 active_bg(theme.green_bg),
@@ -665,18 +677,68 @@ pub(crate) fn badge_style_for(
             ),
             _ => (theme.text_normal, None, false, None),
         },
+        "Type" => match val {
+            "MR" | "PR" => (
+                theme.purple,
+                active_bg(theme.purple_bg),
+                true,
+                Some(format!(" {} {val} ", icons.tab_pr)),
+            ),
+            "Issue" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} Issue ", icons.tab_issue)),
+            ),
+            _ => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {val} ")),
+            ),
+        },
         "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-            "success" | "online" | "ready" => (
+            "success" | "ready" => (
                 theme.green,
                 active_bg(theme.green_bg),
                 true,
                 Some(format!(" {} SUCCESS ", icons.status_success)),
             ),
-            "failed" | "offline" => (
+            "failed" => (
                 theme.red,
                 active_bg(theme.red_bg),
                 true,
                 Some(format!(" {} FAILED ", icons.status_failed)),
+            ),
+            "online" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} ONLINE ", icons.runner_online)),
+            ),
+            "offline" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} OFFLINE ", icons.runner_offline)),
+            ),
+            "stale" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} STALE ", icons.runner_offline)),
+            ),
+            "never contacted" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} NEVER CONTACTED ", icons.status_unknown)),
+            ),
+            "unknown" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} UNKNOWN ", icons.status_unknown)),
             ),
             "running" => (
                 theme.blue,
@@ -820,10 +882,9 @@ pub(crate) fn badge_style_for(
             (theme.blue, None, false, None)
         }
         "Updated" | "Created" | "Duration" | "Released" | "Deployed" | "Date" | "Due Date"
-        | "Start Date" | "Avg Wait" => (theme.yellow, None, false, None),
-        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" => {
-            (theme.blue, None, false, None)
-        }
+        | "Start Date" | "Avg Wait" | "Last Contact" => (theme.yellow, None, false, None),
+        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" | "Version"
+        | "IP Address" => (theme.blue, None, false, None),
         _ => (theme.text_normal, None, false, None),
     }
 }
@@ -913,12 +974,44 @@ pub(crate) fn rendered_line_count(lines: &[Line], width: usize, wrap: bool) -> u
         .sum()
 }
 
+pub(crate) fn sort_header_label(label: &str, sort: Option<(&str, bool)>, icons: &Icons) -> String {
+    match sort {
+        Some((col, ascending)) if col == label => {
+            let arrow = if ascending {
+                &icons.sort_asc
+            } else {
+                &icons.sort_desc
+            };
+            format!("{label}{arrow}")
+        }
+        _ => label.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::pipelines::Job;
     use crate::ui::diff::count_wrapped_lines;
     use crate::ui::diff::{CommentAnchor, format_comment_with_suggestions};
+
+    #[test]
+    fn sort_header_label_marks_only_the_sorted_column() {
+        let icons = Icons::ascii();
+        assert_eq!(
+            sort_header_label("State", Some(("State", true)), &icons),
+            "State^"
+        );
+        assert_eq!(
+            sort_header_label("State", Some(("State", false)), &icons),
+            "Statev"
+        );
+        assert_eq!(
+            sort_header_label("Title", Some(("State", true)), &icons),
+            "Title"
+        );
+        assert_eq!(sort_header_label("Title", None, &icons), "Title");
+    }
 
     fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {
         Job {

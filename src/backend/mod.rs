@@ -11,7 +11,7 @@ use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
-use crate::domain::notifications::Notification;
+use crate::domain::notifications::{Notification, NotificationDetail};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
@@ -667,6 +667,10 @@ pub trait Backend: Send + Sync {
     async fn mark_all_notifications_as_read(&self) -> Result<()>;
     /// Stops further notifications about the notification's issue, MR/PR or thread.
     async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()>;
+    /// The comment or description behind a notification, read from its
+    /// `detail_api_path`. Only GitHub notifications need it: GitLab todos
+    /// carry their body in the list.
+    async fn get_notification_detail(&self, detail_api_path: &str) -> Result<NotificationDetail>;
 
     // ── Branches ──
     async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;

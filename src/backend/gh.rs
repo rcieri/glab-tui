@@ -11,7 +11,7 @@ use crate::domain::milestones::Milestone;
 use crate::domain::mr::{
     DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NotePosition, ensure_complete_diff,
 };
-use crate::domain::notifications::Notification;
+use crate::domain::notifications::{Notification, NotificationDetail};
 use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
@@ -204,6 +204,138 @@ fn parse_gh_login(raw: &str) -> Option<String> {
     } else {
         Some(login.to_string())
     }
+}
+
+/// The `repos/…` path of a GitHub API URL. GitHub Enterprise serves the API
+/// under `/api/v3`, so the host part is dropped rather than parsed.
+fn github_api_path(url: &str) -> Option<String> {
+    url.find("/repos/")
+        .map(|start| url[start + 1..].to_string())
+}
+
+/// The `gh issue view` / `gh pr view` arguments that read the issue or PR an
+/// API path names. Comments, releases, discussions and commits have no
+/// native command.
+fn native_detail_args(detail_api_path: &str) -> Option<[&str; 7]> {
+    let path = detail_api_path.strip_prefix("repos/")?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let name = parts.next()?;
+    let command = match parts.next()? {
+        "issues" => "issue",
+        "pulls" => "pr",
+        _ => return None,
+    };
+    let number = parts.next()?;
+    if parts.next().is_some() || number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let repo = &path[..owner.len() + 1 + name.len()];
+    Some([command, "view", number, "-R", repo, "--json", "body,author"])
+}
+
+fn parse_github_notifications(raw: &str) -> Result<Vec<Notification>> {
+    #[derive(Deserialize)]
+    struct GhNotif {
+        id: String,
+        repository: GhNotifRepo,
+        subject: GhNotifSubject,
+        unread: bool,
+        updated_at: String,
+        #[serde(default)]
+        reason: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GhNotifRepo {
+        full_name: String,
+        #[serde(default)]
+        html_url: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GhNotifSubject {
+        title: String,
+        r#type: String,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        latest_comment_url: Option<String>,
+    }
+    let gh_notifs: Vec<GhNotif> = serde_json::from_str(raw)?;
+    Ok(gh_notifs
+        .into_iter()
+        .map(|item| {
+            let subject_url = item.subject.url.unwrap_or_default();
+            let target_iid = subject_url
+                .split('/')
+                .next_back()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let repo_url = item
+                .repository
+                .html_url
+                .unwrap_or_else(|| format!("https://github.com/{}", item.repository.full_name));
+            let (target_type, web_url) = match item.subject.r#type.as_str() {
+                "PullRequest" => (
+                    "MergeRequest".to_string(),
+                    format!("{repo_url}/pull/{target_iid}"),
+                ),
+                "Issue" => (
+                    "Issue".to_string(),
+                    format!("{repo_url}/issues/{target_iid}"),
+                ),
+                _ => (item.subject.r#type, repo_url),
+            };
+            let detail_api_path = item
+                .subject
+                .latest_comment_url
+                .as_deref()
+                .and_then(github_api_path)
+                .or_else(|| github_api_path(&subject_url));
+            let state = if item.unread { "unread" } else { "read" };
+            Notification {
+                id: item.id,
+                project_path: item.repository.full_name,
+                title: item.subject.title,
+                target_type,
+                target_iid,
+                state: state.to_string(),
+                updated_at: item.updated_at,
+                author: String::new(),
+                reason: item.reason.unwrap_or_default(),
+                web_url,
+                body: None,
+                detail_api_path,
+            }
+        })
+        .collect())
+}
+
+/// Reads the comment, issue, PR or release a notification's
+/// `detail_api_path` points at. The API names a comment's author `user`,
+/// a release's `author`, and `gh issue view` / `gh pr view` use `author`.
+fn parse_github_notification_detail(raw: &str) -> Result<NotificationDetail> {
+    #[derive(Deserialize)]
+    struct GhUser {
+        login: String,
+    }
+    #[derive(Deserialize)]
+    struct GhDetail {
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        user: Option<GhUser>,
+        #[serde(default)]
+        author: Option<GhUser>,
+    }
+    let detail: GhDetail = serde_json::from_str(raw).context("parsing notification detail")?;
+    Ok(NotificationDetail {
+        author: detail
+            .user
+            .or(detail.author)
+            .map(|user| user.login)
+            .unwrap_or_default(),
+        body: detail.body.unwrap_or_default(),
+    })
 }
 
 fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -2843,6 +2975,12 @@ impl Backend for GhBackend {
             id: u64,
             name: String,
             status: String,
+            #[serde(default)]
+            labels: Vec<GhRunnerLabel>,
+        }
+        #[derive(Deserialize)]
+        struct GhRunnerLabel {
+            name: String,
         }
         let res: GhRunners = serde_json::from_str(&raw)?;
         Ok(res
@@ -2853,6 +2991,9 @@ impl Backend for GhBackend {
                 description: Some(r.name),
                 status: r.status,
                 active: true,
+                tags: r.labels.into_iter().map(|label| label.name).collect(),
+                web_url: Some(github_runner_url(project, r.id)),
+                ..Runner::default()
             })
             .collect())
     }
@@ -3206,56 +3347,18 @@ impl Backend for GhBackend {
         let raw = self
             .raw_api(endpoint, "GET", None, "Fetching Todos")
             .await?;
-        #[derive(Deserialize)]
-        struct GhNotif {
-            id: String,
-            repository: GhNotifRepo,
-            subject: GhNotifSubject,
-            unread: bool,
-            updated_at: String,
-        }
-        #[derive(Deserialize)]
-        struct GhNotifRepo {
-            full_name: String,
-        }
-        #[derive(Deserialize)]
-        struct GhNotifSubject {
-            title: String,
-            r#type: String,
-            url: String,
-        }
-        let gh_notifs: Vec<GhNotif> = serde_json::from_str(&raw)?;
-        Ok(gh_notifs
-            .into_iter()
-            .map(|item| {
-                let target_type = if item.subject.r#type == "PullRequest" {
-                    "MergeRequest".to_string()
-                } else {
-                    item.subject.r#type
-                };
-                let target_iid = item
-                    .subject
-                    .url
-                    .split('/')
-                    .next_back()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(0);
-                let state = if item.unread {
-                    "unread".to_string()
-                } else {
-                    "read".to_string()
-                };
-                Notification {
-                    id: item.id,
-                    project_path: item.repository.full_name,
-                    title: item.subject.title,
-                    target_type,
-                    target_iid,
-                    state,
-                    updated_at: item.updated_at,
-                }
-            })
-            .collect())
+        parse_github_notifications(&raw)
+    }
+
+    async fn get_notification_detail(&self, detail_api_path: &str) -> Result<NotificationDetail> {
+        let raw = match native_detail_args(detail_api_path) {
+            Some(args) => self.run_gh(&args, "Fetching Notification").await?,
+            None => {
+                self.raw_api(detail_api_path, "GET", None, "Fetching Notification")
+                    .await?
+            }
+        };
+        parse_github_notification_detail(&raw)
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
@@ -3734,8 +3837,7 @@ impl Backend for GhBackend {
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let path = scope.as_str().replace('/', "%2F");
-        let url = format!("https://github.com/{path}/settings/actions/runners/{runner_id}");
+        let url = github_runner_url(scope.as_str(), runner_id);
         open_github_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
@@ -3837,6 +3939,11 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
         return None;
     }
     Some(diff.num_seconds() as u64)
+}
+
+/// The self-hosted runner's settings page in `repository` (`owner/repo`).
+fn github_runner_url(repository: &str, runner_id: u64) -> String {
+    format!("https://github.com/{repository}/settings/actions/runners/{runner_id}")
 }
 
 /// Open `url` in the user's default browser via `git web--browse`. Logs the
@@ -4014,6 +4121,120 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_github_notification_links_its_page_and_its_latest_comment() {
+        let raw = r#"[
+            {"id": "1", "unread": true, "reason": "mention", "updated_at": "2026-07-06T12:00:00Z",
+             "repository": {"full_name": "acme/api", "html_url": "https://ghe.example/acme/api"},
+             "subject": {"title": "Add retries", "type": "PullRequest",
+                         "url": "https://ghe.example/api/v3/repos/acme/api/pulls/4",
+                         "latest_comment_url": "https://ghe.example/api/v3/repos/acme/api/issues/comments/99"}},
+            {"id": "2", "unread": false, "updated_at": "2026-07-05T12:00:00Z",
+             "repository": {"full_name": "acme/api"},
+             "subject": {"title": "Crash", "type": "Issue",
+                         "url": "https://api.github.com/repos/acme/api/issues/9",
+                         "latest_comment_url": null}},
+            {"id": "3", "unread": true, "updated_at": "2026-07-04T12:00:00Z",
+             "repository": {"full_name": "acme/api"},
+             "subject": {"title": "CI", "type": "CheckSuite", "url": null, "latest_comment_url": null}}
+        ]"#;
+
+        let notifications = parse_github_notifications(raw).unwrap();
+
+        let summary: Vec<_> = notifications
+            .iter()
+            .map(|n| {
+                (
+                    n.target_type.as_str(),
+                    n.state.as_str(),
+                    n.target_iid,
+                    n.web_url.as_str(),
+                    n.detail_api_path.as_deref(),
+                    n.body.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    "MergeRequest",
+                    "unread",
+                    4,
+                    "https://ghe.example/acme/api/pull/4",
+                    Some("repos/acme/api/issues/comments/99"),
+                    None,
+                ),
+                (
+                    "Issue",
+                    "read",
+                    9,
+                    "https://github.com/acme/api/issues/9",
+                    Some("repos/acme/api/issues/9"),
+                    None,
+                ),
+                (
+                    "CheckSuite",
+                    "unread",
+                    0,
+                    "https://github.com/acme/api",
+                    None,
+                    None
+                ),
+            ]
+        );
+        assert_eq!(notifications[0].reason, "mention");
+    }
+
+    #[test]
+    fn a_notification_detail_reads_the_comment_or_release_author() {
+        let comment = r#"{"body": "Looks **good**", "user": {"login": "alice"}}"#;
+        let release = r#"{"body": null, "author": {"login": "bob"}}"#;
+        assert_eq!(
+            parse_github_notification_detail(comment).unwrap(),
+            NotificationDetail {
+                author: "alice".to_string(),
+                body: "Looks **good**".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_github_notification_detail(release).unwrap(),
+            NotificationDetail {
+                author: "bob".to_string(),
+                body: String::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn only_an_issue_or_pr_subject_is_read_with_a_native_command() {
+        assert_eq!(
+            native_detail_args("repos/acme/api/issues/9"),
+            Some([
+                "issue",
+                "view",
+                "9",
+                "-R",
+                "acme/api",
+                "--json",
+                "body,author"
+            ])
+        );
+        assert_eq!(
+            native_detail_args("repos/acme/api/pulls/4"),
+            Some(["pr", "view", "4", "-R", "acme/api", "--json", "body,author"])
+        );
+        for raw_only in [
+            "repos/acme/api/issues/comments/99",
+            "repos/acme/api/pulls/comments/7",
+            "repos/acme/api/releases/123",
+            "repos/acme/api/commits/abc123",
+            "repos/acme/api/issues/",
+        ] {
+            assert_eq!(native_detail_args(raw_only), None, "{raw_only}");
+        }
+    }
 
     #[test]
     fn a_pending_async_merge_is_polled_by_its_uuid() {

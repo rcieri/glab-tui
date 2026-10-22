@@ -6,10 +6,17 @@ use crate::domain::notifications::{self, Notification, NotificationTarget, TodoC
 use crate::event::Event;
 use tokio::sync::mpsc::UnboundedSender;
 
+pub fn activate_todo(app: &mut App, tx: &UnboundedSender<Event>) {
+    if app.selected_todos.is_empty() {
+        open_selected(app, tx);
+    } else {
+        mark_selected_read(app, tx);
+    }
+}
+
 /// Opens the highlighted todo's issue or MR/PR and marks the todo read. A
-/// todo with nothing to open here stays unread. Bound to both
-/// `keybindings.todos.mark_as_read` and `Enter`.
-pub fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
+/// todo with nothing to open here stays unread.
+fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
     let Some(todo) = app.selected_todo().cloned() else {
         return;
     };
@@ -19,21 +26,105 @@ pub fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
     if !jump_to_target(app, &client, &todo, tx) || !todo.is_unread() {
         return;
     }
-    let id = todo.id.clone();
-    spawn_todo_change(tx, TodoChange::MarkedRead(id.clone()), async move {
-        notifications::mark_notification_as_read(&client, &id).await
-    });
+    spawn_marks(tx, client, vec![todo.id], Mark::Read);
 }
 
+fn mark_selected_read(app: &mut App, tx: &UnboundedSender<Event>) {
+    mark_selection(app, tx, Mark::Read);
+}
+
+/// Marks every selected todo done, or the highlighted one without a
+/// selection.
 pub fn mark_selected_done(app: &mut App, tx: &UnboundedSender<Event>) {
-    let Some(id) = app.selected_todo().map(|todo| todo.id.clone()) else {
-        return;
+    mark_selection(app, tx, Mark::Done);
+}
+
+pub fn copy_selected_url(app: &mut App) {
+    if let Err(error) = app.copy_selected_todo_url() {
+        app.show_error(format!("Failed to copy URL: {error}"));
+    }
+}
+
+pub fn copy_selected_reference(app: &mut App) {
+    if let Err(error) = app.copy_selected_todo_reference() {
+        app.show_error(format!("Failed to copy reference: {error}"));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Mark {
+    Read,
+    Done,
+}
+
+impl Mark {
+    fn change(self, ids: Vec<String>) -> TodoChange {
+        match self {
+            Mark::Read => TodoChange::MarkedRead(ids),
+            Mark::Done => TodoChange::MarkedDone(ids),
+        }
+    }
+
+    async fn apply(self, client: &GitlabClient, id: &str) -> anyhow::Result<()> {
+        match self {
+            Mark::Read => notifications::mark_notification_as_read(client, id).await,
+            Mark::Done => notifications::mark_notification_as_done(client, id).await,
+        }
+    }
+}
+
+fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark) {
+    let ids = match mark {
+        Mark::Read => app.unread_todo_ids_to_act_on(),
+        Mark::Done => app.todo_ids_to_act_on(),
     };
+    if ids.is_empty() {
+        if matches!(mark, Mark::Read) && !app.selected_todos.is_empty() {
+            app.clear_selections();
+            let todos = app.kind().term("todo_plural").to_lowercase();
+            app.show_notice(format!("The selected {todos} are already read"));
+        }
+        return;
+    }
     let Some(client) = backend_client(app) else {
         return;
     };
-    spawn_todo_change(tx, TodoChange::MarkedDone(id.clone()), async move {
-        notifications::mark_notification_as_done(&client, &id).await
+    app.clear_selections();
+    spawn_marks(tx, client, ids, mark);
+}
+
+/// Reports the accepted and the failed ids as one `TodoChange` each, so a
+/// batch raises at most one toast.
+fn spawn_marks(tx: &UnboundedSender<Event>, client: GitlabClient, ids: Vec<String>, mark: Mark) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let mut marked = Vec::new();
+        let mut failed = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        for (i, id) in ids.into_iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
+            match mark.apply(&client, &id).await {
+                Ok(()) => marked.push(id),
+                Err(error) => {
+                    failed.push(id);
+                    let error = format!("{error:#}");
+                    if !errors.contains(&error) {
+                        errors.push(error);
+                    }
+                }
+            }
+        }
+        if !marked.is_empty() {
+            let _ = tx.send(Event::TodoChanged(mark.change(marked), Ok(())));
+        }
+        if !failed.is_empty() {
+            let _ = tx.send(Event::TodoChanged(
+                mark.change(failed),
+                Err(errors.join("; ")),
+            ));
+        }
     });
 }
 
@@ -152,13 +243,10 @@ fn jump_to_target(
     let project = todo.project_path.as_str();
     let iid = todo.target_iid;
     if !app.scope.contains_project(project) {
-        let marker = match target {
-            NotificationTarget::MergeRequest if app.kind().is_gitlab() => "!",
-            _ => "#",
-        };
+        let reference = todo.reference(app.kind()).unwrap_or_default();
         let open_in_browser = &app.config.keybindings.todos.open_in_browser;
         app.show_error(format!(
-            "{project}{marker}{iid} is outside {}. Press {open_in_browser} to open it in the browser.",
+            "{project}{reference} is outside {}. Press {open_in_browser} to open it in the browser.",
             app.scope
         ));
         return false;

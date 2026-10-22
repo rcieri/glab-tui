@@ -2704,17 +2704,7 @@ pub(crate) fn render_tab_milestones(
         if let Some(selected_idx) = app.milestones.state.selected() {
             if let Some(m) = filtered_milestones.get(selected_idx) {
                 let is_github = app.is_github();
-                let issues = app
-                    .milestone_issues_cache
-                    .get(&m.iid)
-                    .map(|v| v.as_slice())
-                    .or_else(|| {
-                        if app.selected_milestone_iid == Some(m.iid) {
-                            app.selected_milestone_issues.as_deref()
-                        } else {
-                            None
-                        }
-                    });
+                let issues = app.milestone_issues(m.iid);
                 let progress = app.milestone_progress_cache.get(&m.iid).copied();
                 let doc =
                     crate::entity_editor::build_milestone_document(m, issues, progress, is_github);
@@ -3413,7 +3403,6 @@ mod tests {
         }];
         app.milestones.state.select(Some(0));
         app.selected_milestone_iid = Some(6);
-        // Not in milestone_issues_cache
         app.active_tab = Tab::Milestones;
 
         terminal

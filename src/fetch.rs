@@ -558,10 +558,11 @@ pub fn spawn_refresh_active_tab(
                     Ok(milestones) => {
                         let _ = tx.send(Event::MilestonesFetched(milestones.clone()));
                         if scope.is_repository() {
-                            for (i, m) in milestones.iter().enumerate() {
-                                if m.iid == 0 {
-                                    continue;
-                                }
+                            let active_milestones: Vec<_> = milestones
+                                .iter()
+                                .filter(|m| m.iid > 0 && m.state.eq_ignore_ascii_case("active"))
+                                .collect();
+                            for (i, m) in active_milestones.into_iter().enumerate() {
                                 if i > 0 {
                                     crate::backend::rate_limit::pace_bulk_operation().await;
                                 }
@@ -570,7 +571,7 @@ pub fn spawn_refresh_active_tab(
                                 } else {
                                     &repo_path
                                 };
-                                if let Ok(issues) = domain::milestones::list_milestone_issues(
+                                match domain::milestones::list_milestone_issues(
                                     &client,
                                     project_context,
                                     m.iid,
@@ -578,11 +579,22 @@ pub fn spawn_refresh_active_tab(
                                 )
                                 .await
                                 {
-                                    if tx
-                                        .send(Event::MilestoneIssuesFetched(m.iid, issues))
-                                        .is_err()
-                                    {
-                                        break;
+                                    Ok(issues) => {
+                                        if tx
+                                            .send(Event::MilestoneIssuesFetched(m.iid, issues))
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(Event::CommandCompleted(
+                                            app::Tab::Milestones,
+                                            Err(format!(
+                                                "Failed to fetch milestone issues for '{}': {e}",
+                                                m.title
+                                            )),
+                                        ));
                                     }
                                 }
                             }

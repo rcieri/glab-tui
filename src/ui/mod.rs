@@ -452,7 +452,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let zoomed = (app.details_zoomed && can_zoom) || edit_zoomed;
 
     // Top navigation: carve a one-row tab bar off the top of the workspace.
-    let (top_nav_rect, workspace) = if nav_top && app.config.ui.sidebar_visible && !zoomed {
+    // It stays up wherever the next/previous-tab keys switch tabs, which
+    // includes a zoomed preview; only edit/create forms take those keys.
+    let (top_nav_rect, workspace) = if nav_top && app.config.ui.sidebar_visible && !edit_zoomed {
         let v = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -2087,6 +2089,34 @@ mod tests {
         let (last, last_tab) = hits.last().unwrap();
         assert_eq!(*last_tab, tab);
         assert_eq!(last.right(), 60);
+    }
+
+    #[test]
+    fn top_nav_stays_visible_in_a_zoomed_preview_but_not_in_edit_forms() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.details_zoomed = true;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(!app.top_nav_hits.is_empty());
+
+        app.edit_menu = Some(crate::app::EditMenu {
+            entity_project: String::new(),
+            entity_iid: 1,
+            entity_kind: crate::app::EditEntityKind::EditIssue,
+            title: "Edit Issue".to_string(),
+            fields: vec![],
+            initial_fields: std::collections::HashMap::new(),
+            selected_idx: 0,
+            editing: false,
+            cursor_pos: 0,
+            state: ratatui::widgets::ListState::default(),
+            desc_scroll: 0,
+            workflow_inputs: vec![],
+        });
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.top_nav_hits.is_empty());
     }
 
     #[test]

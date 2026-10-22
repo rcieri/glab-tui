@@ -249,7 +249,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens (`diff_gutter_bg`, `diff_sep`, etc.) to `Theme` if needed.
 
 ### Navigation Layout
-* `[ui] nav_position` (`NavPosition::Left` | `NavPosition::Top`, in [src/config.rs](src/config.rs)) picks between the left sidebar and a one-row top tab bar. `render_top_nav()` in [src/ui/mod.rs](src/ui/mod.rs) draws the bar and returns per-tab click targets stored in `app.top_nav_hits`; the mouse handler in [src/main.rs](src/main.rs) checks them before the sidebar. `sidebar_visible = false` hides navigation in either position, and both are hidden while the detail pane is zoomed.
+* `[ui] nav_position` (`NavPosition::Left` | `NavPosition::Top`, in [src/config.rs](src/config.rs)) picks between the left sidebar and a one-row top tab bar. `render_top_nav()` in [src/ui/mod.rs](src/ui/mod.rs) draws the bar and returns per-tab click targets stored in `app.top_nav_hits`; the mouse handler in [src/main.rs](src/main.rs) checks them before the sidebar. `sidebar_visible = false` hides navigation in either position. The top bar stays up wherever the next/previous-tab keys switch tabs, including a zoomed preview, and hides only while an edit/create form (which takes those keys) is open; the sidebar is hidden in any zoomed state.
 
 ### Keybinding System
 * All keybinding defaults are defined via the `keybind_defaults!` macro in [src/config.rs](src/config.rs).

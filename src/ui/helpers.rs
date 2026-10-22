@@ -645,6 +645,18 @@ pub(crate) fn badge_style_for(
                 true,
                 Some(format!(" {} MERGED ", icons.state_merged)),
             ),
+            "unread" | "pending" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} NEW ", icons.todo_unread)),
+            ),
+            "read" | "done" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} READ ", icons.todo_read)),
+            ),
             "available" => (
                 theme.green,
                 active_bg(theme.green_bg),
@@ -665,18 +677,68 @@ pub(crate) fn badge_style_for(
             ),
             _ => (theme.text_normal, None, false, None),
         },
+        "Type" => match val {
+            "MR" | "PR" => (
+                theme.purple,
+                active_bg(theme.purple_bg),
+                true,
+                Some(format!(" {} {val} ", icons.tab_pr)),
+            ),
+            "Issue" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} Issue ", icons.tab_issue)),
+            ),
+            _ => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {val} ")),
+            ),
+        },
         "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-            "success" | "online" | "ready" => (
+            "success" | "ready" => (
                 theme.green,
                 active_bg(theme.green_bg),
                 true,
                 Some(format!(" {} SUCCESS ", icons.status_success)),
             ),
-            "failed" | "offline" => (
+            "failed" => (
                 theme.red,
                 active_bg(theme.red_bg),
                 true,
                 Some(format!(" {} FAILED ", icons.status_failed)),
+            ),
+            "online" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} ONLINE ", icons.runner_online)),
+            ),
+            "offline" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} OFFLINE ", icons.runner_offline)),
+            ),
+            "stale" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} STALE ", icons.runner_offline)),
+            ),
+            "never contacted" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} NEVER CONTACTED ", icons.status_unknown)),
+            ),
+            "unknown" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} UNKNOWN ", icons.status_unknown)),
             ),
             "running" => (
                 theme.blue,
@@ -820,10 +882,9 @@ pub(crate) fn badge_style_for(
             (theme.blue, None, false, None)
         }
         "Updated" | "Created" | "Duration" | "Released" | "Deployed" | "Date" | "Due Date"
-        | "Start Date" | "Avg Wait" => (theme.yellow, None, false, None),
-        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" => {
-            (theme.blue, None, false, None)
-        }
+        | "Start Date" | "Avg Wait" | "Last Contact" => (theme.yellow, None, false, None),
+        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" | "Version"
+        | "IP Address" => (theme.blue, None, false, None),
         _ => (theme.text_normal, None, false, None),
     }
 }

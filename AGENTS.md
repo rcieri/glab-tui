@@ -73,7 +73,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
     * [custom_commands.rs](src/handlers/custom_commands.rs): `run_bound_command` — resolves the highlighted row's template values, runs the custom command through `editor::suspend_while` (or a background thread) and logs the outcome.
-    * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle). Every mutation goes through `spawn_todo_change`, which reports `Event::TodoChanged`.
+    * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle, copy URL / reference). Read and done marks go through `spawn_marks` (paced batch, one `TodoChanged` for the accepted ids and one for the failed ones), the other mutations through `spawn_todo_change`. Both report `Event::TodoChanged`.
     * [terminal.rs](src/handlers/terminal.rs): Terminal tab keys (`handle_tab_key`), the command inspector's keys (`handle_inspector_key`, before the tab handler in the main loop) and `rerun`, which logs a `RERUN_LOG_PREFIX` row and settles it from `Event::CommandRerun`.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
@@ -222,10 +222,13 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Todos Tab (GitLab Todos / GitHub Notifications)
 * The read filter lives on `GitlabClient::show_read_notifications` (default `false`, unread only) so every refresh path fetches with it. `App::toggle_show_read_todos` flips it and `Event::TodosFetched` carries the filter it was requested with, so a list fetched before a toggle is dropped.
-* Mutations report `Event::TodoChanged(TodoChange, Result)`. On success `App::apply_todo_change` updates `app.todos` in place (no refetch): read and done items are restated while the tab shows them and dropped otherwise, and GitHub's done notifications always leave the list. On failure the error goes through `App::show_error`.
+* Mutations report `Event::TodoChanged(TodoChange, Result)`. `MarkedRead` / `MarkedDone` carry every id of the batch. On success `App::apply_todo_change` updates `app.todos` in place (no refetch): read and done items are restated while the tab shows them and dropped otherwise, and GitHub's done notifications always leave the list. On failure the error goes through `App::show_error`.
+* Batch selection: `App::selected_todos` (notification ids) is filled by `select_todo` (Space), `selection_toggle` (visual mode through `toggle_select_mode` / `update_visual_selection`) and `select_all`. With a selection, `mark_as_read` and `mark_as_done` act on `App::todo_ids_to_act_on` (every selected todo, hidden by the search or not) and clear the selection. `mark_as_read` skips the ones already read (`App::unread_todo_ids_to_act_on`). `apply_todo_change` and `App::set_todos` drop selected ids that left the list.
+* Inspector: `Enter` opens the target on this tab, so `toggle_preview` (`p`) shows the preview. `build_todo_document` renders `Notification::body` as Markdown. GitLab fills `body` from the todo list (the note text for mentions, else the target description). GitHub lists no body: `fetch::dispatch_inspected_todo_detail_fetch` (on `Event::Tick`, debounced like the PR stack fetch) reads `Notification::detail_api_path` (latest comment, else the subject) through `Backend::get_notification_detail` and sends `Event::TodoDetailFetched`, which carries the path it read: a result for a path the notification no longer has is dropped, so the next tick fetches the current one. A failure is kept in `App::failed_todo_details` and shown instead of refetching until the next list refresh, which `set_todos` treats as the retry. `set_todos` keeps a fetched body while the notification's `updated_at` is unchanged.
+* `Notification::reference` (`!N` for a GitLab MR, `#N` otherwise, `None` for a target glab-tui has no view for, whose `target_iid` is not an issue number) and `type_label` (`MR` / `PR` / `Issue`) feed the ID and Type columns, the inspector, the out-of-scope error and `copy_reference`. Without a reference the ID column shows `—`, the inspector title only the type, and `copy_reference` raises an error. Search, the Type filter and group-by read `type_label` too. The raw `target_type` stays a search and filter alias, so filters saved before the label keep matching, but the picker offers only the label. The State and Type badges come from `badge_style_for`.
 * GitLab todos have no read state: `mark_notification_as_read` and `mark_notification_as_done` both run `glab todo done`.
-* `mark_as_read` and `Enter` share `handlers::todos::open_selected`. The jump resolves the target in the todo's own project (`Scope::contains_project`, `App::focus_issue` / `focus_mr` with `Some(project)`) and fetches it when unlisted. A todo outside the current scope, or whose target has no view in glab-tui, raises an error instead of landing on a same-numbered item, and stays unread: `jump_to_target` returns whether it had something to open, and only then is the todo marked read.
-* E2E coverage: `tests/e2e/todos.rs`, driven by `todo list` (`todos.json`) and `api todos?state=done` (`todos_done.json`) in `tests/mocks/glab`.
+* `mark_as_read` and `Enter` share `handlers::todos::activate_todo`: a batch selection is marked read, otherwise `open_selected` jumps to the highlighted todo. The jump resolves the target in the todo's own project (`Scope::contains_project`, `App::focus_issue` / `focus_mr` with `Some(project)`) and fetches it when unlisted. A todo outside the current scope, or whose target has no view in glab-tui, raises an error instead of landing on a same-numbered item, and stays unread: `jump_to_target` returns whether it had something to open, and only then is the todo marked read.
+* E2E coverage: `tests/e2e/todos.rs`, driven by `todo list` (`todos.json`) and `api todos?state=done` (`todos_done.json`) in `tests/mocks/glab`, and on GitHub by the `notifications` and `/issues/comments/` branches of `tests/mocks/gh`.
 
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
@@ -332,7 +335,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` (prints discussions `{id, notes: [...]}`, which `parse_mr_discussions` flattens into notes tagged with their discussion id) | glab fetches every page itself |
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Current branch's pipeline (Jobs tab) | `glab ci list --output json -R <repo> --ref <branch> --per-page 1` and `glab mr list --output json -R <repo> --source-branch <branch> --per-page 1`, then `glab ci list … --ref refs/merge-requests/<iid>/head --per-page 1` when the branch has an open MR. Newest id wins | Single targeted calls, never a full MR or pipeline listing |
-| List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
+| List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call (then one GraphQL query fills tags, version, last contact and IP — see Runner details below) |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
 | List milestone issues | `glab issue list --milestone <title> --all --output json -R <repo> --per-page <N>` | Single call (`--milestone` filters by milestone **title**, not iid — resolved from the selected milestone at the call site) |
@@ -382,6 +385,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List deployments | `GET /projects/{}/deployments?per_page=<N>&order_by=id&sort=desc[&environment=<name>]` | No native command. The API sorts oldest first by default, which would cut the newest deployments off the page |
 | Stop environment | `POST /projects/{}/environments/{}/stop` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
+| Runner details (tags, version, last contact, IP) | `glab api graphql` over `project(fullPath:).runners { id tagList contactedAt managers { version ipAddress contactedAt } }`, one query after `glab runner list` | `glab runner list` returns none of these fields and `glab runner` has no view subcommand. GitLab deprecated the runner's own `version` and stopped returning its `ip_address` in 17.0 in favour of the runner managers. A runner the query does not return (a group or project runner the token cannot read) still lists, with those fields unknown |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
 | MR approval/mergeability state | `glab api graphql` over `mergeRequests(iids: [...])` | `glab mr list` exposes neither axis; one bulk query fills the Approval/Mergeable columns (batched by `api_per_page`) |
 | List group issues | `GET /groups/{}/issues?state=...&per_page=<N>&page=<P>` | `glab issue list -g` spans each project via separate requests; a single group endpoint aggregates across the whole group. Group path is `%2F` URL-encoded. |
@@ -412,6 +416,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
 | List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
 | List labels | `gh label list --json name,color -R <repo> --limit 100` | Single call (label colors feed the Labels column) |
+| Notification body of an issue or PR without comments (Todos preview) | `gh issue view <n> -R <repo> --json body,author` / `gh pr view <n> -R <repo> --json body,author` | N/A (on demand, for the notification resting in the preview) |
 
 #### Mutations — Native Subcommands
 
@@ -438,13 +443,14 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
 | Merge a stacked PR (`Backend::merge_pr_stack`) | `PUT /repos/{}/pulls/{}/merge-async` with `merge_method`, then `GET .../merge-async/{uuid}` every 2 s while `pending` | `gh pr merge` calls the GraphQL `mergePullRequest` mutation, which refuses stacked PRs. Merges the PR with every open PR below it, all or nothing (a merge-queue base enqueues them). Single merges of a stacked PR open `ConfirmAction::MergeStack`. Bulk merges look the selection up with `list_pr_stack_summaries` and route stacked PRs here |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
-| List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
+| List runners | `GET /repos/{}/actions/runners?per_page=<N>` (labels become the runner's tags) | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
 | List notifications | `GET notifications[?all=true]` | No `gh notification` command |
 | Mark notification read | `PATCH notifications/threads/{}` | No native command |
 | Mark notification done | `DELETE notifications/threads/{}` | No native command |
 | Mark all notifications read | `PUT notifications` | No native command |
 | Unsubscribe from notification thread | `DELETE notifications/threads/{}/subscription` | No native command |
+| Notification comment / body (Todos preview) | `GET repos/{}/issues/comments/{}` (the notification's `latest_comment_url`), else a subject other than an issue or PR (release, discussion, commit) | A comment and those subjects have no native command. An issue or PR subject goes through `gh issue view` / `gh pr view` instead. On demand only, for the notification resting in the preview |
 | List branches | `GET /repos/{}/branches?per_page=<N>` | No native command |
 | Create branch | `POST /repos/{}/git/refs` | No native command |
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |

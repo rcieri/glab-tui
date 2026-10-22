@@ -2260,6 +2260,7 @@ pub(crate) fn render_tab_todos(
             detail_rect,
         );
     } else {
+        let kind = app.kind();
         let mut filtered_todos = App::filtered_todos_list(
             &app.todos.items,
             &app.search_query,
@@ -2269,78 +2270,76 @@ pub(crate) fn render_tab_todos(
                 .copied()
                 .unwrap_or(true),
             app.group_by_column.get(&Tab::Todos).unwrap_or(&None),
+            kind,
         );
         App::apply_column_filters(
             &mut filtered_todos,
             &app.column_filters,
             Tab::Todos,
-            App::todo_filter_values,
+            |n, col| App::todo_filter_values(n, col, kind),
         );
-
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
-
-            let (state_str, state_style) = if n.is_unread() {
-                (
-                    " NEW",
-                    Style::default()
-                        .fg(theme.green)
-                        .add_modifier(Modifier::BOLD),
-                )
+            let is_checked = app.selected_todos.contains(&n.id);
+            let row_bg = if is_row_highlighted {
+                theme.highlight_bg
             } else {
-                (" READ", Style::default().fg(theme.text_muted))
+                ratatui::style::Color::Reset
             };
-
-            let type_style = if n.target_type == "MergeRequest" {
-                Style::default()
-                    .fg(theme.purple)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.blue).add_modifier(Modifier::BOLD)
-            };
-
-            let mut row_cells = Vec::new();
-            if app.is_column_visible(Tab::Todos, "State") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    state_str,
+            let badge_cell = |label: &str, value: &str| {
+                let (fg, bg, is_bold, text) = super::helpers::badge_style_for(
+                    label,
+                    value,
+                    is_row_highlighted,
+                    row_bg,
+                    &theme,
+                    &icons,
+                );
+                let mut style = Style::default().fg(fg).bg(bg.unwrap_or(row_bg));
+                if is_bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                super::helpers::render_fuzzy_cell(
+                    &text.unwrap_or_else(|| value.to_string()),
                     &app.search_query,
                     is_row_highlighted,
-                    false,
-                    state_style,
-                    Alignment::Left,
-                ));
+                    is_checked,
+                    style,
+                    Alignment::Center,
+                )
+            };
+
+            let mut row_cells = vec![Cell::from(ratatui::text::Span::styled(
+                " ",
+                if is_checked {
+                    Style::default().bg(theme.checked_bg)
+                } else {
+                    Style::default()
+                },
+            ))];
+            if app.is_column_visible(Tab::Todos, "State") {
+                row_cells.push(badge_cell("State", &n.state));
             }
             if app.is_column_visible(Tab::Todos, "Project") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &n.project_path,
                     &app.search_query,
                     is_row_highlighted,
-                    false,
+                    is_checked,
                     Style::default().fg(theme.text_muted),
                     Alignment::Left,
                 ));
             }
             if app.is_column_visible(Tab::Todos, "Type") {
-                row_cells.push(super::helpers::render_fuzzy_cell(
-                    n.target_type.as_str(),
-                    &app.search_query,
-                    is_row_highlighted,
-                    false,
-                    type_style,
-                    Alignment::Left,
-                ));
+                row_cells.push(badge_cell("Type", n.type_label(kind)));
             }
             if app.is_column_visible(Tab::Todos, "ID") {
-                let prefix = if n.target_type == "MergeRequest" {
-                    "!"
-                } else {
-                    "#"
-                };
+                let reference = n.reference(kind).unwrap_or_else(|| "—".to_string());
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &format!("{}{}", prefix, n.target_iid),
+                    &reference,
                     &app.search_query,
                     is_row_highlighted,
-                    false,
+                    is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
@@ -2350,7 +2349,7 @@ pub(crate) fn render_tab_todos(
                     &truncate(&n.title, 80),
                     &app.search_query,
                     is_row_highlighted,
-                    false,
+                    is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
@@ -2360,7 +2359,7 @@ pub(crate) fn render_tab_todos(
                     &time_ago(&n.updated_at),
                     &app.search_query,
                     is_row_highlighted,
-                    false,
+                    is_checked,
                     Style::default().fg(theme.yellow),
                     Alignment::Left,
                 ));
@@ -2373,8 +2372,8 @@ pub(crate) fn render_tab_todos(
             Row::new(row_cells).style(row_style).height(1)
         });
 
-        let mut header_cells = Vec::new();
-        let mut widths = Vec::new();
+        let mut header_cells = vec![Cell::from("")];
+        let mut widths = vec![Constraint::Length(1)];
 
         let sort = app.sort_for(Tab::Todos);
         let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
@@ -2384,14 +2383,14 @@ pub(crate) fn render_tab_todos(
             header_cells.push(Cell::from(
                 header_line("State").alignment(Alignment::Center),
             ));
-            widths.push(Constraint::Length(6));
+            widths.push(Constraint::Length(8));
         }
         if app.is_column_visible(Tab::Todos, "Project") {
             header_cells.push(header("Project"));
             widths.push(Constraint::Length(24));
         }
         if app.is_column_visible(Tab::Todos, "Type") {
-            header_cells.push(header("Type"));
+            header_cells.push(Cell::from(header_line("Type").alignment(Alignment::Center)));
             widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Todos, "ID") {
@@ -2405,10 +2404,6 @@ pub(crate) fn render_tab_todos(
         if app.is_column_visible(Tab::Todos, "Updated") {
             header_cells.push(header("Updated"));
             widths.push(Constraint::Length(16));
-        }
-
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
         }
 
         let table = Table::new(rows, widths)
@@ -2430,7 +2425,11 @@ pub(crate) fn render_tab_todos(
             .border_style(Style::default().fg(theme.border));
         if let Some(selected) = app.todos.state.selected() {
             if let Some(n) = filtered_todos.get(selected) {
-                let doc = crate::entity_editor::build_todo_document(n);
+                let doc = crate::entity_editor::build_todo_document(
+                    n,
+                    kind,
+                    app.failed_todo_details.get(&n.id).map(String::as_str),
+                );
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,

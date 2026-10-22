@@ -722,6 +722,12 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 | `p` | Pause selected runner | `pause` |
 | `r` | Resume (un-pause) selected runner | `resume` |
 | `e` | Edit runner description (inline text input) | `edit_description` |
+| `o` | Open runner in browser | `open_in_browser` |
+| `s` | Cycle the Status filter: Online, Paused, Offline, all (Online, Offline, all on GitHub, whose runners cannot be paused) | `cycle_status` |
+| `y` | Copy runner URL | `copy_url` |
+| `Y` | Copy runner ID | `copy_id` |
+
+The preview lists each runner's type (instance, group or project), tags, version, last contact, IP address and URL. On GitLab the tags, version, last contact and IP address come from one `glab api graphql` query over the project's runners, and the IP address only appears when a runner manager reports one (GitLab 17 and later no longer report the runner's own IP). On GitHub the runner's labels are its tags, and type, version, last contact and IP address are not available. A runner that is paused shows `PAUSED` whatever its connection state. The `Tags` column (shown by default) can be searched and filtered by tag from the column configurator, where the `Type`, `Version` and `Last Contact` columns can be enabled too.
 
 ---
 
@@ -758,16 +764,26 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 
 On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lists unread items only until `r` toggles read (GitHub) or done (GitLab) items on, and the tab title shows the active filter (`Unread` / `All`). Every action updates the list as soon as the CLI call succeeds, and a failed call raises an error toast.
 
+The State and Type columns are badges (`NEW` / `READ`, `Issue` / `MR` or `PR`). `p` opens the preview, which renders the comment that triggered the item as Markdown, or the target's description when there is none, with the reason and author. GitLab todos carry it in the list. GitHub fetches the latest comment (or the issue / PR body) once the cursor rests on a notification.
+
+Select items with `Space`, or with `v` and the cursor (yazi-style), then press `Enter` or `d` to mark every selected item read or done in one go. `Esc` clears the selection.
+
 > Remappable via `[keybindings.todos]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`) | `mark_as_read` |
-| `d` | Mark item as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
+| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`). With a selection, marks every selected unread item read without leaving the tab | `mark_as_read` |
+| `d` | Mark item (or every selected item) as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
 | `A` | Mark all items as read (with confirmation) | `mark_all_as_read` |
 | `U` | Unsubscribe from the item's thread (GitLab: issues and MRs only) | `unsubscribe` |
 | `r` | Toggle showing read / done items | `toggle_show_read` |
 | `o` | Open item in browser | `open_in_browser` |
+| `Space` | Toggle the item in the selection | `select_todo` |
+| `v` | Toggle select mode (paint selection while navigating) | `selection_toggle` |
+| `Ctrl+a` | Select every filtered item | `select_all` |
+| `y` | Copy the target's URL | `copy_url` |
+| `Y` | Copy the target's reference (`#123`, or `!456` for a GitLab MR). Targets glab-tui has no view for, such as releases or check suites, have none | `copy_reference` |
+| `p` | Show / hide the preview | `toggle_preview` |
 
 ---
 
@@ -965,7 +981,7 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo nextest run --test e2e`, which needs `cargo-nextest`).
 
 ### Development & Tasks (`just`)
 
@@ -984,7 +1000,7 @@ Available recipes:
 - `just fmt` / `just fmt-check` — format code or verify formatting
 - `just lint` — run Clippy with `-Dwarnings`
 - `just test` — run unit tests (`cargo test --lib --bin glab-tui`)
-- `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
+- `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e`, requires `cargo-nextest`)
 - `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
 - `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
 - `just check` — run the full CI check matrix locally

@@ -77,6 +77,11 @@ jobs:
       - name: Run unit tests
         run: cargo test --lib --bin glab-tui --verbose
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-nextest
+
       - name: Run e2e tests
         timeout-minutes: 25
-        run: cargo test --test e2e --verbose -- --test-threads=1
+        run: cargo nextest run --test e2e --no-fail-fast

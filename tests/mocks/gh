@@ -122,6 +122,8 @@ if [[ "$*" == *"api"* ]]; then
                 cat "$FIXTURES_DIR/gh_pr_comments_page2.json"
             fi
         fi
+    elif [[ "$*" == *"/issues/comments/"* ]]; then
+        echo '{"body": "Comment from **octocat** on item one", "user": {"login": "octocat"}}'
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
@@ -147,14 +149,13 @@ if [[ "$*" == *"api"* ]]; then
         # GithubWorkflowRuns is: {"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "..."}]}
         echo '{"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "2026-07-06T12:00:00Z"}]}'
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
-        # For Github runners, we wrap runners.json into GithubRunners
-        echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online"}]}'
+        echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online", "labels": [{"id": 1, "name": "self-hosted", "type": "read-only"}, {"id": 2, "name": "gpu", "type": "custom"}]}]}'
     elif [[ "$*" == *"notifications"* ]]; then
         # GitHub notifications:
         echo '[{
             "id": "1",
             "repository": {"full_name": "test-owner/test-repo"},
-            "subject": {"title": "Todo Item 1", "type": "Issue", "url": "https://api.github.com/repos/test-owner/test-repo/issues/1"},
+            "subject": {"title": "Todo Item 1", "type": "Issue", "url": "https://api.github.com/repos/test-owner/test-repo/issues/1", "latest_comment_url": "https://api.github.com/repos/test-owner/test-repo/issues/comments/77"},
             "unread": true,
             "updated_at": "2026-07-06T12:00:00Z"
         }]'

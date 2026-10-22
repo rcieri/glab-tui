@@ -1831,6 +1831,25 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             key: d(app.config.keybindings.runners.open_in_browser.clone()),
             action: "Open runner in browser",
         },
+        Shortcut {
+            category: "Runners",
+            key: d(app.config.keybindings.runners.cycle_status.clone()),
+            action: if app.kind().supports_runner_management() {
+                "Cycle status filter (Online, Paused, Offline, All)"
+            } else {
+                "Cycle status filter (Online, Offline, All)"
+            },
+        },
+        Shortcut {
+            category: "Runners",
+            key: d(app.config.keybindings.runners.copy_url.clone()),
+            action: "Copy runner URL",
+        },
+        Shortcut {
+            category: "Runners",
+            key: d(app.config.keybindings.runners.copy_id.clone()),
+            action: "Copy runner ID",
+        },
         // ── Releases ──
         Shortcut {
             category: "Releases",
@@ -1861,7 +1880,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "TODOs",
             key: d(app.config.keybindings.todos.mark_as_read.clone()),
-            action: "Open todo target & mark read",
+            action: "Open todo target & mark read (selection: mark all selected read)",
         },
         Shortcut {
             category: "TODOs",
@@ -1871,7 +1890,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "TODOs",
             key: d(app.config.keybindings.todos.mark_as_done.clone()),
-            action: "Mark todo done",
+            action: "Mark todo (or all selected) done",
         },
         Shortcut {
             category: "TODOs",
@@ -1887,6 +1906,36 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "TODOs",
             key: d(app.config.keybindings.todos.toggle_show_read.clone()),
             action: "Toggle showing read todos",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.select_todo.clone()),
+            action: "Toggle selection of todo",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.selection_toggle.clone()),
+            action: "Toggle select mode (paint selection while navigating)",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.select_all.clone()),
+            action: "Select all filtered todos",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.copy_url.clone()),
+            action: "Copy todo target URL",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.copy_reference.clone()),
+            action: "Copy todo target reference (#123 / !456)",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.toggle_preview.clone()),
+            action: "Show / hide the todo preview",
         },
         // ── Terminal ──
         Shortcut {

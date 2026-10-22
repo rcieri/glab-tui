@@ -32,9 +32,9 @@ lint:
 test:
     cargo test --lib --bin glab-tui
 
-# Run end-to-end tests (single-threaded)
+# Run end-to-end tests, one process per test (requires cargo-nextest)
 e2e:
-    cargo test --test e2e -- --test-threads=1
+    cargo nextest run --test e2e
 
 # Check advisories, licenses, duplicate versions and sources (requires cargo-deny)
 deny:

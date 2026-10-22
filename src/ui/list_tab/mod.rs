@@ -53,6 +53,16 @@ pub struct CellContext<'a> {
     pub row_style: Style,
 }
 
+/// Values a column filter offers and matches for a cell showing `text`; an
+/// empty cell offers none.
+fn cell_filter_values(text: Cow<'_, str>) -> Vec<String> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![text.into_owned()]
+    }
+}
+
 /// One column of a list tab: its header, cell, search text, filter values
 /// and sort key, defined once.
 pub trait ColumnDef: Copy + Eq + 'static {
@@ -88,12 +98,7 @@ pub trait ColumnDef: Copy + Eq + 'static {
 
     /// Values the column filter offers and matches; an empty cell offers none.
     fn filter_values(self, row: &Self::Row) -> Vec<String> {
-        let text = self.text(row);
-        if text.is_empty() {
-            Vec::new()
-        } else {
-            vec![text.into_owned()]
-        }
+        cell_filter_values(self.text(row))
     }
 
     fn matches_filter(self, row: &Self::Row, selected: &HashSet<String>) -> bool {

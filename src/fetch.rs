@@ -764,6 +764,62 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
     Some(pr)
 }
 
+/// Fetch the comment or description of the GitHub notification in the
+/// inspector once it has stayed highlighted for `RELATED_MRS_DEBOUNCE`, so
+/// scrolling through the list only fetches where the user stops. Called
+/// from `Event::Tick`; returns whether a fetch was started.
+pub fn dispatch_inspected_todo_detail_fetch(
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) -> bool {
+    let Some((id, detail_api_path)) = inspected_todo_without_detail(app) else {
+        app.todo_detail_candidate = None;
+        return false;
+    };
+    match &app.todo_detail_candidate {
+        Some((candidate, since)) if *candidate == id => {
+            if since.elapsed() < RELATED_MRS_DEBOUNCE {
+                return false;
+            }
+        }
+        _ => {
+            app.todo_detail_candidate = Some((id, std::time::Instant::now()));
+            return false;
+        }
+    }
+    app.todo_detail_candidate = None;
+    app.fetching_todo_details.insert(id.clone());
+    let client = client.clone().muted();
+    let tx = app.scoped_sender(tx.clone());
+    tokio::spawn(async move {
+        let result =
+            domain::notifications::get_notification_detail(&client, &detail_api_path).await;
+        let _ = tx.send(Event::TodoDetailFetched {
+            id,
+            detail_api_path,
+            result: result.map_err(|e| format!("{e:#}")),
+        });
+    });
+    true
+}
+
+/// The id and detail path of the notification shown in the inspector, when
+/// its body is still unknown and no fetch for it is running or has failed.
+fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
+    if app.active_tab != app::Tab::Todos || !(app.detail_visible || app.details_zoomed) {
+        return None;
+    }
+    let todo = app.selected_todo()?;
+    if todo.body.is_some()
+        || app.fetching_todo_details.contains(&todo.id)
+        || app.failed_todo_details.contains_key(&todo.id)
+    {
+        return None;
+    }
+    Some((todo.id.clone(), todo.detail_api_path.clone()?))
+}
+
 /// Kick off background fetches for enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
 /// synchronous fetch), `Tab::Terminal`, and any tab whose data is
@@ -1012,6 +1068,93 @@ mod tests {
 
         assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
         assert_eq!(app.pr_stack_candidate, None);
+    }
+
+    /// A GitHub app on the Todos tab with the inspector open on
+    /// notification 1, whose body is not known yet.
+    fn app_inspecting_notification_1() -> app::App {
+        let mut app = app_inspecting_pr_11();
+        app.active_tab = app::Tab::Todos;
+        app.todos.items = vec![crate::domain::notifications::Notification {
+            id: "1".to_string(),
+            target_type: "Issue".to_string(),
+            target_iid: 9,
+            detail_api_path: Some("repos/owner/repo/issues/9".to_string()),
+            ..Default::default()
+        }];
+        app.todos.state.select(Some(0));
+        app
+    }
+
+    #[tokio::test]
+    async fn inspector_fetches_a_notification_body_once_after_the_selection_rests() {
+        let mut app = app_inspecting_notification_1();
+        let client = app.gitlab_client.clone().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        assert!(!dispatch_inspected_todo_detail_fetch(
+            &client, &mut app, &tx
+        ));
+        assert!(app.fetching_todo_details.is_empty());
+
+        let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
+        app.todo_detail_candidate = Some(("1".to_string(), rested));
+        assert!(dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx));
+        assert_eq!(
+            app.fetching_todo_details,
+            ["1".to_string()].into_iter().collect()
+        );
+
+        app.todo_detail_candidate = Some(("1".to_string(), rested));
+        assert!(
+            !dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx),
+            "an in-flight fetch is not requested again"
+        );
+    }
+
+    #[test]
+    fn inspector_fetches_no_notification_body_already_known_or_failed() {
+        let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
+        let mut known = app_inspecting_notification_1();
+        known.todos.items[0].body = Some("Hello".to_string());
+        let mut failed = app_inspecting_notification_1();
+        failed
+            .failed_todo_details
+            .insert("1".to_string(), "HTTP 404".to_string());
+        let mut gitlab = app_inspecting_notification_1();
+        gitlab.todos.items[0].detail_api_path = None;
+
+        for mut app in [known, failed, gitlab] {
+            let client = app.gitlab_client.clone().unwrap();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            app.todo_detail_candidate = Some(("1".to_string(), rested));
+
+            assert!(!dispatch_inspected_todo_detail_fetch(
+                &client, &mut app, &tx
+            ));
+            assert!(app.fetching_todo_details.is_empty());
+            assert_eq!(app.todo_detail_candidate, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_list_refresh_retries_a_notification_body_that_failed() {
+        let mut app = app_inspecting_notification_1();
+        let client = app.gitlab_client.clone().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let listed = app.todos.items.clone();
+        app.failed_todo_details
+            .insert("1".to_string(), "HTTP 502".to_string());
+        let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
+        app.todo_detail_candidate = Some(("1".to_string(), rested));
+        assert!(!dispatch_inspected_todo_detail_fetch(
+            &client, &mut app, &tx
+        ));
+
+        app.set_todos(listed);
+
+        app.todo_detail_candidate = Some(("1".to_string(), rested));
+        assert!(dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx));
     }
 
     fn pr_stack_of_11() -> crate::domain::mr::PrStack {

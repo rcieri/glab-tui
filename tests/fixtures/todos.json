@@ -4,10 +4,17 @@
     "project": {
       "path_with_namespace": "test-owner/test-repo"
     },
+    "author": {
+      "username": "carol"
+    },
+    "action_name": "mentioned",
     "target": {
       "title": "Ship worktree eight",
-      "iid": 8
+      "iid": 8,
+      "description": "Worktree eight description"
     },
+    "target_url": "https://gitlab.com/test-owner/test-repo/-/issues/8",
+    "body": "Ping from **carol** about worktree eight",
     "target_type": "Issue",
     "state": "pending",
     "updated_at": "2026-07-06T12:00:00Z"

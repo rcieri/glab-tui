@@ -193,6 +193,8 @@ pub struct Icons {
     pub runner_paused: String,
     pub runner_offline: String,
     pub highlight_arrow: String,
+    pub sort_asc: String,
+    pub sort_desc: String,
     pub separator: String,
     pub check_on: String,
     pub check_off: String,
@@ -311,6 +313,8 @@ impl Icons {
             runner_paused: "\u{f46e}".to_string(),
             runner_offline: "\u{f4c3}".to_string(),
             highlight_arrow: "\u{f44a}".to_string(),
+            sort_asc: "\u{2191}".to_string(),
+            sort_desc: "\u{2193}".to_string(),
             separator: "\u{f460}".to_string(),
             check_on: "\u{f4a7}".to_string(),
             check_off: "\u{f51d}".to_string(),
@@ -431,6 +435,8 @@ impl Icons {
             runner_paused: "=".to_string(),
             runner_offline: ".".to_string(),
             highlight_arrow: ">".to_string(),
+            sort_asc: "^".to_string(),
+            sort_desc: "v".to_string(),
             separator: ">".to_string(),
             check_on: "+".to_string(),
             check_off: "-".to_string(),
@@ -1050,6 +1056,12 @@ pub struct KeybindingGlobal {
     pub jump_to_id: String,
     #[serde(default = "def_submit_edit")]
     pub submit_edit: String,
+    #[serde(default = "def_sort_next")]
+    pub sort_next: String,
+    #[serde(default = "def_sort_prev")]
+    pub sort_prev: String,
+    #[serde(default = "def_sort_reverse")]
+    pub sort_reverse: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1251,6 +1263,12 @@ pub struct KeybindingRunners {
     pub edit_description: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_cycle_runner_status")]
+    pub cycle_status: String,
+    #[serde(default = "def_copy_runner_url")]
+    pub copy_url: String,
+    #[serde(default = "def_copy_runner_id")]
+    pub copy_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1477,6 +1495,9 @@ keybind_defaults! {
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
+    def_cycle_runner_status = "s",
+    def_copy_runner_url = "y",
+    def_copy_runner_id = "Y",
     def_mark_as_read = "Enter",
     def_open_in_browser_todo = "o",
     def_mark_as_done = "d",
@@ -1505,6 +1526,9 @@ keybind_defaults! {
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
+    def_sort_next = ">",
+    def_sort_prev = "<",
+    def_sort_reverse = "=",
     def_submit_edit = "Ctrl+x",
     def_copy_branch = "y",
     def_retry_failed = "R",
@@ -1536,6 +1560,9 @@ impl Default for KeybindingGlobal {
             switch_repo: def_switch_repo(),
             jump_to_id: def_jump_to_id(),
             submit_edit: def_submit_edit(),
+            sort_next: def_sort_next(),
+            sort_prev: def_sort_prev(),
+            sort_reverse: def_sort_reverse(),
         }
     }
 }
@@ -1667,6 +1694,9 @@ impl Default for KeybindingRunners {
             resume: def_resume_runner(),
             edit_description: def_edit_description(),
             open_in_browser: def_open_in_browser(),
+            cycle_status: def_cycle_runner_status(),
+            copy_url: def_copy_runner_url(),
+            copy_id: def_copy_runner_id(),
         }
     }
 }
@@ -1983,6 +2013,9 @@ scroll_half_page_up = "Ctrl+u"
 scroll_to_end = "End"
 scroll_top = "Home"
 jump_to_id = "g"
+sort_next = ">"
+sort_prev = "<"
+sort_reverse = "="
 
 [keybindings.issues]
 create_issue = "n"
@@ -2065,6 +2098,9 @@ selection_toggle = "v"
 pause = "p"
 resume = "r"
 edit_description = "e"
+cycle_status = "s"
+copy_url = "y"
+copy_id = "Y"
 
 [keybindings.todos]
 mark_as_read = "Enter"

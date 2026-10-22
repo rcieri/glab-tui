@@ -335,7 +335,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` (prints discussions `{id, notes: [...]}`, which `parse_mr_discussions` flattens into notes tagged with their discussion id) | glab fetches every page itself |
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Current branch's pipeline (Jobs tab) | `glab ci list --output json -R <repo> --ref <branch> --per-page 1` and `glab mr list --output json -R <repo> --source-branch <branch> --per-page 1`, then `glab ci list … --ref refs/merge-requests/<iid>/head --per-page 1` when the branch has an open MR. Newest id wins | Single targeted calls, never a full MR or pipeline listing |
-| List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
+| List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call (then one GraphQL query fills tags, version, last contact and IP — see Runner details below) |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
 | List milestone issues | `glab issue list --milestone <title> --all --output json -R <repo> --per-page <N>` | Single call (`--milestone` filters by milestone **title**, not iid — resolved from the selected milestone at the call site) |
@@ -385,6 +385,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List deployments | `GET /projects/{}/deployments?per_page=<N>&order_by=id&sort=desc[&environment=<name>]` | No native command. The API sorts oldest first by default, which would cut the newest deployments off the page |
 | Stop environment | `POST /projects/{}/environments/{}/stop` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
+| Runner details (tags, version, last contact, IP) | `glab api graphql` over `project(fullPath:).runners { id tagList contactedAt managers { version ipAddress contactedAt } }`, one query after `glab runner list` | `glab runner list` returns none of these fields and `glab runner` has no view subcommand. GitLab deprecated the runner's own `version` and stopped returning its `ip_address` in 17.0 in favour of the runner managers. A runner the query does not return (a group or project runner the token cannot read) still lists, with those fields unknown |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
 | MR approval/mergeability state | `glab api graphql` over `mergeRequests(iids: [...])` | `glab mr list` exposes neither axis; one bulk query fills the Approval/Mergeable columns (batched by `api_per_page`) |
 | List group issues | `GET /groups/{}/issues?state=...&per_page=<N>&page=<P>` | `glab issue list -g` spans each project via separate requests; a single group endpoint aggregates across the whole group. Group path is `%2F` URL-encoded. |
@@ -442,7 +443,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced), `Y` (`view_stack`) and `m` (`merge_mr`), the last two through `with_pr_stack` in `handlers/tabs.rs`, which waits on `App::pending_stack_action`. Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
 | Merge a stacked PR (`Backend::merge_pr_stack`) | `PUT /repos/{}/pulls/{}/merge-async` with `merge_method`, then `GET .../merge-async/{uuid}` every 2 s while `pending` | `gh pr merge` calls the GraphQL `mergePullRequest` mutation, which refuses stacked PRs. Merges the PR with every open PR below it, all or nothing (a merge-queue base enqueues them). Single merges of a stacked PR open `ConfirmAction::MergeStack`. Bulk merges look the selection up with `list_pr_stack_summaries` and route stacked PRs here |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
-| List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
+| List runners | `GET /repos/{}/actions/runners?per_page=<N>` (labels become the runner's tags) | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
 | List notifications | `GET notifications[?all=true]` | No `gh notification` command |
 | Mark notification read | `PATCH notifications/threads/{}` | No native command |

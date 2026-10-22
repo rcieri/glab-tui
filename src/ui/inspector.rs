@@ -566,14 +566,18 @@ pub(crate) fn build_field_list_items(
                         _ => icons.label_details.as_str(),
                     },
                     "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-                        "success" | "online" | "ready" => icons.status_success.as_str(),
-                        "failed" | "offline" => icons.status_failed.as_str(),
+                        "success" | "ready" => icons.status_success.as_str(),
+                        "failed" => icons.status_failed.as_str(),
+                        "online" => icons.runner_online.as_str(),
+                        "offline" | "stale" => icons.runner_offline.as_str(),
                         "running" => icons.status_running.as_str(),
                         "pending" | "waiting" | "draft" => icons.status_pending.as_str(),
                         "canceled" | "cancelled" => icons.status_canceled.as_str(),
                         "paused" => icons.runner_paused.as_str(),
+                        "never contacted" | "unknown" => icons.status_unknown.as_str(),
                         _ => icons.label_details.as_str(),
                     },
+                    "Tags" => icons.tag.as_str(),
                     "Author" | "Assignees" | "Reviewers" | "Deployer" => icons.user.as_str(),
                     "Default" => icons.radio_on.as_str(),
                     "Protected" => icons.lock.as_str(),
@@ -590,11 +594,10 @@ pub(crate) fn build_field_list_items(
                     "Threads" => icons.thread_unresolved.as_str(),
                     "Merge Requests" | "Pull Requests" => icons.tab_pr.as_str(),
                     "Created" | "Updated" | "Date" | "Due Date" | "Start Date" | "Released"
-                    | "Deployed" => icons.date.as_str(),
+                    | "Deployed" | "Last Contact" => icons.date.as_str(),
                     "Duration" | "Avg Wait" => icons.clock.as_str(),
-                    "ID" | "SHA" | "Commit" | "Deploy SHA" | "Deploy ID" | "Runner" | "Tag" => {
-                        icons.identifier.as_str()
-                    }
+                    "ID" | "SHA" | "Commit" | "Deploy SHA" | "Deploy ID" | "Runner" | "Tag"
+                    | "Version" | "IP Address" => icons.identifier.as_str(),
                     "Metrics" | "Utilization" | "Queue Depth" | "Active Jobs" | "Progress" => {
                         icons.chart.as_str()
                     }
@@ -936,6 +939,30 @@ pub(crate) fn build_field_list_items(
                                         ));
                                     }
                                 }
+                            }
+                        } else if val == "--" {
+                            val_spans.push(Span::styled(
+                                " --",
+                                Style::default()
+                                    .fg(theme.text_muted)
+                                    .bg(item_bg)
+                                    .add_modifier(Modifier::ITALIC),
+                            ));
+                        } else if label == "Tags" {
+                            let pill_style = Style::default()
+                                .fg(theme.purple)
+                                .bg(if is_selected {
+                                    theme.highlight_bg
+                                } else {
+                                    theme.purple_bg
+                                })
+                                .add_modifier(Modifier::BOLD);
+                            for tag in val.split(", ") {
+                                val_spans.push(Span::styled(" ", Style::default().bg(item_bg)));
+                                val_spans.push(Span::styled(
+                                    format!(" {} {tag} ", icons.tag),
+                                    pill_style,
+                                ));
                             }
                         } else {
                             let (val_fg, badge_bg, is_bold, formatted_val) = if (label

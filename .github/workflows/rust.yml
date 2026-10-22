@@ -83,5 +83,5 @@ jobs:
           tool: cargo-nextest
 
       - name: Run e2e tests
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: cargo nextest run --test e2e --no-fail-fast

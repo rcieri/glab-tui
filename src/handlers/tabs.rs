@@ -2256,7 +2256,9 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Runners => {
             let can_manage_runners = app.kind().supports_runner_management();
-            if let Some(item) = app.runners.cursor_row() {
+            if keybinding_matches(&app.config.keybindings.runners.cycle_status, key_event) {
+                app.cycle_runner_status_filter();
+            } else if let Some(item) = app.runners.cursor_row() {
                 let runner_id = item.id;
                 match key_event.code {
                     // GitHub cannot pause, resume or rename a runner. The keys are still
@@ -2359,6 +2361,20 @@ pub async fn handle_active_tab_key(
                                 result.map_err(|e| e.to_string()),
                             ));
                         });
+                    }
+                    _ if keybinding_matches(
+                        &app.config.keybindings.runners.copy_url,
+                        key_event,
+                    ) =>
+                    {
+                        if let Err(error) = app.copy_selected_runner_url() {
+                            app.show_error(format!("Failed to copy runner URL: {error}"));
+                        }
+                    }
+                    _ if keybinding_matches(&app.config.keybindings.runners.copy_id, key_event) => {
+                        if let Err(error) = app.copy_selected_runner_id() {
+                            app.show_error(format!("Failed to copy runner ID: {error}"));
+                        }
                     }
                     _ => handled = false,
                 }

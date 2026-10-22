@@ -2975,6 +2975,12 @@ impl Backend for GhBackend {
             id: u64,
             name: String,
             status: String,
+            #[serde(default)]
+            labels: Vec<GhRunnerLabel>,
+        }
+        #[derive(Deserialize)]
+        struct GhRunnerLabel {
+            name: String,
         }
         let res: GhRunners = serde_json::from_str(&raw)?;
         Ok(res
@@ -2985,6 +2991,9 @@ impl Backend for GhBackend {
                 description: Some(r.name),
                 status: r.status,
                 active: true,
+                tags: r.labels.into_iter().map(|label| label.name).collect(),
+                web_url: Some(github_runner_url(project, r.id)),
+                ..Runner::default()
             })
             .collect())
     }
@@ -3828,8 +3837,7 @@ impl Backend for GhBackend {
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let path = scope.as_str().replace('/', "%2F");
-        let url = format!("https://github.com/{path}/settings/actions/runners/{runner_id}");
+        let url = github_runner_url(scope.as_str(), runner_id);
         open_github_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
@@ -3931,6 +3939,11 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
         return None;
     }
     Some(diff.num_seconds() as u64)
+}
+
+/// The self-hosted runner's settings page in `repository` (`owner/repo`).
+fn github_runner_url(repository: &str, runner_id: u64) -> String {
+    format!("https://github.com/{repository}/settings/actions/runners/{runner_id}")
 }
 
 /// Open `url` in the user's default browser via `git web--browse`. Logs the

@@ -528,6 +528,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `Enter` / `Esc` (in search) | Close search bar | — |
 | `?` / `F1` | Show help: type to filter; `↑`/`↓`, `Ctrl+N`/`Ctrl+P`, `PgUp`/`PgDn`, `Ctrl+D`/`Ctrl+U`, `Home`/`End` or the mouse wheel scroll the list | `help` |
 | `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
+| `>` / `<` | Sort list by next / previous visible column | `sort_next` / `sort_prev` |
+| `=` | Reverse sort order | `sort_reverse` |
 | `Ctrl+S` | Switch repository | — |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
 | `u` | Check for updates | — |
@@ -719,6 +721,12 @@ glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[T
 | `p` | Pause selected runner | `pause` |
 | `r` | Resume (un-pause) selected runner | `resume` |
 | `e` | Edit runner description (inline text input) | `edit_description` |
+| `o` | Open runner in browser | `open_in_browser` |
+| `s` | Cycle the Status filter: Online, Paused, Offline, all (Online, Offline, all on GitHub, whose runners cannot be paused) | `cycle_status` |
+| `y` | Copy runner URL | `copy_url` |
+| `Y` | Copy runner ID | `copy_id` |
+
+The preview lists each runner's type (instance, group or project), tags, version, last contact, IP address and URL. On GitLab the tags, version, last contact and IP address come from one `glab api graphql` query over the project's runners, and the IP address only appears when a runner manager reports one (GitLab 17 and later no longer report the runner's own IP). On GitHub the runner's labels are its tags, and type, version, last contact and IP address are not available. A runner that is paused shows `PAUSED` whatever its connection state. The `Tags` column (shown by default) can be searched and filtered by tag from the column configurator, where the `Type`, `Version` and `Last Contact` columns can be enabled too.
 
 ---
 
@@ -980,6 +988,9 @@ just check      # runs fmt check, clippy, unit tests, and single-threaded e2e te
 ```
 
 Available recipes:
+- `just run [args]` — run a debug build, passing `args` to glab-tui
+- `just build` — build the release binary (`target/release/glab-tui`)
+- `just install` — build, then copy the binary to the first directory in `PATH`
 - `just fmt` / `just fmt-check` — format code or verify formatting
 - `just lint` — run Clippy with `-Dwarnings`
 - `just test` — run unit tests (`cargo test --lib --bin glab-tui`)

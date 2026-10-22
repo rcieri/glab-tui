@@ -7916,6 +7916,26 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && !app.focus_column_checklist
+                    {
+                        let keys = &app.config.keybindings.global;
+                        if keybinding_matches(&keys.sort_next, &key_event) {
+                            app.cycle_sort_column(true);
+                            continue;
+                        }
+                        if keybinding_matches(&keys.sort_prev, &key_event) {
+                            app.cycle_sort_column(false);
+                            continue;
+                        }
+                        if keybinding_matches(&keys.sort_reverse, &key_event) {
+                            app.reverse_sort_order();
+                            continue;
+                        }
+                    }
+
                     if keybinding_matches(&app.config.keybindings.global.configure, &key_event)
                         && !app.focus_column_checklist
                         && app.text_input.is_none()

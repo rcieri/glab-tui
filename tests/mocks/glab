@@ -28,7 +28,13 @@ fi
 
 # Match arguments to determine response
 if [[ "$*" == *"api"* ]]; then
-    if [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
+    if [[ "$2" == "graphql" && "$*" == *"runners(first"* ]]; then
+        cat "$FIXTURES_DIR/runner_details_graphql.json"
+        exit 0
+    fi
+    if [[ "$2" == runners/* ]]; then
+        cat "$FIXTURES_DIR/runner_${2#runners/}.json"
+    elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'

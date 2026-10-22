@@ -798,21 +798,42 @@ pub fn build_release_document(
 pub fn build_runner_document(
     runner: &crate::domain::runners::Runner,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
+    let or_placeholder =
+        |value: Option<&str>| value.filter(|v| !v.is_empty()).unwrap_or("--").to_string();
+    let mut fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", runner.id)),
-        crate::app::Field::read_only(
-            "Description",
-            runner
-                .description
-                .clone()
-                .unwrap_or_else(|| "--".to_string()),
-        ),
-        crate::app::Field::read_only("Status", runner.status.to_uppercase()),
+        crate::app::Field::read_only("Description", or_placeholder(runner.description.as_deref())),
+        crate::app::Field::read_only("Status", runner.status_kind().label().to_string()),
         crate::app::Field::read_only(
             "Active",
             crate::app::runner_active_display(runner.active).to_string(),
         ),
+        crate::app::Field::read_only(
+            "Type",
+            or_placeholder(runner.runner_type.map(|kind| kind.label())),
+        ),
+        crate::app::Field::read_only(
+            "Tags",
+            or_placeholder(Some(runner.tags.join(", ").as_str())),
+        ),
+        crate::app::Field::read_only("Version", or_placeholder(runner.version.as_deref())),
+        crate::app::Field::read_only(
+            "Last Contact",
+            or_placeholder(
+                runner
+                    .contacted_at
+                    .as_deref()
+                    .map(crate::utils::format::time_ago)
+                    .as_deref(),
+            ),
+        ),
     ];
+    if let Some(ip) = runner.ip_address.as_deref().filter(|ip| !ip.is_empty()) {
+        fields.push(crate::app::Field::read_only("IP Address", ip.to_string()));
+    }
+    if let Some(url) = &runner.web_url {
+        fields.push(crate::app::Field::read_only("URL", url.clone()));
+    }
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),
         fields,

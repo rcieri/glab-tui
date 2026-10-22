@@ -23,6 +23,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Cell, Row as TableRow, Table, TableState};
 
 use crate::config::{Icons, Theme};
+use crate::ui::helpers::sort_header_label;
 
 /// A row with a natural key that survives refreshes, sorts and filters.
 pub trait Row {
@@ -50,6 +51,16 @@ pub struct CellContext<'a> {
     pub is_highlighted: bool,
     /// The style of the whole row: the highlight style on the cursor row.
     pub row_style: Style,
+}
+
+/// Values a column filter offers and matches for a cell showing `text`; an
+/// empty cell offers none.
+fn cell_filter_values(text: Cow<'_, str>) -> Vec<String> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![text.into_owned()]
+    }
 }
 
 /// One column of a list tab: its header, cell, search text, filter values
@@ -87,12 +98,7 @@ pub trait ColumnDef: Copy + Eq + 'static {
 
     /// Values the column filter offers and matches; an empty cell offers none.
     fn filter_values(self, row: &Self::Row) -> Vec<String> {
-        let text = self.text(row);
-        if text.is_empty() {
-            Vec::new()
-        } else {
-            vec![text.into_owned()]
-        }
+        cell_filter_values(self.text(row))
     }
 
     fn matches_filter(self, row: &Self::Row, selected: &HashSet<String>) -> bool {
@@ -307,11 +313,15 @@ impl<C: ColumnDef> ListTab<C> {
                 .style(row_style)
                 .height(1)
         });
-        let header = TableRow::new(
-            columns
-                .iter()
-                .map(|col| Cell::from(Line::from(col.label()).alignment(col.header_alignment()))),
-        )
+        let sort = self
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.sort.as_ref())
+            .map(|(col, ascending)| (col.as_str(), *ascending));
+        let header = TableRow::new(columns.iter().map(|col| {
+            let label = sort_header_label(col.label(), sort, table.icons);
+            Cell::from(Line::from(label).alignment(col.header_alignment()))
+        }))
         .style(table.header_style)
         .height(1);
         let mut widths: Vec<Constraint> = columns.iter().map(|col| col.width()).collect();

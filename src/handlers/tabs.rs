@@ -417,18 +417,7 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
         });
     });
 }
-/// Record a request to fetch related MRs/PRs for the currently selected issue.
-///
-/// This is intentionally *cheap*: it just stores the iid in
-/// `App::pending_related_mrs_iid` and a timestamp in
-/// `App::pending_related_mrs_since`. The actual `spawn_fetch_related_mrs` is
-/// deferred to `dispatch_pending_related_mrs_fetch`, which only fires once
-/// the debounce window has elapsed — so holding `j`/`k` through the issue
-/// list queues one request per scroll-stop, not one per issue scrolled past.
-///
-/// The `tx` parameter is accepted (not consumed) so existing keypress handler
-/// call sites keep passing their sender without churn; the dispatcher is what
-/// ultimately drives `spawn_fetch_related_mrs`.
+
 /// Switch to `tab` from a nav click, exactly as the next/previous-tab keys do.
 pub fn activate_tab(app: &mut App, tab: Tab, tx: &UnboundedSender<Event>) {
     app.switch_to_tab(tab);
@@ -462,6 +451,18 @@ fn load_active_tab(app: &mut App, tx: &UnboundedSender<Event>) {
     }
 }
 
+/// Record a request to fetch related MRs/PRs for the currently selected issue.
+///
+/// This is intentionally *cheap*: it just stores the iid in
+/// `App::pending_related_mrs_iid` and a timestamp in
+/// `App::pending_related_mrs_since`. The actual `spawn_fetch_related_mrs` is
+/// deferred to `dispatch_pending_related_mrs_fetch`, which only fires once
+/// the debounce window has elapsed — so holding `j`/`k` through the issue
+/// list queues one request per scroll-stop, not one per issue scrolled past.
+///
+/// The `tx` parameter is accepted (not consumed) so existing keypress handler
+/// call sites keep passing their sender without churn; the dispatcher is what
+/// ultimately drives `spawn_fetch_related_mrs`.
 pub fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .issues

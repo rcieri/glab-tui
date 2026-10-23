@@ -4038,6 +4038,8 @@ pub struct App {
     >,
     pub column_filter_context: Option<(Tab, String)>,
     pub sidebar_rect: Option<Rect>,
+    /// Click targets for each tab label when navigation is drawn as a top tab bar.
+    pub top_nav_hits: Vec<(Rect, Tab)>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
@@ -4196,6 +4198,7 @@ impl Default for App {
             column_filters: std::collections::HashMap::new(),
             column_filter_context: None,
             sidebar_rect: None,
+            top_nav_hits: Vec::new(),
             content_rect: None,
             detail_rect: None,
             overlay_stack: vec![],
@@ -6185,17 +6188,7 @@ impl App {
         }
         let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
         let next_index = (current_index + 1) % tabs.len();
-        self.active_tab = tabs[next_index];
-        self.selected_pipelines.clear();
-        self.selected_jobs.clear();
-        self.selected_issues.clear();
-        self.selected_mrs.clear();
-        self.selected_todos.clear();
-        self.select_mode = false;
-        self.select_anchor = None;
-        self.details_zoomed = false;
-        self.detail_visible = false;
-        self.update_filter_selection();
+        self.switch_to_tab(tabs[next_index]);
     }
 
     pub fn previous_tab(&mut self) {
@@ -6209,7 +6202,24 @@ impl App {
         } else {
             current_index - 1
         };
-        self.active_tab = tabs[prev_index];
+        self.switch_to_tab(tabs[prev_index]);
+    }
+
+    /// Whether the preview pane fills the workspace. A zoom request on the
+    /// Pipelines tab only takes effect once a pipeline's jobs are listed.
+    pub fn preview_zoomed(&self) -> bool {
+        self.details_zoomed && (self.active_tab != Tab::Pipelines || !self.jobs.items.is_empty())
+    }
+
+    /// Whether the next/previous-tab keys switch tabs right now.
+    pub fn tab_switch_enabled(&self) -> bool {
+        self.config.ui.tab_switch_in_zoom || !self.preview_zoomed()
+    }
+
+    /// Make `tab` active and drop the per-tab selection and preview state, as
+    /// every tab switch (keyboard or mouse) does.
+    pub fn switch_to_tab(&mut self, tab: Tab) {
+        self.active_tab = tab;
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
         self.selected_issues.clear();

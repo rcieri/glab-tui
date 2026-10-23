@@ -171,7 +171,11 @@ fn border_inner(outer: ratatui::layout::Rect) -> ratatui::layout::Rect {
     )
 }
 
-fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent) {
+fn handle_mouse_event(
+    app: &mut App,
+    mouse_event: &crossterm::event::MouseEvent,
+    tx: &tokio::sync::mpsc::UnboundedSender<event::Event>,
+) {
     use app::OverlayKind;
     use crossterm::event::MouseEventKind;
 
@@ -373,13 +377,21 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                 }
             }
 
-            // Fallback: sidebar / content clicks
+            // Fallback: nav / content clicks
+            if let Some(&(_, tab)) = app
+                .top_nav_hits
+                .iter()
+                .find(|(r, _)| rect_contains(*r, row, col))
+            {
+                handlers::tabs::activate_tab(app, tab, tx);
+                return;
+            }
             if let Some(sidebar_rect) = app.sidebar_rect {
                 if rect_contains(sidebar_rect, row, col) {
                     let tab_idx = (row - sidebar_rect.y - 1) as usize;
                     let tabs = app.available_tabs();
                     if tab_idx < tabs.len() {
-                        app.active_tab = tabs[tab_idx];
+                        handlers::tabs::activate_tab(app, tabs[tab_idx], tx);
                     }
                     return;
                 }
@@ -2319,7 +2331,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::Mouse(mouse_event) => {
-                    handle_mouse_event(&mut app, &mouse_event);
+                    handle_mouse_event(&mut app, &mouse_event, &events.sender());
                 }
                 Event::Key(key_event) => {
                     if key_event.code == KeyCode::Char('c')

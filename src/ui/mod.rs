@@ -205,6 +205,75 @@ fn merge_syntax_with_fuzzy<'a>(
     result
 }
 
+/// Draw the horizontal tab bar used when `ui.nav_position = "top"` and return
+/// the click target of every visible tab label. When the labels overflow the
+/// bar, the strip scrolls so the active tab stays centred, only drifting
+/// toward an edge once the first or last tab is reached.
+fn render_top_nav(f: &mut Frame, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+    let theme = THEME.read().unwrap();
+    let kind = app.kind();
+    let tabs = app.available_tabs();
+
+    // Lay every label out on a virtual strip: (tab, label, start column).
+    // Labels carry a space of padding on each side, so adjacent tabs sit two
+    // columns apart with no extra gap.
+    let mut strip = Vec::with_capacity(tabs.len());
+    let mut strip_width = 0;
+    for tab in &tabs {
+        let label = format!(" {} ", tab.title(kind).to_uppercase());
+        let width = label.chars().count();
+        strip.push((*tab, label, strip_width));
+        strip_width += width;
+    }
+
+    let view = area.width as usize;
+    let offset = strip
+        .iter()
+        .find(|(t, _, _)| *t == app.active_tab)
+        .map(|(_, label, start)| start + label.chars().count() / 2)
+        .map_or(0, |center| {
+            center
+                .saturating_sub(view / 2)
+                .min(strip_width.saturating_sub(view))
+        });
+
+    let mut spans = Vec::new();
+    let mut hits = Vec::new();
+    let mut cursor = offset;
+    for (tab, label, start) in strip {
+        let end = start + label.chars().count();
+        let (from, to) = (start.max(offset), end.min(offset + view));
+        if from >= to {
+            continue;
+        }
+        if from > cursor {
+            spans.push(Span::raw(" ".repeat(from - cursor)));
+        }
+        let style = if tab == app.active_tab {
+            Style::default()
+                .bg(theme.border_focused)
+                .fg(theme.highlight_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_muted)
+        };
+        let text: String = label.chars().skip(from - start).take(to - from).collect();
+        spans.push(Span::styled(text, style));
+        let x = area.x + (from - offset) as u16;
+        hits.push((Rect::new(x, area.y, (to - from) as u16, 1), tab));
+        cursor = to;
+    }
+
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg)),
+        area,
+    );
+    hits
+}
+
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let cursor_marker = format!(" {} ", ICONS.read().unwrap().pointer);
@@ -334,26 +403,33 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     }
 
-    // Top banner split into left content and a right-aligned mode indicator.
+    // Top banner: a text row (left content and a right-aligned mode
+    // indicator) above a separator that spans the full width.
+    let header_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(title_area);
     let banner = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Length(12)])
-        .split(title_area);
+        .split(header_rows[0]);
 
     let title = Paragraph::new(Line::from(title_spans))
-        .style(Style::default().bg(THEME.read().unwrap().bg))
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(THEME.read().unwrap().border)),
-        );
+        .style(Style::default().bg(THEME.read().unwrap().bg));
     f.render_widget(title, banner[0]);
     render_mode_indicator(f, app, banner[1]);
+    f.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(THEME.read().unwrap().border))
+            .style(Style::default().bg(THEME.read().unwrap().bg)),
+        header_rows[1],
+    );
 
     // Middle: Sidebar | Main Area | Preview Area
-    let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
-    let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
+    let nav_top = app.config.ui.nav_position == crate::config::NavPosition::Top;
+    let sidebar_width = if !nav_top && size.width >= 80 && app.config.ui.sidebar_visible {
         Constraint::Length(app.config.ui.sidebar_width)
     } else {
         Constraint::Length(0)
@@ -372,8 +448,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // When an edit/create menu is active, force the detail pane to full-zoom
     // (exactly like the preview's zoomed state) so the form fills the workspace.
     let edit_zoomed = app.edit_menu.is_some();
+    let zoomed = app.preview_zoomed() || edit_zoomed;
 
-    let middle_chunks_raw = if (app.details_zoomed && can_zoom) || edit_zoomed {
+    // Top navigation: carve a one-row tab bar off the top of the workspace.
+    // It shows wherever the next/previous-tab keys switch tabs: a zoomed
+    // preview unless `tab_switch_in_zoom` is off, never an edit/create form,
+    // which takes those keys for its own fields.
+    let (top_nav_rect, workspace) =
+        if nav_top && app.config.ui.sidebar_visible && app.tab_switch_enabled() && !edit_zoomed {
+            let v = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(chunks[1]);
+            (v[0], v[1])
+        } else {
+            (Rect::default(), chunks[1])
+        };
+
+    let middle_chunks_raw = if zoomed {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -381,17 +473,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Constraint::Length(0),
                 Constraint::Min(0),
             ])
-            .split(chunks[1])
+            .split(workspace)
     } else if app.active_tab == Tab::Terminal {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([sidebar_width, Constraint::Min(0), Constraint::Length(0)])
-            .split(chunks[1])
+            .split(workspace)
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([sidebar_width, Constraint::Min(0), details_width])
-            .split(chunks[1])
+            .split(workspace)
     };
     let [sidebar_rect, content_rect, mut detail_rect] = [
         middle_chunks_raw[0],
@@ -461,6 +553,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ),
     );
     f.render_widget(sidebar, sidebar_rect);
+    app.top_nav_hits = render_top_nav(f, app, top_nav_rect);
 
     // Main Area Title
     // Inside a pipeline descent the tab name alone no longer says where you
@@ -1934,6 +2027,145 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        buffer
+            .content()
+            .chunks(buffer.area.width as usize)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn top_nav_renders_tab_bar_and_registers_click_targets() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.active_tab = Tab::MergeRequests;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        let rows = buffer_rows(&terminal);
+        assert!(!rows.iter().any(|r| r.contains("Navigation")));
+        let nav_row = &rows[2];
+        assert!(nav_row.contains("ISSUES"), "{nav_row}");
+        assert_eq!(app.sidebar_rect.map(|r| r.width), Some(0));
+        let (hit, _) = app
+            .top_nav_hits
+            .iter()
+            .find(|(_, t)| *t == Tab::MergeRequests)
+            .expect("active tab has a click target");
+        assert_eq!(hit.y, 2);
+    }
+
+    fn top_nav_hits_at(width: u16, active: usize) -> (Vec<(Rect, Tab)>, Tab) {
+        let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.active_tab = app.available_tabs()[active];
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        (app.top_nav_hits, app.active_tab)
+    }
+
+    #[test]
+    fn top_nav_keeps_active_tab_centred_while_scrolling() {
+        let count = App::default().available_tabs().len();
+        for active in [count / 2 - 1, count / 2, count / 2 + 1] {
+            let (hits, tab) = top_nav_hits_at(60, active);
+            let (rect, _) = hits.iter().find(|(_, t)| *t == tab).unwrap();
+            let center = rect.x + rect.width / 2;
+            assert!(center.abs_diff(30) <= 1, "{tab:?} centred at {center}");
+            assert!(hits.iter().all(|(r, _)| r.right() <= 60));
+        }
+    }
+
+    #[test]
+    fn top_nav_pins_to_the_ends() {
+        let count = App::default().available_tabs().len();
+        let (hits, tab) = top_nav_hits_at(60, 0);
+        assert_eq!(hits[0], (Rect::new(0, 2, hits[0].0.width, 1), tab));
+
+        let (hits, tab) = top_nav_hits_at(60, count - 1);
+        let (last, last_tab) = hits.last().unwrap();
+        assert_eq!(*last_tab, tab);
+        assert_eq!(last.right(), 60);
+    }
+
+    #[test]
+    fn top_nav_stays_visible_in_a_zoomed_preview_but_not_in_edit_forms() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.details_zoomed = true;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(!app.top_nav_hits.is_empty());
+
+        app.edit_menu = Some(crate::app::EditMenu {
+            entity_project: String::new(),
+            entity_iid: 1,
+            entity_kind: crate::app::EditEntityKind::EditIssue,
+            title: "Edit Issue".to_string(),
+            fields: vec![],
+            initial_fields: std::collections::HashMap::new(),
+            selected_idx: 0,
+            editing: false,
+            cursor_pos: 0,
+            state: ratatui::widgets::ListState::default(),
+            desc_scroll: 0,
+            workflow_inputs: vec![],
+        });
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.top_nav_hits.is_empty());
+    }
+
+    #[test]
+    fn top_nav_hides_in_a_zoomed_preview_when_tab_switching_is_off_there() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.ui.nav_position = crate::config::NavPosition::Top;
+        app.config.ui.tab_switch_in_zoom = false;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(!app.top_nav_hits.is_empty(), "shown when not zoomed");
+
+        app.details_zoomed = true;
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.top_nav_hits.is_empty(), "hidden while zoomed");
+    }
+
+    #[test]
+    fn header_separator_spans_the_full_width() {
+        for nav in [
+            crate::config::NavPosition::Left,
+            crate::config::NavPosition::Top,
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+            let mut app = App::default();
+            app.config.ui.nav_position = nav;
+
+            terminal.draw(|f| render(f, &mut app)).unwrap();
+
+            let separator = &buffer_rows(&terminal)[1];
+            assert!(separator.chars().all(|c| c == '─'), "{nav:?}: {separator}");
+        }
+    }
+
+    #[test]
+    fn left_nav_is_default_and_registers_no_top_targets() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        assert!(app.top_nav_hits.is_empty());
+        assert!(
+            buffer_rows(&terminal)
+                .iter()
+                .any(|r| r.contains("Navigation"))
+        );
+    }
 
     #[test]
     fn error_toast_strips_escape_sequences_from_cli_stderr() {

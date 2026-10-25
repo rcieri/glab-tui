@@ -4018,6 +4018,7 @@ pub struct App {
     pub milestones: StatefulTable<crate::domain::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::domain::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
+    pub milestone_prefetch: Option<tokio::task::AbortHandle>,
     pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
     /// `(closed, total)` issue counts per milestone iid, derived from
     /// `issues.items.iter().filter_map(|i| i.milestone.as_ref())`.
@@ -4183,6 +4184,7 @@ impl Default for App {
             milestones: StatefulTable::with_items(vec![]),
             selected_milestone_issues: None,
             selected_milestone_iid: None,
+            milestone_prefetch: None,
             milestone_issues_cache: std::collections::HashMap::new(),
             milestone_progress_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
@@ -4399,6 +4401,9 @@ impl App {
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
+        if let Some(handle) = self.milestone_prefetch.take() {
+            handle.abort();
+        }
         self.issues.state.select(Some(0));
         self.mrs.state.select(Some(0));
         self.pipelines.state.select(Some(0));
@@ -9082,6 +9087,20 @@ mod tests {
         assert_eq!(issues6[0].iid, 3);
 
         assert!(app.milestone_issues(7).is_none());
+    }
+
+    #[tokio::test]
+    async fn reset_on_scope_change_aborts_running_milestone_prefetch() {
+        let mut app = App::default();
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+        app.milestone_prefetch = Some(handle.abort_handle());
+
+        app.reset_on_scope_change();
+
+        assert!(app.milestone_prefetch.is_none());
+        let _ = handle.await;
     }
 
     fn issue_with_milestone(iid: u64, state: &str, milestone_iid: u64) -> Issue {

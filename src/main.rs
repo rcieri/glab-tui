@@ -1717,16 +1717,16 @@ async fn main() -> Result<()> {
                     app.milestones.items = milestones;
                     app.update_filter_selection();
                     app.project_cache.milestones = app.milestones.items.clone();
-                    let active_iids: std::collections::HashSet<u64> =
+                    let listed_iids: std::collections::HashSet<u64> =
                         app.milestones.items.iter().map(|m| m.iid).collect();
                     app.milestone_issues_cache
-                        .retain(|iid, _| active_iids.contains(iid));
+                        .retain(|iid, _| listed_iids.contains(iid));
                     app.project_cache
                         .milestone_issues
-                        .retain(|iid, _| active_iids.contains(iid));
+                        .retain(|iid, _| listed_iids.contains(iid));
                     app.rebuild_milestone_progress_cache();
                     if let Some(iid) = app.selected_milestone_iid {
-                        if !active_iids.contains(&iid) {
+                        if !listed_iids.contains(&iid) {
                             app.selected_milestone_iid = None;
                             app.selected_milestone_issues = None;
                         } else if let Some(cached) = app.milestone_issues_cache.get(&iid) {
@@ -1734,6 +1734,59 @@ async fn main() -> Result<()> {
                         }
                     }
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+
+                    if app.scope.is_repository() {
+                        let client = app.gitlab_client.clone();
+                        let tx = app.scoped_sender(events.sender());
+                        let repo_path = app.scope.as_str().to_string();
+                        let milestones = app.milestones.items.clone();
+                        if let Some(client) = client {
+                            let handle = tokio::spawn(async move {
+                                for (i, m) in milestones.iter().filter(|m| m.iid > 0).enumerate() {
+                                    if i > 0 {
+                                        crate::backend::rate_limit::pace_bulk_operation().await;
+                                    }
+                                    let project_context = if !m.project_path.is_empty() {
+                                        &m.project_path
+                                    } else {
+                                        &repo_path
+                                    };
+                                    match crate::domain::milestones::list_milestone_issues(
+                                        &client,
+                                        project_context,
+                                        m.iid,
+                                        &m.title,
+                                    )
+                                    .await
+                                    {
+                                        Ok(issues) => {
+                                            if tx
+                                                .send(Event::MilestoneIssuesFetched(m.iid, issues))
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let _ = tx.send(Event::CommandCompleted(
+                                                app::Tab::Milestones,
+                                                Err(format!(
+                                                    "Failed to fetch milestone issues for '{}': {e}",
+                                                    m.title
+                                                )),
+                                            ));
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+                            if let Some(previous) =
+                                app.milestone_prefetch.replace(handle.abort_handle())
+                            {
+                                previous.abort();
+                            }
+                        }
+                    }
                 }
                 Event::MilestoneIssuesFetched(iid, issues) => {
                     let total = issues.len();

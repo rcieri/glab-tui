@@ -979,6 +979,11 @@ pub fn handle_refresh(
         if let Some(client) = app.gitlab_client.clone() {
             let tx = app.scoped_sender(tx);
             if !app.loading_tabs.contains(&app.active_tab) {
+                if app.active_tab == crate::app::Tab::Milestones {
+                    if let Some(handle) = app.milestone_prefetch.take() {
+                        handle.abort();
+                    }
+                }
                 app.start_loading_tab(app.active_tab);
                 spawn_refresh_active_tab(
                     &client,

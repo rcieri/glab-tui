@@ -556,46 +556,7 @@ pub fn spawn_refresh_active_tab(
             app::Tab::Milestones => {
                 match domain::milestones::list_milestones(&client, &scope).await {
                     Ok(milestones) => {
-                        let _ = tx.send(Event::MilestonesFetched(milestones.clone()));
-                        if scope.is_repository() {
-                            for (i, m) in milestones.iter().filter(|m| m.iid > 0).enumerate() {
-                                if i > 0 {
-                                    crate::backend::rate_limit::pace_bulk_operation().await;
-                                }
-                                let project_context = if !m.project_path.is_empty() {
-                                    &m.project_path
-                                } else {
-                                    &repo_path
-                                };
-                                match domain::milestones::list_milestone_issues(
-                                    &client,
-                                    project_context,
-                                    m.iid,
-                                    &m.title,
-                                )
-                                .await
-                                {
-                                    Ok(issues) => {
-                                        if tx
-                                            .send(Event::MilestoneIssuesFetched(m.iid, issues))
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(Event::CommandCompleted(
-                                            app::Tab::Milestones,
-                                            Err(format!(
-                                                "Failed to fetch milestone issues for '{}': {e}",
-                                                m.title
-                                            )),
-                                        ));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                        let _ = tx.send(Event::MilestonesFetched(milestones));
                     }
                     Err(e) => {
                         let _ = tx.send(Event::FetchFailed(

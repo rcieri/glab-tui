@@ -443,7 +443,6 @@ pub struct LocalCommitInfo {
 }
 
 /// Read the latest commit's author, email, date, and message for `rev`.
-/// Pure local object DB read, safe on the UI thread.
 pub fn get_commit_info(rev: &str) -> Option<LocalCommitInfo> {
     if rev.is_empty() {
         return None;

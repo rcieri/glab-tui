@@ -468,7 +468,6 @@ pub fn get_commit_info(rev: &str) -> Option<LocalCommitInfo> {
 }
 
 /// Computes (ahead, behind) commit counts between `base` and `target`.
-/// Pure local object DB read, safe on the UI thread.
 pub fn get_ahead_behind(base: &str, target: &str) -> Option<(usize, usize)> {
     if base.is_empty() || target.is_empty() {
         return None;

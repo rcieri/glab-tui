@@ -32,16 +32,7 @@ pub fn enrich_branches(branches: &mut [Branch]) {
         .iter()
         .find(|b| b.default)
         .map(|b| b.commit_sha.clone())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            crate::git_helpers::get_default_branch().and_then(|def| {
-                branches
-                    .iter()
-                    .find(|b| b.name == def)
-                    .map(|b| b.commit_sha.clone())
-                    .filter(|s| !s.is_empty())
-            })
-        });
+        .filter(|s| !s.is_empty());
 
     for branch in branches.iter_mut() {
         if branch.author_name.is_none()

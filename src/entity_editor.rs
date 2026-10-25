@@ -1701,6 +1701,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 cursor_pos: 0,
                 editing: false,
                 desc_scroll: 0,
+                source_on_forge: false,
             });
         }
     } else if entity_is_mr(entity_type) {
@@ -1742,6 +1743,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 cursor_pos: 0,
                 editing: false,
                 desc_scroll: 0,
+                source_on_forge: false,
             });
         }
     } else if entity_is_milestone(entity_type) {
@@ -1779,6 +1781,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 cursor_pos: 0,
                 editing: false,
                 desc_scroll: 0,
+                source_on_forge: false,
             });
         }
     }
@@ -1813,6 +1816,7 @@ pub fn release_edit_menu(
         cursor_pos: 0,
         editing: false,
         desc_scroll: 0,
+        source_on_forge: false,
     }
 }
 

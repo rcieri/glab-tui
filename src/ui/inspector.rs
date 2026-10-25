@@ -968,8 +968,16 @@ pub(crate) fn build_field_list_items(
                             let (val_fg, badge_bg, is_bold, formatted_val) = if let Some(tone) =
                                 &f.tone
                             {
+                                let (_, _, _, pill_text) = crate::ui::helpers::badge_style_for(
+                                    label,
+                                    val,
+                                    is_selected,
+                                    item_bg,
+                                    &theme,
+                                    &icons,
+                                );
                                 let (fg, bg, bold) = tone_badge_style(tone, is_selected, &theme);
-                                (fg, bg, bold, None)
+                                (fg, bg, bold, pill_text)
                             } else {
                                 crate::ui::helpers::badge_style_for(
                                     label,
@@ -1547,6 +1555,7 @@ mod tests {
             cursor_pos: 0,
             editing: false,
             desc_scroll: 0,
+            source_on_forge: false,
         };
 
         terminal

@@ -427,6 +427,8 @@ pub struct EditMenu {
     pub cursor_pos: usize,
     pub editing: bool,
     pub desc_scroll: u16,
+    /// When true, the source branch already exists on the forge (e.g. opened from Branches tab).
+    pub source_on_forge: bool,
 }
 
 impl EditMenu {

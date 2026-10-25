@@ -2422,6 +2422,7 @@ impl Backend for GhBackend {
             reviewers,
             milestone,
             issue_iid,
+            source_on_forge,
         } = *mr;
         let mut args: Vec<String> = vec![
             "pr".into(),
@@ -2432,10 +2433,14 @@ impl Backend for GhBackend {
             title.into(),
         ];
         if !source_branch.is_empty() {
-            let local_project =
-                crate::git_helpers::remote_project_path("origin").unwrap_or_default();
             args.push("--head".into());
-            args.push(qualify_head_ref(&local_project, project, source_branch));
+            if source_on_forge {
+                args.push(source_branch.into());
+            } else {
+                let local_project =
+                    crate::git_helpers::remote_project_path("origin").unwrap_or_default();
+                args.push(qualify_head_ref(&local_project, project, source_branch));
+            }
         }
         if !target_branch.is_empty() {
             args.push("--base".into());
@@ -3434,7 +3439,7 @@ impl Backend for GhBackend {
         let repo: GhRepo = serde_json::from_str(&repo_raw)?;
         let default_branch = repo.default_branch;
 
-        let branches: Vec<Branch> = serde_json::from_str::<Vec<GhBr>>(&raw)?
+        let mut branches: Vec<Branch> = serde_json::from_str::<Vec<GhBr>>(&raw)?
             .into_iter()
             .map(|b| Branch {
                 default: b.name == default_branch,
@@ -3450,6 +3455,40 @@ impl Backend for GhBackend {
                 ahead_behind: None,
             })
             .collect();
+
+        // Ensure the default branch is included so ahead/behind calculation has a base SHA.
+        if !branches.iter().any(|b| b.default) {
+            let encoded = Self::encode_branch(&default_branch);
+            if let Ok(br_raw) = self
+                .raw_api(
+                    &format!("/repos/{project}/branches/{encoded}"),
+                    "GET",
+                    None,
+                    "Fetching Default Branch",
+                )
+                .await
+            {
+                if let Ok(br) = serde_json::from_str::<GhBr>(&br_raw) {
+                    branches.push(Branch {
+                        default: true,
+                        protected: br.protected,
+                        web_url: format!("https://github.com/{project}/tree/{}", br.name),
+                        name: br.name,
+                        can_push: false,
+                        commit_sha: br
+                            .commit
+                            .as_ref()
+                            .map(|c| c.sha.clone())
+                            .unwrap_or_default(),
+                        commit_message: None,
+                        author_name: None,
+                        author_email: None,
+                        commit_date: None,
+                        ahead_behind: None,
+                    });
+                }
+            }
+        }
         Ok(branches)
     }
 

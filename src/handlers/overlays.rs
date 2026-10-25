@@ -306,6 +306,7 @@ fn run_submit_action(
                         let _ = tx.send(Event::CommandCompleted(crate::app::Tab::Branches, Ok(())));
                     }
                     Err(e) => {
+                        let _ = tx.send(Event::CommandCompleted(crate::app::Tab::Branches, Ok(())));
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::Branches,
                             Err(format!("Failed to delete branch: {e}")),
@@ -1326,6 +1327,7 @@ mod tests {
             state: ratatui::widgets::ListState::default(),
             desc_scroll: 0,
             workflow_inputs: vec![],
+            source_on_forge: false,
         });
         assert!(handle_help_keybinding(
             &mut app,

@@ -51,6 +51,7 @@ pub(crate) fn open_create_mr_form(
     values: crate::entity_editor::MrFieldValues,
     project: String,
     entity_iid: u64,
+    source_on_forge: bool,
 ) {
     let is_github = app.is_github();
     let pr_suffix = if is_github {
@@ -96,6 +97,7 @@ pub(crate) fn open_create_mr_form(
         cursor_pos: 0,
         editing: false,
         desc_scroll: 0,
+        source_on_forge,
     });
 }
 
@@ -861,6 +863,7 @@ pub async fn handle_active_tab_key(
                     cursor_pos: 0,
                     editing: false,
                     desc_scroll: 0,
+                    source_on_forge: false,
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
@@ -890,6 +893,7 @@ pub async fn handle_active_tab_key(
                         cursor_pos: 0,
                         editing: false,
                         desc_scroll: 0,
+                        source_on_forge: false,
                     });
                 } else if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
@@ -921,6 +925,7 @@ pub async fn handle_active_tab_key(
                             cursor_pos: 0,
                             editing: false,
                             desc_scroll: 0,
+                            source_on_forge: false,
                         });
                     }
                 }
@@ -1163,6 +1168,7 @@ pub async fn handle_active_tab_key(
                             },
                             project_val,
                             issue.iid,
+                            false,
                         );
                     }
                 }
@@ -1197,6 +1203,7 @@ pub async fn handle_active_tab_key(
                     crate::entity_editor::MrFieldValues::default(),
                     project,
                     0,
+                    false,
                 );
             } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
                 if let Some(selected_idx) = app.mrs.state.selected() {
@@ -1253,6 +1260,7 @@ pub async fn handle_active_tab_key(
                         cursor_pos: 0,
                         editing: false,
                         desc_scroll: 0,
+                        source_on_forge: false,
                     });
                 } else if let Some(selected_idx) = app.mrs.state.selected() {
                     let filtered = app.filtered_mrs();
@@ -1293,6 +1301,7 @@ pub async fn handle_active_tab_key(
                             cursor_pos: 0,
                             editing: false,
                             desc_scroll: 0,
+                            source_on_forge: false,
                         });
                     }
                 }
@@ -1702,6 +1711,7 @@ pub async fn handle_active_tab_key(
                     cursor_pos: 0,
                     editing: false,
                     desc_scroll: 0,
+                    source_on_forge: false,
                 });
             } else if keybinding_matches(
                 &app.config.keybindings.pipelines.selection_toggle,
@@ -2397,6 +2407,7 @@ pub async fn handle_active_tab_key(
                     cursor_pos: 0,
                     editing: false,
                     desc_scroll: 0,
+                    source_on_forge: false,
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
@@ -2529,6 +2540,7 @@ pub async fn handle_active_tab_key(
                     cursor_pos: 0,
                     editing: false,
                     desc_scroll: 0,
+                    source_on_forge: false,
                 });
             }
             _ if keybinding_matches(
@@ -2573,6 +2585,7 @@ pub async fn handle_active_tab_key(
                             cursor_pos: 0,
                             editing: false,
                             desc_scroll: 0,
+                            source_on_forge: false,
                         });
                     }
                 }
@@ -2707,18 +2720,30 @@ pub async fn handle_active_tab_key(
                     cursor_pos: 0,
                     editing: false,
                     desc_scroll: 0,
+                    source_on_forge: false,
                 });
             } else if keybinding_matches(&app.config.keybindings.branches.delete_branch, key_event)
             {
                 if !app.selected_branches.is_empty() {
-                    let mut names: Vec<String> = app.selected_branches.iter().cloned().collect();
+                    let default_name = app
+                        .branches
+                        .items()
+                        .iter()
+                        .find(|b| b.default)
+                        .map(|b| b.name.as_str());
+                    let mut names: Vec<String> = app
+                        .selected_branches
+                        .iter()
+                        .filter(|n| default_name != Some(n.as_str()))
+                        .cloned()
+                        .collect();
                     names.sort();
                     if names.len() == 1 {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build(
                             crate::app::ConfirmAction::DeleteBranch(names.remove(0)),
                             app,
                         ));
-                    } else {
+                    } else if !names.is_empty() {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build(
                             crate::app::ConfirmAction::BulkDeleteBranches(names),
                             app,
@@ -2760,6 +2785,7 @@ pub async fn handle_active_tab_key(
                         },
                         project,
                         0,
+                        true,
                     );
                 } else if keybinding_matches(
                     &app.config.keybindings.branches.open_in_browser,
@@ -2986,6 +3012,7 @@ pub async fn handle_active_tab_key(
                                             cursor_pos: 0,
                                             editing: false,
                                             desc_scroll: 0,
+                                            source_on_forge: false,
                                         });
                                     }
                                 }
@@ -3032,6 +3059,7 @@ pub async fn handle_active_tab_key(
                                             cursor_pos: 0,
                                             editing: false,
                                             desc_scroll: 0,
+                                            source_on_forge: false,
                                         });
                                     }
                                 }
@@ -3076,6 +3104,7 @@ pub async fn handle_active_tab_key(
                                             cursor_pos: 0,
                                             editing: false,
                                             desc_scroll: 0,
+                                            source_on_forge: false,
                                         });
                                     }
                                 }

@@ -372,8 +372,9 @@ impl CustomCommands {
             .keys()
             .map(|pane| ConfigProblem {
                 binding: format!("[custom_keybindings.{pane}]"),
-                problem: "unsupported pane; use universal, issues, mrs, pipelines, jobs or diff"
-                    .to_string(),
+                problem:
+                    "unsupported pane; use universal, issues, mrs, pipelines, jobs, branches or diff"
+                        .to_string(),
             })
             .collect();
 
@@ -1031,7 +1032,7 @@ command = "true"
         assert_eq!(
             reasons,
             vec![
-                "unsupported pane; use universal, issues, mrs, pipelines, jobs or diff",
+                "unsupported pane; use universal, issues, mrs, pipelines, jobs, branches or diff",
                 "missing `key`",
                 "\"gg\" is not a key glab-tui can bind",
                 "{{.PrNumber}} is not available in custom_keybindings.issues; \

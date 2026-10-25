@@ -92,6 +92,7 @@ pub struct NewMr<'a> {
     pub reviewers: &'a str,
     pub milestone: &'a str,
     pub issue_iid: Option<u64>,
+    pub source_on_forge: bool,
 }
 
 /// How to merge an MR/PR.

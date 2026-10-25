@@ -2183,6 +2183,7 @@ cycle_status_filter = "s"
 #   issues:    RepoName RepoPath IssueNumber IssueTitle Author
 #   pipelines: RepoName RepoPath PipelineId Ref Sha
 #   jobs:      RepoName RepoPath JobId JobName Stage Status
+#   branches:  RepoName RepoPath BranchName CommitSha
 #   universal: RepoName RepoPath
 #   diff:      mrs arguments + FilePath LineNumber (the line under the diff cursor)
 # Each is also exported as GLAB_TUI_<NAME>, e.g. GLAB_TUI_PR_NUMBER.

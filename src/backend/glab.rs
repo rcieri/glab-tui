@@ -1928,6 +1928,7 @@ impl Backend for GlabBackend {
             reviewers,
             milestone,
             issue_iid,
+            source_on_forge: _,
         } = *mr;
         let mut args: Vec<String> = vec!["mr".into(), "create".into(), "-y".into()];
         if !project.is_empty() {
@@ -3064,7 +3065,7 @@ impl Backend for GlabBackend {
             committed_date: Option<String>,
         }
         let gl_branches: Vec<GiBr> = serde_json::from_str(&raw)?;
-        Ok(gl_branches
+        let mut branches: Vec<Branch> = gl_branches
             .into_iter()
             .map(|b| {
                 let (commit_sha, commit_message, author_name, author_email, commit_date) =
@@ -3089,7 +3090,62 @@ impl Backend for GlabBackend {
                     ahead_behind: None,
                 }
             })
-            .collect())
+            .collect();
+
+        // Ensure the default branch is included so ahead/behind calculation has a base SHA.
+        if !branches.iter().any(|b| b.default) {
+            #[derive(serde::Deserialize)]
+            struct GiProj {
+                default_branch: Option<String>,
+            }
+            let proj_endpoint = format!("/projects/{encoded}");
+            if let Ok(proj_raw) = self
+                .raw_api(&proj_endpoint, "GET", None, "Fetching Project Info")
+                .await
+            {
+                if let Ok(proj) = serde_json::from_str::<GiProj>(&proj_raw) {
+                    if let Some(def) = proj.default_branch {
+                        let br_encoded = url_encode_branch(&def);
+                        let br_endpoint =
+                            format!("/projects/{encoded}/repository/branches/{br_encoded}");
+                        if let Ok(br_raw) = self
+                            .raw_api(&br_endpoint, "GET", None, "Fetching Default Branch")
+                            .await
+                        {
+                            if let Ok(b) = serde_json::from_str::<GiBr>(&br_raw) {
+                                let (
+                                    commit_sha,
+                                    commit_message,
+                                    author_name,
+                                    author_email,
+                                    commit_date,
+                                ) = if let Some(c) = b.commit {
+                                    let msg = c.message.filter(|m| !m.is_empty()).or(c.title);
+                                    let date = c.committed_date.or(c.authored_date);
+                                    (c.id, msg, c.author_name, c.author_email, date)
+                                } else {
+                                    (String::new(), None, None, None, None)
+                                };
+                                branches.push(Branch {
+                                    name: b.name,
+                                    default: true,
+                                    protected: b.protected.unwrap_or(false),
+                                    web_url: b.web_url.unwrap_or_default(),
+                                    can_push: b.can_push.unwrap_or(false),
+                                    commit_sha,
+                                    commit_message,
+                                    author_name,
+                                    author_email,
+                                    commit_date,
+                                    ahead_behind: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(branches)
     }
 
     async fn create_branch(

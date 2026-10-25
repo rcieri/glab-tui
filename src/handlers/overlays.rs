@@ -333,9 +333,8 @@ fn run_submit_action(
                         errors.push(format!("{branch_name}: {e}"));
                     }
                 }
-                if errors.is_empty() {
-                    let _ = tx.send(Event::CommandCompleted(crate::app::Tab::Branches, Ok(())));
-                } else {
+                let _ = tx.send(Event::CommandCompleted(crate::app::Tab::Branches, Ok(())));
+                if !errors.is_empty() {
                     let _ = tx.send(Event::CommandCompleted(
                         crate::app::Tab::Branches,
                         Err(format!("Failed to delete branches: {}", errors.join("; "))),

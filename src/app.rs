@@ -7512,10 +7512,7 @@ impl App {
         }
     }
 
-    /// Recompute `milestone_progress_cache`. Prefers the authoritative per-milestone
-    /// issue lists in `milestone_issues_cache` where available, and supplements from
-    /// `issues.items` for any milestones not yet loaded into `milestone_issues_cache`.
-    /// Cheap enough to call on every IssuesFetched, MilestonesFetched, and cache load.
+    /// Recompute `milestone_progress_cache`, preferring each milestone's own issue list over `issues.items`.
     pub fn rebuild_milestone_progress_cache(&mut self) {
         let mut map: std::collections::HashMap<u64, (usize, usize)> =
             std::collections::HashMap::new();

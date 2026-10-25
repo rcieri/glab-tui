@@ -558,11 +558,7 @@ pub fn spawn_refresh_active_tab(
                     Ok(milestones) => {
                         let _ = tx.send(Event::MilestonesFetched(milestones.clone()));
                         if scope.is_repository() {
-                            let active_milestones: Vec<_> = milestones
-                                .iter()
-                                .filter(|m| m.iid > 0 && m.state.eq_ignore_ascii_case("active"))
-                                .collect();
-                            for (i, m) in active_milestones.into_iter().enumerate() {
+                            for (i, m) in milestones.iter().filter(|m| m.iid > 0).enumerate() {
                                 if i > 0 {
                                     crate::backend::rate_limit::pace_bulk_operation().await;
                                 }
@@ -595,6 +591,7 @@ pub fn spawn_refresh_active_tab(
                                                 m.title
                                             )),
                                         ));
+                                        break;
                                     }
                                 }
                             }

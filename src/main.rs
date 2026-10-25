@@ -1760,7 +1760,6 @@ async fn main() -> Result<()> {
                         }
                         app.milestone_issues_cache.remove(&iid);
                         app.project_cache.milestone_issues.remove(&iid);
-                        app.milestone_progress_cache.remove(&iid);
                         if app.selected_milestone_iid == Some(iid) {
                             app.selected_milestone_iid = None;
                             app.selected_milestone_issues = None;

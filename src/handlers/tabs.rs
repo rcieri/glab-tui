@@ -417,6 +417,40 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
         });
     });
 }
+
+/// Switch to `tab` from a nav click, exactly as the next/previous-tab keys do.
+pub fn activate_tab(app: &mut App, tab: Tab, tx: &UnboundedSender<Event>) {
+    app.switch_to_tab(tab);
+    load_active_tab(app, tx);
+}
+
+/// After a tab switch: start the active tab's first fetch unless it is already
+/// loading or was refreshed, and load the Issues/MRs cross-references.
+fn load_active_tab(app: &mut App, tx: &UnboundedSender<Event>) {
+    if let Some(client) = &app.gitlab_client {
+        if !app.loading_tabs.contains(&app.active_tab)
+            && !app.refreshed_tabs.contains(&app.active_tab)
+        {
+            if !app.loaded_tabs.contains(&app.active_tab) {
+                app.loading_tabs.insert(app.active_tab);
+            }
+            spawn_refresh_active_tab(
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
+    }
+    if app.active_tab == Tab::Issues {
+        maybe_fetch_related_mrs(app, tx);
+    }
+    if app.active_tab == Tab::MergeRequests {
+        maybe_fetch_mr_related_issues(app, tx);
+    }
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -3036,61 +3070,21 @@ pub async fn handle_active_tab_key(
                     }
                 }
             },
-            _ if (key_event.code == KeyCode::Right
-                || key_event.code == KeyCode::Char('l')
-                || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
+            _ if app.tab_switch_enabled()
+                && (key_event.code == KeyCode::Right
+                    || key_event.code == KeyCode::Char('l')
+                    || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, &tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, &tx);
-                }
+                load_active_tab(app, &tx);
             }
-            _ if (key_event.code == KeyCode::Left
-                || key_event.code == KeyCode::Char('h')
-                || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
+            _ if app.tab_switch_enabled()
+                && (key_event.code == KeyCode::Left
+                    || key_event.code == KeyCode::Char('h')
+                    || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, &tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, &tx);
-                }
+                load_active_tab(app, &tx);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if app.details_zoomed {
@@ -3504,6 +3498,28 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     #[tokio::test]
+    async fn activating_a_tab_starts_its_first_fetch_and_resets_tab_state() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+            show_read_notifications: false,
+        });
+        app.details_zoomed = true;
+        app.select_mode = true;
+
+        activate_tab(&mut app, Tab::Releases, &tx);
+
+        assert_eq!(app.active_tab, Tab::Releases);
+        assert!(app.loading_tabs.contains(&Tab::Releases));
+        assert!(!app.details_zoomed && !app.select_mode);
+    }
+
+    #[tokio::test]
     async fn failed_bulk_mutation_reverts_only_failed_rows_and_reports_once() {
         let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
@@ -3687,6 +3703,31 @@ mod tests {
         )
         .await;
         assert_eq!(app.detail_scroll, 7);
+    }
+
+    #[tokio::test]
+    async fn tab_keys_in_a_zoomed_preview_follow_tab_switch_in_zoom() {
+        let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        let mut app = App::default();
+        app.active_tab = Tab::Issues;
+        app.details_zoomed = true;
+        app.config.ui.tab_switch_in_zoom = false;
+        for code in [
+            KeyCode::Right,
+            KeyCode::Char('l'),
+            KeyCode::Left,
+            KeyCode::Char('h'),
+        ] {
+            dispatch(&mut app, &press(code)).await;
+            assert_eq!(app.active_tab, Tab::Issues, "{code:?}");
+            assert!(app.details_zoomed, "{code:?}");
+        }
+
+        app.config.ui.tab_switch_in_zoom = true;
+        dispatch(&mut app, &press(KeyCode::Right)).await;
+        assert_ne!(app.active_tab, Tab::Issues);
+        assert!(!app.details_zoomed);
     }
 
     #[tokio::test]

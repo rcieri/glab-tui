@@ -3,7 +3,9 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Cell, HighlightSpacing, Paragraph, Row, Table, TableState, Wrap,
+    },
 };
 
 use super::helpers::{badge_style_for, progress_bar, status_dot};
@@ -772,7 +774,9 @@ fn render_item_list(f: &mut Frame, ctx: &Context, area: Rect) {
         ],
     )
     .block(block)
-    .row_highlight_style(Style::default().bg(theme.highlight_bg));
+    .row_highlight_style(Style::default().bg(theme.highlight_bg))
+    .highlight_symbol(format!("{} ", ctx.icons.highlight_arrow))
+    .highlight_spacing(HighlightSpacing::Always);
     let mut state = TableState::default()
         .with_selected(is_focused.then(|| app.dashboard.list_cursor.min(items.len() - 1)));
     f.render_stateful_widget(table, area, &mut state);

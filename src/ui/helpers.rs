@@ -337,20 +337,48 @@ pub(crate) fn get_stages_summary(jobs: &[crate::domain::pipelines::Job]) -> Vec<
 
 pub(crate) fn get_stages_dots(jobs: &[crate::domain::pipelines::Job]) -> String {
     let icons = crate::config::ICONS.read().unwrap();
-    let summaries = get_stages_summary(jobs);
-    let mut dots = String::new();
-    for s in summaries {
-        let dot = match s.status.as_str() {
-            "success" => &icons.dot_success,
-            "failed" => &icons.dot_failed,
-            "running" => &icons.dot_running,
-            "canceled" => &icons.dot_canceled,
-            "pending" => &icons.dot_pending,
-            _ => &icons.dot_skipped,
-        };
-        dots.push_str(dot);
+    get_stages_summary(jobs)
+        .iter()
+        .map(|s| status_dot(&s.status, &icons))
+        .collect()
+}
+
+/// The one-cell dot drawn for a pipeline, stage or job status.
+pub(crate) fn status_dot<'a>(status: &str, icons: &'a Icons) -> &'a str {
+    match status {
+        "success" => &icons.dot_success,
+        "failed" => &icons.dot_failed,
+        "running" => &icons.dot_running,
+        "canceled" => &icons.dot_canceled,
+        "pending" => &icons.dot_pending,
+        _ => &icons.dot_skipped,
     }
-    dots
+}
+
+const PROGRESS_BAR_SEGMENTS: usize = 10;
+
+/// `[████░░░░░░] 40%` for `closed` of `total` (non-zero) items, colored red up
+/// to a third done, yellow up to two thirds, green above.
+pub(crate) fn progress_bar(closed: usize, total: usize, theme: &Theme) -> (String, Color) {
+    let pct = (closed as f32 / total as f32) * 100.0;
+    let color = if pct <= 33.0 {
+        theme.red
+    } else if pct <= 66.0 {
+        theme.yellow
+    } else {
+        theme.green
+    };
+    let filled_len = (closed * PROGRESS_BAR_SEGMENTS) / total;
+    let empty_len = PROGRESS_BAR_SEGMENTS - filled_len;
+    (
+        format!(
+            "[{}{}] {:.0}%",
+            "█".repeat(filled_len),
+            "░".repeat(empty_len),
+            pct,
+        ),
+        color,
+    )
 }
 
 pub(crate) fn append_stage_summaries(

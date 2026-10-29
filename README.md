@@ -61,6 +61,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Custom commands** — bind a key to your own shell command with the highlighted issue, MR/PR or pipeline as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.PipelineId}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
 - **Single-Column Inspector** — unified fullscreen details preview and inline editing with full-width markdown description on top and stacked metadata fields below
 - **Interactive Submit Dialogs** — explicit Submit/Cancel confirmations with configurable options (squash, delete source branch, auto-merge) for mutating actions
+- **Dashboard**: one screen for what needs attention, scoped to you by default or to any contributor. Queues count the open MRs/PRs waiting for review, returned with changes requested, ready to merge, blocked by a conflict or rebase, idle for a week, and drafts, and the issues assigned, overdue, due soon, idle for two weeks or unassigned. Select a queue to list its items below the cards and `Enter` to jump to one. A Contributors card shows each person's open MRs/PRs, pending reviews, assigned issues, overdue ones and recent activity count, and choosing a person rescopes the queues and lists their recent activity: issues and MRs/PRs, plus their commits, comments, review thread comments and reviews from the repository's activity feed. Pipeline health, upcoming milestones and the latest release sit alongside (`--tab dashboard` or `active_tab = "dashboard"` to start there)
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description) with in-menu template selection
 - **Merge Requests / Pull Requests** — list, filter, create MRs from issues with auto-linking, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
 - **MR/PR review state at a glance** — color-coded **Approval** (`APPROVED`, `AWAITING`, `REVIEW REQ`, …), **Mergeable** (`CONFLICT`, `REBASE`, `CLEAN`), and **Workflow** (Returned / Review req / Yours / Approved / By others / Inactive) columns; rebase with `R`, revoke your approval with `A` (GitLab)
@@ -269,8 +270,8 @@ The generated file is fully annotated. Key sections:
 # Pick a built-in theme preset
 theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
 
-# Tab to open on launch. Valid: issues, mrs, pr, pipelines, runners, releases,
-# todos, milestones, branches, environments, terminal. Case-insensitive.
+# Tab to open on launch. Valid: dashboard, issues, mrs, pr, pipelines, runners,
+# releases, todos, milestones, branches, environments, terminal. Case-insensitive.
 # Overridden by the --tab CLI flag.
 # active_tab = "mrs"
 
@@ -414,7 +415,7 @@ glab-tui --tab pipelines
 | `-g`, `--group` | `group` | Launch glab-tui for a GitLab group or GitHub organization context |
 | `-d`, `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
 | `-c`, `--config` | `/path/to/config.toml` | Use this config file instead of `~/.config/glab-tui/config.toml` (a repo-local `.glab-tui/config.toml` still applies on top); `Save View → Global` rewrites that file without its comments |
-| `-t`, `--tab` | `issues\|mrs\|pr\|pipelines\|jobs\|runners\|releases\|todos\|milestones\|branches\|environments\|terminal` | Tab to open on launch (overrides `active_tab` in `config.toml`) |
+| `-t`, `--tab` | `dashboard\|issues\|mrs\|pr\|pipelines\|jobs\|runners\|releases\|todos\|milestones\|branches\|environments\|terminal` | Tab to open on launch (overrides `active_tab` in `config.toml`) |
 | `-u`, `--update` | | Check for and install updates |
 | `-h`, `--help` | | Print usage help details |
 | `-V`, `--version` | | Print version information |
@@ -535,6 +536,24 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
 | `u` | Check for updates | — |
 | `q` / `Esc` | Quit (or close current overlay) | `quit` |
+
+---
+
+### Dashboard tab
+
+> Built from the lists the other tabs fetch: refreshing the Dashboard refreshes the MRs/PRs, Issues, Pipelines, Milestones and Releases lists (in group scope, only those the backend can list for a group or organization). It has no keybindings of its own.
+>
+> The MR/PR and Issues cards count queues for the person the Dashboard shows: you by default (your login comes with the MR/PR list's review state, everyone's work is shown until it is known), everyone, or a contributor. For a person, MR/PR queues cover the ones they author, are assigned or review, and issue queues the ones assigned to them (unassigned: the ones they opened). Idle means not updated for 7 days (MRs/PRs) or 14 days (issues). Overdue and due-soon queues are GitLab only, since GitHub issues have no due date.
+>
+> The Contributors card columns are open MRs/PRs authored or assigned (`MRs`), MRs/PRs waiting for their review (`rev`), assigned open issues (`iss`), overdue ones (`ovd`) and their entries in the activity feed (`act`). The feed is the newest 100 events of the repository (GitLab project events, GitHub repository events), read once per Dashboard refresh, in repository scope only. `Enter` on a comment, thread comment or review opens the issue or MR/PR it was made on.
+
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` / `k` / `↑` | Select the next / previous queue, contributor or card (the next / previous item while the list has the keys) | — |
+| `Home` / `End` | Select the first / last row (or item) | — |
+| `Enter` | On a queue: move into its item list. On a contributor: show their work and list their recent activity. On Pipelines, Milestones or Releases: open that tab | — |
+| `Enter` (in the list) | Open the issue or MR/PR in its tab with the preview open | — |
+| `Esc` | Leave the item list | — |
 
 ---
 
@@ -905,6 +924,7 @@ src/
 ├── git_helpers.rs   # Git remote parsing, current branch, workflow file detection
 ├── editor.rs        # External editor integration ($EDITOR)
 ├── entity_editor.rs # Edit-menu field change logic
+├── dashboard.rs     # Dashboard selection, person scope and what each row lists
 ├── templates.rs     # Default issue/MR/PR description templates
 ├── cli.rs           # CLI subcommands (doctor, clean-cache, cache, open, repos, review)
 ├── cli/review.rs    # `review` subcommand: threads/comment/submit/reply/resolve as JSON
@@ -916,6 +936,7 @@ src/
 ├── domain/          # Domain models + API logic
 │   ├── mod.rs       # Module declarations
 │   ├── client.rs    # GitlabClient wrapper (backend + page_size + event tx)
+│   ├── dashboard.rs # Dashboard queues, workloads and summaries over the other tabs' lists
 │   ├── issues.rs    # Issue struct + list/get/create/edit
 │   ├── mr.rs        # MergeRequest/PR, DiscussionNote, NotePosition
 │   ├── review.rs    # ReviewEvent + DraftComment, shared by the diff view and `review`
@@ -933,6 +954,7 @@ src/
 ├── ui/              # Ratatui render functions
 │   ├── mod.rs       # Re-exports
 │   ├── inspector.rs # Unified entity inspector (preview/edit single-column layout)
+│   ├── dashboard.rs # Dashboard cards, contributor table and item list
 │   ├── tabs.rs      # Tab-specific render functions
 │   ├── overlays.rs  # Overlay render functions (SubmitDialog, selectors, date picker)
 │   ├── helpers.rs   # Shared UI helpers (badge styling, fuzzy cells)

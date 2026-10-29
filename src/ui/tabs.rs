@@ -2612,59 +2612,19 @@ pub(crate) fn render_tab_milestones(
                             ));
                         }
                         "Progress" => {
-                            // Prefer the cheap aggregate derived from
-                            // `Issue.milestone` (rebuilt on every IssuesFetched).
-                            // Fall back to the per-milestone issue list when the
-                            // user has drilled in. Never refetch: the bar must
-                            // show whatever we already have, even if stale.
-                            //
-                            // `milestone_progress_cache` stores `(closed, total)`.
-                            // If neither cache has data, render a dash.
-                            let cached = app
-                                .milestone_progress_cache
-                                .get(&m.iid)
-                                .copied()
-                                .filter(|&(_, total)| total > 0);
-                            let (closed, total) = cached.unwrap_or_else(|| {
-                                app.milestone_issues_cache
-                                    .get(&m.iid)
-                                    .filter(|v| !v.is_empty())
-                                    .map(|issues| {
-                                        let total = issues.len();
-                                        let closed =
-                                            issues.iter().filter(|i| i.state == "closed").count();
-                                        (closed, total)
-                                    })
-                                    .unwrap_or((0, 0))
-                            });
-                            let (bar_text, color) = if total > 0 {
-                                let pct = (closed as f32 / total as f32) * 100.0;
-                                let color = if pct <= 33.0 {
-                                    theme.red
-                                } else if pct <= 66.0 {
-                                    theme.yellow
+                            // Never refetch: the bar must show whatever we
+                            // already have, even if stale. If neither cache has
+                            // data, render a dash.
+                            let (bar_text, color) =
+                                if let Some((closed, total)) = app.milestone_progress(m.iid) {
+                                    super::helpers::progress_bar(closed, total, &theme)
+                                } else if app.selected_milestone_iid == Some(m.iid)
+                                    && !app.milestone_issues_cache.contains_key(&m.iid)
+                                {
+                                    ("Loading...".to_string(), theme.text_muted)
                                 } else {
-                                    theme.green
+                                    ("-".to_string(), theme.text_muted)
                                 };
-                                let bar_segments = 10;
-                                let filled_len = (closed * bar_segments) / total;
-                                let empty_len = bar_segments - filled_len;
-                                (
-                                    format!(
-                                        "[{}{}] {:.0}%",
-                                        "█".repeat(filled_len),
-                                        "░".repeat(empty_len),
-                                        pct,
-                                    ),
-                                    color,
-                                )
-                            } else if app.selected_milestone_iid == Some(m.iid)
-                                && !app.milestone_issues_cache.contains_key(&m.iid)
-                            {
-                                ("Loading...".to_string(), theme.text_muted)
-                            } else {
-                                ("-".to_string(), theme.text_muted)
-                            };
                             cells.push(Cell::from(bar_text).style(Style::default().fg(color)));
                         }
                         _ => {

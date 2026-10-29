@@ -891,7 +891,7 @@ async fn main() -> Result<()> {
             Some(tab) => app.active_tab = tab,
             None => {
                 eprintln!(
-                    "Error: --tab '{tab_str}' is not a recognised tab.\nValid values: issues, mrs, pr, pipelines, jobs, runners, releases, todos, milestones, branches, environments, terminal."
+                    "Error: --tab '{tab_str}' is not a recognised tab.\nValid values: dashboard, issues, mrs, pr, pipelines, jobs, runners, releases, todos, milestones, branches, environments, terminal."
                 );
                 std::process::exit(2);
             }
@@ -1892,6 +1892,17 @@ async fn main() -> Result<()> {
                     app.project_cache.environments = app.environments.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
+                Event::DashboardRefreshed => {
+                    app.complete_loading_tab(app::Tab::Dashboard, "Success");
+                }
+                Event::ContributionsFetched(result) => {
+                    app.dashboard.contributions = match result {
+                        Ok(contributions) => {
+                            crate::dashboard::ContributionFeed::Loaded(contributions)
+                        }
+                        Err(reason) => crate::dashboard::ContributionFeed::Failed(reason),
+                    };
+                }
                 Event::SelectorItemsFetched(items) => {
                     let mut applied_from_cache = false;
                     if items.is_empty() {
@@ -2199,6 +2210,7 @@ async fn main() -> Result<()> {
                     if app.has_rows(tab) {
                         app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
                     } else {
+                        app.fetch_failures.insert(tab, err_msg.clone());
                         app.show_error(err_msg);
                         app.error_has_cli_detail = true;
                     }

@@ -144,6 +144,8 @@ impl IconSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
+    pub tab_dashboard: String,
+    pub commit: String,
     pub tab_issue: String,
     pub tab_pr: String,
     pub tab_pipeline: String,
@@ -264,6 +266,8 @@ pub struct Icons {
 impl Icons {
     pub fn nerd() -> Self {
         Self {
+            tab_dashboard: "\u{f463}".to_string(),
+            commit: "\u{f417}".to_string(),
             tab_issue: "\u{f41b}".to_string(),
             tab_pr: "\u{f407}".to_string(),
             tab_pipeline: "\u{f500}".to_string(),
@@ -386,6 +390,8 @@ impl Icons {
     /// font.
     pub fn ascii() -> Self {
         Self {
+            tab_dashboard: "&".to_string(),
+            commit: "*".to_string(),
             tab_issue: "#".to_string(),
             tab_pr: "!".to_string(),
             tab_pipeline: ">".to_string(),

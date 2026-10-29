@@ -108,6 +108,11 @@ pub enum Event {
     MrDeleted,
     BranchesFetched(Vec<crate::domain::branches::Branch>),
     EnvironmentsFetched(Vec<crate::domain::deployments::Environment>),
+    /// Every list the Dashboard summarizes has been fetched, successfully or
+    /// not: each list reported its own outcome through its usual event.
+    DashboardRefreshed,
+    /// The repository's activity feed, fetched with every Dashboard refresh.
+    ContributionsFetched(Result<Vec<crate::domain::contributions::Contribution>, String>),
     DeploymentsFetched {
         environment: String,
         deployments: Vec<crate::domain::deployments::Deployment>,

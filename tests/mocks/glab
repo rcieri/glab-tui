@@ -34,6 +34,8 @@ if [[ "$*" == *"api"* ]]; then
     fi
     if [[ "$2" == runners/* ]]; then
         cat "$FIXTURES_DIR/runner_${2#runners/}.json"
+    elif [[ "$*" == *"/events?"* ]]; then
+        cat "$FIXTURES_DIR/events.json"
     elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then

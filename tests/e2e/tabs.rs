@@ -546,7 +546,10 @@ fn test_gitlab_jobs_help_offers_start_job() {
 /// way to find one command in it or start over.
 #[test]
 fn test_terminal_log_filters_with_search_and_clears() {
-    let mut session = TestSession::new(false, 30, 160);
+    // Passing through the Dashboard would start the fetches of every list it
+    // summarizes, whose log entries land after the clear.
+    let mut session =
+        TestSession::with_config(false, 30, 160, Some("disabled_tabs = [\"dashboard\"]\n"));
     session
         .wait_for_screen_contains("Issues", 5000)
         .expect("app starts");
@@ -605,7 +608,7 @@ fn test_terminal_inspects_filters_and_reruns_a_failed_command() {
     session
         .wait_for_cli_call("mr list", 5000)
         .expect("the MR fetch runs and fails");
-    session.send_input(b"hh");
+    session.send_input(b"hhh");
     session
         .wait_for_screen_contains("┌ Terminal ─", 5000)
         .expect("the Terminal tab opens");

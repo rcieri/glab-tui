@@ -1,3 +1,4 @@
+pub mod dashboard;
 mod diff;
 mod helpers;
 pub(crate) mod inspector;
@@ -388,7 +389,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Constraint::Min(0),
             ])
             .split(chunks[1])
-    } else if app.active_tab == Tab::Terminal {
+    } else if matches!(app.active_tab, Tab::Terminal | Tab::Dashboard) {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([sidebar_width, Constraint::Min(0), Constraint::Length(0)])
@@ -474,6 +475,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // descent and needs it just as much. The Todos tab shows which items its
     // read filter lets through.
     let breadcrumb = match app.active_tab {
+        Tab::Dashboard => app.scope.display(),
         Tab::Pipelines | Tab::Jobs => app.nav_breadcrumb(),
         Tab::Todos if app.shows_read_todos() => "All".to_string(),
         Tab::Todos => "Unread".to_string(),
@@ -544,6 +546,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             main_block.clone(),
         ),
         Tab::Terminal => tabs::render_tab_terminal(f, ctx, app, content_area),
+        Tab::Dashboard => dashboard::render_tab_dashboard(f, app, content_area, main_block.clone()),
     }
 
     // Compact terminal pane at bottom of the middle column

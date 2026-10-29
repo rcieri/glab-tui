@@ -3,6 +3,7 @@ use super::bounded_output::{CapturedStdout, output_bounded};
 use super::logged_command::{ChildOutput, LoggedCommand};
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
+use crate::domain::contributions::Contribution;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
@@ -3169,6 +3170,23 @@ impl Backend for GlabBackend {
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
+    }
+
+    // ── Contributions ──
+
+    async fn list_contributions(&self, scope: &Scope) -> Result<Vec<Contribution>> {
+        let Scope::Repository(project) = scope else {
+            return Err(anyhow::anyhow!("Group-level activity not supported"));
+        };
+        let encoded = Self::encode_path(project);
+        let endpoint = format!(
+            "/projects/{encoded}/events?per_page={}",
+            crate::domain::contributions::EVENTS_PER_FETCH
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Activity")
+            .await?;
+        crate::domain::contributions::parse_gitlab_events(&raw)
     }
 
     // ── Environments / Deployments ──

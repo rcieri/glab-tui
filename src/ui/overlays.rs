@@ -1932,6 +1932,21 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             key: s("Esc"),
             action: "Leave the item list",
         },
+        Shortcut {
+            category: "Dashboard",
+            key: d(app.config.keybindings.dashboard.cycle_window.clone()),
+            action: "Contributors: open work, then activity in the last day, week, month",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: d(format!(
+                "{} / {} / {}",
+                app.config.keybindings.global.sort_next,
+                app.config.keybindings.global.sort_prev,
+                app.config.keybindings.global.sort_reverse
+            )),
+            action: "Sort contributors by a column (highest first) / reverse",
+        },
         // ── Terminal ──
         Shortcut {
             category: "Terminal",

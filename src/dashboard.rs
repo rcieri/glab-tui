@@ -2,8 +2,11 @@
 //! selectable row lists.
 
 use crate::app::{App, Tab};
-use crate::domain::contributions::{Contribution, TargetKind};
-use crate::domain::dashboard::{self, Activity, IssueQueue, MrQueue, Now, Person, recent_activity};
+use crate::domain::contributions::{Contribution, ContributionHistory, TargetKind};
+use crate::domain::dashboard::{
+    self, Activity, ActivityWindow, IssueQueue, MrQueue, Now, Person, recent_activity,
+};
+use chrono::{DateTime, Utc};
 
 /// The repository's activity feed as the Dashboard last fetched it.
 #[derive(Debug, Default, Clone)]
@@ -11,17 +14,76 @@ pub enum ContributionFeed {
     /// Not fetched yet, or not available in the current scope.
     #[default]
     NotLoaded,
-    Loaded(Vec<Contribution>),
+    Loaded(ContributionHistory),
     Failed(String),
 }
 
 impl ContributionFeed {
     pub fn contributions(&self) -> &[Contribution] {
         match self {
-            ContributionFeed::Loaded(contributions) => contributions,
+            ContributionFeed::Loaded(history) => &history.contributions,
             ContributionFeed::NotLoaded | ContributionFeed::Failed(_) => &[],
         }
     }
+
+    /// The oldest event read when the feed stopped short of `since`.
+    pub fn cut_off_after(&self, since: DateTime<Utc>) -> Option<&str> {
+        let ContributionFeed::Loaded(history) = self else {
+            return None;
+        };
+        let cut_off_at = history.cut_off_at.as_deref()?;
+        DateTime::parse_from_rfc3339(cut_off_at)
+            .is_ok_and(|at| at.with_timezone(&Utc) > since)
+            .then_some(cut_off_at)
+    }
+}
+
+/// What the Contributors card counts per person.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ContributorsView {
+    /// Open MRs/PRs, pending reviews, assigned and overdue issues.
+    #[default]
+    OpenWork,
+    /// Commits, comments, thread comments and reviews in the window.
+    Activity(ActivityWindow),
+}
+
+impl ContributorsView {
+    pub const ALL: [ContributorsView; 4] = [
+        ContributorsView::OpenWork,
+        ContributorsView::Activity(ActivityWindow::Day),
+        ContributorsView::Activity(ActivityWindow::Week),
+        ContributorsView::Activity(ActivityWindow::Month),
+    ];
+    pub const COLUMN_COUNT: usize = 4;
+
+    pub fn next(self) -> Self {
+        let current = Self::ALL.iter().position(|view| *view == self).unwrap_or(0);
+        Self::ALL[(current + 1) % Self::ALL.len()]
+    }
+
+    pub fn columns(self) -> [&'static str; Self::COLUMN_COUNT] {
+        match self {
+            ContributorsView::OpenWork => ["MRs", "rev", "iss", "ovd"],
+            ContributorsView::Activity(_) => ["cmt", "com", "thr", "rvw"],
+        }
+    }
+
+    /// The start of the window whose contributions the item list shows.
+    pub fn activity_since(self, now: Now) -> DateTime<Utc> {
+        match self {
+            ContributorsView::OpenWork => ActivityWindow::Month.starts_at(now),
+            ContributorsView::Activity(window) => window.starts_at(now),
+        }
+    }
+}
+
+/// The Contributors column people are ordered by. Unsorted, they are listed
+/// by login, so the card is not a ranking unless asked to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContributorSort {
+    pub column: usize,
+    pub is_descending: bool,
 }
 
 /// Whose work the Dashboard shows.
@@ -121,6 +183,8 @@ pub struct DashboardState {
     pub is_list_focused: bool,
     pub list_cursor: usize,
     pub contributions: ContributionFeed,
+    pub contributors_view: ContributorsView,
+    pub contributors_sort: Option<ContributorSort>,
 }
 
 impl DashboardState {
@@ -218,14 +282,7 @@ impl App {
                 DashboardCard::Contributors => {
                     rows.push(DashboardRow::Contributor(DashboardPerson::Everyone));
                     rows.push(DashboardRow::Contributor(DashboardPerson::Me));
-                    let contributors = dashboard::contributors(
-                        &self.issues.items,
-                        &self.mrs.items,
-                        self.dashboard.contributions.contributions(),
-                        self.dashboard_signed_in_user(),
-                        now,
-                    );
-                    rows.extend(contributors.into_iter().map(|(login, _)| {
+                    rows.extend(self.sorted_contributors(now).into_iter().map(|login| {
                         DashboardRow::Contributor(DashboardPerson::User(login.to_string()))
                     }));
                 }
@@ -248,6 +305,7 @@ impl App {
         let person = self.dashboard_person();
         let (issues, mrs) = (&self.issues.items, &self.mrs.items);
         let contributions = self.dashboard.contributions.contributions();
+        let since = self.dashboard.contributors_view.activity_since(now);
         match row {
             Some(DashboardRow::Mr(queue)) => queue
                 .list(mrs, person, signed_in, now)
@@ -259,12 +317,117 @@ impl App {
                 .into_iter()
                 .map(Activity::Issue)
                 .collect(),
-            Some(DashboardRow::Contributor(contributor)) => {
-                recent_activity(issues, mrs, contributions, contributor.resolve(signed_in))
-            }
+            Some(DashboardRow::Contributor(contributor)) => recent_activity(
+                issues,
+                mrs,
+                contributions,
+                contributor.resolve(signed_in),
+                since,
+            ),
             Some(DashboardRow::Card(_)) | None => {
-                recent_activity(issues, mrs, contributions, person)
+                recent_activity(issues, mrs, contributions, person, since)
             }
+        }
+    }
+
+    /// The Contributors card's numbers for `person` in its current view.
+    /// `None` for the signed-in user while their login is unknown.
+    pub fn contributor_stats(
+        &self,
+        person: &DashboardPerson,
+        now: Now,
+    ) -> Option<[usize; ContributorsView::COLUMN_COUNT]> {
+        let signed_in = self.dashboard_signed_in_user();
+        if *person == DashboardPerson::Me && signed_in.is_none() {
+            return None;
+        }
+        let person = person.resolve(signed_in);
+        Some(match self.dashboard.contributors_view {
+            ContributorsView::OpenWork => {
+                let load = dashboard::workload(
+                    &self.issues.items,
+                    &self.mrs.items,
+                    person,
+                    signed_in,
+                    now,
+                );
+                [
+                    load.open_mrs,
+                    load.reviews,
+                    load.open_issues,
+                    load.overdue_issues,
+                ]
+            }
+            ContributorsView::Activity(window) => {
+                let counts = dashboard::activity_counts(
+                    self.dashboard.contributions.contributions(),
+                    person,
+                    window.starts_at(now),
+                );
+                [
+                    counts.commits,
+                    counts.comments,
+                    counts.threads,
+                    counts.reviews,
+                ]
+            }
+        })
+    }
+
+    /// Contributors other than the signed-in user, by login, or by the
+    /// sort column with the login breaking ties.
+    fn sorted_contributors(&self, now: Now) -> Vec<&str> {
+        let mut logins = dashboard::contributor_logins(
+            &self.issues.items,
+            &self.mrs.items,
+            self.dashboard.contributions.contributions(),
+            self.dashboard_signed_in_user(),
+        );
+        let Some(sort) = self.dashboard.contributors_sort else {
+            return logins;
+        };
+        logins.sort_by_cached_key(|login| {
+            let value = self
+                .contributor_stats(&DashboardPerson::User(login.to_string()), now)
+                .map_or(0, |stats| stats[sort.column]);
+            let key = if sort.is_descending {
+                usize::MAX - value
+            } else {
+                value
+            };
+            (key, login.to_string())
+        });
+        logins
+    }
+
+    /// `w`: count open work, then the last day, week and month of activity.
+    pub fn cycle_contributors_view(&mut self) {
+        self.dashboard.contributors_view = self.dashboard.contributors_view.next();
+    }
+
+    /// `>` / `<` on the Dashboard: sort contributors by the next or previous
+    /// column, highest first, with "by login" between the last and the first.
+    pub fn cycle_contributors_sort(&mut self, forward: bool) {
+        let positions = ContributorsView::COLUMN_COUNT + 1;
+        let current = self
+            .dashboard
+            .contributors_sort
+            .map_or(0, |sort| sort.column + 1);
+        let next = if forward {
+            (current + 1) % positions
+        } else {
+            (current + positions - 1) % positions
+        };
+        self.dashboard.contributors_sort = next.checked_sub(1).map(|column| ContributorSort {
+            column,
+            is_descending: true,
+        });
+    }
+
+    /// `=` on the Dashboard: flip the contributor sort, if any.
+    pub fn reverse_contributors_sort(&mut self) {
+        if let Some(sort) = &mut self.dashboard.contributors_sort {
+            sort.is_descending = !sort.is_descending;
         }
     }
 
@@ -416,6 +579,71 @@ mod tests {
         state.step_list(2, false);
         state.step_list(2, false);
         assert_eq!(state.list_cursor, 0);
+    }
+
+    #[test]
+    fn contributors_list_by_login_until_sorted_by_a_column_highest_first() {
+        use crate::domain::contributions::ContributionKind;
+        let now = Now {
+            instant: DateTime::parse_from_rfc3339("2026-10-29T12:00:00Z")
+                .expect("valid time")
+                .with_timezone(&Utc),
+            today: chrono::NaiveDate::from_ymd_opt(2026, 10, 29).expect("valid date"),
+        };
+        let commit = |author: &str| Contribution {
+            author: author.to_string(),
+            kind: ContributionKind::Commit,
+            created_at: "2026-10-28T00:00:00Z".to_string(),
+            summary: String::new(),
+            target: None,
+            location: None,
+        };
+        let mut app = App::default();
+        app.dashboard.contributions = ContributionFeed::Loaded(ContributionHistory {
+            contributions: vec![commit("bob"), commit("cy"), commit("cy")],
+            cut_off_at: None,
+        });
+        app.dashboard.contributors_view = ContributorsView::Activity(ActivityWindow::Week);
+        let contributors = |app: &App| -> Vec<String> {
+            app.dashboard_rows(now)
+                .into_iter()
+                .filter_map(|row| match row {
+                    DashboardRow::Contributor(DashboardPerson::User(login)) => Some(login),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        assert_eq!(contributors(&app), vec!["bob", "cy"]);
+        app.cycle_contributors_sort(true);
+        assert_eq!(
+            app.contributor_stats(&DashboardPerson::User("cy".into()), now),
+            Some([2, 0, 0, 0])
+        );
+        assert_eq!(contributors(&app), vec!["cy", "bob"]);
+        app.reverse_contributors_sort();
+        assert_eq!(contributors(&app), vec!["bob", "cy"]);
+        app.cycle_contributors_sort(false);
+        assert_eq!(app.dashboard.contributors_sort, None);
+    }
+
+    #[test]
+    fn the_window_key_steps_from_open_work_through_day_week_and_month() {
+        let mut view = ContributorsView::default();
+        let mut seen = Vec::new();
+        for _ in 0..ContributorsView::ALL.len() {
+            view = view.next();
+            seen.push(view);
+        }
+        assert_eq!(
+            seen,
+            vec![
+                ContributorsView::Activity(ActivityWindow::Day),
+                ContributorsView::Activity(ActivityWindow::Week),
+                ContributorsView::Activity(ActivityWindow::Month),
+                ContributorsView::OpenWork,
+            ]
+        );
     }
 
     #[test]

@@ -343,7 +343,7 @@ fn sort_by_update<T>(rows: &mut [T], updated_at: impl Fn(&T) -> &str, is_oldest_
     });
 }
 
-/// What one person, or everyone, has open, and what they did lately.
+/// What one person, or everyone, has open.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Workload {
     /// Open MRs/PRs they authored or are assigned (everyone's: every open one).
@@ -353,20 +353,11 @@ pub struct Workload {
     /// Open issues assigned to them (everyone's: every open one).
     pub open_issues: usize,
     pub overdue_issues: usize,
-    /// Their commits, comments and reviews in the fetched activity feed.
-    pub contributions: usize,
-}
-
-impl Workload {
-    pub fn total(&self) -> usize {
-        self.open_mrs + self.reviews + self.open_issues + self.contributions
-    }
 }
 
 pub fn workload(
     issues: &[Issue],
     mrs: &[MergeRequest],
-    contributions: &[Contribution],
     person: Person,
     signed_in: Option<&str>,
     now: Now,
@@ -383,22 +374,76 @@ pub fn workload(
         reviews: MrQueue::AwaitingReview.count(mrs, person, signed_in, now),
         open_issues: IssueQueue::Open.count(issues, person, now),
         overdue_issues: IssueQueue::Overdue.count(issues, person, now),
-        contributions: contributions
-            .iter()
-            .filter(|contribution| Activity::Contribution(contribution).involves(person))
-            .count(),
     }
 }
 
+/// The span of the activity feed the Contributors card counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActivityWindow {
+    Day,
+    Week,
+    Month,
+}
+
+impl ActivityWindow {
+    pub fn days(self) -> i64 {
+        match self {
+            ActivityWindow::Day => 1,
+            ActivityWindow::Week => 7,
+            ActivityWindow::Month => crate::domain::contributions::HISTORY_DAYS,
+        }
+    }
+
+    pub fn starts_at(self, now: Now) -> DateTime<Utc> {
+        now.instant - chrono::Duration::days(self.days())
+    }
+}
+
+/// What one person, or everyone, did in an activity window.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ActivityCounts {
+    pub commits: usize,
+    pub comments: usize,
+    pub threads: usize,
+    pub reviews: usize,
+}
+
+/// Whether a contribution was made after `since`. One whose time does not
+/// parse is kept rather than silently dropped.
+pub fn is_made_after(contribution: &Contribution, since: DateTime<Utc>) -> bool {
+    DateTime::parse_from_rfc3339(&contribution.created_at)
+        .map_or(true, |at| at.with_timezone(&Utc) > since)
+}
+
+pub fn activity_counts(
+    contributions: &[Contribution],
+    person: Person,
+    since: DateTime<Utc>,
+) -> ActivityCounts {
+    use crate::domain::contributions::ContributionKind;
+    let mut counts = ActivityCounts::default();
+    let made = contributions.iter().filter(|contribution| {
+        Activity::Contribution(contribution).involves(person) && is_made_after(contribution, since)
+    });
+    for contribution in made {
+        match contribution.kind {
+            ContributionKind::Commit => counts.commits += 1,
+            ContributionKind::Comment => counts.comments += 1,
+            ContributionKind::ThreadComment => counts.threads += 1,
+            ContributionKind::Review => counts.reviews += 1,
+        }
+    }
+    counts
+}
+
 /// Everyone taking part in an open issue or MR/PR, or in the activity feed,
-/// other than the signed-in user, busiest first, then by login.
-pub fn contributors<'a>(
+/// other than the signed-in user, by login.
+pub fn contributor_logins<'a>(
     issues: &'a [Issue],
     mrs: &'a [MergeRequest],
     contributions: &'a [Contribution],
     signed_in: Option<&str>,
-    now: Now,
-) -> Vec<(&'a str, Workload)> {
+) -> Vec<&'a str> {
     let mut logins: BTreeSet<&str> = BTreeSet::new();
     for mr in mrs.iter().filter(|mr| is_open_mr(mr)) {
         logins.insert(&mr.author.username);
@@ -410,25 +455,10 @@ pub fn contributors<'a>(
         logins.extend(issue.assignees.iter().map(|a| a.username.as_str()));
     }
     logins.extend(contributions.iter().map(|c| c.author.as_str()));
-    let mut loads: Vec<(&str, Workload)> = logins
+    logins
         .into_iter()
         .filter(|login| !login.is_empty() && Some(*login) != signed_in)
-        .map(|login| {
-            let load = workload(
-                issues,
-                mrs,
-                contributions,
-                Person::User(login),
-                signed_in,
-                now,
-            );
-            (login, load)
-        })
-        .collect();
-    loads.sort_by(|(a_login, a), (b_login, b)| {
-        b.total().cmp(&a.total()).then_with(|| a_login.cmp(b_login))
-    });
-    loads
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -570,18 +600,25 @@ impl Activity<'_> {
 }
 
 /// The issues and MRs/PRs `person` takes part in, in any state, and their
-/// commits, comments and reviews, most recently updated first.
+/// commits, comments and reviews made after `since`, most recently updated
+/// first.
 pub fn recent_activity<'a>(
     issues: &'a [Issue],
     mrs: &'a [MergeRequest],
     contributions: &'a [Contribution],
     person: Person,
+    since: DateTime<Utc>,
 ) -> Vec<Activity<'a>> {
     let mut activity: Vec<Activity> = issues
         .iter()
         .map(Activity::Issue)
         .chain(mrs.iter().map(Activity::MergeRequest))
-        .chain(contributions.iter().map(Activity::Contribution))
+        .chain(
+            contributions
+                .iter()
+                .filter(|c| is_made_after(c, since))
+                .map(Activity::Contribution),
+        )
         .filter(|item| item.involves(person))
         .collect();
     sort_by_update(&mut activity, Activity::updated_at, false);
@@ -811,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn contributors_leave_out_the_signed_in_user_and_list_the_busiest_first() {
+    fn contributors_are_everyone_in_open_work_or_the_feed_but_the_signed_in_user() {
         let issues = [
             issue(
                 1,
@@ -829,38 +866,64 @@ mod tests {
                 json!({ "state": "merged", "author": { "username": "eve" } }),
             ),
         ];
-
         let feed = [contribution("fay", "2026-10-02T00:00:00Z")];
 
-        let contributors = contributors(&issues, &mrs, &feed, Some("ada"), now());
+        assert_eq!(
+            contributor_logins(&issues, &mrs, &feed, Some("ada")),
+            vec!["bob", "cy", "dee", "fay"]
+        );
+        assert_eq!(
+            workload(&issues, &mrs, Person::User("cy"), Some("ada"), now()),
+            Workload {
+                open_issues: 2,
+                overdue_issues: 1,
+                ..Workload::default()
+            }
+        );
+    }
+
+    #[test]
+    fn activity_counts_split_by_kind_and_keep_only_the_window() {
+        use crate::domain::contributions::ContributionKind;
+        let made = |kind, created_at: &str| Contribution {
+            kind,
+            ..contribution("ada", created_at)
+        };
+        let feed = [
+            made(ContributionKind::Commit, "2026-10-29T11:00:00Z"),
+            made(ContributionKind::Commit, "2026-10-28T13:00:00Z"),
+            made(ContributionKind::Comment, "2026-10-25T00:00:00Z"),
+            made(ContributionKind::ThreadComment, "2026-10-23T00:00:00Z"),
+            made(ContributionKind::Review, "2026-10-10T00:00:00Z"),
+            contribution("bob", "2026-10-29T11:00:00Z"),
+        ];
+        let counts = |window: ActivityWindow| activity_counts(&feed, ADA, window.starts_at(now()));
 
         assert_eq!(
-            contributors,
-            vec![
-                (
-                    "cy",
-                    Workload {
-                        open_issues: 2,
-                        overdue_issues: 1,
-                        ..Workload::default()
-                    }
-                ),
-                (
-                    "dee",
-                    Workload {
-                        reviews: 1,
-                        ..Workload::default()
-                    }
-                ),
-                (
-                    "fay",
-                    Workload {
-                        contributions: 1,
-                        ..Workload::default()
-                    }
-                ),
-                ("bob", Workload::default()),
-            ]
+            counts(ActivityWindow::Day),
+            ActivityCounts {
+                commits: 2,
+                ..ActivityCounts::default()
+            }
+        );
+        assert_eq!(
+            counts(ActivityWindow::Week),
+            ActivityCounts {
+                commits: 2,
+                comments: 1,
+                threads: 1,
+                reviews: 0,
+            }
+        );
+        assert_eq!(counts(ActivityWindow::Month).reviews, 1);
+        assert_eq!(
+            activity_counts(
+                &feed,
+                Person::Everyone,
+                ActivityWindow::Day.starts_at(now())
+            )
+            .commits,
+            3
         );
     }
 
@@ -893,7 +956,8 @@ mod tests {
             contribution("bob", "2026-10-06T00:00:00Z"),
         ];
 
-        let shown: Vec<String> = recent_activity(&issues, &mrs, &feed, ADA)
+        let since = ActivityWindow::Month.starts_at(now());
+        let shown: Vec<String> = recent_activity(&issues, &mrs, &feed, ADA, since)
             .iter()
             .map(|item| match item {
                 Activity::Issue(issue) => format!("#{}", issue.iid),

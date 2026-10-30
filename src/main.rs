@@ -1885,9 +1885,7 @@ async fn main() -> Result<()> {
                 }
                 Event::ContributionsFetched(result) => {
                     app.dashboard.contributions = match result {
-                        Ok(contributions) => {
-                            crate::dashboard::ContributionFeed::Loaded(contributions)
-                        }
+                        Ok(history) => crate::dashboard::ContributionFeed::Loaded(history),
                         Err(reason) => crate::dashboard::ContributionFeed::Failed(reason),
                     };
                 }

@@ -5,17 +5,89 @@
 
 use crate::domain::client::GitlabClient;
 use crate::scope::Scope;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
+/// Feed events per page.
+pub const EVENTS_PER_PAGE: usize = 100;
+/// How far back the Dashboard reads the feed: its longest activity window.
+pub const HISTORY_DAYS: i64 = 30;
+/// GitLab filters the feed by date, so paging only stops a busy project
+/// from costing too many calls.
+const MAX_GITLAB_PAGES: usize = 10;
+/// GitHub serves at most 300 events of a repository and refuses later pages.
+const MAX_GITHUB_PAGES: usize = 3;
+
+/// One page of the activity feed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FeedPage {
+    pub contributions: Vec<Contribution>,
+    /// Events on the page, contributions or not, so a short page is known.
+    pub event_count: usize,
+    /// RFC 3339 time of the page's oldest event.
+    pub oldest_at: Option<String>,
+}
+
+/// The feed read back to a point in time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContributionHistory {
+    pub contributions: Vec<Contribution>,
+    /// The oldest event read, when the feed ran out or the page cap stopped
+    /// the read before `since`. `None` when the history covers `since`.
+    pub cut_off_at: Option<String>,
+}
+
+impl ContributionHistory {
+    /// Adds a page read newest first and keeps its contributions made after
+    /// `since`. Returns whether reading can stop: the page reached back to
+    /// `since`, or the feed has nothing older.
+    pub fn add_page(&mut self, page: FeedPage, since: DateTime<Utc>) -> bool {
+        let reaches_since = page
+            .oldest_at
+            .as_deref()
+            .and_then(parse_time)
+            .is_some_and(|oldest| oldest <= since);
+        let is_last = page.event_count < EVENTS_PER_PAGE;
+        self.contributions.extend(
+            page.contributions
+                .into_iter()
+                .filter(|c| parse_time(&c.created_at).is_none_or(|at| at > since)),
+        );
+        self.cut_off_at = if reaches_since { None } else { page.oldest_at };
+        reaches_since || is_last
+    }
+}
+
+fn parse_time(timestamp: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
+/// The feed of the last `HISTORY_DAYS` days, read page by page.
 pub async fn list_contributions(
     client: &GitlabClient,
     scope: &Scope,
-) -> anyhow::Result<Vec<Contribution>> {
-    client.backend.list_contributions(scope).await
+    now: DateTime<Utc>,
+) -> anyhow::Result<ContributionHistory> {
+    let since = now - chrono::Duration::days(HISTORY_DAYS);
+    let max_pages = if client.backend.kind().is_github() {
+        MAX_GITHUB_PAGES
+    } else {
+        MAX_GITLAB_PAGES
+    };
+    let mut history = ContributionHistory::default();
+    for page in 1..=max_pages {
+        let feed = client
+            .backend
+            .list_contribution_page(scope, since.date_naive(), page)
+            .await?;
+        if history.add_page(feed, since) {
+            return Ok(history);
+        }
+    }
+    Ok(history)
 }
-
-/// How many of the newest feed events one fetch reads.
-pub const EVENTS_PER_FETCH: usize = 100;
 
 const SHORT_SHA_CHARS: usize = 8;
 
@@ -188,9 +260,13 @@ fn gitlab_contribution(event: GlEvent) -> Option<Contribution> {
 }
 
 /// Contributions in a GitLab `/projects/:id/events` reply, newest first.
-pub fn parse_gitlab_events(raw: &str) -> anyhow::Result<Vec<Contribution>> {
+pub fn parse_gitlab_events(raw: &str) -> anyhow::Result<FeedPage> {
     let events: Vec<GlEvent> = serde_json::from_str(raw)?;
-    Ok(events.into_iter().filter_map(gitlab_contribution).collect())
+    Ok(FeedPage {
+        event_count: events.len(),
+        oldest_at: events.last().map(|e| e.created_at.clone()),
+        contributions: events.into_iter().filter_map(gitlab_contribution).collect(),
+    })
 }
 
 #[derive(Deserialize)]
@@ -385,14 +461,74 @@ fn github_contributions(event: GhEvent) -> Vec<Contribution> {
 
 /// Contributions in a GitHub `/repos/{owner}/{repo}/events` reply, newest
 /// first.
-pub fn parse_github_events(raw: &str) -> anyhow::Result<Vec<Contribution>> {
+pub fn parse_github_events(raw: &str) -> anyhow::Result<FeedPage> {
     let events: Vec<GhEvent> = serde_json::from_str(raw)?;
-    Ok(events.into_iter().flat_map(github_contributions).collect())
+    Ok(FeedPage {
+        event_count: events.len(),
+        oldest_at: events.last().map(|e| e.created_at.clone()),
+        contributions: events.into_iter().flat_map(github_contributions).collect(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn page(times: &[&str], event_count: usize) -> FeedPage {
+        FeedPage {
+            contributions: times
+                .iter()
+                .map(|at| Contribution {
+                    author: "ada".to_string(),
+                    kind: ContributionKind::Commit,
+                    created_at: at.to_string(),
+                    summary: String::new(),
+                    target: None,
+                    location: None,
+                })
+                .collect(),
+            event_count,
+            oldest_at: times.last().map(|at| at.to_string()),
+        }
+    }
+
+    fn since() -> DateTime<Utc> {
+        parse_time("2026-10-01T00:00:00Z").expect("valid time")
+    }
+
+    #[test]
+    fn reading_stops_at_a_page_reaching_back_past_since_and_drops_older_events() {
+        let mut history = ContributionHistory::default();
+
+        let is_done = history.add_page(
+            page(
+                &["2026-10-05T00:00:00Z", "2026-09-30T00:00:00Z"],
+                EVENTS_PER_PAGE,
+            ),
+            since(),
+        );
+
+        assert!(is_done);
+        assert_eq!(history.contributions.len(), 1);
+        assert_eq!(history.cut_off_at, None);
+    }
+
+    #[test]
+    fn a_full_page_short_of_since_asks_for_more_and_records_where_it_stopped() {
+        let mut history = ContributionHistory::default();
+
+        let is_done = history.add_page(page(&["2026-10-05T00:00:00Z"], EVENTS_PER_PAGE), since());
+
+        assert!(!is_done);
+        assert_eq!(history.cut_off_at.as_deref(), Some("2026-10-05T00:00:00Z"));
+    }
+
+    #[test]
+    fn a_short_page_ends_the_feed_even_before_since() {
+        let mut history = ContributionHistory::default();
+
+        assert!(history.add_page(page(&["2026-10-05T00:00:00Z"], 1), since()));
+    }
 
     #[test]
     fn gitlab_pushes_comments_threads_and_approvals_become_contributions() {
@@ -415,7 +551,9 @@ mod tests {
              "target_type": "Issue", "target_iid": 4}
         ]"#;
 
-        let contributions = parse_gitlab_events(raw).expect("valid events");
+        let contributions = parse_gitlab_events(raw)
+            .expect("valid events")
+            .contributions;
 
         let target = |kind, iid, title: &str| {
             Some(ContributionTarget {
@@ -491,6 +629,7 @@ mod tests {
 
         let shown: Vec<String> = parse_github_events(raw)
             .expect("valid events")
+            .contributions
             .into_iter()
             .map(|c| {
                 format!(

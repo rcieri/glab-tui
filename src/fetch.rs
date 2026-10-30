@@ -632,7 +632,7 @@ fn spawn_contributions_fetch(
     let client = client.clone();
     let scope = scope.clone();
     tokio::spawn(async move {
-        let result = domain::contributions::list_contributions(&client, &scope)
+        let result = domain::contributions::list_contributions(&client, &scope, chrono::Utc::now())
             .await
             .map_err(|e| format!("Failed to fetch activity: {e}"));
         let _ = tx.send(Event::ContributionsFetched(result));

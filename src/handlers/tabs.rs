@@ -2824,7 +2824,11 @@ pub async fn handle_active_tab_key(
             handled = crate::handlers::terminal::handle_tab_key(app, key_event);
         }
         crate::app::Tab::Dashboard => {
-            handled = false;
+            if keybinding_matches(&app.config.keybindings.dashboard.cycle_window, key_event) {
+                app.cycle_contributors_view();
+            } else {
+                handled = false;
+            }
         }
     }
 

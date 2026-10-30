@@ -5797,6 +5797,10 @@ impl App {
     /// Moves the active tab's sort to the next (or previous) visible column.
     /// "Unsorted" sits between the last and the first column.
     pub fn cycle_sort_column(&mut self, forward: bool) {
+        if self.active_tab == Tab::Dashboard {
+            self.cycle_contributors_sort(forward);
+            return;
+        }
         let tab = self.active_tab;
         let mut options: Vec<Option<&str>> = vec![None];
         options.extend(
@@ -5827,6 +5831,10 @@ impl App {
     /// Does nothing while the tab is unsorted: the flip would be invisible
     /// and surprise the user on the next `cycle_sort_column`.
     pub fn reverse_sort_order(&mut self) {
+        if self.active_tab == Tab::Dashboard {
+            self.reverse_contributors_sort();
+            return;
+        }
         if self.sort_for(self.active_tab).is_none() {
             return;
         }

@@ -8,6 +8,11 @@
 //! contributors (everyone, you, `@reviewer-user`, `@test-user`), then the
 //! Pipelines, Milestones and Releases cards. `k` from the first row wraps to
 //! the last.
+//!
+//! The activity feed (`events.json`) holds a push by `test-user` 2 hours
+//! ago, a diff comment by `reviewer-user` 30 hours ago, a comment by
+//! `test-user` 50 hours ago and an approval by `reviewer-user` 100 hours
+//! ago, timed relative to now by the mock.
 
 use crate::TestSession;
 
@@ -82,11 +87,11 @@ fn a_queue_lists_its_items_and_enter_opens_one() {
 fn choosing_a_contributor_scopes_the_cards_and_lists_their_activity() {
     let mut session = dashboard_session();
     session
-        .wait_for_cli_call("/events?per_page=100", 15000)
+        .wait_for_cli_call("/events?after=", 15000)
         .expect("the dashboard reads the project's activity feed");
     session.press_keys(b"kkkk\r");
     session
-        .wait_for_screen_contains("Activity of @test-user · 5 ", 5000)
+        .wait_for_screen_contains("Activity of @test-user, last 30 days · 5 ", 5000)
         .expect("Enter on a contributor lists their MRs, issues, commits and comments");
     session
         .wait_for_screen_contains("Paginate the issue list (+1 more)", 5000)
@@ -126,4 +131,39 @@ fn esc_hands_the_keys_back_from_a_contributors_activity() {
     session
         .wait_for_screen_contains("Enter browse", 5000)
         .expect("Esc hands the keys back to the rows");
+}
+
+#[test]
+fn the_window_key_counts_each_contributors_activity_in_the_last_day_and_week() {
+    let mut session = dashboard_session();
+    session
+        .wait_for_cli_call("/events?after=", 15000)
+        .expect("the dashboard reads the project's activity feed");
+
+    session.press_keys(b"w");
+    session
+        .wait_for_screen_contains("Contributors · last 24h", 5000)
+        .expect("w switches the card to the last day of activity");
+    session.settle(300);
+    assert!(
+        screen_line_with(&session, "@test-user").contains("    1    0    0    0"),
+        "only the push of 2 hours ago is inside the last day: {}",
+        session.emulator.get_text()
+    );
+
+    session.press_keys(b"w");
+    session
+        .wait_for_screen_contains("Contributors · last 7 days", 5000)
+        .expect("w again widens the window to a week");
+    session.settle(300);
+    assert!(
+        screen_line_with(&session, "@test-user").contains("    1    1    0    0"),
+        "the week adds test-user's comment: {}",
+        session.emulator.get_text()
+    );
+    assert!(
+        screen_line_with(&session, "@reviewer-user").contains("    0    0    1    1"),
+        "and reviewer-user's diff comment and approval: {}",
+        session.emulator.get_text()
+    );
 }

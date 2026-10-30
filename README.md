@@ -541,11 +541,11 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 ### Dashboard tab
 
-> Built from the lists the other tabs fetch: refreshing the Dashboard refreshes the MRs/PRs, Issues, Pipelines, Milestones and Releases lists (in group scope, only those the backend can list for a group or organization). It has no keybindings of its own.
+> Built from the lists the other tabs fetch: refreshing the Dashboard refreshes the MRs/PRs, Issues, Pipelines, Milestones and Releases lists (in group scope, only those the backend can list for a group or organization). Remappable via `[keybindings.dashboard]` in `config.toml`.
 >
 > The MR/PR and Issues cards count queues for the person the Dashboard shows: you by default (your login comes with the MR/PR list's review state, everyone's work is shown until it is known), everyone, or a contributor. For a person, MR/PR queues cover the ones they author, are assigned or review, and issue queues the ones assigned to them (unassigned: the ones they opened). Idle means not updated for 7 days (MRs/PRs) or 14 days (issues). Overdue and due-soon queues are GitLab only, since GitHub issues have no due date.
 >
-> The Contributors card columns are open MRs/PRs authored or assigned (`MRs`), MRs/PRs waiting for their review (`rev`), assigned open issues (`iss`), overdue ones (`ovd`) and their entries in the activity feed (`act`). The feed is the newest 100 events of the repository (GitLab project events, GitHub repository events), read once per Dashboard refresh, in repository scope only. `Enter` on a comment, thread comment or review opens the issue or MR/PR it was made on.
+> The Contributors card shows open work by default: open MRs/PRs authored or assigned (`MRs`), MRs/PRs waiting for their review (`rev`), assigned open issues (`iss`) and overdue ones (`ovd`). `w` switches it to activity in the last 24 hours, 7 days or 30 days: commits (`cmt`), comments (`com`), review thread comments (`thr`) and reviews (`rvw`), and the activity lists follow the same window. People are listed by login. `>` / `<` sort them by a column, highest first, and `=` reverses. The activity comes from the repository's feed (GitLab project events filtered with `after`, GitHub repository events), read back 30 days once per Dashboard refresh, in repository scope only. GitLab reads at most 10 pages of 100 events and GitHub serves at most 300 events, so when the feed ends inside the window the card title says where (`feed ends 9 days ago`). GitHub push events no longer list their commits, so a push counts as one commit there. `Enter` on a comment, thread comment or review opens the issue or MR/PR it was made on.
 
 | Key | Action | Config |
 |---|---|---|
@@ -554,6 +554,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `Enter` | On a queue: move into its item list. On a contributor: show their work and list their recent activity. On Pipelines, Milestones or Releases: open that tab | — |
 | `Enter` (in the list) | Open the issue or MR/PR in its tab with the preview open | — |
 | `Esc` | Leave the item list | — |
+| `w` | Contributors: open work, then activity in the last 24 hours, 7 days, 30 days | `cycle_window` |
+| `>` / `<` / `=` | Sort contributors by the next / previous column, highest first / reverse | `sort_next` / `sort_prev` / `sort_reverse` (global) |
 
 ---
 

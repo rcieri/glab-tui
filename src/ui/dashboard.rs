@@ -8,15 +8,17 @@ use ratatui::{
     },
 };
 
-use super::helpers::{badge_style_for, progress_bar, status_dot};
+use super::helpers::{badge_style_for, progress_bar, sort_header_label, status_dot};
 use crate::app::{App, StaleData, Tab};
 use crate::backend::BackendKind;
 use crate::config::{ICONS, Icons, THEME, Theme};
-use crate::dashboard::{ContributionFeed, DashboardCard, DashboardPerson, DashboardRow};
+use crate::dashboard::{
+    ContributionFeed, ContributorsView, DashboardCard, DashboardPerson, DashboardRow,
+};
 use crate::domain::contributions::{ContributionKind, TargetKind};
 use crate::domain::dashboard::{
     self, Activity, ISSUE_IDLE_DAYS, IssueQueue, MR_IDLE_DAYS, MilestoneProgress, MrQueue, Now,
-    Person, PipelineOutcome, Workload,
+    Person, PipelineOutcome,
 };
 use crate::domain::issues::Issue;
 use crate::domain::mr::MergeRequest;
@@ -35,8 +37,7 @@ const MILESTONES_SHOWN: usize = CARD_BODY_LINES / 2;
 /// Width of `[██████████] 100%`, the widest progress bar.
 const PROGRESS_BAR_CHARS: usize = 17;
 /// Width of one number column of the Contributors card.
-const WORKLOAD_COLUMN_CHARS: usize = 4;
-const WORKLOAD_COLUMNS: usize = 5;
+const CONTRIBUTOR_COLUMN_CHARS: usize = 5;
 const LIST_REF_WIDTH: u16 = 7;
 const LIST_AUTHOR_WIDTH: u16 = 16;
 const LIST_PEOPLE_WIDTH: u16 = 20;
@@ -198,10 +199,21 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
         .add_modifier(Modifier::BOLD);
     let mut title = match (card, card.tab()) {
         (DashboardCard::Contributors, _) | (_, None) => {
-            vec![Span::styled(
-                format!(" {} Contributors ", ctx.icons.user),
+            let mut spans = vec![Span::styled(
+                format!(
+                    " {} Contributors · {} ",
+                    ctx.icons.user,
+                    contributors_view_label(ctx.app.dashboard.contributors_view)
+                ),
                 header,
-            )]
+            )];
+            if let Some(note) = feed_cut_off_note(ctx) {
+                spans.push(Span::styled(
+                    format!("{note} "),
+                    Style::default().fg(theme.yellow),
+                ));
+            }
+            spans
         }
         (DashboardCard::MergeRequests | DashboardCard::Issues, Some(tab)) => vec![Span::styled(
             format!(" {} · {} ", tab.title(ctx.kind), ctx.who().card_suffix()),
@@ -406,32 +418,20 @@ fn issues_body(ctx: &Context) -> Vec<Line<'static>> {
 
 fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
     let (theme, app) = (ctx.theme, ctx.app);
-    let (issues, mrs) = (&app.issues.items, &app.mrs.items);
-    let contributions = app.dashboard.contributions.contributions();
-    let loads = dashboard::contributors(issues, mrs, contributions, ctx.signed_in, ctx.now);
-    let workload_of = |person: &DashboardPerson| -> Option<Workload> {
-        let workload = |person| {
-            dashboard::workload(issues, mrs, contributions, person, ctx.signed_in, ctx.now)
-        };
-        match person {
-            DashboardPerson::Everyone => Some(workload(Person::Everyone)),
-            DashboardPerson::Me => ctx.signed_in.map(|login| workload(Person::User(login))),
-            DashboardPerson::User(login) => loads
-                .iter()
-                .find(|(listed, _)| listed == login)
-                .map(|(_, load)| *load),
-        }
-    };
-
+    let view = app.dashboard.contributors_view;
+    let sort = app.dashboard.contributors_sort;
     let name_width = width
-        .saturating_sub(2 + 2 + WORKLOAD_COLUMNS * WORKLOAD_COLUMN_CHARS)
+        .saturating_sub(2 + 2 + ContributorsView::COLUMN_COUNT * CONTRIBUTOR_COLUMN_CHARS)
         .max(4);
-    let w = WORKLOAD_COLUMN_CHARS;
+    let w = CONTRIBUTOR_COLUMN_CHARS;
+    let sort_label = sort.map(|sort| (view.columns()[sort.column], !sort.is_descending));
+    let header: String = view
+        .columns()
+        .iter()
+        .map(|column| format!("{:>w$}", sort_header_label(column, sort_label, ctx.icons)))
+        .collect();
     let mut lines = vec![Line::styled(
-        format!(
-            "    {:<name_width$}{:>w$}{:>w$}{:>w$}{:>w$}{:>w$}",
-            "who", "MRs", "rev", "iss", "ovd", "act"
-        ),
+        format!("    {:<name_width$}{header}", "who"),
         Style::default().fg(theme.text_muted),
     )];
 
@@ -466,21 +466,16 @@ fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
             },
             DashboardPerson::User(login) => format!("@{}", sanitize_untrusted(login)),
         };
-        let load = workload_of(person);
-        let numbers = match load {
-            Some(load) => format!(
-                "{:>w$}{:>w$}{:>w$}{:>w$}{:>w$}",
-                load.open_mrs,
-                load.reviews,
-                load.open_issues,
-                load.overdue_issues,
-                load.contributions
-            ),
-            None => format!("{:>w$}{:>w$}{:>w$}{:>w$}{:>w$}", "-", "-", "-", "-", "-"),
+        let stats = app.contributor_stats(person, ctx.now);
+        let numbers: String = match stats {
+            Some(stats) => stats.iter().map(|value| format!("{value:>w$}")).collect(),
+            None => format!("{:>w$}", "-").repeat(ContributorsView::COLUMN_COUNT),
         };
-        let late_color = match load {
-            Some(load) if load.overdue_issues > 0 => theme.red,
-            _ => theme.text_normal,
+        let is_late = view == ContributorsView::OpenWork && stats.is_some_and(|s| s[3] > 0);
+        let late_color = if is_late {
+            theme.red
+        } else {
+            theme.text_normal
         };
         lines.push(
             Line::from(vec![
@@ -502,6 +497,24 @@ fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
         );
     }
     lines
+}
+
+fn contributors_view_label(view: ContributorsView) -> String {
+    match view {
+        ContributorsView::OpenWork => "open work".to_string(),
+        ContributorsView::Activity(window) if window.days() == 1 => "last 24h".to_string(),
+        ContributorsView::Activity(window) => format!("last {} days", window.days()),
+    }
+}
+
+/// Why activity counts may be short: the feed ended inside the window.
+fn feed_cut_off_note(ctx: &Context) -> Option<String> {
+    let since = ctx.app.dashboard.contributors_view.activity_since(ctx.now);
+    let ContributorsView::Activity(_) = ctx.app.dashboard.contributors_view else {
+        return None;
+    };
+    let cut_off_at = ctx.app.dashboard.contributions.cut_off_after(since)?;
+    Some(format!("(feed ends {})", time_ago(cut_off_at)))
 }
 
 fn pipelines_body(ctx: &Context) -> Vec<Line<'static>> {
@@ -692,10 +705,15 @@ fn releases_body(ctx: &Context) -> Vec<Line<'static>> {
 
 /// The title of the item list: what the selected row lists.
 fn item_list_title(ctx: &Context) -> String {
+    let window = contributors_view_label(ctx.app.dashboard.contributors_view);
+    let window = match ctx.app.dashboard.contributors_view {
+        ContributorsView::OpenWork => "last 30 days".to_string(),
+        ContributorsView::Activity(_) => window,
+    };
     let activity_of = |who: Who| match who {
-        Who::Everyone => "Everyone's activity".to_string(),
-        Who::You => "Your activity".to_string(),
-        Who::Someone(login) => format!("Activity of @{login}"),
+        Who::Everyone => format!("Everyone's activity, {window}"),
+        Who::You => format!("Your activity, {window}"),
+        Who::Someone(login) => format!("Activity of @{login}, {window}"),
     };
     let mut label = match &ctx.selected {
         Some(DashboardRow::Mr(queue)) => return capitalized(mr_queue_label(*queue, ctx.who())),

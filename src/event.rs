@@ -112,7 +112,7 @@ pub enum Event {
     /// not: each list reported its own outcome through its usual event.
     DashboardRefreshed,
     /// The repository's activity feed, fetched with every Dashboard refresh.
-    ContributionsFetched(Result<Vec<crate::domain::contributions::Contribution>, String>),
+    ContributionsFetched(Result<crate::domain::contributions::ContributionHistory, String>),
     DeploymentsFetched {
         environment: String,
         deployments: Vec<crate::domain::deployments::Deployment>,

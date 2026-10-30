@@ -3,7 +3,7 @@ use super::bounded_output::{CapturedStdout, output_bounded};
 use super::logged_command::{ChildOutput, LoggedCommand};
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
-use crate::domain::contributions::Contribution;
+use crate::domain::contributions::FeedPage;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
@@ -3174,14 +3174,21 @@ impl Backend for GlabBackend {
 
     // ── Contributions ──
 
-    async fn list_contributions(&self, scope: &Scope) -> Result<Vec<Contribution>> {
+    async fn list_contribution_page(
+        &self,
+        scope: &Scope,
+        since: chrono::NaiveDate,
+        page: usize,
+    ) -> Result<FeedPage> {
         let Scope::Repository(project) = scope else {
             return Err(anyhow::anyhow!("Group-level activity not supported"));
         };
         let encoded = Self::encode_path(project);
+        // `after` is exclusive and day-granular: the day before keeps `since`.
+        let after = since.pred_opt().unwrap_or(since);
         let endpoint = format!(
-            "/projects/{encoded}/events?per_page={}",
-            crate::domain::contributions::EVENTS_PER_FETCH
+            "/projects/{encoded}/events?after={after}&per_page={}&page={page}",
+            crate::domain::contributions::EVENTS_PER_PAGE
         );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Activity")

@@ -144,6 +144,8 @@ impl IconSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
+    pub tab_dashboard: String,
+    pub commit: String,
     pub tab_issue: String,
     pub tab_pr: String,
     pub tab_pipeline: String,
@@ -264,6 +266,8 @@ pub struct Icons {
 impl Icons {
     pub fn nerd() -> Self {
         Self {
+            tab_dashboard: "\u{f463}".to_string(),
+            commit: "\u{f417}".to_string(),
             tab_issue: "\u{f41b}".to_string(),
             tab_pr: "\u{f407}".to_string(),
             tab_pipeline: "\u{f500}".to_string(),
@@ -386,6 +390,8 @@ impl Icons {
     /// font.
     pub fn ascii() -> Self {
         Self {
+            tab_dashboard: "&".to_string(),
+            commit: "*".to_string(),
             tab_issue: "#".to_string(),
             tab_pr: "!".to_string(),
             tab_pipeline: ">".to_string(),
@@ -1359,6 +1365,12 @@ pub struct KeybindingTerminal {
     pub cycle_status_filter: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingDashboard {
+    #[serde(default = "def_cycle_dashboard_window")]
+    pub cycle_window: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingConfig {
     #[serde(default)]
@@ -1385,6 +1397,8 @@ pub struct KeybindingConfig {
     pub environments: KeybindingEnvironments,
     #[serde(default)]
     pub terminal: KeybindingTerminal,
+    #[serde(default)]
+    pub dashboard: KeybindingDashboard,
 }
 
 /// A user-defined shell command bound to a key, in the gh-dash shape.
@@ -1537,6 +1551,7 @@ keybind_defaults! {
     def_inspect_terminal_command = "Enter",
     def_rerun_terminal_command = "r",
     def_cycle_terminal_status_filter = "s",
+    def_cycle_dashboard_window = "w",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
@@ -1760,6 +1775,14 @@ impl Default for KeybindingEnvironments {
             stop_environment: def_stop_environment(),
             copy_url: def_copy_environment_url(),
             view_deployment_log: def_view_deployment_log(),
+        }
+    }
+}
+
+impl Default for KeybindingDashboard {
+    fn default() -> Self {
+        Self {
+            cycle_window: def_cycle_dashboard_window(),
         }
     }
 }
@@ -2161,6 +2184,9 @@ copy_output = "Y"
 inspect_command = "Enter"
 rerun_command = "r"
 cycle_status_filter = "s"
+
+[keybindings.dashboard]
+cycle_window = "w"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

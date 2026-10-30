@@ -1937,6 +1937,42 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             key: d(app.config.keybindings.todos.toggle_preview.clone()),
             action: "Show / hide the todo preview",
         },
+        // ── Dashboard ──
+        Shortcut {
+            category: "Dashboard",
+            key: s("j / k / ↓ / ↑ / Home / End"),
+            action: "Select a queue, contributor or card (an item inside the list)",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter"),
+            action: "Browse the queue's items / show a contributor's work / open the card's tab",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter (in the list)"),
+            action: "Open the issue or MR/PR with its preview",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Esc"),
+            action: "Leave the item list",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: d(app.config.keybindings.dashboard.cycle_window.clone()),
+            action: "Contributors: open work, then activity in the last day, week, month",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: d(format!(
+                "{} / {} / {}",
+                app.config.keybindings.global.sort_next,
+                app.config.keybindings.global.sort_prev,
+                app.config.keybindings.global.sort_reverse
+            )),
+            action: "Sort contributors by a column (highest first) / reverse",
+        },
         // ── Terminal ──
         Shortcut {
             category: "Terminal",
@@ -2360,6 +2396,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             Tab::Branches => &["Global & Nav", "Branches", CUSTOM_COMMANDS_CATEGORY],
             Tab::Environments => &["Global & Nav", "Environments", CUSTOM_COMMANDS_CATEGORY],
             Tab::Terminal => &["Global & Nav", "Terminal", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Dashboard => &["Global & Nav", "Dashboard", CUSTOM_COMMANDS_CATEGORY],
         }
     };
 

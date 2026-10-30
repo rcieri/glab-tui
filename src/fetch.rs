@@ -409,6 +409,9 @@ pub fn dispatch_state_query_refetch(
     }
 }
 
+/// Fetch `tab`'s list in the background. The Dashboard has no list of its
+/// own: refreshing it fetches every list it summarizes, then reports
+/// `Event::DashboardRefreshed`.
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
@@ -416,15 +419,41 @@ pub fn spawn_refresh_active_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
+    spawn_tab_fetch(client, scope, states, tab, tx);
+}
+
+fn spawn_tab_fetch(
+    client: &domain::client::GitlabClient,
+    scope: &crate::scope::Scope,
+    states: StateQueries,
+    tab: app::Tab,
+    tx: ScopedSender,
+) -> Option<tokio::task::JoinHandle<()>> {
     if !tab.is_fetchable_in(scope) {
-        return;
+        return None;
     }
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
     let scope = scope.clone();
-    tokio::spawn(async move {
+    Some(tokio::spawn(async move {
         let repo_path = scope.as_str().to_string();
         match tab {
+            app::Tab::Dashboard => {
+                let sources = app::Tab::dashboard_sources(&scope, client.backend.kind());
+                let mut fetches: Vec<_> = sources
+                    .iter()
+                    .filter_map(|source| {
+                        spawn_tab_fetch(&client, &scope, states, *source, tx.clone())
+                    })
+                    .collect();
+                if scope.is_repository() {
+                    fetches.push(spawn_contributions_fetch(&client, &scope, tx.clone()));
+                }
+                for fetch in fetches {
+                    let _ = fetch.await;
+                }
+                let _ = tx.send(Event::DashboardRefreshed);
+            }
             app::Tab::Issues => {
                 match domain::issues::list_issues(&client, &scope, states.issues).await {
                     Ok(issues) => {
@@ -592,7 +621,22 @@ pub fn spawn_refresh_active_tab(
             }
             app::Tab::Terminal => {}
         }
-    });
+    }))
+}
+
+fn spawn_contributions_fetch(
+    client: &domain::client::GitlabClient,
+    scope: &crate::scope::Scope,
+    tx: ScopedSender,
+) -> tokio::task::JoinHandle<()> {
+    let client = client.clone();
+    let scope = scope.clone();
+    tokio::spawn(async move {
+        let result = domain::contributions::list_contributions(&client, &scope, chrono::Utc::now())
+            .await
+            .map_err(|e| format!("Failed to fetch activity: {e}"));
+        let _ = tx.send(Event::ContributionsFetched(result));
+    })
 }
 
 /// Fetch a single issue by iid from `project_path` for the "go to issue/MR by
@@ -822,8 +866,9 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
 
 /// Kick off background fetches for enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
-/// synchronous fetch), `Tab::Terminal`, and any tab whose data is
-/// already loaded.
+/// synchronous fetch), `Tab::Terminal` and `Tab::Dashboard`, which have
+/// no list of their own, the lists an active Dashboard has already
+/// fetched, and any tab whose data is already loaded.
 ///
 /// Each tab fetches through `spawn_refresh_active_tab` so it shares
 /// the existing per-tab error handling; the queue paces itself
@@ -841,8 +886,17 @@ pub fn spawn_refresh_all_tabs(
     let client = client.clone();
     let scope = scope.clone();
     tokio::spawn(async move {
+        let fetched_by_active_tab: &[app::Tab] = if active_tab == app::Tab::Dashboard {
+            app::Tab::dashboard_sources(&scope, client.backend.kind())
+        } else {
+            &[]
+        };
         for tab in available_tabs {
-            if tab == active_tab || tab == app::Tab::Terminal || already_loaded.contains(&tab) {
+            if tab == active_tab
+                || matches!(tab, app::Tab::Terminal | app::Tab::Dashboard)
+                || fetched_by_active_tab.contains(&tab)
+                || already_loaded.contains(&tab)
+            {
                 continue;
             }
             crate::backend::rate_limit::pace_bulk_operation().await;

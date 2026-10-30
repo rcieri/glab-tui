@@ -2823,6 +2823,13 @@ pub async fn handle_active_tab_key(
         crate::app::Tab::Terminal => {
             handled = crate::handlers::terminal::handle_tab_key(app, key_event);
         }
+        crate::app::Tab::Dashboard => {
+            if keybinding_matches(&app.config.keybindings.dashboard.cycle_window, key_event) {
+                app.cycle_contributors_view();
+            } else {
+                handled = false;
+            }
+        }
     }
 
     if !handled {
@@ -2926,6 +2933,10 @@ pub async fn handle_active_tab_key(
                         app.jobs.state.select(None);
                         app.selected_jobs.clear();
                     }
+                } else if app.active_tab == crate::app::Tab::Dashboard
+                    && app.dashboard.is_list_focused
+                {
+                    app.dashboard.is_list_focused = false;
                 } else if !app.search_query.is_empty() {
                     // Last-resort Esc action: drop the active filter. The
                     // previous Esc press already exited the search input
@@ -2939,6 +2950,7 @@ pub async fn handle_active_tab_key(
                 app.is_typing_search = true;
             }
             KeyCode::Enter => match app.active_tab {
+                crate::app::Tab::Dashboard => open_from_dashboard(app, &tx),
                 crate::app::Tab::Todos => crate::handlers::todos::activate_todo(app, &tx),
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
@@ -3115,56 +3127,14 @@ pub async fn handle_active_tab_key(
                 || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, &tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, &tx);
-                }
+                fetch_for_entered_tab(app, &tx);
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
                 || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, &tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, &tx);
-                }
+                fetch_for_entered_tab(app, &tx);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if app.details_zoomed {
@@ -3201,6 +3171,7 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.next(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.step_dashboard(true),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
                         }
@@ -3251,6 +3222,7 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.previous(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.step_dashboard(false),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_add(1);
                         }
@@ -3301,6 +3273,7 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.first(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.select_first_on_dashboard(),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = usize::MAX;
                         }
@@ -3354,6 +3327,7 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.last(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.select_last_on_dashboard(),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = 0;
                         }
@@ -3377,6 +3351,68 @@ pub async fn handle_active_tab_key(
     }
 
     handled
+}
+
+/// `Enter` on the Dashboard: drill into a list, or leave for the tab, issue
+/// or MR/PR it points at, with the item's preview open.
+fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>) {
+    use crate::dashboard::DashboardAction;
+    match app.enter_dashboard() {
+        DashboardAction::Stay => {}
+        DashboardAction::OpenTab(tab) => {
+            app.activate_tab(tab);
+            fetch_for_entered_tab(app, tx);
+        }
+        DashboardAction::OpenIssue { project, iid } => {
+            if !app.focus_issue(Some(&project), iid)
+                && let Some(client) = app.gitlab_client.clone()
+            {
+                crate::fetch::spawn_fetch_issue(
+                    &client,
+                    &project,
+                    iid,
+                    app.scoped_sender(tx.clone()),
+                );
+            }
+            app.detail_visible = true;
+            maybe_fetch_related_mrs(app, tx);
+        }
+        DashboardAction::OpenMr { project, iid } => {
+            if !app.focus_mr(Some(&project), iid)
+                && let Some(client) = app.gitlab_client.clone()
+            {
+                crate::fetch::spawn_fetch_mr(&client, &project, iid, app.scoped_sender(tx.clone()));
+            }
+            app.detail_visible = true;
+            maybe_fetch_mr_related_issues(app, tx);
+        }
+    }
+}
+
+/// Start what a tab needs once switched to: its list, unless it is loading
+/// or was already refreshed this session, and the linked MRs/issues of the
+/// highlighted issue or MR.
+fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>) {
+    if let Some(client) = &app.gitlab_client
+        && !app.loading_tabs.contains(&app.active_tab)
+        && !app.refreshed_tabs.contains(&app.active_tab)
+    {
+        if !app.loaded_tabs.contains(&app.active_tab) {
+            app.loading_tabs.insert(app.active_tab);
+        }
+        spawn_refresh_active_tab(
+            client,
+            &app.scope,
+            app.requested_state_queries(),
+            app.active_tab,
+            app.scoped_sender(tx.clone()),
+        );
+    }
+    match app.active_tab {
+        crate::app::Tab::Issues => maybe_fetch_related_mrs(app, tx),
+        crate::app::Tab::MergeRequests => maybe_fetch_mr_related_issues(app, tx),
+        _ => {}
+    }
 }
 
 /// Switch to the Merge Requests tab, drop the filters that would hide the

@@ -6,6 +6,7 @@ pub mod cli;
 pub mod command_log;
 pub mod config;
 pub mod custom_commands;
+pub mod dashboard;
 pub mod domain;
 pub mod editor;
 pub mod entity_editor;

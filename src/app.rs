@@ -2744,10 +2744,6 @@ pub enum TextInputAction {
     },
     EnterPipelineId,
     CreateMilestone,
-    SubmitReviewFinal {
-        mr_iid: u64,
-        status: String,
-    },
     ReplyToComment {
         mr_iid: u64,
         comment_id: u64,
@@ -2757,23 +2753,21 @@ pub enum TextInputAction {
     EditPageSize,
 }
 
-#[derive(Clone, Debug)]
-pub struct TextInput {
-    pub title: String,
+/// Single-line text being edited, with a cursor counted in characters so
+/// multibyte text edits whole characters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextBuffer {
     value: String,
     cursor_char_idx: usize,
-    pub action: TextInputAction,
 }
 
-impl TextInput {
-    /// Opens the input with the cursor after the last character of `value`.
-    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+impl TextBuffer {
+    /// Starts with the cursor after the last character of `value`.
+    pub fn new(value: String) -> Self {
         let cursor_char_idx = value.chars().count();
         Self {
-            title: title.into(),
             value,
             cursor_char_idx,
-            action,
         }
     }
 
@@ -2783,8 +2777,7 @@ impl TextInput {
 
     /// Replaces the whole value and moves the cursor to its end.
     pub fn set_value(&mut self, value: String) {
-        self.cursor_char_idx = value.chars().count();
-        self.value = value;
+        *self = Self::new(value);
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -2826,11 +2819,44 @@ impl TextInput {
         rendered
     }
 
+    /// Applies a line-editing key: typing, Backspace, Delete, Left and Right.
+    /// Returns false for any other key.
+    pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) -> bool {
+        use crossterm::event::KeyCode;
+        match code {
+            KeyCode::Char(c) => self.insert_char(c),
+            KeyCode::Backspace => self.delete_char_before_cursor(),
+            KeyCode::Delete => self.delete_char_at_cursor(),
+            KeyCode::Left => self.move_cursor_left(),
+            KeyCode::Right => self.move_cursor_right(),
+            _ => return false,
+        }
+        true
+    }
+
     fn byte_offset(&self, char_idx: usize) -> usize {
         self.value
             .char_indices()
             .nth(char_idx)
             .map_or(self.value.len(), |(offset, _)| offset)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TextInput {
+    pub title: String,
+    pub buffer: TextBuffer,
+    pub action: TextInputAction,
+}
+
+impl TextInput {
+    /// Opens the input with the cursor after the last character of `value`.
+    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        Self {
+            title: title.into(),
+            buffer: TextBuffer::new(value),
+            action,
+        }
     }
 }
 
@@ -3005,6 +3031,7 @@ pub enum OverlayKind {
     ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
+    ReviewSubmit,
     TerminalInspector,
 }
 
@@ -4005,6 +4032,7 @@ pub struct App {
     pub help_table_state: ratatui::widgets::TableState,
     pub diff_view: Option<DiffView>,
     pub review_threads: Option<ReviewThreadsOverview>,
+    pub review_submit: Option<crate::review_submit::ReviewSubmit>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
@@ -4167,6 +4195,7 @@ impl Default for App {
             help_table_state: ratatui::widgets::TableState::default(),
             diff_view: None,
             review_threads: None,
+            review_submit: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             submit_dialog: None,
@@ -5387,6 +5416,13 @@ impl App {
     ) {
         self.terminal_commands
             .settle(row, outcome_status(outcome), Some(execution));
+    }
+
+    /// Stamps the outcome on a row returned by `start_command`, timing it
+    /// from when it started.
+    pub fn finish_command(&mut self, row: LogRow, outcome: &Result<(), String>) {
+        self.terminal_commands
+            .settle(row, outcome_status(outcome), None);
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
@@ -9241,13 +9277,13 @@ mod tests {
         assert_eq!(parse_jump_input("#123abc"), None);
     }
 
-    fn text_input(value: &str) -> TextInput {
-        TextInput::new(" Test ", value.to_string(), TextInputAction::EditPageSize)
+    fn text_buffer(value: &str) -> TextBuffer {
+        TextBuffer::new(value.to_string())
     }
 
     #[test]
-    fn text_input_typing_multibyte_characters_keeps_the_cursor_after_them() {
-        let mut input = text_input("");
+    fn text_buffer_typing_multibyte_characters_keeps_the_cursor_after_them() {
+        let mut input = text_buffer("");
         for c in ['é', '日', 'a'] {
             input.insert_char(c);
         }
@@ -9256,8 +9292,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_inserts_between_multibyte_characters_after_moving_left() {
-        let mut input = text_input("é日");
+    fn text_buffer_inserts_between_multibyte_characters_after_moving_left() {
+        let mut input = text_buffer("é日");
         input.move_cursor_left();
         input.insert_char('x');
         assert_eq!(input.value(), "éx日");
@@ -9265,8 +9301,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_backspace_and_delete_remove_whole_multibyte_characters() {
-        let mut input = text_input("aé日b");
+    fn text_buffer_backspace_and_delete_remove_whole_multibyte_characters() {
+        let mut input = text_buffer("aé日b");
         input.move_cursor_left();
         input.move_cursor_left();
         assert_eq!(input.value_with_cursor('|'), "aé|日b");
@@ -9277,8 +9313,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_cursor_edits_stop_at_both_ends_of_multibyte_text() {
-        let mut input = text_input("日");
+    fn text_buffer_cursor_edits_stop_at_both_ends_of_multibyte_text() {
+        let mut input = text_buffer("日");
         input.move_cursor_right();
         input.delete_char_at_cursor();
         assert_eq!(input.value_with_cursor('|'), "日|");
@@ -9289,8 +9325,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
-        let mut input = text_input("");
+    fn text_buffer_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
+        let mut input = text_buffer("");
         input.set_value("ñandú".to_string());
         input.delete_char_before_cursor();
         assert_eq!(input.value_with_cursor('|'), "ñand|");

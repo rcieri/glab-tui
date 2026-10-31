@@ -10,13 +10,10 @@ pub enum ReviewEvent {
 }
 
 impl ReviewEvent {
-    /// Maps the labels of the TUI's submit-review selector.
-    pub fn from_label(label: &str) -> Self {
-        match label {
-            "Approve" => Self::Approve,
-            "Request Changes" => Self::RequestChanges,
-            _ => Self::Comment,
-        }
+    /// Whether a review would post nothing: an approval stands on its own,
+    /// any other verdict needs a summary or an inline comment.
+    pub fn is_empty_review(self, body: &str, comment_count: usize) -> bool {
+        self != Self::Approve && comment_count == 0 && body.trim().is_empty()
     }
 }
 

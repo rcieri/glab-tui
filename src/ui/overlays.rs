@@ -67,7 +67,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
             let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "review_submit_status"
                 && selector.field_type != "related_mrs";
 
             let constraints = if has_filter {
@@ -301,7 +300,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .split(area);
 
-        let value_p = Paragraph::new(text_input.value_with_cursor('▋'))
+        let value_p = Paragraph::new(text_input.buffer.value_with_cursor('▋'))
             .style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_normal)
@@ -1208,6 +1207,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         }
     }
 
+    super::review_submit::render_review_submit(f, app, size);
     render_help(f, app, size);
 }
 
@@ -2126,7 +2126,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Diff View",
             key: s("r"),
-            action: "Submit Review (approve/changes/comment)",
+            action: "Submit Review (comment/approve/request changes/keep as draft)",
         },
         Shortcut {
             category: "Diff View",

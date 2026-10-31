@@ -632,24 +632,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::SubmitReview(mr_iid) => {
-            app.selector = Some(crate::app::Selector {
-                title: " Submit Pull Request Review ".to_string(),
-                all_items: vec![
-                    "Approve".to_string(),
-                    "Request Changes".to_string(),
-                    "Comment".to_string(),
-                ],
-                selected_items: std::collections::HashSet::new(),
-                cursor_idx: 0,
-                search_query: String::new(),
-                is_filtering: false,
-                is_loading: false,
-                entity_iid: mr_iid,
-                entity_type: "mr".to_string(),
-                field_type: "review_submit_status".to_string(),
-                multi_select: false,
-                state: ListState::default(),
-            });
+            crate::handlers::review_submit::open(app, mr_iid, project_path);
         }
         crate::app::ConfirmAction::MarkAllTodosRead => {
             crate::handlers::todos::mark_all_read(app, &tx);
@@ -1614,27 +1597,6 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.review_threads.is_some());
     }
 
-    /// Holds the env lock and points the cache dir at a tempdir, because the
-    /// submit-review dialog writes drafts to the project cache.
-    struct IsolatedCache {
-        _env: crate::config::EnvGuard,
-        _home: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    fn isolate_cache() -> IsolatedCache {
-        let lock = crate::config::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let home = tempfile::tempdir().unwrap();
-        let env = crate::config::EnvGuard::isolate_home(home.path());
-        IsolatedCache {
-            _env: env,
-            _home: home,
-            _lock: lock,
-        }
-    }
-
     fn draft(body: &str) -> crate::domain::review::DraftComment {
         crate::domain::review::DraftComment {
             file_path: "src/lib.rs".to_string(),
@@ -1694,7 +1656,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn esc_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Esc]);
@@ -1708,7 +1670,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn cancel_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right; 3]);
@@ -1723,7 +1685,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn keep_drafts_closes_the_diff_and_reopening_or_restarting_restores_them() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Enter]);
@@ -1743,7 +1705,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn discard_drops_the_drafts_and_their_saved_copy_and_closes_the_diff() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
@@ -1761,7 +1723,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
         app.draft_comments = vec![draft("other project")];
         app.persist_draft_comments("acme/gadget", 7);
@@ -1783,7 +1745,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn drafts_whose_lines_left_the_diff_are_held_back_but_kept_until_discarded() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
         let moved = crate::domain::review::DraftComment {
             line_num: Some(9),

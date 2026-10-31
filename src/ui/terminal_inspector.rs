@@ -2,7 +2,9 @@ use super::helpers::{log_status_badge, rendered_line_count};
 use super::modal::modal_area;
 use crate::app::{App, OverlayKind, TerminalInspector};
 use crate::command_log::TerminalCommand;
-use crate::config::{ICONS, Icons, KeybindingTerminal, THEME, Theme};
+use crate::config::{Icons, KeybindingTerminal, Theme};
+use crate::ui::diff::centered_rect_min;
+use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{expand_tabs, format_elapsed, sanitize_untrusted};
 use ratatui::{
     Frame,
@@ -15,7 +17,12 @@ use ratatui::{
 const LABEL_WIDTH: usize = 11;
 const TAB_WIDTH: usize = 4;
 
-pub(crate) fn render_terminal_inspector(f: &mut Frame, app: &mut App, size: Rect) {
+pub(crate) fn render_terminal_inspector(
+    f: &mut Frame,
+    ctx: &RenderCtx<'_>,
+    app: &mut App,
+    size: Rect,
+) {
     let Some(inspector) = app.terminal_inspector else {
         return;
     };
@@ -23,13 +30,13 @@ pub(crate) fn render_terminal_inspector(f: &mut Frame, app: &mut App, size: Rect
         app.terminal_inspector = None;
         return;
     };
-    let theme = *THEME.read().unwrap();
-    let icons = ICONS.read().unwrap();
-    let lines = inspector_lines(entry, &app.config.keybindings.terminal, &theme, &icons);
+    let theme = ctx.theme;
+    let icons = ctx.icons;
+    let lines = inspector_lines(entry, &app.config.keybindings.terminal, &theme, icons);
     let hints = key_hints(&app.config.keybindings.terminal);
 
     let title = format!("{} Command Details", icons.tab_terminal);
-    let (body, area) = modal_area(f, &title, 80, 80, 60, 14, size);
+    let (body, area) = modal_area(f, ctx, &title, centered_rect_min(80, 80, 60, 14, size));
     app.overlay_stack
         .push((OverlayKind::TerminalInspector, area));
     let [content, hints_area] =
@@ -236,8 +243,10 @@ mod tests {
         app.terminal_inspector = Some(TerminalInspector::new(row));
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_terminal_inspector(f, &mut app, f.area()))
+            .draw(|f| render_terminal_inspector(f, ctx, &mut app, f.area()))
             .unwrap();
 
         let screen = screen_text(&terminal);
@@ -271,8 +280,10 @@ mod tests {
         app.clear_terminal_log();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_terminal_inspector(f, &mut app, f.area()))
+            .draw(|f| render_terminal_inspector(f, ctx, &mut app, f.area()))
             .unwrap();
 
         assert_eq!(app.terminal_inspector, None);
@@ -297,8 +308,10 @@ mod tests {
         });
         let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_terminal_inspector(f, &mut app, f.area()))
+            .draw(|f| render_terminal_inspector(f, ctx, &mut app, f.area()))
             .unwrap();
 
         let screen = screen_text(&terminal);

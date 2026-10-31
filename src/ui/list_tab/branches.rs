@@ -138,7 +138,15 @@ impl ColumnDef for BranchColumn {
         let theme = ctx.theme;
         let icons = ctx.icons;
         let fuzzy = |text: &str, style: Style, alignment: Alignment| {
-            render_fuzzy_cell(text, ctx.query, ctx.is_highlighted, false, style, alignment)
+            render_fuzzy_cell(
+                text,
+                ctx.query,
+                ctx.is_highlighted,
+                false,
+                style,
+                alignment,
+                ctx.theme,
+            )
         };
         match self {
             Self::Name => {

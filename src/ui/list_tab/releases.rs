@@ -120,6 +120,7 @@ impl ColumnDef for ReleaseColumn {
             false,
             style,
             Alignment::Left,
+            ctx.theme,
         )
     }
 }

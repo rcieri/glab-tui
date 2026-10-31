@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -2293,8 +2292,6 @@ cycle_status_filter = "s"
     }
 }
 
-pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
-pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().icons.icons()));
 static COMMAND_TIMEOUT_SECONDS: Lazy<AtomicU64> =
     Lazy::new(|| AtomicU64::new(Config::load().command_timeout().as_secs()));
 
@@ -2511,31 +2508,11 @@ impl Config {
     }
 }
 
-pub fn reload_theme() {
-    if let Ok(mut theme) = THEME.write() {
-        *theme = Config::load().resolve_theme();
-    }
-}
-
-pub fn reload_icons() {
-    if let Ok(mut icons) = ICONS.write() {
-        *icons = Config::load().icons.icons();
-    }
-}
-
 pub fn reload_command_timeout() {
     COMMAND_TIMEOUT_SECONDS.store(
         Config::load().command_timeout().as_secs(),
         Ordering::Relaxed,
     );
-}
-
-pub fn set_theme_preset(name: &str) {
-    if let Some(preset) = Theme::preset(name) {
-        if let Ok(mut theme) = THEME.write() {
-            *theme = preset;
-        }
-    }
 }
 
 #[cfg(test)]

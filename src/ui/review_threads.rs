@@ -1,8 +1,10 @@
 use super::helpers::rendered_line_count;
 use super::modal::modal_area;
 use crate::app::{App, OverlayKind, ReviewThreadsOverview};
-use crate::config::{ICONS, THEME, Theme};
+use crate::config::Theme;
 use crate::domain::review_threads::{ReviewThread, ThreadAnchor};
+use crate::ui::diff::centered_rect_min;
+use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{sanitize_untrusted, time_ago, truncate};
 use crate::utils::markdown::render_markdown;
 use ratatui::{
@@ -16,16 +18,21 @@ use ratatui::{
 const EXCERPT_CHARS: usize = 80;
 const KEY_HINTS: &str = " j/k move · Enter jump to line · a actions · u unresolved only · J/K scroll thread · Esc close";
 
-pub(crate) fn render_review_threads(f: &mut Frame, app: &mut App, size: Rect) {
+pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     if app.diff_view.is_none() {
         return;
     }
     let Some(overview) = app.review_threads.as_mut() else {
         return;
     };
-    let theme = *THEME.read().unwrap();
+    let theme = ctx.theme;
 
-    let (body, area) = modal_area(f, &modal_title(overview), 85, 85, 70, 16, size);
+    let (body, area) = modal_area(
+        f,
+        ctx,
+        &modal_title(overview),
+        centered_rect_min(85, 85, 70, 16, size),
+    );
     app.overlay_stack.push((OverlayKind::ReviewThreads, area));
 
     let chunks = Layout::default()
@@ -40,7 +47,7 @@ pub(crate) fn render_review_threads(f: &mut Frame, app: &mut App, size: Rect) {
 
     overview.list_rect = Some(list_area);
     render_thread_list(f, overview, list_area, &theme);
-    render_thread_preview(f, overview, preview_area, &theme);
+    render_thread_preview(f, ctx, overview, preview_area);
     f.render_widget(
         Paragraph::new(KEY_HINTS).style(Style::default().fg(theme.text_muted).bg(theme.bg)),
         hints_area,
@@ -184,10 +191,11 @@ fn location(file_path: &str, line: Option<u64>) -> String {
 
 fn render_thread_preview(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     overview: &mut ReviewThreadsOverview,
     area: Rect,
-    theme: &Theme,
 ) {
+    let theme = &ctx.theme;
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border))
@@ -199,7 +207,7 @@ fn render_thread_preview(
     let Some(thread) = overview.selected_thread() else {
         return;
     };
-    let lines = thread_preview_lines(thread, theme, inner.width);
+    let lines = thread_preview_lines(thread, ctx, inner.width);
     let rendered_rows = rendered_line_count(&lines, inner.width as usize, true);
     let max_scroll =
         u16::try_from(rendered_rows.saturating_sub(inner.height as usize)).unwrap_or(u16::MAX);
@@ -214,8 +222,13 @@ fn render_thread_preview(
     );
 }
 
-fn thread_preview_lines(thread: &ReviewThread, theme: &Theme, width: u16) -> Vec<Line<'static>> {
-    let comment_icon = ICONS.read().unwrap().comment.clone();
+fn thread_preview_lines(
+    thread: &ReviewThread,
+    ctx: &RenderCtx<'_>,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let theme = &ctx.theme;
+    let comment_icon = &ctx.icons.comment;
     let mut header = vec![status_badge(thread, theme), Span::raw(" ")];
     header.extend(anchor_spans(&thread.anchor, theme));
     let mut lines = vec![Line::from(header), Line::default()];

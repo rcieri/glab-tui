@@ -4,7 +4,7 @@
 
 use crate::app::Tab;
 use crate::config::{Config, CustomKeybinding};
-use crate::keybinding::{binding_key_event, keybinding_matches};
+use crate::keybinding::{KeyPress, binding_key_event, keybinding_matches};
 use crossterm::event::KeyEvent;
 
 /// Keys the list view handles in code whatever the config says, so a custom
@@ -117,7 +117,7 @@ fn tab_keybindings(config: &Config, tab: Tab) -> (&'static str, Option<toml::Val
 /// Name of the first `field = "binding"` in `bindings` that `event` triggers.
 fn matching_field<'a>(
     bindings: &'a toml::Value,
-    event: &KeyEvent,
+    event: &KeyPress,
     ignored: &[&str],
 ) -> Option<&'a str> {
     bindings.as_table()?.iter().find_map(|(field, binding)| {
@@ -131,7 +131,7 @@ fn matching_field<'a>(
 
 /// The built-in action that takes `event` on `tab`'s list view before any
 /// custom binding is consulted.
-fn builtin_action(config: &Config, tab: Tab, event: &KeyEvent) -> Option<String> {
+fn builtin_action(config: &Config, tab: Tab, event: &KeyPress) -> Option<String> {
     if let Some(global) = toml::Value::try_from(&config.keybindings.global).ok()
         && let Some(field) = matching_field(&global, event, OVERLAY_ONLY_GLOBAL_ACTIONS)
     {
@@ -162,7 +162,7 @@ fn builtin_action(config: &Config, tab: Tab, event: &KeyEvent) -> Option<String>
 /// The built-in action that takes `event` in the diff view before any custom
 /// binding. The diff view matches plain key codes regardless of modifiers,
 /// so `Ctrl` plus a diff-view key is taken just like the plain key.
-fn diff_view_action(config: &Config, event: &KeyEvent) -> Option<String> {
+fn diff_view_action(config: &Config, event: &KeyPress) -> Option<String> {
     use crossterm::event::{KeyCode, KeyModifiers};
     let global = &config.keybindings.global;
     for (field, binding) in [
@@ -407,7 +407,7 @@ impl CustomCommands {
     }
 
     /// The command `event` runs on `tab`, if a custom binding claims it.
-    pub fn find(&self, tab: Tab, event: &KeyEvent) -> Option<&CustomCommand> {
+    pub fn find(&self, tab: Tab, event: &KeyPress) -> Option<&CustomCommand> {
         self.commands
             .iter()
             .find(|command| command.is_reachable_on(tab) && keybinding_matches(&command.key, event))
@@ -421,7 +421,7 @@ impl CustomCommands {
     }
 
     /// The diff-view command `event` runs, if a custom binding claims it.
-    pub fn find_in_diff(&self, event: &KeyEvent) -> Option<&CustomCommand> {
+    pub fn find_in_diff(&self, event: &KeyPress) -> Option<&CustomCommand> {
         self.in_diff()
             .find(|command| keybinding_matches(&command.key, event))
     }
@@ -431,18 +431,6 @@ impl CustomCommands {
         self.commands
             .iter()
             .filter(|command| command.pane == CommandPane::Diff)
-    }
-
-    /// Plain-character keys, which the key-sequence timeout must still
-    /// dispatch when they double as the prefix of a two-key binding.
-    pub fn character_keys(&self) -> impl Iterator<Item = char> + '_ {
-        self.commands.iter().filter_map(|command| {
-            let mut chars = command.key.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) => Some(c),
-                _ => None,
-            }
-        })
     }
 }
 
@@ -461,6 +449,7 @@ fn validate(
         return Err("missing `command`".to_string());
     }
     let event = binding_key_event(&binding.key)
+        .map(KeyPress::Key)
         .ok_or_else(|| format!("\"{}\" is not a key glab-tui can bind", binding.key))?;
     for argument in template_argument_names(&binding.command)? {
         if !pane.template_arguments().contains(&argument) {
@@ -707,7 +696,6 @@ pub fn shell_process(command: &str) -> std::process::Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn config_with(custom_keybindings: &str) -> Config {
         let custom: crate::config::CustomKeybindingConfig =
@@ -718,8 +706,8 @@ mod tests {
         }
     }
 
-    fn key(c: char) -> KeyEvent {
-        binding_key_event(&c.to_string()).expect("plain character key")
+    fn key(c: char) -> KeyPress {
+        KeyPress::Key(binding_key_event(&c.to_string()).expect("plain character key"))
     }
 
     fn values(pairs: &[(&'static str, &str)]) -> TemplateValues {
@@ -936,7 +924,10 @@ command = "true"
         );
         assert!(
             commands
-                .find(Tab::Issues, &binding_key_event("Ctrl+t").unwrap())
+                .find(
+                    Tab::Issues,
+                    &KeyPress::Key(binding_key_event("Ctrl+t").unwrap())
+                )
                 .is_some()
         );
     }
@@ -1179,31 +1170,6 @@ command = "true"
 
         assert_eq!(problems, vec![]);
         assert!(commands.in_diff().count() > 0);
-    }
-
-    #[test]
-    fn character_keys_lists_only_plain_character_bindings() {
-        let config = config_with(
-            r#"
-[[universal]]
-key = "x"
-command = "true"
-[[universal]]
-key = "Ctrl+t"
-command = "true"
-"#,
-        );
-        let (commands, _) = CustomCommands::load(&config);
-        assert_eq!(commands.character_keys().collect::<Vec<_>>(), vec!['x']);
-        assert_eq!(
-            commands
-                .find(
-                    Tab::Issues,
-                    &KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)
-                )
-                .map(|c| c.key.as_str()),
-            Some("Ctrl+t")
-        );
     }
 
     #[test]

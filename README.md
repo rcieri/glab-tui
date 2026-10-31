@@ -298,10 +298,16 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # border_focused = "#31bf67"
 # ...color tokens (see bundled themes for the full list)
 
-# Remap any keybinding
+# Remap any keybinding. A binding is one key ("l", "Ctrl+x", "PageDown", "F5")
+# or a sequence of plain characters typed one after the other ("gg", "gcc").
+# While the keys typed so far start a sequence, glab-tui waits for the next one.
+# A sequence that is also the start of a longer one ("g" next to "gg") fires
+# after keybinding_timeout_ms (default 1000) without a key, and a key that
+# completes nothing drops what was typed.
 [keybindings.global]
 next_tab = "l"
 submit_edit = "Ctrl+x"
+scroll_top = "gg"
 # ...
 
 [keybindings.issues]
@@ -388,7 +394,7 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 - Row arguments come from the highlighted issue, MR/PR, pipeline, job, or branch. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project. GitHub jobs have no stage, so `{{.Stage}}` is refused there. `JobName` is the full name GitLab or GitHub reports, so a matrix job's (`rspec: [3.2, pg]`, `build (ubuntu, 3.2)`) holds spaces and brackets: pass it as `"$GLAB_TUI_JOB_NAME"`.
 - Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_PIPELINE_ID`, `GLAB_TUI_REF`, `GLAB_TUI_SHA`, `GLAB_TUI_BRANCH_NAME`, `GLAB_TUI_COMMIT_SHA`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`, `GLAB_TUI_JOB_ID`, `GLAB_TUI_JOB_NAME`, `GLAB_TUI_STAGE`, `GLAB_TUI_STATUS`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
 - Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
-- Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A repo-local `config.toml` that defines a table replaces the global list for that table.
+- Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A custom `key` is a single key: a key sequence such as `gg` counts as unbindable here. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
 ---
 

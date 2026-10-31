@@ -3,7 +3,7 @@ use crate::app::{App, Tab};
 use crate::event::{Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
-use crate::keybinding::keybinding_matches;
+use crate::keybinding::{KeyPress, keybinding_matches};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
@@ -374,7 +374,7 @@ const NO_DEPLOYMENT_SELECTED: &str =
 
 fn handle_environments_key(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
 ) -> bool {
     if handle_focused_deployments_key(app, key_event) {
@@ -660,11 +660,9 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
 /// `scroll_page_down`/`scroll_page_up`/`scroll_half_page_down`/
 /// `scroll_half_page_up` bindings, against the usable height of
 /// `detail_rect` (its height minus the two border rows), or of the trace pane
-/// below the job header while the Jobs tab shows a log. `pending` is the
-/// character captured on a previous keystroke, if any (see
-/// `matches_with_pending`); pass `None` when there is no pending sequence.
-/// Returns true if a page scroll action matched and was applied.
-fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent) -> bool {
+/// below the job header while the Jobs tab shows a log. Returns true if a
+/// page scroll action matched and was applied.
+fn apply_page_scroll(app: &mut App, key_event: &KeyPress) -> bool {
     if let Some(rect) = app.detail_rect.filter(|_| app.detail_visible) {
         let trace_rows = app
             .job_trace
@@ -679,30 +677,20 @@ fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent)
             )
             .max(1);
         let half_page = full_page / 2;
-        if crate::keybinding::matches_with_pending(
-            &app.config.keybindings.global.scroll_page_down,
-            pending,
-            key_event,
-        ) {
+        if keybinding_matches(&app.config.keybindings.global.scroll_page_down, key_event) {
             app.detail_scroll = app.detail_scroll.saturating_add(full_page);
             return true;
-        } else if crate::keybinding::matches_with_pending(
-            &app.config.keybindings.global.scroll_page_up,
-            pending,
-            key_event,
-        ) {
+        } else if keybinding_matches(&app.config.keybindings.global.scroll_page_up, key_event) {
             app.detail_scroll = app.detail_scroll.saturating_sub(full_page);
             return true;
-        } else if crate::keybinding::matches_with_pending(
+        } else if keybinding_matches(
             &app.config.keybindings.global.scroll_half_page_down,
-            pending,
             key_event,
         ) {
             app.detail_scroll = app.detail_scroll.saturating_add(half_page);
             return true;
-        } else if crate::keybinding::matches_with_pending(
+        } else if keybinding_matches(
             &app.config.keybindings.global.scroll_half_page_up,
-            pending,
             key_event,
         ) {
             app.detail_scroll = app.detail_scroll.saturating_sub(half_page);
@@ -715,7 +703,7 @@ fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent)
 /// Moves the list selection by half a page for the half-page bindings while
 /// the detail pane is hidden. A visible pane takes these keys first (see
 /// `apply_page_scroll`). Returns true if a binding matched.
-fn apply_list_half_page(app: &mut App, key_event: &KeyEvent, tx: &UnboundedSender<Event>) -> bool {
+fn apply_list_half_page(app: &mut App, key_event: &KeyPress, tx: &UnboundedSender<Event>) -> bool {
     if app.detail_visible || app.details_zoomed {
         return false;
     }
@@ -784,31 +772,10 @@ fn apply_list_half_page(app: &mut App, key_event: &KeyEvent, tx: &UnboundedSende
 
 pub async fn handle_active_tab_key(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     terminal: &mut AppTerminal,
     tx: UnboundedSender<Event>,
-    pending: Option<char>,
 ) -> bool {
-    if pending.is_some() {
-        // Resolving the second key of a pending sequence (e.g. the second
-        // `g` of `gg`). A key that doesn't complete a known sequence lapses
-        // instead of falling through to normal dispatch — vim discards `g`
-        // + an unbound key the same way (glt-0009 plan, Entscheidung 5).
-        if app.detail_visible
-            && crate::keybinding::matches_with_pending(
-                &app.config.keybindings.global.scroll_top,
-                pending,
-                key_event,
-            )
-        {
-            app.detail_scroll = 0;
-            return true;
-        } else if apply_page_scroll(app, pending, key_event) {
-            return true;
-        }
-        return false;
-    }
-
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
@@ -2845,18 +2812,12 @@ pub async fn handle_active_tab_key(
             // it in the same frame.
             app.detail_scroll_to_bottom = true;
         } else if app.detail_visible
-            && crate::keybinding::matches_with_pending(
-                &app.config.keybindings.global.scroll_top,
-                pending,
-                key_event,
-            )
+            && keybinding_matches(&app.config.keybindings.global.scroll_top, key_event)
         {
             // `scroll_top` jumps to the first line directly: 0 is a known
             // index, no flag round-trip needed.
             app.detail_scroll = 0;
-        } else if !apply_page_scroll(app, None, key_event)
-            && !apply_list_half_page(app, key_event, &tx)
-        {
+        } else if !apply_page_scroll(app, key_event) && !apply_list_half_page(app, key_event, &tx) {
             detail_scrolled = false;
         }
 
@@ -3679,13 +3640,10 @@ mod tests {
     /// Uses `Viewport::Fixed` so construction never queries the backend's
     /// terminal size - `cargo test` has no controlling tty in CI.
     async fn dispatch(app: &mut App, key_event: &KeyEvent) {
-        dispatch_with_pending(app, key_event, None).await;
+        dispatch_press(app, &KeyPress::from(*key_event)).await;
     }
 
-    /// Like `dispatch`, but with an explicit `pending` first key, to
-    /// exercise the multi-key sequence branch at the top of
-    /// `handle_active_tab_key`.
-    async fn dispatch_with_pending(app: &mut App, key_event: &KeyEvent, pending: Option<char>) {
+    async fn dispatch_press(app: &mut App, press: &KeyPress) {
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let options = ratatui::TerminalOptions {
             viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
@@ -3693,7 +3651,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::with_options(backend, options)
             .expect("terminal construction failed");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_active_tab_key(app, key_event, &mut terminal, tx, pending).await;
+        handle_active_tab_key(app, press, &mut terminal, tx).await;
     }
 
     #[tokio::test]
@@ -4207,21 +4165,40 @@ mod tests {
     /// `gg` jumps to a known index, so it writes the scroll directly and
     /// must not raise the jump-to-bottom flag on the way.
     #[tokio::test]
-    async fn scroll_top_resolves_two_char_sequence_through_matches_with_pending() {
+    async fn scroll_top_bound_to_a_sequence_scrolls_to_the_first_line() {
         let mut app = App::default();
         app.detail_visible = true;
         app.detail_scroll = 5;
         app.config.keybindings.global.scroll_top = "gg".to_string();
 
-        dispatch_with_pending(
-            &mut app,
-            &KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
-            Some('g'),
-        )
-        .await;
+        dispatch_press(&mut app, &KeyPress::Sequence("gg".to_string())).await;
 
         assert_eq!(app.detail_scroll, 0);
         assert!(!app.detail_scroll_to_bottom);
+    }
+
+    #[tokio::test]
+    async fn next_tab_bound_to_a_sequence_switches_tab() {
+        let mut app = App::default();
+        app.active_tab = Tab::Issues;
+        app.config.keybindings.global.next_tab = "zz".to_string();
+
+        dispatch_press(&mut app, &KeyPress::Sequence("zz".to_string())).await;
+
+        assert_ne!(app.active_tab, Tab::Issues);
+    }
+
+    /// `J` scrolls the detail pane whatever the config says, but a sequence
+    /// ending in `J` is not a `J` keypress.
+    #[tokio::test]
+    async fn sequence_does_not_fire_the_fixed_key_of_its_last_character() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+
+        dispatch_press(&mut app, &KeyPress::Sequence("JJ".to_string())).await;
+
+        assert_eq!(app.detail_scroll, 5);
     }
 
     /// The default `scroll_top = "Home"` shares its key with the hardcoded
@@ -4357,26 +4334,6 @@ mod tests {
         )
         .await;
         assert_eq!(app.detail_scroll, 0);
-    }
-
-    /// A page-scroll key still scrolls even while a `g` sequence prefix is
-    /// pending, instead of being swallowed by the sequence lapsing
-    /// (Entscheidung 5: both handler sites stay wired).
-    #[tokio::test]
-    async fn ctrl_f_scrolls_even_with_pending_g_prefix() {
-        let mut app = App::default();
-        bind_vim_page_keys(&mut app);
-        app.detail_visible = true;
-        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
-        app.detail_scroll = 5;
-
-        dispatch_with_pending(
-            &mut app,
-            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
-            Some('g'),
-        )
-        .await;
-        assert_eq!(app.detail_scroll, 25);
     }
 
     /// `Ctrl+f` must only page-scroll, not also trigger the hardcoded plain
@@ -4943,7 +4900,7 @@ mod tests {
     async fn focus_key_toggles_between_the_list_and_the_deployments() {
         let mut app = app_with_focused_deployments(two_deployments());
         let tab = key(KeyCode::Tab);
-        assert!(app.is_deployments_focus_key(&tab));
+        assert!(app.is_deployments_focus_key(&tab.into()));
 
         dispatch(&mut app, &tab).await;
         dispatch(&mut app, &key(KeyCode::Char('j'))).await;
@@ -4966,7 +4923,7 @@ mod tests {
         let mut app = app_with_focused_deployments(two_deployments());
         app.detail_rect = None;
 
-        assert!(!app.is_deployments_focus_key(&key(KeyCode::Tab)));
+        assert!(!app.is_deployments_focus_key(&key(KeyCode::Tab).into()));
         dispatch(&mut app, &key(KeyCode::Char('j'))).await;
         assert_eq!(highlighted_environment(&app), Some("staging"));
     }

@@ -1855,9 +1855,9 @@ pub struct Config {
     pub page_size: usize,
     #[serde(default = "def_api_per_page")]
     pub api_per_page: usize,
-    /// How long a captured first keypress of a two-character sequence stays
-    /// pending before the timeout fires and the prefix is dispatched as a
-    /// single keypress.
+    /// How long keys typed towards a longer key sequence wait for the next
+    /// key. Each key restarts it. When it runs out, a binding the typed keys
+    /// complete fires (`g` next to `gg`) and anything else is dropped.
     #[serde(default = "def_keybinding_timeout_ms")]
     pub keybinding_timeout_ms: u64,
     /// Use real label colors from `label list` when available; otherwise use
@@ -1988,8 +1988,8 @@ page_size = 100
 # Use "ascii" when boxes and columns are misaligned because no Nerd Font is installed.
 # icons = "nerd"
 
-# How long a captured first keypress of a two-character key sequence stays
-# pending before the prefix is dispatched as a single keypress.
+# How long keys typed towards a longer key sequence (e.g. the `g` of `gg`)
+# wait for the next key. When it runs out, the binding they complete fires.
 # keybinding_timeout_ms = 1000
 
 # Per-color overrides (takes precedence over theme_preset).

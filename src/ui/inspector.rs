@@ -10,9 +10,10 @@ use ratatui::{
 };
 
 use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, InspectorContent};
-use crate::config::{ICONS, THEME, Theme};
+use crate::config::Theme;
 use crate::domain::issues::Issue;
 use crate::ui::helpers::{get_label_color, rendered_line_count};
+use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::sanitize_untrusted;
 use crate::utils::markdown::render_markdown;
 
@@ -47,13 +48,14 @@ pub enum InspectorMode<'a> {
 
 pub(crate) fn render_entity_inspector(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     doc: &EntityDocument,
     area: Rect,
     mut mode: InspectorMode<'_>,
     label_colors: &HashMap<String, Color>,
 ) -> u16 {
-    let icons = ICONS.read().unwrap();
-    let theme = THEME.read().unwrap();
+    let icons = ctx.icons;
+    let theme = &ctx.theme;
 
     // The view (ReadOnly) and edit (Interactive) modes share one render path:
     // the same outer block, the same fields/content layout, and the same field
@@ -175,20 +177,20 @@ pub(crate) fn render_entity_inspector(
             .constraints([Constraint::Length(field_height), Constraint::Min(3)])
             .split(main_area);
 
-        render_fields_list(f, &mut mode, &field_list, chunks[0], &theme);
-        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP)
+        render_fields_list(f, ctx, &mut mode, &field_list, chunks[0], theme);
+        render_content_pane(f, ctx, &mut mode, doc, chunks[1], Borders::TOP)
     } else if has_content {
         // Only content.
-        render_content_pane(f, &mut mode, doc, main_area, Borders::NONE)
+        render_content_pane(f, ctx, &mut mode, doc, main_area, Borders::NONE)
     } else {
         // Only fields.
-        render_fields_list(f, &mut mode, &field_list, main_area, &theme);
+        render_fields_list(f, ctx, &mut mode, &field_list, main_area, theme);
         0
     };
 
     // Submit/save footer (edit mode only).
     if is_interactive {
-        render_submit_footer(f, &mut mode, submit_area, &theme, &icons);
+        render_submit_footer(f, &mut mode, submit_area, theme, icons);
     }
 
     max_scroll
@@ -198,12 +200,13 @@ pub(crate) fn render_entity_inspector(
 /// selection/state; in view mode a fresh state is used each frame.
 fn render_fields_list(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     mode: &mut InspectorMode<'_>,
     field_list: &FieldList,
     area: Rect,
     theme: &crate::config::Theme,
 ) {
-    let field_items = build_field_list_items(field_list, area.width);
+    let field_items = build_field_list_items(ctx, field_list, area.width);
     let list = List::new(field_items).style(Style::default().bg(theme.bg));
 
     let mut state = match mode {
@@ -224,12 +227,13 @@ fn render_fields_list(
 /// fills the whole pane.
 fn render_content_pane(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     mode: &mut InspectorMode<'_>,
     doc: &EntityDocument,
     area: Rect,
     borders: ratatui::widgets::Borders,
 ) -> u16 {
-    let theme = THEME.read().unwrap();
+    let theme = &ctx.theme;
 
     match mode {
         InspectorMode::Interactive { menu } => {
@@ -334,7 +338,7 @@ fn render_content_pane(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(&desc_value, &theme, desc_inner.width)
+                render_markdown(&desc_value, theme, desc_inner.width)
             };
 
             f.render_widget(
@@ -351,7 +355,7 @@ fn render_content_pane(
                 .border_style(Style::default().fg(theme.border));
             let content_inner = content_block.inner(area);
             f.render_widget(content_block, area);
-            render_inspector_content(f, &doc.content, content_inner, *scroll)
+            render_inspector_content(f, ctx, &doc.content, content_inner, *scroll)
         }
     }
 }
@@ -437,12 +441,13 @@ impl<'a> FieldList<'a> {
 /// `doc`'s fields, border included. A `List` leaves out an item that does not
 /// fit whole, so a wrapped value needs all its rows counted.
 pub(crate) fn read_only_fields_height(
+    ctx: &RenderCtx<'_>,
     doc: &EntityDocument,
     width: u16,
     label_colors: &HashMap<String, Color>,
 ) -> usize {
     let field_list = FieldList::read_only(&doc.fields, label_colors);
-    let rows: usize = build_field_list_items(&field_list, width.saturating_sub(2))
+    let rows: usize = build_field_list_items(ctx, &field_list, width.saturating_sub(2))
         .iter()
         .map(ListItem::height)
         .sum();
@@ -450,6 +455,7 @@ pub(crate) fn read_only_fields_height(
 }
 
 pub(crate) fn build_field_list_items(
+    ctx: &RenderCtx<'_>,
     field_list: &FieldList,
     pane_width: u16,
 ) -> Vec<ListItem<'static>> {
@@ -462,8 +468,8 @@ pub(crate) fn build_field_list_items(
         skip_description,
         interactive,
     } = *field_list;
-    let icons = ICONS.read().unwrap();
-    let theme = THEME.read().unwrap();
+    let icons = ctx.icons;
+    let theme = &ctx.theme;
 
     let label_width = fields
         .iter()
@@ -683,7 +689,7 @@ pub(crate) fn build_field_list_items(
                                 }
                                 let trimmed = part.trim();
                                 let color = if label == "Labels" {
-                                    get_label_color(trimmed, label_colors)
+                                    get_label_color(trimmed, label_colors, &ctx.theme)
                                 } else {
                                     theme.blue
                                 };
@@ -963,29 +969,28 @@ pub(crate) fn build_field_list_items(
                                 ));
                             }
                         } else {
-                            let (val_fg, badge_bg, is_bold, formatted_val) = if let Some(tone) =
-                                &f.tone
-                            {
-                                let (_, _, _, pill_text) = crate::ui::helpers::badge_style_for(
-                                    label,
-                                    val,
-                                    is_selected,
-                                    item_bg,
-                                    &theme,
-                                    &icons,
-                                );
-                                let (fg, bg, bold) = tone_badge_style(tone, is_selected, &theme);
-                                (fg, bg, bold, pill_text)
-                            } else {
-                                crate::ui::helpers::badge_style_for(
-                                    label,
-                                    val,
-                                    is_selected,
-                                    item_bg,
-                                    &theme,
-                                    &icons,
-                                )
-                            };
+                            let (val_fg, badge_bg, is_bold, formatted_val) =
+                                if let Some(tone) = &f.tone {
+                                    let (_, _, _, pill_text) = crate::ui::helpers::badge_style_for(
+                                        label,
+                                        val,
+                                        is_selected,
+                                        item_bg,
+                                        theme,
+                                        icons,
+                                    );
+                                    let (fg, bg, bold) = tone_badge_style(tone, is_selected, theme);
+                                    (fg, bg, bold, pill_text)
+                                } else {
+                                    crate::ui::helpers::badge_style_for(
+                                        label,
+                                        val,
+                                        is_selected,
+                                        item_bg,
+                                        theme,
+                                        icons,
+                                    )
+                                };
 
                             let current_bg = badge_bg.unwrap_or(item_bg);
                             let mut style = Style::default().fg(val_fg).bg(current_bg);
@@ -1273,12 +1278,13 @@ fn strip_leading_issue_marker(title: &str) -> String {
 
 pub(crate) fn render_inspector_content(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     content: &InspectorContent,
     area: Rect,
     scroll: u16,
 ) -> u16 {
-    let icons = ICONS.read().unwrap();
-    let theme = THEME.read().unwrap();
+    let icons = ctx.icons;
+    let theme = &ctx.theme;
 
     match content {
         InspectorContent::Markdown(md) => {
@@ -1290,7 +1296,7 @@ pub(crate) fn render_inspector_content(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(md, &theme, area.width)
+                render_markdown(md, theme, area.width)
             };
             let total_lines = rendered_line_count(&lines, area.width as usize, true);
             let max_scroll =
@@ -1310,7 +1316,7 @@ pub(crate) fn render_inspector_content(
             let mut lines: Vec<Line<'static>> = if description.trim().is_empty() {
                 Vec::new()
             } else {
-                render_markdown(description, &theme, area.width)
+                render_markdown(description, theme, area.width)
             };
             if !lines.is_empty() {
                 lines.push(Line::from(""));
@@ -1324,7 +1330,7 @@ pub(crate) fn render_inspector_content(
             match issues {
                 Some(iss) if !iss.is_empty() => {
                     lines.push(Line::from(""));
-                    lines.extend(milestone_related_issue_lines(iss, &theme));
+                    lines.extend(milestone_related_issue_lines(iss, theme));
                 }
                 Some(_) => {
                     lines.push(Line::from(""));
@@ -1362,7 +1368,7 @@ pub(crate) fn render_inspector_content(
                 lines.push(Line::from(Span::styled("Failed Jobs:", header_style)));
                 lines.push(Line::from(""));
                 for job in failed_jobs {
-                    lines.push(failed_job_line(job, &theme, &icons));
+                    lines.push(failed_job_line(job, theme, icons));
                 }
                 lines.push(Line::from(""));
             }
@@ -1556,10 +1562,12 @@ mod tests {
             source_on_forge: false,
         };
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
                 render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     f.area(),
                     InspectorMode::Interactive { menu: &mut menu },
@@ -1590,7 +1598,8 @@ mod tests {
             Field::multi_select("Labels", "bug, urgent".to_string()),
         ];
         let label_colors = HashMap::new();
-        let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 80);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let items = build_field_list_items(ctx, &unselected_field_list(&fields, &label_colors), 80);
         assert_eq!(items.len(), 4);
     }
 
@@ -1609,10 +1618,12 @@ mod tests {
         };
         let label_colors = HashMap::new();
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
                 render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     f.area(),
                     InspectorMode::ReadOnly {
@@ -1639,10 +1650,12 @@ mod tests {
         };
         let label_colors = HashMap::new();
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
                 render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     f.area(),
                     InspectorMode::ReadOnly {
@@ -1672,9 +1685,10 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let content = InspectorContent::Markdown("- Parent\n    - Nested\n\n> Quoted".to_string());
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
-                render_inspector_content(f, &content, f.area(), 0);
+                render_inspector_content(f, ctx, &content, f.area(), 0);
             })
             .unwrap();
 
@@ -1707,9 +1721,10 @@ mod tests {
         ]);
 
         let mut max_scroll = 0;
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
-                max_scroll = render_inspector_content(f, &content, f.area(), 0);
+                max_scroll = render_inspector_content(f, ctx, &content, f.area(), 0);
             })
             .unwrap();
 
@@ -1732,10 +1747,12 @@ mod tests {
         };
         let label_colors = HashMap::new();
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
                 render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     f.area(),
                     InspectorMode::ReadOnly {
@@ -1768,7 +1785,8 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // pane_width 40 will force wrapping of the long title
-        let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 40);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let items = build_field_list_items(ctx, &unselected_field_list(&fields, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1784,8 +1802,9 @@ mod tests {
         };
         let label_colors = HashMap::new();
 
-        assert_eq!(read_only_fields_height(&doc, 100, &label_colors), 4);
-        assert_eq!(read_only_fields_height(&doc, 45, &label_colors), 5);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        assert_eq!(read_only_fields_height(ctx, &doc, 100, &label_colors), 4);
+        assert_eq!(read_only_fields_height(ctx, &doc, 45, &label_colors), 5);
     }
 
     #[test]
@@ -1800,7 +1819,9 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Active editing at cursor position 10
-        let items = build_field_list_items(&editing_first_field(&fields, 10, &label_colors), 40);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let items =
+            build_field_list_items(ctx, &editing_first_field(&fields, 10, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1812,7 +1833,9 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Editing empty Title at cursor position 0
-        let items = build_field_list_items(&editing_first_field(&fields, 0, &label_colors), 40);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let items =
+            build_field_list_items(ctx, &editing_first_field(&fields, 0, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1824,7 +1847,9 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Editing spaces Title at cursor position 2
-        let items = build_field_list_items(&editing_first_field(&fields, 2, &label_colors), 40);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let items =
+            build_field_list_items(ctx, &editing_first_field(&fields, 2, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1835,7 +1860,8 @@ mod tests {
             Field::read_only("State", "OPEN".to_string()),
         ];
         let label_colors = HashMap::new();
-        let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 80);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let items = build_field_list_items(ctx, &unselected_field_list(&fields, &label_colors), 80);
         assert_eq!(items.len(), 2);
     }
 
@@ -1854,10 +1880,12 @@ mod tests {
         };
         let label_colors = HashMap::new();
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
                 render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     f.area(),
                     InspectorMode::ReadOnly {
@@ -1931,9 +1959,10 @@ mod tests {
             issues: Some(vec![open, closed]),
         };
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
-                render_inspector_content(f, &content, f.area(), 0);
+                render_inspector_content(f, ctx, &content, f.area(), 0);
             })
             .unwrap();
 
@@ -1977,9 +2006,10 @@ mod tests {
             issues: None,
         };
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
-                render_inspector_content(f, &content, f.area(), 0);
+                render_inspector_content(f, ctx, &content, f.area(), 0);
             })
             .unwrap();
 
@@ -2011,10 +2041,12 @@ mod tests {
             },
         };
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         terminal
             .draw(|f| {
                 render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     f.area(),
                     InspectorMode::ReadOnly {

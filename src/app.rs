@@ -1,6 +1,6 @@
 use crate::backend::BackendKind;
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
-use crate::config::{Config, KeybindingConfig, Theme};
+use crate::config::{Config, Icons, KeybindingConfig, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
@@ -22,7 +22,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::ListState;
 use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
 /// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
@@ -145,8 +145,7 @@ impl Tab {
         }
     }
 
-    pub fn title(&self, kind: BackendKind) -> String {
-        let icons = crate::config::ICONS.read().unwrap();
+    pub fn title(&self, kind: BackendKind, icons: &Icons) -> String {
         match self {
             Tab::Issues => format!("{} Issues", icons.tab_issue),
             Tab::MergeRequests => {
@@ -3825,6 +3824,10 @@ impl EnvironmentDeployments {
 
 pub struct App {
     pub config: Config,
+    /// `config`'s theme and icon set, resolved by `apply_config`. Render code
+    /// reads them through a per-frame `RenderCtx`, never from `config`.
+    pub theme: Theme,
+    pub icons: Arc<Icons>,
     /// The first keypress of an in-progress key sequence (e.g. the `g` of
     /// `gg`), if one hasn't resolved or timed out yet. Set by the event loop
     /// when a plain-character event lands on a configured sequence prefix;
@@ -4074,6 +4077,8 @@ impl Default for App {
         let config = Config::load();
         let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&config.keybindings);
         Self {
+            theme: config.resolve_theme(),
+            icons: Arc::new(config.icons.icons()),
             config: config.clone(),
             pending_key: None,
             sequence_prefixes,
@@ -5797,9 +5802,9 @@ impl App {
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {
             tabs.retain(|t| {
-                !disabled
-                    .iter()
-                    .any(|d| Tab::from_str(d).as_ref() == Some(t) || d == &t.title(kind))
+                !disabled.iter().any(|d| {
+                    Tab::from_str(d).as_ref() == Some(t) || d == &t.title(kind, &self.icons)
+                })
             });
         }
         tabs
@@ -6055,6 +6060,8 @@ impl App {
         let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
         self.sequence_prefixes = sequence_prefixes;
         self.standalone_chars = standalone_chars;
+        self.theme = self.config.resolve_theme();
+        self.icons = Arc::new(self.config.icons.icons());
 
         for tab in Tab::ALL {
             let pane = match tab {
@@ -6701,7 +6708,7 @@ impl App {
             "Title" => vec![m.title.clone()],
             "Approval" => {
                 vec![
-                    match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
+                    match crate::domain::mr_state::approval_tone(m.approval.as_ref(), false) {
                         crate::domain::mr_state::ApprovalTone::Unknown => "—",
                         crate::domain::mr_state::ApprovalTone::ChangesRequested => "CHG",
                         crate::domain::mr_state::ApprovalTone::AwaitingYou => "AWAITING",
@@ -6713,7 +6720,7 @@ impl App {
             }
             "Mergeable" => {
                 vec![
-                    match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
+                    match crate::domain::mr_state::mergeable_tone(m.mergeability.as_ref()) {
                         crate::domain::mr_state::MergeTone::Unknown => "—",
                         crate::domain::mr_state::MergeTone::Conflict => "CONFLICT",
                         crate::domain::mr_state::MergeTone::Rebase => "REBASE",
@@ -13665,6 +13672,20 @@ index 123456..789012 100644
         app.apply_config();
 
         assert!(app.sequence_prefixes.contains(&'z'));
+    }
+
+    #[test]
+    fn apply_config_keeps_color_overrides_on_top_of_a_picked_preset() {
+        let mut app = App::default();
+        app.config.theme = toml::from_str(r##"bg = "#123456""##).unwrap();
+        app.config.theme_preset = Some("nord".to_string());
+
+        app.apply_config();
+
+        let nord = Theme::preset("nord").unwrap();
+        assert_eq!(app.theme.bg, ratatui::style::Color::Rgb(0x12, 0x34, 0x56));
+        assert_eq!(app.theme.border, nord.border);
+        assert_ne!(nord.bg, app.theme.bg);
     }
 
     #[test]

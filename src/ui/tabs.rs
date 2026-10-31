@@ -1,8 +1,8 @@
 use crate::app::{App, EntityDocument, InspectorContent, Tab};
 use crate::command_log::StatusFilter;
-use crate::config::THEME;
 use crate::ui::helpers::sort_header_label;
 use crate::ui::list_tab::TableContext;
+use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 use ratatui::{
     Frame,
@@ -32,12 +32,13 @@ fn settle_detail_scroll(app: &mut App, max: u16) {
 /// no row is selected.
 fn render_list_preview(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     detail_rect: Rect,
     doc: Option<crate::app::EntityDocument>,
-    theme: &crate::config::Theme,
     title_icon: &str,
 ) {
+    let theme = &ctx.theme;
     let Some(doc) = doc else {
         f.render_widget(
             Paragraph::new("Select an item to view preview...")
@@ -59,6 +60,7 @@ fn render_list_preview(
     };
     let max_detail_scroll = super::inspector::render_entity_inspector(
         f,
+        ctx,
         &doc,
         detail_rect,
         super::inspector::InspectorMode::ReadOnly {
@@ -114,17 +116,18 @@ fn group_scope_unavailable<'a>(
 
 pub(crate) fn render_tab_issues(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    if super::render_edit_menu_if_active(f, app, detail_rect) {
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    if super::render_edit_menu_if_active(f, ctx, app, detail_rect) {
         return;
     }
-    let icons = crate::config::ICONS.read().unwrap();
+    let icons = ctx.icons;
     if app.issues.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading issues...", icons.label_loading))
@@ -204,6 +207,7 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.badge_group_bg),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "ID") {
@@ -214,6 +218,7 @@ pub(crate) fn render_tab_issues(
                     false,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "State") {
@@ -224,6 +229,7 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     state_style,
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "Title") {
@@ -234,6 +240,7 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "Assignees") {
@@ -253,6 +260,7 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "Labels") {
@@ -263,6 +271,7 @@ pub(crate) fn render_tab_issues(
                     is_selected,
                     is_checked,
                     24,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "Milestone") {
@@ -278,10 +287,13 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.yellow),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
-            let show_related_mrs =
-                app.is_column_visible(Tab::Issues, if app.is_github() { "PRs" } else { "MRs" });
+            let show_related_mrs = app.is_column_visible(
+                Tab::Issues,
+                if ctx.kind.is_github() { "PRs" } else { "MRs" },
+            );
             if show_related_mrs {
                 let related_str = match &i.related_mrs {
                     None if app.fetching_related_mrs.contains(&i.iid) => "…".to_string(),
@@ -331,6 +343,7 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.purple),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "Due Date") {
@@ -342,6 +355,7 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.yellow),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Issues, "Author") {
@@ -353,17 +367,18 @@ pub(crate) fn render_tab_issues(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             let row_style = if is_selected {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(ctx.theme.highlight_bg)
             } else {
                 Style::default()
             };
             let bar_cell = Cell::from(ratatui::text::Span::styled(
                 " ",
                 if is_checked {
-                    Style::default().bg(THEME.read().unwrap().checked_bg)
+                    Style::default().bg(ctx.theme.checked_bg)
                 } else {
                     Style::default()
                 },
@@ -379,7 +394,7 @@ pub(crate) fn render_tab_issues(
         widths.push(Constraint::Length(1));
 
         let sort = app.sort_for(Tab::Issues);
-        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
         if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
@@ -413,10 +428,12 @@ pub(crate) fn render_tab_issues(
             header_cells.push(header("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
-        let show_related_mrs =
-            app.is_column_visible(Tab::Issues, if app.is_github() { "PRs" } else { "MRs" });
+        let show_related_mrs = app.is_column_visible(
+            Tab::Issues,
+            if ctx.kind.is_github() { "PRs" } else { "MRs" },
+        );
         if show_related_mrs {
-            header_cells.push(header(if app.is_github() { "PRs" } else { "MRs" }));
+            header_cells.push(header(if ctx.kind.is_github() { "PRs" } else { "MRs" }));
             widths.push(col_w(content_area.width, 16));
         }
         if app.is_column_visible(Tab::Issues, "Due Date") {
@@ -451,7 +468,7 @@ pub(crate) fn render_tab_issues(
         let selected_issue_idx = app.issues.state.selected();
         if let Some(selected) = selected_issue_idx {
             if let Some(issue) = filtered_issues.get(selected) {
-                let is_github = app.is_github();
+                let is_github = ctx.kind.is_github();
                 let doc = crate::entity_editor::build_issue_document(
                     issue,
                     is_github,
@@ -459,6 +476,7 @@ pub(crate) fn render_tab_issues(
                 );
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     detail_rect,
                     super::inspector::InspectorMode::ReadOnly {
@@ -483,23 +501,24 @@ pub(crate) fn render_tab_issues(
 }
 pub(crate) fn render_tab_merge_requests(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    if super::render_edit_menu_if_active(f, app, detail_rect) {
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    if super::render_edit_menu_if_active(f, ctx, app, detail_rect) {
         return;
     }
-    let icons = crate::config::ICONS.read().unwrap();
+    let icons = ctx.icons;
     if app.mrs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(
                 "\n\n {} Loading {}...",
                 icons.label_loading,
-                app.kind().term("mr_plural").to_lowercase()
+                ctx.kind.term("mr_plural").to_lowercase()
             ))
             .alignment(Alignment::Center)
             .block(main_block.clone())
@@ -624,7 +643,7 @@ pub(crate) fn render_tab_merge_requests(
             let status_styled = format!(
                 "{}{}",
                 status_styled,
-                crate::domain::mr_state::status_flags(m.blocking_discussions_resolved)
+                crate::domain::mr_state::status_flags(m.blocking_discussions_resolved, ctx.icons)
             );
 
             let mut cells = Vec::new();
@@ -636,6 +655,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.badge_group_bg),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "ID") {
@@ -646,6 +666,7 @@ pub(crate) fn render_tab_merge_requests(
                     false,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "State") {
@@ -656,6 +677,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     state_style,
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Status") {
@@ -666,10 +688,12 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     status_style,
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
-                let (text, tone) = crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref());
+                let (text, tone) =
+                    crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref(), ctx.icons);
                 let style = {
                     let t = &theme;
                     match tone {
@@ -715,11 +739,15 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     style,
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Approval") {
-                let (text, tone) =
-                    crate::domain::mr_state::approval_cell(m.approval.as_ref(), app.is_github());
+                let (text, tone) = crate::domain::mr_state::approval_cell(
+                    m.approval.as_ref(),
+                    ctx.kind.is_github(),
+                    ctx.icons,
+                );
                 let style = {
                     let t = &theme;
                     match tone {
@@ -765,6 +793,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     style,
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Title") {
@@ -775,6 +804,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Assignees") {
@@ -794,6 +824,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
@@ -813,10 +844,11 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Workflow") {
-                let text = crate::domain::mr_state::workflow_cell(m.workflow);
+                let text = crate::domain::mr_state::workflow_cell(m.workflow, ctx.icons);
                 let (color, bg_color) = {
                     let t = &theme;
                     match m.workflow {
@@ -849,6 +881,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     wf_style,
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Labels") {
@@ -859,9 +892,10 @@ pub(crate) fn render_tab_merge_requests(
                     is_selected,
                     is_checked,
                     24,
+                    &ctx.theme,
                 ));
             }
-            let is_github = app.is_github();
+            let is_github = ctx.kind.is_github();
             if app.is_column_visible(
                 Tab::MergeRequests,
                 if is_github { "Action" } else { "Pipeline" },
@@ -878,7 +912,7 @@ pub(crate) fn render_tab_merge_requests(
                 });
                 if let Some(pipe) = resolved_pipe {
                     let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id()) {
-                        super::helpers::get_stages_dots(jobs)
+                        super::helpers::get_stages_dots(jobs, ctx.icons)
                     } else {
                         icons.label_loading.clone()
                     };
@@ -936,6 +970,7 @@ pub(crate) fn render_tab_merge_requests(
                                 .bg(bg)
                                 .add_modifier(Modifier::BOLD),
                             Alignment::Center,
+                            &ctx.theme,
                         ));
                     } else {
                         cells.push(super::helpers::render_fuzzy_cell(
@@ -945,6 +980,7 @@ pub(crate) fn render_tab_merge_requests(
                             is_checked,
                             Style::default().fg(theme.text_normal),
                             Alignment::Left,
+                            &ctx.theme,
                         ));
                     }
                 } else {
@@ -955,6 +991,7 @@ pub(crate) fn render_tab_merge_requests(
                         is_checked,
                         Style::default().fg(theme.text_muted),
                         Alignment::Center,
+                        &ctx.theme,
                     ));
                 }
             }
@@ -975,6 +1012,7 @@ pub(crate) fn render_tab_merge_requests(
                         Style::default().fg(theme.text_muted)
                     },
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Milestone") {
@@ -990,6 +1028,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.yellow),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             let show_closes = app.is_column_visible(Tab::MergeRequests, "Closes");
@@ -1040,6 +1079,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Author") {
@@ -1051,6 +1091,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             let row_style = if is_selected {
@@ -1077,7 +1118,7 @@ pub(crate) fn render_tab_merge_requests(
         widths.push(Constraint::Length(1));
 
         let sort = app.sort_for(Tab::MergeRequests);
-        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
         if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
@@ -1135,7 +1176,7 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(header("Labels"));
             widths.push(col_w(content_area.width, 26));
         }
-        let is_github = app.is_github();
+        let is_github = ctx.kind.is_github();
         if app.is_column_visible(
             Tab::MergeRequests,
             if is_github { "Action" } else { "Pipeline" },
@@ -1188,7 +1229,7 @@ pub(crate) fn render_tab_merge_requests(
             );
         if let Some(selected) = app.mrs.state.selected() {
             if let Some(mr) = filtered_mrs.get(selected) {
-                let is_github = app.is_github();
+                let is_github = ctx.kind.is_github();
                 let unresolved_threads = if is_github {
                     None
                 } else if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid) {
@@ -1210,9 +1251,11 @@ pub(crate) fn render_tab_merge_requests(
                     is_github,
                     unresolved_threads,
                     fetching_issues,
+                    ctx.icons,
                 );
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     detail_rect,
                     super::inspector::InspectorMode::ReadOnly {
@@ -1237,18 +1280,19 @@ pub(crate) fn render_tab_merge_requests(
 }
 pub(crate) fn render_tab_pipelines(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    if super::render_edit_menu_if_active(f, app, detail_rect) {
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    if super::render_edit_menu_if_active(f, ctx, app, detail_rect) {
         return;
     }
-    let icons = crate::config::ICONS.read().unwrap();
-    let is_github = app.is_github();
+    let icons = ctx.icons;
+    let is_github = ctx.kind.is_github();
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(if is_github {
@@ -1367,7 +1411,7 @@ pub(crate) fn render_tab_pipelines(
                 ),
             };
             let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
-                super::helpers::get_stages_dots(jobs)
+                super::helpers::get_stages_dots(jobs, ctx.icons)
             } else {
                 icons.label_loading.clone()
             };
@@ -1386,6 +1430,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.badge_group_bg),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "ID") {
@@ -1402,6 +1447,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Status") {
@@ -1415,6 +1461,7 @@ pub(crate) fn render_tab_pipelines(
                         .bg(status_bg)
                         .add_modifier(Modifier::BOLD),
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Stages") {
@@ -1425,6 +1472,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Source") {
@@ -1435,6 +1483,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_muted),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Name") {
@@ -1445,6 +1494,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Event") {
@@ -1455,6 +1505,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "SHA") {
@@ -1465,6 +1516,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_muted),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Actor") {
@@ -1475,6 +1527,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "Created") {
@@ -1502,6 +1555,7 @@ pub(crate) fn render_tab_pipelines(
                     is_checked,
                     Style::default().fg(theme.purple),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             let row_style = if is_row_highlighted {
@@ -1528,7 +1582,7 @@ pub(crate) fn render_tab_pipelines(
         widths.push(Constraint::Length(1));
 
         let sort = app.sort_for(Tab::Pipelines);
-        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
         if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
@@ -1610,6 +1664,7 @@ pub(crate) fn render_tab_pipelines(
                 let doc = crate::entity_editor::build_pipeline_document(p, &jobs, is_github);
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     detail_rect,
                     super::inspector::InspectorMode::ReadOnly {
@@ -1634,14 +1689,15 @@ pub(crate) fn render_tab_pipelines(
 }
 pub(crate) fn render_tab_jobs(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    let icons = crate::config::ICONS.read().unwrap();
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
     if app.jobs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading jobs...", icons.label_loading))
@@ -1753,6 +1809,7 @@ pub(crate) fn render_tab_jobs(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Jobs, "Stage") {
@@ -1763,6 +1820,7 @@ pub(crate) fn render_tab_jobs(
                     is_checked,
                     Style::default().fg(theme.purple),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Jobs, "Status") {
@@ -1776,6 +1834,7 @@ pub(crate) fn render_tab_jobs(
                         .bg(status_bg)
                         .add_modifier(Modifier::BOLD),
                     Alignment::Center,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Jobs, "Name") {
@@ -1786,6 +1845,7 @@ pub(crate) fn render_tab_jobs(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Jobs, "Matrix") {
@@ -1796,6 +1856,7 @@ pub(crate) fn render_tab_jobs(
                     is_checked,
                     Style::default().fg(theme.text_muted),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Jobs, "Runner") {
@@ -1807,6 +1868,7 @@ pub(crate) fn render_tab_jobs(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Jobs, "Needs") {
@@ -1854,7 +1916,7 @@ pub(crate) fn render_tab_jobs(
         widths.push(Constraint::Length(1));
 
         let sort = app.sort_for(Tab::Jobs);
-        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
         if app.is_column_visible(Tab::Jobs, "ID") {
@@ -1896,9 +1958,9 @@ pub(crate) fn render_tab_jobs(
             widths.push(Constraint::Min(0));
         }
 
-        let kind = app.kind();
+        let kind = ctx.kind;
         let is_github = kind.is_github();
-        let jobs_title = Tab::Jobs.title(kind);
+        let jobs_title = Tab::Jobs.title(kind, ctx.icons);
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block.clone().title(format!(" {jobs_title} ")))
@@ -1932,6 +1994,7 @@ pub(crate) fn render_tab_jobs(
             let trace_rect = match header {
                 Some(header) => {
                     let header_height = u16::try_from(super::inspector::read_only_fields_height(
+                        ctx,
                         &header,
                         detail_rect.width,
                         &app.label_colors,
@@ -1943,6 +2006,7 @@ pub(crate) fn render_tab_jobs(
                             .areas(detail_rect);
                     super::inspector::render_entity_inspector(
                         f,
+                        ctx,
                         &header,
                         header_rect,
                         super::inspector::InspectorMode::ReadOnly {
@@ -1959,16 +2023,16 @@ pub(crate) fn render_tab_jobs(
                 f.render_widget(
                     Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
                         .alignment(Alignment::Center)
-                        .block(job_trace_block("", &theme))
+                        .block(job_trace_block("", theme))
                         .style(Style::default().fg(theme.text_muted)),
                     trace_rect,
                 );
             } else {
-                render_job_trace(f, app, trace_rect, &theme);
+                render_job_trace(f, app, trace_rect, theme);
             }
         } else {
             let summary =
-                InspectorContent::Custom(job_summary_lines(&app.jobs.items, is_github, &theme));
+                InspectorContent::Custom(job_summary_lines(ctx, &app.jobs.items, is_github));
             let document = match selected_job {
                 Some(job) => crate::entity_editor::build_job_document(job, summary),
                 None => EntityDocument {
@@ -1979,6 +2043,7 @@ pub(crate) fn render_tab_jobs(
             };
             let max_detail_scroll = super::inspector::render_entity_inspector(
                 f,
+                ctx,
                 &document,
                 detail_rect,
                 super::inspector::InspectorMode::ReadOnly {
@@ -2071,10 +2136,11 @@ fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::con
 /// Per-stage success rates on GitLab, per-job statuses on GitHub, whose jobs
 /// have no stages.
 fn job_summary_lines(
+    ctx: &RenderCtx<'_>,
     jobs: &[crate::domain::pipelines::Job],
     is_github: bool,
-    theme: &crate::config::Theme,
 ) -> Vec<Line<'static>> {
+    let theme = &ctx.theme;
     let heading = if is_github {
         "Jobs Status:"
     } else {
@@ -2090,25 +2156,26 @@ fn job_summary_lines(
         Line::from(""),
     ];
     if is_github {
-        super::helpers::append_job_summaries(&mut lines, jobs);
+        super::helpers::append_job_summaries(&mut lines, jobs, &ctx.theme);
     } else {
-        super::helpers::append_stage_summaries(&mut lines, jobs);
+        super::helpers::append_stage_summaries(ctx, &mut lines, jobs);
     }
     lines
 }
 
 pub(crate) fn render_tab_runners(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    let icons = crate::config::ICONS.read().unwrap();
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
     if app.scope.is_group() {
-        let [list, preview] = group_scope_unavailable(app, &theme, &icons, "Runners", main_block);
+        let [list, preview] = group_scope_unavailable(app, theme, icons, "Runners", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
         return;
@@ -2140,8 +2207,8 @@ pub(crate) fn render_tab_runners(
                 block: main_block,
                 header_style,
                 highlight_style: Style::default().bg(theme.highlight_bg),
-                theme: &theme,
-                icons: &icons,
+                theme,
+                icons,
                 query: &app.search_query,
                 is_checked: None,
             },
@@ -2150,24 +2217,25 @@ pub(crate) fn render_tab_runners(
             .runners
             .cursor_row()
             .map(crate::entity_editor::build_runner_document);
-        render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_details);
+        render_list_preview(f, ctx, app, detail_rect, doc, &icons.label_details);
     }
 }
 pub(crate) fn render_tab_releases(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    if super::render_edit_menu_if_active(f, app, detail_rect) {
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    if super::render_edit_menu_if_active(f, ctx, app, detail_rect) {
         return;
     }
-    let icons = crate::config::ICONS.read().unwrap();
+    let icons = ctx.icons;
     if app.scope.is_group() {
-        let [list, preview] = group_scope_unavailable(app, &theme, &icons, "Releases", main_block);
+        let [list, preview] = group_scope_unavailable(app, theme, icons, "Releases", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
         return;
@@ -2199,8 +2267,8 @@ pub(crate) fn render_tab_releases(
                 block: main_block,
                 header_style,
                 highlight_style: Style::default().bg(theme.highlight_bg),
-                theme: &theme,
-                icons: &icons,
+                theme,
+                icons,
                 query: &app.search_query,
                 is_checked: None,
             },
@@ -2209,21 +2277,22 @@ pub(crate) fn render_tab_releases(
             .releases
             .cursor_row()
             .map(crate::entity_editor::build_release_document);
-        render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_details);
+        render_list_preview(f, ctx, app, detail_rect, doc, &icons.label_details);
     }
 }
 pub(crate) fn render_tab_todos(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    let icons = crate::config::ICONS.read().unwrap();
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
     if app.todos.items.is_empty() {
-        let entity_label = if app.kind().is_github() {
+        let entity_label = if ctx.kind.is_github() {
             "notifications"
         } else {
             "todos"
@@ -2260,7 +2329,7 @@ pub(crate) fn render_tab_todos(
             detail_rect,
         );
     } else {
-        let kind = app.kind();
+        let kind = ctx.kind;
         let mut filtered_todos = App::filtered_todos_list(
             &app.todos.items,
             &app.search_query,
@@ -2292,8 +2361,8 @@ pub(crate) fn render_tab_todos(
                     value,
                     is_row_highlighted,
                     row_bg,
-                    &theme,
-                    &icons,
+                    theme,
+                    icons,
                 );
                 let mut style = Style::default().fg(fg).bg(bg.unwrap_or(row_bg));
                 if is_bold {
@@ -2306,6 +2375,7 @@ pub(crate) fn render_tab_todos(
                     is_checked,
                     style,
                     Alignment::Center,
+                    &ctx.theme,
                 )
             };
 
@@ -2328,6 +2398,7 @@ pub(crate) fn render_tab_todos(
                     is_checked,
                     Style::default().fg(theme.text_muted),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Todos, "Type") {
@@ -2342,6 +2413,7 @@ pub(crate) fn render_tab_todos(
                     is_checked,
                     Style::default().fg(theme.blue),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Todos, "Title") {
@@ -2352,6 +2424,7 @@ pub(crate) fn render_tab_todos(
                     is_checked,
                     Style::default().fg(theme.text_normal),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             if app.is_column_visible(Tab::Todos, "Updated") {
@@ -2362,6 +2435,7 @@ pub(crate) fn render_tab_todos(
                     is_checked,
                     Style::default().fg(theme.yellow),
                     Alignment::Left,
+                    &ctx.theme,
                 ));
             }
             let row_style = if is_row_highlighted {
@@ -2376,7 +2450,7 @@ pub(crate) fn render_tab_todos(
         let mut widths = vec![Constraint::Length(1)];
 
         let sort = app.sort_for(Tab::Todos);
-        let header_line = |name: &str| Line::from(sort_header_label(name, sort, &icons));
+        let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
         if app.is_column_visible(Tab::Todos, "State") {
@@ -2432,6 +2506,7 @@ pub(crate) fn render_tab_todos(
                 );
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     detail_rect,
                     super::inspector::InspectorMode::ReadOnly {
@@ -2456,17 +2531,18 @@ pub(crate) fn render_tab_todos(
 }
 pub(crate) fn render_tab_milestones(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    if super::render_edit_menu_if_active(f, app, detail_rect) {
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    if super::render_edit_menu_if_active(f, ctx, app, detail_rect) {
         return;
     }
-    let icons = crate::config::ICONS.read().unwrap();
+    let icons = ctx.icons;
     if app.milestones.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(
@@ -2511,11 +2587,11 @@ pub(crate) fn render_tab_milestones(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
-        let cols = Tab::Milestones.columns(app.kind(), app.scope.is_group());
+        let cols = Tab::Milestones.columns(ctx.kind, app.scope.is_group());
         let sort = app.sort_for(Tab::Milestones);
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
-                header_cells.push(Cell::from(sort_header_label(col, sort, &icons)));
+                header_cells.push(Cell::from(sort_header_label(col, sort, icons)));
                 match *col {
                     "ID" => widths.push(Constraint::Length(8)),
                     "Title" => widths.push(Constraint::Fill(1)),
@@ -2542,6 +2618,7 @@ pub(crate) fn render_tab_milestones(
                                 false,
                                 Style::default().fg(theme.text_normal),
                                 Alignment::Left,
+                                &ctx.theme,
                             ));
                         }
                         "Title" => {
@@ -2554,6 +2631,7 @@ pub(crate) fn render_tab_milestones(
                                     .fg(theme.text_normal)
                                     .add_modifier(Modifier::BOLD),
                                 Alignment::Left,
+                                &ctx.theme,
                             ));
                         }
                         "State" => {
@@ -2598,6 +2676,7 @@ pub(crate) fn render_tab_milestones(
                                 false,
                                 Style::default().fg(theme.blue),
                                 Alignment::Left,
+                                &ctx.theme,
                             ));
                         }
                         "Due Date" => {
@@ -2609,6 +2688,7 @@ pub(crate) fn render_tab_milestones(
                                 false,
                                 Style::default().fg(theme.yellow),
                                 Alignment::Left,
+                                &ctx.theme,
                             ));
                         }
                         "Progress" => {
@@ -2705,13 +2785,14 @@ pub(crate) fn render_tab_milestones(
 
         if let Some(selected_idx) = app.milestones.state.selected() {
             if let Some(m) = filtered_milestones.get(selected_idx) {
-                let is_github = app.is_github();
+                let is_github = ctx.kind.is_github();
                 let issues = app.milestone_issues(m.iid);
                 let progress = app.milestone_progress_cache.get(&m.iid).copied();
                 let doc =
                     crate::entity_editor::build_milestone_document(m, issues, progress, is_github);
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
+                    ctx,
                     &doc,
                     detail_rect,
                     super::inspector::InspectorMode::ReadOnly {
@@ -2736,20 +2817,21 @@ pub(crate) fn render_tab_milestones(
 }
 pub(crate) fn render_tab_branches(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    if super::render_edit_menu_if_active(f, app, detail_rect) {
+    let highlight_style = ctx.highlight_style();
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    if super::render_edit_menu_if_active(f, ctx, app, detail_rect) {
         return;
     }
-    let icons = crate::config::ICONS.read().unwrap();
+    let icons = ctx.icons;
     if app.scope.is_group() {
-        let [list, preview] = group_scope_unavailable(app, &theme, &icons, "Branches", main_block);
+        let [list, preview] = group_scope_unavailable(app, theme, icons, "Branches", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
         return;
@@ -2770,8 +2852,8 @@ pub(crate) fn render_tab_branches(
                 block: main_block,
                 header_style,
                 highlight_style,
-                theme: &theme,
-                icons: &icons,
+                theme,
+                icons,
                 query: &app.search_query,
                 is_checked: Some(&|branch| app.selected_branches.contains(&branch.name)),
             },
@@ -2780,23 +2862,24 @@ pub(crate) fn render_tab_branches(
             .branches
             .cursor_row()
             .map(crate::entity_editor::build_branch_document);
-        render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_branch);
+        render_list_preview(f, ctx, app, detail_rect, doc, &icons.label_branch);
     }
 }
 pub(crate) fn render_tab_environments(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
     detail_rect: Rect,
     main_block: Block<'_>,
-    highlight_style: Style,
-    header_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
-    let icons = crate::config::ICONS.read().unwrap();
+    let highlight_style = ctx.highlight_style();
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
     if app.scope.is_group() {
         let [list, preview] =
-            group_scope_unavailable(app, &theme, &icons, "Environments", main_block);
+            group_scope_unavailable(app, theme, icons, "Environments", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
         return;
@@ -2820,8 +2903,8 @@ pub(crate) fn render_tab_environments(
                 block: main_block,
                 header_style,
                 highlight_style,
-                theme: &theme,
-                icons: &icons,
+                theme,
+                icons,
                 query: &app.search_query,
                 is_checked: None,
             },
@@ -2831,23 +2914,15 @@ pub(crate) fn render_tab_environments(
             .as_ref()
             .is_some_and(|shown| !shown.table.items.is_empty());
         if has_deployments {
-            render_environment_deployments(
-                f,
-                app,
-                detail_rect,
-                highlight_style,
-                header_style,
-                &theme,
-                &icons,
-            );
+            render_environment_deployments(f, ctx, app, detail_rect);
         } else {
             let keys = &app.config.keybindings.environments;
-            let is_github = app.is_github();
+            let is_github = ctx.kind.is_github();
             let doc = app
                 .environments
                 .cursor_row()
                 .map(|env| crate::entity_editor::build_environment_document(env, keys, is_github));
-            render_list_preview(f, app, detail_rect, doc, &theme, &icons.label_environment);
+            render_list_preview(f, ctx, app, detail_rect, doc, &icons.label_environment);
         }
     }
 }
@@ -2964,13 +3039,14 @@ impl DeploymentColumn {
 /// The shown deployments as a table over the selected deployment's details.
 fn render_environment_deployments(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     detail_rect: Rect,
-    highlight_style: Style,
-    header_style: Style,
-    theme: &crate::config::Theme,
-    icons: &crate::config::Icons,
 ) {
+    let highlight_style = ctx.highlight_style();
+    let header_style = ctx.header_style();
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
     let Some(shown) = app.environment_deployments.as_mut() else {
         return;
     };
@@ -3036,16 +3112,17 @@ fn render_environment_deployments(
     let doc = shown
         .selected()
         .map(crate::entity_editor::build_deployment_document);
-    render_list_preview(f, app, inspector_rect, doc, theme, &icons.label_deployment);
+    render_list_preview(f, ctx, app, inspector_rect, doc, &icons.label_deployment);
 }
 
 pub(crate) fn render_tab_terminal(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     app: &mut App,
     content_area: Rect,
-    highlight_style: Style,
 ) {
-    let theme = THEME.read().unwrap();
+    let highlight_style = ctx.highlight_style();
+    let theme = &ctx.theme;
     let entries = app.filtered_terminal_commands();
     let num_cmds = entries.len();
     let area = content_area;
@@ -3064,7 +3141,7 @@ pub(crate) fn render_tab_terminal(
         let full_text: String = entries
             .iter()
             .map(|cmd| {
-                let line = super::helpers::build_log_line(cmd, usize::MAX);
+                let line = super::helpers::build_log_line(ctx, cmd, usize::MAX);
                 line.spans
                     .iter()
                     .map(|s| s.content.as_ref())
@@ -3112,7 +3189,7 @@ pub(crate) fn render_tab_terminal(
     let paragraph = if app.terminal_wrap {
         let all_lines: Vec<Line> = entries
             .iter()
-            .map(|cmd| super::helpers::build_log_line(cmd, usize::MAX))
+            .map(|cmd| super::helpers::build_log_line(ctx, cmd, usize::MAX))
             .collect();
 
         Paragraph::new(all_lines)
@@ -3133,7 +3210,7 @@ pub(crate) fn render_tab_terminal(
 
         let cursor = end_idx.checked_sub(1);
         for (index, cmd) in entries.iter().enumerate().take(end_idx).skip(start_idx) {
-            let line = super::helpers::build_log_line(cmd, width);
+            let line = super::helpers::build_log_line(ctx, cmd, width);
             log_lines.push(if Some(index) == cursor {
                 line.patch_style(highlight_style)
             } else {
@@ -3181,6 +3258,8 @@ mod tests {
         app.issues.state.select(Some(0));
         app.detail_scroll = 999;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3188,11 +3267,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 10, area.width, 10);
                 render_tab_issues(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3287,6 +3366,8 @@ mod tests {
         app.milestones.state.select(Some(0));
         app.active_tab = Tab::Milestones;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3294,11 +3375,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 40, area.width, 30);
                 render_tab_milestones(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3327,6 +3408,8 @@ mod tests {
         app.milestones.state.select(Some(0));
         app.active_tab = Tab::Milestones;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3334,11 +3417,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 40, area.width, 30);
                 render_tab_milestones(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3367,6 +3450,8 @@ mod tests {
         app.milestone_progress_cache.insert(5, (0, 0));
         app.active_tab = Tab::Milestones;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3374,11 +3459,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 40, area.width, 30);
                 render_tab_milestones(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3409,6 +3494,8 @@ mod tests {
         app.selected_milestone_iid = Some(6);
         app.active_tab = Tab::Milestones;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3416,11 +3503,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 40, area.width, 30);
                 render_tab_milestones(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3451,6 +3538,8 @@ mod tests {
         app.active_tab = Tab::MergeRequests;
         app.loading_tabs.insert(Tab::MergeRequests);
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3458,11 +3547,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 40, area.width, 30);
                 render_tab_merge_requests(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3483,6 +3572,8 @@ mod tests {
         });
         app.active_tab = Tab::MergeRequests;
         app.loading_tabs.insert(Tab::MergeRequests);
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
 
         terminal
             .draw(|f| {
@@ -3491,11 +3582,11 @@ mod tests {
                 let detail_rect = Rect::new(0, 40, area.width, 30);
                 render_tab_merge_requests(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3532,26 +3623,26 @@ mod tests {
         app.issues.state.select(Some(0));
         app.selected_issues.insert(("owner/repo".to_string(), 1));
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
                 let content_area = Rect::new(0, 0, area.width, 5);
                 let detail_rect = Rect::new(0, 5, area.width, 5);
-                let theme = THEME.read().unwrap();
-                let header_style = Style::default().fg(theme.text_normal);
                 render_tab_issues(
                     f,
+                    ctx,
                     &mut app,
                     content_area,
                     detail_rect,
                     Block::default(),
-                    header_style,
                 );
             })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        let theme = THEME.read().unwrap();
+        let theme = &ctx.theme;
         // Row 1 is the first data row.
         // x=3 is the leftmost selection bar cell (after 3-char highlight arrow gutter).
         assert_eq!(buffer[(3, 1)].bg, theme.checked_bg);
@@ -3578,19 +3669,14 @@ mod tests {
     /// Renders the Jobs tab with the trace pane on rows 10-19.
     fn render_jobs_with_trace_pane(app: &mut App) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
                 let content_area = Rect::new(0, 0, area.width, 10);
                 let detail_rect = Rect::new(0, 10, area.width, 10);
-                render_tab_jobs(
-                    f,
-                    app,
-                    content_area,
-                    detail_rect,
-                    Block::default(),
-                    Style::default(),
-                );
+                render_tab_jobs(f, ctx, app, content_area, detail_rect, Block::default());
             })
             .unwrap();
         terminal
@@ -3643,16 +3729,18 @@ mod tests {
         app.jobs.state.select(Some(0));
         let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
                 render_tab_jobs(
                     f,
+                    ctx,
                     &mut app,
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 30),
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3695,16 +3783,18 @@ mod tests {
         app.jobs.state.select(Some(0));
         let mut terminal = Terminal::new(TestBackend::new(45, 40)).unwrap();
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
                 render_tab_jobs(
                     f,
+                    ctx,
                     &mut app,
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 30),
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3803,16 +3893,18 @@ mod tests {
             .or_default()
             .insert("Needs".to_string());
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
                 render_tab_jobs(
                     f,
+                    ctx,
                     &mut app,
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 10),
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3830,7 +3922,8 @@ mod tests {
 
     #[test]
     fn sorted_column_header_carries_the_sort_arrow() {
-        let sort_desc = crate::config::ICONS.read().unwrap().sort_desc.clone();
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let sort_desc = ctx.icons.sort_desc.clone();
         let backend = TestBackend::new(160, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
@@ -3876,11 +3969,11 @@ mod tests {
                 let area = f.area();
                 render_tab_issues(
                     f,
+                    ctx,
                     &mut app,
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 10),
                     Block::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3899,12 +3992,11 @@ mod tests {
                 let area = f.area();
                 render_tab_environments(
                     f,
+                    ctx,
                     &mut app,
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 10),
                     Block::default(),
-                    Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3938,17 +4030,18 @@ mod tests {
             .insert("URL".to_string());
         app.sync_list_views();
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
                 render_tab_environments(
                     f,
+                    ctx,
                     &mut app,
                     Rect::new(0, 0, area.width, 10),
                     Rect::new(0, 10, area.width, 10),
                     Block::default(),
-                    Style::default(),
-                    Style::default(),
                 );
             })
             .unwrap();
@@ -3959,7 +4052,7 @@ mod tests {
             .find(|row| row.contains("production"))
             .expect("environment row rendered");
         let cells: Vec<_> = env_row.split_whitespace().collect();
-        let icons = crate::config::ICONS.read().unwrap();
+        let icons = ctx.icons;
         assert_eq!(
             cells,
             [
@@ -3989,10 +4082,12 @@ mod tests {
         }
         app.terminal_scroll = usize::MAX;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
                 let area = f.area();
-                render_tab_terminal(f, &mut app, area, Style::default());
+                render_tab_terminal(f, ctx, &mut app, area);
             })
             .unwrap();
 

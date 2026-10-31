@@ -1,5 +1,5 @@
-use crate::config::{ICONS, THEME};
 use crate::syntax::{LineHighlighter, ScopeKinds, styled_tokens, syntax_for_path};
+use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -22,6 +22,7 @@ pub(crate) struct CommentAnchor<'a> {
 pub(crate) type CommentRow = (String, Style, Vec<(Style, String)>);
 
 pub(crate) fn format_comment_with_suggestions(
+    ctx: &RenderCtx<'_>,
     body: &str,
     anchor: &CommentAnchor,
     all_lines: &[crate::app::DiffLine],
@@ -42,7 +43,7 @@ pub(crate) fn format_comment_with_suggestions(
     let mut suggestion_highlighter: Option<LineHighlighter> = None;
     let continuation_prefix = " ".repeat(Span::raw(prefix).width());
     let (suggestion_start, suggestion_end) = {
-        let icons = ICONS.read().unwrap();
+        let icons = ctx.icons;
         (icons.suggestion_start.clone(), icons.suggestion_end.clone())
     };
 
@@ -103,7 +104,7 @@ pub(crate) fn format_comment_with_suggestions(
                 prefix_style,
                 vec![(
                     Style::default()
-                        .fg(THEME.read().unwrap().green)
+                        .fg(ctx.theme.green)
                         .add_modifier(Modifier::BOLD),
                     suggestion_start.clone(),
                 )],
@@ -111,7 +112,7 @@ pub(crate) fn format_comment_with_suggestions(
 
             // Print original code as DELETIONS (red)
             for orig in &original_lines {
-                let theme = THEME.read().unwrap();
+                let theme = &ctx.theme;
                 let code_fg = theme.diff_deletion_fg;
                 let code_bg = theme.diff_deletion_bg;
                 let prefix_fg = theme.red;
@@ -124,7 +125,7 @@ pub(crate) fn format_comment_with_suggestions(
                     "│ - ".to_string(),
                 )];
 
-                match orig.syntax_spans(&theme) {
+                match orig.syntax_spans(theme) {
                     Some(highlighted) => spans.extend(
                         highlighted.map(|(style, text)| (style.bg(code_bg), text.to_string())),
                     ),
@@ -143,14 +144,14 @@ pub(crate) fn format_comment_with_suggestions(
                 prefix_style,
                 vec![(
                     Style::default()
-                        .fg(THEME.read().unwrap().green)
+                        .fg(ctx.theme.green)
                         .add_modifier(Modifier::BOLD),
                     suggestion_end.clone(),
                 )],
             ));
         } else if in_suggestion {
             // Print suggested code as ADDITIONS (green)
-            let theme = THEME.read().unwrap();
+            let theme = &ctx.theme;
             let code_fg = theme.diff_addition_fg;
             let code_bg = theme.diff_addition_bg;
             let prefix_fg = theme.green;
@@ -169,7 +170,7 @@ pub(crate) fn format_comment_with_suggestions(
 
             match highlighted {
                 Some(tokens) => spans.extend(
-                    styled_tokens(&tokens, body_line, &theme)
+                    styled_tokens(&tokens, body_line, theme)
                         .map(|(style, text)| (style.bg(code_bg), text.to_string())),
                 ),
                 None => spans.push((
@@ -184,7 +185,7 @@ pub(crate) fn format_comment_with_suggestions(
                 current_prefix,
                 prefix_style,
                 vec![(
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(ctx.theme.text_normal),
                     body_line.to_string(),
                 )],
             ));
@@ -195,10 +196,7 @@ pub(crate) fn format_comment_with_suggestions(
         result_lines.push((
             prefix.to_string(),
             prefix_style,
-            vec![(
-                Style::default().fg(THEME.read().unwrap().text_normal),
-                String::new(),
-            )],
+            vec![(Style::default().fg(ctx.theme.text_normal), String::new())],
         ));
     }
 
@@ -388,9 +386,10 @@ mod tests {
     #[test]
     fn test_get_label_color() {
         let colors = std::collections::HashMap::new();
-        let color1 = get_label_color("bug", &colors);
-        let _color2 = get_label_color("feature", &colors);
-        let color3 = get_label_color("bug", &colors);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let color1 = get_label_color("bug", &colors, &ctx.theme);
+        let _color2 = get_label_color("feature", &colors, &ctx.theme);
+        let color3 = get_label_color("bug", &colors, &ctx.theme);
 
         assert_eq!(color1, color3);
         match color1 {
@@ -403,11 +402,12 @@ mod tests {
     fn test_render_labels_cell() {
         let labels = vec!["bug".to_string(), "backend".to_string()];
         let colors = std::collections::HashMap::new();
-        let cell_empty = render_labels_cell(&[], &colors, "", false, false, 24);
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let cell_empty = render_labels_cell(&[], &colors, "", false, false, 24, &ctx.theme);
         let cell_str_empty = format!("{cell_empty:?}");
         assert!(cell_str_empty.contains("—"));
 
-        let cell_normal = render_labels_cell(&labels, &colors, "", false, false, 24);
+        let cell_normal = render_labels_cell(&labels, &colors, "", false, false, 24, &ctx.theme);
         let cell_str = format!("{cell_normal:?}");
         assert!(cell_str.contains("bug"));
         assert!(cell_str.contains("backend"));
@@ -429,7 +429,9 @@ mod tests {
         let prefix = "prefix";
         let prefix_style = Style::default();
 
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         let formatted = format_comment_with_suggestions(
+            ctx,
             body,
             &CommentAnchor {
                 file_path,
@@ -445,7 +447,7 @@ mod tests {
 
         assert_eq!(formatted.len(), 6);
         assert_eq!(formatted[0].2[0].1, "This is a comment");
-        let icons = crate::config::ICONS.read().unwrap();
+        let icons = ctx.icons;
         assert_eq!(formatted[1].2[0].1, icons.suggestion_start);
         assert_eq!(formatted[2].2[0].1, "│ - ");
         assert_eq!(formatted[2].2[1].1, "old line content");
@@ -465,7 +467,9 @@ mod tests {
             start_old: None,
             end_old: None,
         };
-        let formatted = format_comment_with_suggestions(body, &anchor, &[], "", Style::default());
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let formatted =
+            format_comment_with_suggestions(ctx, body, &anchor, &[], "", Style::default());
 
         let suggested: Vec<String> = formatted[1..4]
             .iter()
@@ -477,7 +481,9 @@ mod tests {
     #[test]
     fn comment_continuation_lines_align_under_a_wide_prefix() {
         let prefix = " 💬 @alice: ";
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
         let formatted = format_comment_with_suggestions(
+            ctx,
             "first line\nsecond line",
             &CommentAnchor {
                 file_path: "src/app.rs",

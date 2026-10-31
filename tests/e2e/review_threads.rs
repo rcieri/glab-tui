@@ -166,13 +166,9 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
 
     session.send_input(b"r");
     session
-        .wait_for_screen_contains("Approve", 5000)
-        .expect("r should offer the review verdicts");
-    session.send_input(b"\r");
-    session
-        .wait_for_screen_contains("Summary", 5000)
-        .expect("a verdict should ask for the summary");
-    session.send_input(b"\r");
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    press_keys(&session, b"j\r");
 
     let deadline = Instant::now() + Duration::from_secs(10);
     while !session.get_cli_calls().contains("mr approve 2") && Instant::now() < deadline {
@@ -200,6 +196,80 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
     assert_eq!(draft["note"], "nit");
     assert_eq!(draft["position"]["new_path"], "docs/readme.md");
     assert_eq!(draft["position"]["new_line"], 1, "the draft keeps its line");
+    session
+        .wait_for_screen_contains("Review submitted on MR #2", 5000)
+        .expect("a posted review closes the overlay with a notice");
+}
+
+/// Diff view with one draft comment on the unchanged `# Pagination` line.
+fn session_with_one_draft(session: TestSession) -> TestSession {
+    let mut session = open_diff_view(session);
+    press_keys(&session, b"\t");
+    let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
+    for _ in 0..8 {
+        if wait_for_row(&mut session, on_code_line, 300).is_ok() {
+            break;
+        }
+        press_keys(&session, b"j");
+    }
+    session.send_input(b"c");
+    press_keys(&session, b"nit");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains("1 pending", 5000)
+        .expect("the comment should be kept as a draft");
+    session
+}
+
+#[test]
+fn test_failed_review_submission_shows_the_error_in_the_overlay_and_keeps_the_drafts() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_FAIL_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    press_keys(&session, b"\tLGTM\r");
+    session
+        .wait_for_screen_contains("404 Not Found", 10000)
+        .expect("the failure is shown inside the overlay");
+    let screen = session.emulator.get_text();
+    assert!(
+        screen.contains("Submit Merge Request Review") && screen.contains("LGTM"),
+        "the overlay stays open with its summary:\n{screen}"
+    );
+
+    press_keys(&session, b"\x1b");
+    session.settle(300);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Submit Merge Request Review") && screen.contains("1 pending"),
+        "Esc closes the overlay and the draft is still pending:\n{screen}"
+    );
+}
+
+#[test]
+fn test_review_submission_in_flight_shows_a_loading_state() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_HANG_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    press_keys(&session, b"\r");
+    session
+        .wait_for_screen_contains("Submitting review…", 10000)
+        .expect("the overlay shows the submission running");
+    press_keys(&session, b"\x1b");
+    session.settle(300);
+    assert!(
+        session.emulator.get_text().contains("Submitting review…"),
+        "keys are ignored while the review is posted"
+    );
 }
 
 #[test]

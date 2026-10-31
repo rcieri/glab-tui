@@ -643,7 +643,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `e` | Add code suggestion via `$EDITOR` |
 | `a` | Open comment actions menu (reply, resolve, edit, delete) |
 | `T` | Review threads overview: every thread, including general and outdated ones |
-| `r` | Submit review (Approve / Request Changes / Comment) |
+| `r` | Submit review: pick Comment / Approve / Request changes / Keep as draft, write the summary (`Ctrl+E` opens `$EDITOR`) and submit. A failed submission shows its error in the dialog and keeps the drafts |
 | `/` / `f` | Search within diff |
 | `Ctrl+N` | Next search match |
 | `Ctrl+Shift+N` | Previous search match |

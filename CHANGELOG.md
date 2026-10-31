@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+- **Submit-review overlay**: `r` in the diff view (and **Submit** on the dialog shown when leaving it with drafts) opens one dialog instead of a verdict picker followed by a summary prompt. It holds the verdict as radio buttons (Comment, Approve, Request changes, Keep as draft), the summary (`Ctrl+E` opens `$EDITOR`), how many draft comments the review posts, and Submit / Cancel buttons. While the review is posted the dialog shows that it is submitting and ignores keys. A failure is shown inside the dialog and keeps the draft comments and the summary, so the review can be submitted again: before, the drafts were dropped before the request ran and a failure only raised a toast. An empty Comment or Request changes review is refused in the dialog before anything is sent (#599).
+
 ## [0.9.4] - 2026-10-29
 
 ### Breaking Changes

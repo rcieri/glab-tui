@@ -75,6 +75,29 @@ fn set_or_remove_env(name: &str, value: Option<&str>) {
     }
 }
 
+/// Holds `TEST_ENV_MUTEX` and points every location variable at a tempdir,
+/// for tests that write the cache or config files.
+#[cfg(test)]
+pub(crate) struct IsolatedHome {
+    _env: EnvGuard,
+    _home: tempfile::TempDir,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+pub(crate) fn isolate_home() -> IsolatedHome {
+    let lock = TEST_ENV_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let env = EnvGuard::isolate_home(home.path());
+    IsolatedHome {
+        _env: env,
+        _home: home,
+        _lock: lock,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub bg: Color,

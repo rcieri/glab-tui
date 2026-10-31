@@ -93,6 +93,12 @@ pub enum Event {
         status: String,
         execution: Box<crate::command_log::Execution>,
     },
+    /// The review the submit-review overlay posted on MR/PR `mr_iid`
+    /// finished.
+    ReviewSubmitted {
+        mr_iid: u64,
+        result: Result<(), String>,
+    },
     MilestonesFetched(Vec<crate::domain::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::domain::issues::Issue>),
     JobTraceFetched(u64, Result<crate::domain::job_trace::JobTrace, String>),

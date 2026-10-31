@@ -132,6 +132,40 @@ fn spawn_mr_review_task(
     });
 }
 
+/// After a successful mutation: refetch `tab` and, while a diff is open, the
+/// diff and its comments, so the change shows up.
+fn refresh_after_mutation(app: &mut App, tab: app::Tab, events: &EventHandler) {
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    if !app.loading_tabs.contains(&tab) {
+        app.start_loading_tab(tab);
+    }
+    spawn_refresh_active_tab(
+        &client.clone().muted(),
+        &app.scope,
+        app.requested_state_queries(),
+        tab,
+        app.scoped_sender(events.sender()),
+    );
+    let Some(diff_view) = &app.diff_view else {
+        return;
+    };
+    let project_context = diff_view.project_path.clone();
+    let mr_iid = diff_view.mr_iid;
+    let tx = app.scoped_sender(events.sender());
+    tokio::spawn(async move {
+        if let Ok((diff_view, comments)) =
+            crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await
+        {
+            let _ = tx.send(Event::DiffFetched {
+                diff_view,
+                comments,
+            });
+        }
+    });
+}
+
 /// Posts one diff comment right away, outside review mode, as a single-comment
 /// review so it lands on its line exactly like a submitted draft would.
 fn post_review_comment(
@@ -339,9 +373,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                     }
                     OverlayKind::Selector => {
                         let has_search = app.selector.as_ref().is_some_and(|s| {
-                            s.field_type != "comment_action_select"
-                                && s.field_type != "review_submit_status"
-                                && s.field_type != "related_mrs"
+                            s.field_type != "comment_action_select" && s.field_type != "related_mrs"
                         });
                         let sr = if has_search { 3 } else { 0 };
                         handle_selector_mouse(app, inner, row, sr, 1);
@@ -367,6 +399,10 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         if row >= inner.y && row < inner.y + 3 {
                             app.help_search_query.clear();
                         }
+                        return;
+                    }
+                    OverlayKind::ReviewSubmit => {
+                        handlers::review_submit::click(app, row, col);
                         return;
                     }
                     OverlayKind::TerminalInspector => return,
@@ -2276,6 +2312,11 @@ async fn main() -> Result<()> {
                     app.sync_list_views();
                     terminal.draw(|f| ui::render(f, &mut app))?;
                 }
+                Event::ReviewSubmitted { mr_iid, result } => {
+                    if handlers::review_submit::finish(&mut app, mr_iid, result) {
+                        refresh_after_mutation(&mut app, app::Tab::MergeRequests, &events);
+                    }
+                }
                 Event::CommandCompleted(tab, res) => {
                     if res.is_ok() {
                         if let Some(row) = app.latest_running_cli_command() {
@@ -2283,44 +2324,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     match res {
-                        Ok(_) => {
-                            if let Some(client) = app.gitlab_client.clone() {
-                                if !app.loading_tabs.contains(&tab) {
-                                    app.start_loading_tab(tab);
-                                }
-                                spawn_refresh_active_tab(
-                                    &client.muted(),
-                                    &app.scope,
-                                    app.requested_state_queries(),
-                                    tab,
-                                    app.scoped_sender(events.sender()),
-                                );
-                            }
-                            if let Some(diff_view) = &app.diff_view {
-                                let client = app.gitlab_client.clone();
-                                let project_context = diff_view.project_path.clone();
-                                let tx = app.scoped_sender(events.sender());
-                                let mr_iid = diff_view.mr_iid;
-                                tokio::spawn(async move {
-                                    let Some(client) = client else {
-                                        return;
-                                    };
-                                    if let Ok((diff_view, comments)) =
-                                        crate::fetch::fetch_diff_view(
-                                            &client,
-                                            &project_context,
-                                            mr_iid,
-                                        )
-                                        .await
-                                    {
-                                        let _ = tx.send(Event::DiffFetched {
-                                            diff_view,
-                                            comments,
-                                        });
-                                    }
-                                });
-                            }
-                        }
+                        Ok(_) => refresh_after_mutation(&mut app, tab, &events),
                         Err(err) => {
                             app.show_error(err);
                             // CLI failure: full stderr is in the terminal log.
@@ -2378,6 +2382,7 @@ async fn main() -> Result<()> {
                         && app.selector.is_none()
                         && !app.show_help
                         && app.review_threads.is_none()
+                        && app.review_submit.is_none()
                         && app.terminal_inspector.is_none()
                         && !app.focus_column_checklist
                         && !app.is_typing_search
@@ -2388,7 +2393,26 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if handle_help_overlay(&mut app, &key_event)
+                    if key_event
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && key_event.code == KeyCode::Char('e')
+                    {
+                        if let Some(overlay) =
+                            app.review_submit.as_mut().filter(|o| !o.is_submitting())
+                        {
+                            if let Some(summary) =
+                                edit_in_editor(overlay.summary.value(), &mut terminal)
+                            {
+                                overlay.summary.set_value(summary);
+                            }
+                            overlay.focus = crate::review_submit::ReviewSubmitFocus::Summary;
+                            continue;
+                        }
+                    }
+
+                    if handlers::review_submit::handle_key(&mut app, &key_event, events.sender())
+                        || handle_help_overlay(&mut app, &key_event)
                         || handle_help_keybinding(&mut app, &key_event)
                         || handle_submit_dialog(&mut app, &key_event, events.sender())
                         || handle_switch_repo(&mut app, &key_event)
@@ -2406,9 +2430,10 @@ async fn main() -> Result<()> {
                             .contains(crossterm::event::KeyModifiers::CONTROL)
                             && key_event.code == KeyCode::Char('e')
                         {
-                            if let Some(new_val) = edit_in_editor(text_input.value(), &mut terminal)
+                            if let Some(new_val) =
+                                edit_in_editor(text_input.buffer.value(), &mut terminal)
                             {
-                                text_input.set_value(new_val);
+                                text_input.buffer.set_value(new_val);
                             }
                             app.text_input = Some(text_input);
                             continue;
@@ -2417,28 +2442,8 @@ async fn main() -> Result<()> {
                             KeyCode::Esc => {
                                 // Cancel
                             }
-                            KeyCode::Backspace => {
-                                text_input.delete_char_before_cursor();
-                                app.text_input = Some(text_input);
-                            }
-                            KeyCode::Delete => {
-                                text_input.delete_char_at_cursor();
-                                app.text_input = Some(text_input);
-                            }
-                            KeyCode::Left => {
-                                text_input.move_cursor_left();
-                                app.text_input = Some(text_input);
-                            }
-                            KeyCode::Right => {
-                                text_input.move_cursor_right();
-                                app.text_input = Some(text_input);
-                            }
-                            KeyCode::Char(c) => {
-                                text_input.insert_char(c);
-                                app.text_input = Some(text_input);
-                            }
                             KeyCode::Enter => {
-                                let value = text_input.value().to_string();
+                                let value = text_input.buffer.value().to_string();
                                 match text_input.action {
                                     crate::app::TextInputAction::EditPageSize => {
                                         if let Ok(new_size) = value.trim().parse::<usize>() {
@@ -2681,35 +2686,6 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    crate::app::TextInputAction::SubmitReviewFinal {
-                                        mr_iid,
-                                        status,
-                                    } => {
-                                        let comments = std::mem::take(&mut app.draft_comments);
-                                        let project = app
-                                            .diff_view
-                                            .as_ref()
-                                            .filter(|diff| diff.mr_iid == mr_iid)
-                                            .map(|diff| diff.project_path.clone())
-                                            .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
-                                        app.persist_draft_comments(&project, mr_iid);
-                                        app.in_review_mode = false;
-                                        if let Some(client) = app.gitlab_client.clone() {
-                                            let event = ReviewEvent::from_label(&status);
-                                            let body = value.clone();
-                                            let tx = events.sender();
-                                            let _ = tx.send(Event::CommandStarted(format!(
-                                                "Submitting review on MR #{mr_iid}"
-                                            )));
-                                            spawn_mr_review_task(tx, async move {
-                                                client
-                                                    .submit_review(
-                                                        &project, mr_iid, event, &body, &comments,
-                                                    )
-                                                    .await
-                                            });
-                                        }
-                                    }
                                     crate::app::TextInputAction::EditNewField { field_idx } => {
                                         // Write the value directly into the edit_menu fields
                                         // (no CLI call — iid==0 means this entity is not yet created)
@@ -2721,7 +2697,8 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             }
-                            _ => {
+                            code => {
+                                text_input.buffer.apply_edit_key(code);
                                 app.text_input = Some(text_input);
                             }
                         }
@@ -2769,7 +2746,6 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
                                     let has_filter = selector.field_type != "comment_action_select"
-                                        && selector.field_type != "review_submit_status"
                                         && selector.field_type != "related_mrs"
                                         && selector.field_type != "linked_issues";
                                     if has_filter {
@@ -3269,31 +3245,6 @@ async fn main() -> Result<()> {
                                             app.config.theme_preset = Some(name);
                                             app.apply_config();
                                         }
-                                        continue;
-                                    }
-
-                                    if field_type == "review_submit_status" {
-                                        let filtered_items = selector.get_filtered_items();
-                                        let mut selected_val =
-                                            selector.selected_items.iter().next().cloned();
-                                        if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val =
-                                                Some(filtered_items[selector.cursor_idx].clone());
-                                        }
-
-                                        let status =
-                                            selected_val.unwrap_or_else(|| "Comment".to_string());
-                                        app.selector = None;
-                                        app.text_input = Some(crate::app::TextInput::new(
-                                            format!(
-                                                " Submit Review ({status}) - Summary/Description "
-                                            ),
-                                            String::new(),
-                                            crate::app::TextInputAction::SubmitReviewFinal {
-                                                mr_iid: selector.entity_iid,
-                                                status,
-                                            },
-                                        ));
                                         continue;
                                     }
 
@@ -7422,32 +7373,11 @@ async fn main() -> Result<()> {
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('r') => {
-                                let is_github = app.is_github();
-                                app.selector = Some(crate::app::Selector {
-                                    title: format!(
-                                        " Submit {} Review ",
-                                        if is_github {
-                                            "Pull Request"
-                                        } else {
-                                            "Merge Request"
-                                        }
-                                    ),
-                                    all_items: vec![
-                                        "Approve".to_string(),
-                                        "Request Changes".to_string(),
-                                        "Comment".to_string(),
-                                    ],
-                                    selected_items: std::collections::HashSet::new(),
-                                    cursor_idx: 0,
-                                    search_query: String::new(),
-                                    is_filtering: false,
-                                    is_loading: false,
-                                    entity_iid: diff_view.mr_iid,
-                                    entity_type: "mr".to_string(),
-                                    field_type: "review_submit_status".to_string(),
-                                    multi_select: false,
-                                    state: ListState::default(),
-                                });
+                                handlers::review_submit::open(
+                                    &mut app,
+                                    diff_view.mr_iid,
+                                    diff_view.project_path.clone(),
+                                );
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('e') => {

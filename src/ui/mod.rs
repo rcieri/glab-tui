@@ -5,6 +5,7 @@ pub mod job_trace;
 pub mod list_tab;
 pub(crate) mod modal;
 mod overlays;
+mod review_submit;
 mod review_threads;
 mod tabs;
 mod terminal_inspector;

@@ -589,6 +589,9 @@ pub struct Selector {
     pub field_type: String,  // "labels", "assignees", "reviewers", "milestone"
     pub multi_select: bool,
     pub state: ListState,
+    /// The item fetch this selector started. Its notices are drawn inside
+    /// the selector rather than as a toast.
+    pub request: Option<crate::notice::RequestTag>,
 }
 
 impl Selector {
@@ -685,6 +688,7 @@ impl Selector {
             field_type: field_type.to_string(),
             multi_select: false,
             state: ListState::default(),
+            request: None,
         }
     }
 
@@ -3757,34 +3761,6 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
-/// How long a `StatusMessage` stays in the header bar.
-pub const STATUS_NOTICE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// A confirmation shown in the header bar until `STATUS_NOTICE_LIFETIME`
-/// passes. Errors use the toast instead.
-#[derive(Clone, Debug, PartialEq)]
-pub struct StatusMessage {
-    text: String,
-    shown_at: std::time::Instant,
-}
-
-impl StatusMessage {
-    pub fn notice(text: impl Into<String>) -> Self {
-        StatusMessage {
-            text: text.into(),
-            shown_at: std::time::Instant::now(),
-        }
-    }
-
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.shown_at.elapsed() >= STATUS_NOTICE_LIFETIME
-    }
-}
-
 /// Why a tab shows rows that may be out of date. Kept per tab in
 /// `App::stale_tabs` until that tab's own fetch succeeds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3868,13 +3844,8 @@ pub struct App {
     pub pending_mr_select: Option<u64>,
     pub pending_issue_select: Option<u64>,
     pub job_trace: Option<crate::ui::job_trace::JobTraceView>,
-    pub error_message: Option<String>,
-    pub error_message_at: Option<std::time::Instant>,
-    /// True when the current error toast originated from a real glab/gh CLI
-    /// failure (stderr is captured in the terminal log).  False for guard
-    /// rejections that never ran a CLI command.  Controls the hint line shown
-    /// in the toast.
-    pub error_has_cli_detail: bool,
+    notices: crate::notice::NoticeQueue,
+    last_request_tag: crate::notice::RequestTag,
     pub runners: ListTab<RunnerColumn>,
     pub releases: ListTab<ReleaseColumn>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
@@ -4011,7 +3982,6 @@ pub struct App {
     pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
-    pub status_message: Option<StatusMessage>,
     pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
@@ -4102,9 +4072,8 @@ impl Default for App {
             pending_mr_select: None,
             pending_issue_select: None,
             job_trace: None,
-            error_message: None,
-            error_message_at: None,
-            error_has_cli_detail: false,
+            notices: crate::notice::NoticeQueue::default(),
+            last_request_tag: crate::notice::RequestTag::default(),
             runners: ListTab::default(),
             releases: ListTab::default(),
             pipeline_jobs: std::collections::HashMap::new(),
@@ -4172,7 +4141,6 @@ impl Default for App {
             submit_dialog: None,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
-            status_message: None,
             stale_tabs: std::collections::HashMap::new(),
             clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
@@ -4379,7 +4347,7 @@ impl App {
         self.text_input = None;
         self.edit_menu = None;
         self.submit_dialog = None;
-        self.status_message = None;
+        self.clear_info_notices();
         self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
@@ -5296,12 +5264,24 @@ impl App {
     /// Single entry point for non-error feedback in the header bar. Stale
     /// data has its own badge (`stale_tabs`), so a notice never hides it.
     pub fn show_notice(&mut self, text: impl Into<String>) {
-        self.status_message = Some(StatusMessage::notice(text));
+        self.push_notice(crate::notice::Notice::info(text));
     }
 
-    /// Single entry point for surfacing a runtime error. Sets the transient
-    /// error toast (`error_message`) and marks the failed terminal command so
-    /// both UI surfaces stay in sync.
+    /// Takes down the header-bar notices, e.g. a "Loading…" notice once the
+    /// load it announced has landed. Error toasts stay until they expire.
+    pub fn clear_info_notices(&mut self) {
+        self.notices.dismiss(crate::notice::NoticeLevel::Info);
+    }
+
+    /// Queues a notice as built, for one that names its own request or
+    /// detail. Errors raised this way mark no terminal entry failed.
+    pub fn push_notice(&mut self, notice: crate::notice::Notice) {
+        self.notices.push(notice);
+    }
+
+    /// Single entry point for surfacing a runtime error. Raises the error
+    /// toast and marks the failed terminal command so both UI surfaces stay
+    /// in sync.
     ///
     /// The failed command is matched with the same two-tier preference the
     /// `CommandCompleted` handler used before this helper: a still-running
@@ -5309,8 +5289,21 @@ impl App {
     /// bulk/submit operation takes precedence, falling back to the most
     /// recent running command.
     pub fn show_error(&mut self, msg: String) {
-        let failed_status = format!("Failed: {msg}");
-        self.raise_error_toast(msg);
+        self.report_error(crate::notice::Notice::error(msg));
+    }
+
+    /// `show_error` for a failed glab/gh call whose stderr is in the
+    /// Terminal tab: the toast points there. Guard rejections that never ran
+    /// a CLI command use `show_error`.
+    pub fn show_cli_error(&mut self, msg: String) {
+        self.report_error(
+            crate::notice::Notice::error(msg).with_detail(crate::notice::CLI_LOG_HINT),
+        );
+    }
+
+    fn report_error(&mut self, notice: crate::notice::Notice) {
+        let failed_status = format!("Failed: {}", notice.text());
+        self.push_notice(notice);
         let row = self
             .terminal_commands
             .find_latest(|cmd| {
@@ -5330,8 +5323,36 @@ impl App {
     /// Shows the error toast without marking any terminal entry failed, for
     /// failures already recorded with `record_command_outcome`.
     pub fn raise_error_toast(&mut self, msg: String) {
-        self.error_message_at = Some(std::time::Instant::now());
-        self.error_message = Some(msg);
+        self.push_notice(crate::notice::Notice::error(msg));
+    }
+
+    /// A fresh tag for a request a modal is about to start.
+    pub fn next_request_tag(&mut self) -> crate::notice::RequestTag {
+        self.last_request_tag = self.last_request_tag.next();
+        self.last_request_tag
+    }
+
+    /// The request of the modal on screen, whose notices it draws itself.
+    pub fn open_modal_request(&self) -> Option<crate::notice::RequestTag> {
+        self.selector.as_ref().and_then(|selector| selector.request)
+    }
+
+    /// The newest notice about the open modal's request.
+    pub fn modal_notice(&self) -> Option<&crate::notice::Notice> {
+        self.open_modal_request()
+            .and_then(|request| self.notices.latest_for(request))
+    }
+
+    /// The newest error for the toast: one the open modal does not draw.
+    pub fn toast_notice(&self) -> Option<&crate::notice::Notice> {
+        self.notices
+            .latest_outside(crate::notice::NoticeLevel::Error, self.open_modal_request())
+    }
+
+    /// The newest non-error notice for the header bar.
+    pub fn header_notice(&self) -> Option<&crate::notice::Notice> {
+        self.notices
+            .latest_outside(crate::notice::NoticeLevel::Info, self.open_modal_request())
     }
 
     /// Appends a finished command to the terminal log. A failure also raises
@@ -6087,7 +6108,9 @@ impl App {
         }
     }
 
-    pub fn tick(&mut self) {}
+    pub fn tick(&mut self) {
+        self.notices.expire(std::time::Instant::now());
+    }
 
     pub fn unresolved_threads_count(&self) -> usize {
         use std::collections::HashMap;
@@ -9353,7 +9376,7 @@ mod tests {
         ];
         app.issues.state.select(Some(0));
         app.show_notice("Selected all 3 items");
-        let status = app.status_message.clone();
+        let status = app.header_notice().cloned();
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -9361,7 +9384,7 @@ mod tests {
             copied.borrow().as_deref(),
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
-        assert_eq!(app.status_message, status);
+        assert_eq!(app.header_notice(), status.as_ref());
     }
 
     #[test]
@@ -9418,7 +9441,7 @@ mod tests {
         ];
         app.mrs.state.select(Some(0));
         app.show_notice("Selected all 3 items");
-        let status = app.status_message.clone();
+        let status = app.header_notice().cloned();
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -9435,7 +9458,7 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message, status);
+        assert_eq!(app.header_notice(), status.as_ref());
     }
 
     #[test]
@@ -10322,6 +10345,7 @@ diff --git a/Makefile b/Makefile
             field_type: "labels".to_string(),
             multi_select: true,
             state: ListState::default(),
+            request: None,
         };
 
         selector.move_by(true, 15);
@@ -10357,6 +10381,7 @@ diff --git a/Makefile b/Makefile
             field_type: "labels".to_string(),
             multi_select: true,
             state: ListState::default(),
+            request: None,
         };
 
         let filtered = selector.get_filtered_items();
@@ -12679,8 +12704,10 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.error_message, Some("boom".to_string()));
-        assert!(app.error_message_at.is_some());
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some("boom")
+        );
         assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
@@ -13017,7 +13044,7 @@ index 123456..789012 100644
         assert_eq!(entry.status, "Failed: HTTP 401");
         assert_eq!(entry.execution, execution);
         assert_eq!(
-            app.error_message.as_deref(),
+            app.toast_notice().map(crate::notice::Notice::text),
             Some("Re-run failed: HTTP 401")
         );
     }

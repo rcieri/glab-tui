@@ -21,10 +21,13 @@ use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestio
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
-use crate::app::{App, DiffLine, StatusMessage, Tab};
+use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME, Theme};
 use crate::utils::format::{sanitize_untrusted, truncate};
 use std::collections::HashSet;
+
+/// Rows a modal gives to a notice about its own request, below its content.
+pub const MODAL_NOTICE_ROWS: u16 = 1;
 
 /// Render the active edit/create menu as an interactive inspector into the
 /// (full-zoom) detail pane — the same pane the read-only preview uses. Returns
@@ -227,14 +230,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         return;
     }
 
-    if app
-        .status_message
-        .as_ref()
-        .is_some_and(StatusMessage::is_expired)
-    {
-        app.status_message = None;
-    }
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -325,7 +320,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    if let Some(status) = &app.status_message {
+    if let Some(status) = app.header_notice() {
         let text = crate::utils::format::sanitize_untrusted(status.text());
         title_spans.push(Span::raw(" "));
         title_spans.push(Span::styled(
@@ -1841,37 +1836,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     render_overlays(f, app, size);
 
-    if app.error_message.is_some() {
-        if app.error_message_at.is_none() {
-            app.error_message_at = Some(std::time::Instant::now());
-        }
-        if let Some(at) = app.error_message_at {
-            if at.elapsed() > std::time::Duration::from_secs(5) {
-                app.error_message = None;
-                app.error_message_at = None;
-                app.error_has_cli_detail = false;
-            }
-        }
-    }
-    if let Some(ref msg) = app.error_message {
+    if let Some(notice) = app.toast_notice() {
         let theme = THEME.read().unwrap();
         let icons = ICONS.read().unwrap();
-        let show_hint = app.error_has_cli_detail;
 
         // First content line: "  <icon> <msg>  "
-        let label = format!("  {} {}  ", icons.status_failed, sanitize_untrusted(msg));
-        let hint = "  Full details in the terminal log below  ";
+        let label = format!(
+            "  {} {}  ",
+            icons.status_failed,
+            sanitize_untrusted(notice.text())
+        );
+        let hint = notice
+            .detail()
+            .map(|detail| format!("  {}  ", sanitize_untrusted(detail)));
 
         // Box width: content line width (plus hint width when shown), capped to terminal width
-        let content_w = if show_hint {
-            label.chars().count().max(hint.chars().count()) as u16
-        } else {
-            label.chars().count() as u16
-        };
+        let content_w = hint.as_ref().map_or(label.chars().count(), |hint| {
+            label.chars().count().max(hint.chars().count())
+        }) as u16;
         let inner_w = content_w.min(size.width.saturating_sub(4));
         let box_w = inner_w + 2;
         // 4 rows when hint is shown, 3 rows otherwise
-        let box_h = if show_hint { 4u16 } else { 3u16 };
+        let box_h = if hint.is_some() { 4u16 } else { 3u16 };
         let box_x = size.x + (size.width.saturating_sub(box_w)) / 2;
         let box_y = size.height.saturating_sub(box_h + 1);
         let toast_area = Rect::new(box_x, box_y, box_w, box_h);
@@ -1892,7 +1878,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let inner = block.inner(toast_area);
         f.render_widget(block, toast_area);
 
-        if show_hint {
+        if let Some(hint) = &hint {
             // Split inner into two rows: error message + hint
             use ratatui::layout::Layout;
             let rows = Layout::default()
@@ -1940,7 +1926,7 @@ mod tests {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.error_message = Some(
+        app.raise_error_toast(
             "push rejected: \u{1b}]8;;https://evil.example\u{7}feature\u{1b}]8;;\u{7}\u{1b}[5m!"
                 .to_string(),
         );
@@ -1965,5 +1951,87 @@ mod tests {
             toast_text,
             Some(format!("{icon} push rejected: feature!").as_str())
         );
+    }
+
+    fn rendered_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        buffer
+            .content()
+            .chunks(buffer.area.width as usize)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    fn loading_selector(request: crate::notice::RequestTag) -> crate::app::Selector {
+        crate::app::Selector {
+            title: "Select Labels".to_string(),
+            all_items: vec![],
+            selected_items: HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 7,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ratatui::widgets::ListState::default(),
+            request: Some(request),
+        }
+    }
+
+    #[test]
+    fn error_about_the_open_selector_request_renders_inside_the_selector() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let mut app = App::default();
+        let request = app.next_request_tag();
+        app.selector = Some(loading_selector(request));
+        app.push_notice(
+            crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
+        );
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        let selector_area = app
+            .overlay_stack
+            .iter()
+            .find(|(kind, _)| *kind == crate::app::OverlayKind::Selector)
+            .map(|(_, area)| *area)
+            .expect("selector drawn");
+        let rows = rendered_rows(&terminal);
+        let notice_rows: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.contains("Failed to load options: HTTP 502"))
+            .map(|(y, _)| y)
+            .collect();
+        assert_eq!(notice_rows.len(), 1, "drawn once, not also as a toast");
+        let y = notice_rows[0] as u16;
+        assert!(
+            (selector_area.y..selector_area.y + selector_area.height).contains(&y),
+            "row {y} is outside the selector {selector_area:?}"
+        );
+        assert_eq!(app.toast_notice(), None);
+    }
+
+    #[test]
+    fn error_about_a_closed_selector_request_renders_as_the_toast() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let mut app = App::default();
+        let request = app.next_request_tag();
+        app.selector = Some(loading_selector(request));
+        app.push_notice(
+            crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
+        );
+        app.selector = None;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        let icon = ICONS.read().unwrap().status_failed.clone();
+        let toast_row = rendered_rows(&terminal)
+            .into_iter()
+            .find(|row| row.contains("Failed to load options: HTTP 502"))
+            .expect("toast rendered");
+        assert!(toast_row.contains(&format!("{icon} Failed to load options: HTTP 502")));
     }
 }

@@ -1,9 +1,12 @@
+use super::MODAL_NOTICE_ROWS;
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
 use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
+use crate::notice::{Notice, NoticeLevel};
+use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -42,6 +45,28 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
     (Text::from(lines), count)
 }
 
+/// One row inside a modal for a notice about the modal's own request.
+fn modal_notice_line(notice: &Notice, failed_icon: &str) -> Line<'static> {
+    let theme = THEME.read().unwrap();
+    let mut spans = match notice.level() {
+        NoticeLevel::Error => vec![Span::styled(
+            format!(" {failed_icon} {}", sanitize_untrusted(notice.text())),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        )],
+        NoticeLevel::Info => vec![Span::styled(
+            format!(" {}", sanitize_untrusted(notice.text())),
+            Style::default().fg(theme.yellow),
+        )],
+    };
+    if let Some(detail) = notice.detail() {
+        spans.push(Span::styled(
+            format!(" {}", sanitize_untrusted(detail)),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    Line::from(spans)
+}
+
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
@@ -60,6 +85,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     // Below the re-run confirmation it opens.
     super::terminal_inspector::render_terminal_inspector(f, app, size);
 
+    let selector_notice = app.modal_notice().cloned();
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
             let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
@@ -70,16 +96,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 && selector.field_type != "review_submit_status"
                 && selector.field_type != "related_mrs";
 
-            let constraints = if has_filter {
-                vec![
-                    Constraint::Length(3), // Search/Filter
-                    Constraint::Min(0),    // List of items
-                ]
-            } else {
-                vec![
-                    Constraint::Min(0), // List of items
-                ]
-            };
+            let mut constraints = Vec::with_capacity(3);
+            if has_filter {
+                constraints.push(Constraint::Length(3)); // Search/Filter
+            }
+            constraints.push(Constraint::Min(0)); // List of items
+            if selector_notice.is_some() {
+                constraints.push(Constraint::Length(MODAL_NOTICE_ROWS));
+            }
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -91,6 +115,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             } else {
                 (None, chunks[0])
             };
+            if let Some(notice) = &selector_notice {
+                let notice_chunk = chunks[chunks.len() - 1];
+                f.render_widget(
+                    Paragraph::new(modal_notice_line(notice, &icons.status_failed))
+                        .style(Style::default().bg(THEME.read().unwrap().bg)),
+                    notice_chunk,
+                );
+            }
 
             let border_color_search = if selector.is_filtering {
                 THEME.read().unwrap().border_focused

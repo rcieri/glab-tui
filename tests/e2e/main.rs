@@ -11,6 +11,7 @@ mod job_trace;
 mod keybindings;
 mod layout;
 mod list_tab;
+mod modal_notices;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;

@@ -250,7 +250,9 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Keybinding System
 * All keybinding defaults are defined via the `keybind_defaults!` macro in [src/config.rs](src/config.rs).
-* At runtime, every keypress is matched against the config using `keybinding_matches(binding: &str, event: &KeyEvent) -> bool` in [src/keybinding.rs](src/keybinding.rs).
+* At runtime, every keypress is matched against the config using `keybinding_matches(binding: &str, press: &KeyPress) -> bool` in [src/keybinding.rs](src/keybinding.rs). `parse_binding` there is the only reader of binding strings: `keybinding_matches`, `binding_key_event` (custom commands) and `KeySequences` (sequence prefixes) all go through it. Never read a binding string by hand.
+* **Key sequences:** a binding is one key (a plain character, a named key such as `End` or `F1`, or a modifier combo such as `Ctrl+x`) or a sequence of two or more plain characters (`gg`, `gcc`). Named keys and modifier combos never take part in a sequence, and a binding with a space inside matches nothing. The terminal's `Event::Key` goes through `App::receive_key` into `App::key_buffer` (`KeyBuffer`), which resolves it as vim does: keys that start a binding wait, a complete binding nothing longer starts with fires at once, one that also starts a longer binding fires after `keybinding_timeout_ms` (`App::expire_typed_keys` on every tick, restarted by each key), and a key that completes nothing drops what was typed. The event loop takes resolved keys from `key_buffer.pop_ready()` before the channel and dispatches them as `Event::KeyPress`. Keys typed into a text field (`App::is_capturing_text`) pass straight through, so add any new text-entry state there. Sequence prefixes come from every `[keybindings.<table>]`, so they wait in every context.
+* Handlers take `&KeyPress`, which derefs to its `KeyEvent` for code that compares `key_event.code`. A sequence derefs to a `KeyCode::Null` event, so a hard-wired `KeyCode::Char('x')` arm never fires on the last character of a sequence.
 * **Pattern for all new action handlers:**
   ```rust
   _ if (key_event.code == KeyCode::Char('x')

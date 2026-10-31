@@ -3695,58 +3695,26 @@ impl SubmitDialog {
     }
 }
 
-/// A captured first keypress of a not-yet-completed key sequence (e.g. the
-/// `g` of `gg`), waiting for its second keystroke or a timeout.
-pub struct PendingKey {
-    pub event: crossterm::event::KeyEvent,
-    pub since: std::time::Instant,
-}
-
-/// Splits every string leaf of `keybindings` into sequence-prefix
-/// characters (the first character of a two-character binding, e.g. `gg`)
-/// and standalone characters (a one-character binding). Non-string values
-/// and bindings of any other length are skipped.
-fn keybinding_char_sets(
-    keybindings: &KeybindingConfig,
-) -> (
-    std::collections::HashSet<char>,
-    std::collections::HashSet<char>,
-) {
-    fn walk(
-        value: &toml::Value,
-        prefixes: &mut std::collections::HashSet<char>,
-        standalone: &mut std::collections::HashSet<char>,
-    ) {
+/// Every key sequence bound in any `[keybindings.<table>]`.
+fn key_sequences(keybindings: &KeybindingConfig) -> crate::keybinding::KeySequences {
+    fn collect<'a>(value: &'a toml::Value, bindings: &mut Vec<&'a str>) {
         match value {
             toml::Value::Table(table) => {
                 for v in table.values() {
-                    walk(v, prefixes, standalone);
+                    collect(v, bindings);
                 }
             }
-            toml::Value::String(s) => {
-                let mut chars = s.chars();
-                match (chars.next(), chars.next(), chars.next()) {
-                    (Some(c), None, None) => {
-                        standalone.insert(c);
-                    }
-                    (Some(first), Some(_), None)
-                        if !crate::keybinding::is_named_two_char_binding(s) =>
-                    {
-                        prefixes.insert(first);
-                    }
-                    _ => {}
-                }
-            }
+            toml::Value::String(s) => bindings.push(s),
             _ => {}
         }
     }
 
-    let mut prefixes = std::collections::HashSet::new();
-    let mut standalone = std::collections::HashSet::new();
-    if let Ok(value) = toml::Value::try_from(keybindings) {
-        walk(&value, &mut prefixes, &mut standalone);
-    }
-    (prefixes, standalone)
+    let Ok(value) = toml::Value::try_from(keybindings) else {
+        return crate::keybinding::KeySequences::default();
+    };
+    let mut bindings = Vec::new();
+    collect(&value, &mut bindings);
+    crate::keybinding::KeySequences::new(bindings)
 }
 
 pub struct NavFrame {
@@ -3825,21 +3793,9 @@ impl EnvironmentDeployments {
 
 pub struct App {
     pub config: Config,
-    /// The first keypress of an in-progress key sequence (e.g. the `g` of
-    /// `gg`), if one hasn't resolved or timed out yet. Set by the event loop
-    /// when a plain-character event lands on a configured sequence prefix;
-    /// cleared when the next keypress arrives or `keybinding_timeout_ms`
-    /// elapses on the tick.
-    pub pending_key: Option<PendingKey>,
-    /// First characters of every configured two-character sequence binding.
-    /// Built once from the keybindings TOML at startup; the event loop uses
-    /// it to decide whether a keypress should be deferred as a prefix.
-    pub sequence_prefixes: std::collections::HashSet<char>,
-    /// Characters of every configured one-character binding. The timeout
-    /// path dispatches a stale prefix key through this set so a character
-    /// that is both a prefix and a standalone binding still does its single
-    /// action when the sequence lapses.
-    pub standalone_chars: std::collections::HashSet<char>,
+    /// Keys typed towards a key sequence. The event loop feeds every
+    /// keypress through `receive_key` and dispatches what it resolves to.
+    pub key_buffer: crate::keybinding::KeyBuffer,
     /// Validated `[[custom_keybindings.<pane>]]` entries, rebuilt whenever
     /// the config is loaded.
     pub custom_commands: crate::custom_commands::CustomCommands,
@@ -4072,12 +4028,10 @@ pub struct App {
 impl Default for App {
     fn default() -> Self {
         let config = Config::load();
-        let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&config.keybindings);
+        let key_buffer = crate::keybinding::KeyBuffer::new(key_sequences(&config.keybindings));
         Self {
             config: config.clone(),
-            pending_key: None,
-            sequence_prefixes,
-            standalone_chars,
+            key_buffer,
             custom_commands: crate::custom_commands::CustomCommands::default(),
             active_tab: Tab::default(),
             running: true,
@@ -5545,9 +5499,6 @@ impl App {
     /// ignored or shadowed entry in the terminal log.
     pub fn load_custom_commands(&mut self) {
         let (commands, problems) = crate::custom_commands::CustomCommands::load(&self.config);
-        let (_, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
-        self.standalone_chars = standalone_chars;
-        self.standalone_chars.extend(commands.character_keys());
         self.custom_commands = commands;
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         for problem in &problems {
@@ -6052,9 +6003,8 @@ impl App {
     }
 
     pub fn apply_config(&mut self) {
-        let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
-        self.sequence_prefixes = sequence_prefixes;
-        self.standalone_chars = standalone_chars;
+        self.key_buffer
+            .set_sequences(key_sequences(&self.config.keybindings));
 
         for tab in Tab::ALL {
             let pane = match tab {
@@ -7717,7 +7667,7 @@ impl App {
     /// Whether `key` moves focus between the environment list and the shown
     /// deployments. The event loop asks before the global configure key,
     /// which is also bound to Tab by default.
-    pub fn is_deployments_focus_key(&self, key: &crossterm::event::KeyEvent) -> bool {
+    pub fn is_deployments_focus_key(&self, key: &crate::keybinding::KeyPress) -> bool {
         self.active_tab == Tab::Environments
             && self.is_detail_pane_on_screen()
             && self
@@ -7728,6 +7678,41 @@ impl App {
                 &self.config.keybindings.environments.focus_deployments,
                 key,
             )
+    }
+
+    /// Whether a keypress goes into a text field (a search, a filter, an
+    /// inline edit) rather than to a binding.
+    pub fn is_capturing_text(&self) -> bool {
+        self.text_input.is_some()
+            || self.show_help
+            || self.is_typing_search
+            || self.job_trace_searching
+            || self.editing_page_size
+            || self.selector.as_ref().is_some_and(|s| s.is_filtering)
+            || self.edit_menu.as_ref().is_some_and(|m| m.editing)
+            || self.diff_view.as_ref().is_some_and(|d| d.search_active)
+    }
+
+    fn keybinding_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.config.keybinding_timeout_ms)
+    }
+
+    /// Feeds a keypress from the terminal into `key_buffer`; what it resolves
+    /// to comes out of `key_buffer.pop_ready()`.
+    pub fn receive_key(&mut self, event: crossterm::event::KeyEvent) {
+        if self.is_capturing_text() {
+            self.key_buffer.pass_through(event);
+        } else {
+            let timeout = self.keybinding_timeout();
+            self.key_buffer
+                .push(event, std::time::Instant::now(), timeout);
+        }
+    }
+
+    /// Resolves keys that waited `keybinding_timeout_ms` for a longer binding.
+    pub fn expire_typed_keys(&mut self) {
+        let timeout = self.keybinding_timeout();
+        self.key_buffer.expire(std::time::Instant::now(), timeout);
     }
 
     /// Canonicalise a saved filter value to the display string that
@@ -13610,61 +13595,68 @@ index 123456..789012 100644
         assert!(!app.selected_pipelines.contains(&105));
     }
 
-    #[test]
-    fn keybinding_char_sets_records_two_char_and_single_char_bindings() {
-        let mut keybindings = crate::config::KeybindingConfig::default();
-        keybindings.global.next_tab = "gg".to_string();
+    fn typed(c: char) -> crossterm::event::KeyEvent {
+        let modifiers = if c.is_uppercase() {
+            crossterm::event::KeyModifiers::SHIFT
+        } else {
+            crossterm::event::KeyModifiers::NONE
+        };
+        crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char(c), modifiers)
+    }
 
-        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
-
-        assert!(prefixes.contains(&'g'));
-        // `jump_to_id = "g"` is the default, so `g` appears in both sets:
-        // pressing it starts the sequence, but the timeout path falls back
-        // to the single-key binding when the sequence lapses.
-        assert!(standalone.contains(&'g'));
-        assert!(standalone.contains(&'q'));
+    fn resolved(app: &mut App) -> Vec<crate::keybinding::KeyPress> {
+        std::iter::from_fn(|| app.key_buffer.pop_ready()).collect()
     }
 
     #[test]
-    fn keybinding_char_sets_drops_modifier_prefixed_bindings() {
-        let mut keybindings = crate::config::KeybindingConfig::default();
-        keybindings.global.refresh = "Ctrl+z".to_string();
-
-        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
-
-        assert!(
-            !prefixes.contains(&'z'),
-            "Ctrl+z must not contribute 'z' to either set",
-        );
-        assert!(
-            !standalone.contains(&'z'),
-            "Ctrl+z must not contribute 'z' to either set",
-        );
-    }
-
-    #[test]
-    fn keybinding_char_sets_does_not_treat_a_named_two_char_binding_as_a_prefix() {
-        // "Up" is a two-character *named* token (matched literally by
-        // keybinding_matches), not two literal characters. It must not
-        // register 'U' as a sequence-prefix char.
-        let mut keybindings = crate::config::KeybindingConfig::default();
-        let (_, default_standalone) = keybinding_char_sets(&keybindings);
-        keybindings.global.scroll_top = "Up".to_string();
-
-        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
-
-        assert!(!prefixes.contains(&'U'));
-        assert_eq!(standalone, default_standalone);
-    }
-
-    #[test]
-    fn apply_config_rebuilds_keybinding_sequence_sets() {
+    fn sequence_bound_in_any_table_resolves_after_apply_config() {
         let mut app = App::default();
         app.config.keybindings.global.next_tab = "zz".to_string();
-
+        app.config.keybindings.terminal.clear_log = "cc".to_string();
         app.apply_config();
 
-        assert!(app.sequence_prefixes.contains(&'z'));
+        app.receive_key(typed('z'));
+        assert_eq!(resolved(&mut app), vec![]);
+        app.receive_key(typed('z'));
+        app.receive_key(typed('c'));
+        app.receive_key(typed('c'));
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![
+                crate::keybinding::KeyPress::Sequence("zz".to_string()),
+                crate::keybinding::KeyPress::Sequence("cc".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn key_typed_into_a_text_field_never_waits_for_a_sequence() {
+        let mut app = App::default();
+        app.config.keybindings.global.next_tab = "zz".to_string();
+        app.apply_config();
+        app.is_typing_search = true;
+
+        app.receive_key(typed('z'));
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(typed('z'))]
+        );
+    }
+
+    #[test]
+    fn function_key_binding_does_not_hold_back_its_letter() {
+        let mut app = App::default();
+        app.config.keybindings.global.scroll_top = "F1".to_string();
+        app.apply_config();
+
+        app.receive_key(typed('F'));
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(typed('F'))]
+        );
     }
 
     #[test]

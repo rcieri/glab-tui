@@ -1,7 +1,7 @@
 use glab_tui_crate::*;
 
 use anyhow::Result;
-use app::{App, PendingKey, SaveMenu};
+use app::{App, SaveMenu};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
@@ -1235,36 +1235,18 @@ async fn main() -> Result<()> {
         app.discard_stale_deployments();
         terminal.draw(|f| ui::render(f, &mut app))?;
 
-        let event = events
-            .next()
-            .await
-            .and_then(|event| event.for_scope(app.scope_generation));
+        let event = match app.key_buffer.pop_ready() {
+            Some(press) => Some(Event::KeyPress(press)),
+            None => events
+                .next()
+                .await
+                .and_then(|event| event.for_scope(app.scope_generation)),
+        };
         if let Some(event) = event {
             match event {
                 Event::Tick => {
                     app.tick();
-                    if let Some(pending_key) = app.pending_key.take() {
-                        if pending_key.since.elapsed()
-                            >= std::time::Duration::from_millis(app.config.keybinding_timeout_ms)
-                        {
-                            if let KeyCode::Char(c) = pending_key.event.code {
-                                if app.standalone_chars.contains(&c) {
-                                    let old_scope = app.scope.clone();
-                                    handlers::tabs::handle_active_tab_key(
-                                        &mut app,
-                                        &pending_key.event,
-                                        &mut terminal,
-                                        events.sender(),
-                                        None,
-                                    )
-                                    .await;
-                                    sync_after_scope_change(&mut app, &old_scope, &events);
-                                }
-                            }
-                        } else {
-                            app.pending_key = Some(pending_key);
-                        }
-                    }
+                    app.expire_typed_keys();
                     if let Some(client) = app.gitlab_client.clone() {
                         let _ = crate::fetch::dispatch_pending_related_mrs_fetch(
                             &client,
@@ -2362,7 +2344,8 @@ async fn main() -> Result<()> {
                 Event::Mouse(mouse_event) => {
                     handle_mouse_event(&mut app, &mouse_event);
                 }
-                Event::Key(key_event) => {
+                Event::Key(key_event) => app.receive_key(key_event),
+                Event::KeyPress(key_event) => {
                     if key_event.code == KeyCode::Char('c')
                         && key_event
                             .modifiers
@@ -8014,36 +7997,12 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    let pending: Option<char> = if let Some(pending_key) = app.pending_key.take() {
-                        match pending_key.event.code {
-                            KeyCode::Char(c) => Some(c),
-                            _ => None,
-                        }
-                    } else if let KeyCode::Char(c) = key_event.code {
-                        if (key_event.modifiers.is_empty()
-                            || (key_event.modifiers == crossterm::event::KeyModifiers::SHIFT
-                                && c.is_uppercase()))
-                            && app.sequence_prefixes.contains(&c)
-                        {
-                            app.pending_key = Some(PendingKey {
-                                event: key_event,
-                                since: std::time::Instant::now(),
-                            });
-                            continue;
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
                     let old_scope = app.scope.clone();
                     handlers::tabs::handle_active_tab_key(
                         &mut app,
                         &key_event,
                         &mut terminal,
                         events.sender(),
-                        pending,
                     )
                     .await;
 

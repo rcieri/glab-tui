@@ -9,7 +9,10 @@ pub static PAUSED: AtomicBool = AtomicBool::new(false);
 #[allow(dead_code)]
 pub enum Event {
     Tick,
+    /// A keypress read from the terminal, before key sequences are resolved.
     Key(KeyEvent),
+    /// A key, or a completed key sequence, as `App::key_buffer` resolved it.
+    KeyPress(crate::keybinding::KeyPress),
     Mouse(MouseEvent),
     Resize(u16, u16),
     PipelineJobs(u64, Vec<crate::domain::pipelines::Job>),

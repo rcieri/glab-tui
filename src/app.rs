@@ -7700,7 +7700,11 @@ impl App {
     /// Feeds a keypress from the terminal into `key_buffer`; what it resolves
     /// to comes out of `key_buffer.pop_ready()`.
     pub fn receive_key(&mut self, event: crossterm::event::KeyEvent) {
-        if self.is_capturing_text() {
+        let is_quit = event.code == crossterm::event::KeyCode::Char('c')
+            && event
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL);
+        if is_quit || self.is_capturing_text() {
             self.key_buffer.pass_through(event);
         } else {
             let timeout = self.keybinding_timeout();
@@ -13656,6 +13660,25 @@ index 123456..789012 100644
         assert_eq!(
             resolved(&mut app),
             vec![crate::keybinding::KeyPress::Key(typed('F'))]
+        );
+    }
+
+    #[test]
+    fn ctrl_c_quits_while_a_sequence_is_waiting() {
+        let mut app = App::default();
+        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.apply_config();
+        let ctrl_c = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('c'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        app.receive_key(typed('g'));
+        app.receive_key(ctrl_c);
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(ctrl_c)]
         );
     }
 

@@ -3000,8 +3000,18 @@ pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 /// tab. Like custom commands, those entries settle their own row.
 pub const RERUN_LOG_PREFIX: &str = "Rerun: ";
 
+/// Prefix of the terminal-log entry written while the submit-review overlay
+/// posts a review. The overlay settles that row itself once the post ends.
+pub const REVIEW_SUBMIT_LOG_PREFIX: &str = "Submit review: ";
+
 fn settles_own_row(cmd: &TerminalCommand) -> bool {
-    cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX) || cmd.command.starts_with(RERUN_LOG_PREFIX)
+    [
+        CUSTOM_COMMAND_LOG_PREFIX,
+        RERUN_LOG_PREFIX,
+        REVIEW_SUBMIT_LOG_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| cmd.command.starts_with(prefix))
 }
 
 fn outcome_status(outcome: &Result<(), String>) -> String {
@@ -5417,8 +5427,9 @@ impl App {
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands and re-runs are skipped: they settle their own row,
-    /// and an unrelated completion must not stamp them finished.
+    /// Custom commands, re-runs and review submissions are skipped: they
+    /// settle their own row, and an unrelated completion must not stamp them
+    /// finished.
     pub fn latest_running_cli_command(&self) -> Option<LogRow> {
         self.terminal_commands
             .find_latest(|cmd| cmd.status == "Running" && !settles_own_row(cmd))
@@ -13023,6 +13034,27 @@ index 123456..789012 100644
                 .map(|cmd| cmd.status.as_str()),
             Some("Running")
         );
+    }
+
+    #[test]
+    fn backend_log_never_settles_a_running_review_submission() {
+        let mut app = App::default();
+        let row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
+
+        app.log_cli_command(executed_entry(
+            "FETCHING MR DIFF REFS: glab mr view 7 --output json -R acme/widget",
+            "Success",
+            "{}",
+            "",
+        ));
+
+        assert_eq!(
+            app.terminal_commands
+                .get(row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+        assert_eq!(app.latest_running_cli_command(), None);
     }
 
     #[test]

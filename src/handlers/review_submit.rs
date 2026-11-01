@@ -1,6 +1,6 @@
 //! Keys, clicks and the background submission of the submit-review overlay.
 
-use crate::app::App;
+use crate::app::{App, REVIEW_SUBMIT_LOG_PREFIX};
 use crate::event::Event;
 use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, SubmissionState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -125,7 +125,7 @@ fn submit(app: &mut App, tx: UnboundedSender<Event>) {
     let body = overlay.summary.value().to_string();
     let comments = app.draft_comments.clone();
     let mr_short = app.kind().term("mr_short");
-    let log_row = app.start_command(format!("Submitting review on {mr_short} #{mr_iid}"));
+    let log_row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}{mr_short} #{mr_iid}"));
     if let Some(overlay) = app.review_submit.as_mut() {
         overlay.state = SubmissionState::Submitting { log_row };
     }
@@ -197,7 +197,7 @@ mod tests {
         app.draft_comments = vec![draft("nit")];
         app.in_review_mode = true;
         open(&mut app, 7, PROJECT.to_string());
-        let log_row = app.start_command("Submitting review on MR #7".to_string());
+        let log_row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
         if let Some(overlay) = app.review_submit.as_mut() {
             overlay.summary.set_value("Looks good".to_string());
             overlay.state = SubmissionState::Submitting { log_row };

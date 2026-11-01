@@ -180,7 +180,13 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
     assert_eq!(draft["position"]["new_line"], 1, "the draft keeps its line");
     session
         .wait_for_screen_contains("Review submitted on MR #2", 5000)
-        .expect("a posted review closes the overlay with a notice");
+        .expect("a posted review shows a notice");
+    session.settle(300);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Submit Merge Request Review") && !screen.contains("1 pending"),
+        "a posted review closes the overlay and clears the draft:\n{screen}"
+    );
 }
 
 /// Diff view with one draft comment on the unchanged `# Pagination` line.

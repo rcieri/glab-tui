@@ -1685,6 +1685,26 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
+    fn submit_on_the_submit_review_dialog_opens_the_review_overlay_with_drafts_intact() {
+        let _cache = crate::config::isolate_home();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        let overlay = app
+            .review_submit
+            .as_ref()
+            .expect("Submit opens the overlay");
+        assert_eq!(overlay.mr_iid, 7);
+        assert_eq!(overlay.project_path, PROJECT);
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
     fn keep_drafts_closes_the_diff_and_reopening_or_restarting_restores_them() {
         let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();

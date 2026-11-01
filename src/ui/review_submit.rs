@@ -5,7 +5,7 @@ use crate::config::{ICONS, Icons, THEME, Theme};
 use crate::review_submit::{
     ReviewSubmit, ReviewSubmitFocus, ReviewSubmitLayout, ReviewVerdict, SubmissionState,
 };
-use crate::utils::format::{sanitize_untrusted, wrap_text};
+use crate::utils::format::{sanitize_untrusted, wrap_ranges, wrap_text};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Margin, Rect},
@@ -18,7 +18,7 @@ const DIALOG_WIDTH: u16 = 64;
 /// The border plus one padding column on each side, and the border alone
 /// above and below.
 const CONTENT_MARGIN: Margin = Margin::new(2, 1);
-/// Rows of summary text the box shows; a longer summary shows its end.
+/// Rows of summary text the box shows, scrolled to keep the cursor's row.
 const SUMMARY_ROWS: u16 = 3;
 /// Most rows an error takes, so the buttons stay on screen.
 const MAX_STATUS_ROWS: usize = 4;
@@ -248,41 +248,75 @@ fn render_summary(f: &mut Frame, overlay: &ReviewSubmit, area: Rect, theme: &The
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let value = if is_focused {
-        overlay.summary.value_with_cursor('▋')
-    } else {
-        overlay.summary.value().to_string()
-    };
-    let (rows, style) = if value.is_empty() {
+    let summary = overlay.summary.value();
+    if summary.is_empty() && !is_focused {
         let placeholder = match overlay.verdict {
             ReviewVerdict::Approve => "Optional for an approval",
             ReviewVerdict::KeepAsDraft => "Not posted while the drafts are kept",
             _ => "Required without draft comments",
         };
-        (
-            vec![placeholder.to_string()],
-            Style::default()
-                .fg(theme.text_muted)
-                .add_modifier(Modifier::ITALIC),
-        )
-    } else {
-        let color = if overlay.verdict == ReviewVerdict::KeepAsDraft {
-            theme.text_muted
-        } else {
-            theme.text_normal
-        };
-        (
-            wrap_text(&sanitize_untrusted(&value), usize::from(inner.width)),
-            Style::default().fg(color),
-        )
-    };
-    let hidden = rows.len().saturating_sub(usize::from(inner.height));
-    f.render_widget(
-        Paragraph::new(rows.into_iter().map(Line::from).collect::<Vec<_>>())
-            .style(style.bg(theme.bg))
-            .scroll((u16::try_from(hidden).unwrap_or(u16::MAX), 0)),
-        inner,
-    );
+        f.render_widget(
+            Paragraph::new(placeholder).style(
+                Style::default()
+                    .fg(theme.text_muted)
+                    .bg(theme.bg)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            inner,
+        );
+        return;
+    }
+
+    let text_style =
+        Style::default()
+            .bg(theme.bg)
+            .fg(if overlay.verdict == ReviewVerdict::KeepAsDraft {
+                theme.text_muted
+            } else {
+                theme.text_normal
+            });
+    let cursor_style = Style::default()
+        .fg(theme.highlight_bg)
+        .bg(theme.text_normal)
+        .add_modifier(Modifier::SLOW_BLINK);
+    let (before, after) = summary.split_at(overlay.summary.cursor_byte_offset());
+    let before = displayable(before);
+    let cursor = before.len();
+    let text = before + &displayable(after);
+    // One column stays free for the cursor at the end of a full row.
+    let rows = wrap_ranges(&text, usize::from(inner.width).saturating_sub(1));
+    let cursor_row = rows
+        .iter()
+        .rposition(|row| row.start <= cursor)
+        .unwrap_or(0);
+    let first_visible = (cursor_row + 1).saturating_sub(usize::from(inner.height));
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .skip(first_visible)
+        .take(usize::from(inner.height))
+        .map(|(index, row)| {
+            let row_text = &text[row.clone()];
+            if !is_focused || index != cursor_row {
+                return Line::from(Span::styled(row_text.to_string(), text_style));
+            }
+            let (head, tail) = row_text.split_at(cursor - row.start);
+            let mut tail = tail.chars();
+            let under_cursor = tail.next().map_or_else(|| " ".to_string(), String::from);
+            Line::from(vec![
+                Span::styled(head.to_string(), text_style),
+                Span::styled(under_cursor, cursor_style),
+                Span::styled(tail.as_str().to_string(), text_style),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines).style(text_style), inner);
+}
+
+/// The summary as drawn: escape sequences removed, and tabs and carriage
+/// returns shown as one space so byte offsets past them do not move.
+fn displayable(text: &str) -> String {
+    sanitize_untrusted(text).replace(['\t', '\r'], " ")
 }
 
 fn render_buttons(
@@ -401,6 +435,47 @@ mod tests {
             rows.iter().any(|row| row.ends_with("pending")),
             "the error keeps its last word: {rows:#?}"
         );
+    }
+
+    fn app_with_summary(summary: &str) -> App {
+        let mut app = app_with_overlay(SubmissionState::Editing);
+        if let Some(overlay) = app.review_submit.as_mut() {
+            overlay.summary.set_value(summary.to_string());
+            overlay.focus = ReviewSubmitFocus::Summary;
+        }
+        app
+    }
+
+    #[test]
+    fn the_summary_box_follows_the_cursor_into_earlier_rows() {
+        let mut app = app_with_summary("one\ntwo\nthree\nfour\nfive");
+        let rows = row_texts(&render(&mut app));
+        assert!(rows.iter().any(|row| row == "five"), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row == "one"), "{rows:#?}");
+
+        if let Some(overlay) = app.review_submit.as_mut() {
+            for _ in 0.."one\ntwo\nthree\nfour\nfive".len() {
+                overlay.summary.move_cursor_left();
+            }
+        }
+        let rows = row_texts(&render(&mut app));
+
+        assert!(rows.iter().any(|row| row == "one"), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row == "five"), "{rows:#?}");
+    }
+
+    #[test]
+    fn the_summary_box_keeps_runs_of_spaces() {
+        let mut app = app_with_summary("- a\n  - b   c");
+        if let Some(overlay) = app.review_submit.as_mut() {
+            overlay.focus = ReviewSubmitFocus::Verdicts;
+        }
+
+        let rows = row_texts(&render(&mut app));
+
+        assert!(rows.iter().any(|row| row == "- b   c"), "{rows:#?}");
+        let screen = render(&mut app);
+        assert!(screen.contains("│  - b   c"), "{screen}");
     }
 
     #[test]

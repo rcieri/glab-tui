@@ -2819,6 +2819,10 @@ impl TextBuffer {
         rendered
     }
 
+    pub fn cursor_byte_offset(&self) -> usize {
+        self.byte_offset(self.cursor_char_idx)
+    }
+
     pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) {
         use crossterm::event::KeyCode;
         match code {

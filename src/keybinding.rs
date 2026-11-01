@@ -179,7 +179,11 @@ fn function_key(digits: &str) -> Option<Key> {
     if digits.len() > MAX_DIGITS {
         return None;
     }
-    digits.parse().ok().map(|n| Key::Named(KeyCode::F(n)))
+    digits
+        .parse::<u8>()
+        .ok()
+        .filter(|&n| n > 0)
+        .map(|n| Key::Named(KeyCode::F(n)))
 }
 
 fn modified_key(modifier: &str, key: &str) -> Option<Key> {
@@ -580,8 +584,8 @@ mod tests {
     #[test]
     fn binding_key_event_rejects_sequences_and_spellings_that_never_match() {
         for binding in [
-            "", "gg", "enter", "F100", "Ctrl+1", "Ctrl+ab", "Shift+a", "Meta+x", "Alt+é", "Alt+ ",
-            "g g", "Ctrl+w j", "g+",
+            "", "gg", "enter", "F0", "F100", "Ctrl+1", "Ctrl+ab", "Shift+a", "Meta+x", "Alt+é",
+            "Alt+ ", "g g", "Ctrl+w j", "g+",
         ] {
             assert_eq!(binding_key_event(binding), None, "{binding:?}");
         }

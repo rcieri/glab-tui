@@ -120,12 +120,34 @@ fn parse_binding(binding: &str) -> Option<Binding<'_>> {
     match (chars.next(), chars.next()) {
         (Some(' '), None) => Some(Binding::Key(Key::Char(' '))),
         (Some(c), None) => is_sequence_char(c).then_some(Binding::Key(Key::Char(c))),
-        (Some(_), Some(_)) => binding
-            .chars()
-            .all(is_sequence_char)
-            .then_some(Binding::Sequence(binding)),
+        (Some(_), Some(_)) => (binding.chars().all(is_sequence_char)
+            && !is_named_key_ignoring_case(binding))
+        .then_some(Binding::Sequence(binding)),
         (None, _) => None,
     }
+}
+
+/// A mis-cased key name (`"home"`) is a typo, not a sequence: read as one it
+/// would hold back its first letter in every context.
+fn is_named_key_ignoring_case(binding: &str) -> bool {
+    const KEY_NAMES: [&str; 13] = [
+        "Tab",
+        "Enter",
+        "Esc",
+        "Backspace",
+        "Space",
+        "Up",
+        "Down",
+        "Left",
+        "Right",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+    ];
+    KEY_NAMES
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(binding))
 }
 
 fn named_key(name: &str) -> Option<Key> {
@@ -578,6 +600,13 @@ mod tests {
             "Shift+Tab",
         ]);
         assert_eq!(sequences, KeySequences::default());
+    }
+
+    #[test]
+    fn mis_cased_key_names_never_start_a_sequence() {
+        let sequences = KeySequences::new(["home", "enter", "PAGEDOWN", "esc"]);
+        assert_eq!(sequences, KeySequences::default());
+        assert!(!keybinding_matches("home", &sequence("home")));
     }
 
     const TIMEOUT: Duration = Duration::from_millis(1000);

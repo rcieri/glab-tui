@@ -144,31 +144,13 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
 
 #[test]
 fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
-    let mut session = session_in_diff_view();
-
-    session.press_keys(b"\t");
-    let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
-    for _ in 0..8 {
-        if wait_for_row(&mut session, on_code_line, 300).is_ok() {
-            break;
-        }
-        session.press_keys(b"j");
-    }
-    wait_for_row(&mut session, on_code_line, 2000)
-        .expect("the cursor should reach the unchanged `# Pagination` line (old 1, new 1)");
-
-    session.send_input(b"c");
-    session.press_keys(b"nit");
-    session.send_input(b"\r");
-    session
-        .wait_for_screen_contains("1 pending", 5000)
-        .expect("the comment should be kept as a draft");
+    let mut session = session_with_one_draft(TestSession::new(false, 40, 140));
 
     session.send_input(b"r");
     session
         .wait_for_screen_contains("Submit Merge Request Review", 5000)
         .expect("r should open the submit-review overlay");
-    press_keys(&session, b"j\r");
+    session.press_keys(b"j\r");
 
     let deadline = Instant::now() + Duration::from_secs(10);
     while !session.get_cli_calls().contains("mr approve 2") && Instant::now() < deadline {
@@ -204,16 +186,18 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
 /// Diff view with one draft comment on the unchanged `# Pagination` line.
 fn session_with_one_draft(session: TestSession) -> TestSession {
     let mut session = open_diff_view(session);
-    press_keys(&session, b"\t");
+    session.press_keys(b"\t");
     let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
     for _ in 0..8 {
         if wait_for_row(&mut session, on_code_line, 300).is_ok() {
             break;
         }
-        press_keys(&session, b"j");
+        session.press_keys(b"j");
     }
+    wait_for_row(&mut session, on_code_line, 2000)
+        .expect("the cursor should reach the unchanged `# Pagination` line (old 1, new 1)");
     session.send_input(b"c");
-    press_keys(&session, b"nit");
+    session.press_keys(b"nit");
     session.send_input(b"\r");
     session
         .wait_for_screen_contains("1 pending", 5000)
@@ -231,7 +215,7 @@ fn test_failed_review_submission_shows_the_error_in_the_overlay_and_keeps_the_dr
     session
         .wait_for_screen_contains("Submit Merge Request Review", 5000)
         .expect("r should open the submit-review overlay");
-    press_keys(&session, b"\tLGTM\r");
+    session.press_keys(b"\tLGTM\r");
     session
         .wait_for_screen_contains("404 Not Found", 10000)
         .expect("the failure is shown inside the overlay");
@@ -241,7 +225,7 @@ fn test_failed_review_submission_shows_the_error_in_the_overlay_and_keeps_the_dr
         "the overlay stays open with its summary:\n{screen}"
     );
 
-    press_keys(&session, b"\x1b");
+    session.press_keys(b"\x1b");
     session.settle(300);
     let screen = session.emulator.get_text();
     assert!(
@@ -303,11 +287,11 @@ fn test_review_submission_in_flight_shows_a_loading_state() {
     session
         .wait_for_screen_contains("Submit Merge Request Review", 5000)
         .expect("r should open the submit-review overlay");
-    press_keys(&session, b"\r");
+    session.press_keys(b"\r");
     session
         .wait_for_screen_contains("Submitting review…", 10000)
         .expect("the overlay shows the submission running");
-    press_keys(&session, b"\x1b");
+    session.press_keys(b"\x1b");
     session.settle(300);
     assert!(
         session.emulator.get_text().contains("Submitting review…"),

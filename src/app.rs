@@ -2753,7 +2753,7 @@ pub enum TextInputAction {
     EditPageSize,
 }
 
-/// Single-line text being edited, with a cursor counted in characters so
+/// Text being edited, with a cursor counted in characters so
 /// multibyte text edits whole characters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextBuffer {

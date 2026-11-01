@@ -273,6 +273,26 @@ fn test_review_submission_in_flight_shows_a_loading_state() {
 }
 
 #[test]
+fn test_ctrl_c_does_not_quit_while_the_review_is_posted() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_HANG_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("Submitting review…", 10000)
+        .expect("the overlay shows the submission running");
+    session.send_input(b"\x03");
+    session
+        .wait_for_screen_contains("Waiting for the review to post before quitting", 5000)
+        .expect("Ctrl+C must not quit while the review is posted");
+}
+
+#[test]
 fn test_leaving_the_diff_keeps_drafts_on_esc_and_restores_kept_drafts_on_reopen() {
     let mut session = session_in_diff_view();
 

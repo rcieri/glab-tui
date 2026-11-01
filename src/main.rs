@@ -2372,6 +2372,17 @@ async fn main() -> Result<()> {
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL)
                     {
+                        // Only a successful finish clears the drafts, so quitting
+                        // now would restore them next launch after the server
+                        // may already have posted them.
+                        if app
+                            .review_submit
+                            .as_ref()
+                            .is_some_and(|o| o.is_submitting())
+                        {
+                            app.show_notice("Waiting for the review to post before quitting");
+                            continue;
+                        }
                         app.quit();
                         continue;
                     }

@@ -284,7 +284,7 @@ fn test_retrying_a_review_that_failed_before_publishing_leaves_no_duplicate_draf
 }
 
 #[test]
-fn test_review_submission_in_flight_shows_a_loading_state() {
+fn test_review_submission_in_flight_shows_a_loading_state_and_ignores_keys() {
     let session =
         TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_HANG_MATCH", "bulk_publish")]);
     let mut session = session_with_one_draft(session);

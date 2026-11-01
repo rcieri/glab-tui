@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 const DIALOG_WIDTH: u16 = 64;
-/// Text columns inside the border and the two-column padding on each side.
+/// Text columns inside the border and one padding column on each side.
 const TEXT_WIDTH: usize = DIALOG_WIDTH as usize - 4;
 /// Rows of summary text the box shows; a longer summary shows its end.
 const SUMMARY_ROWS: u16 = 3;

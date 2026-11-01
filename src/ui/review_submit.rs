@@ -173,15 +173,20 @@ fn status_lines(state: &SubmissionState, icons: &Icons, theme: &Theme) -> Vec<Li
                 .fg(theme.yellow)
                 .add_modifier(Modifier::BOLD),
         ))],
-        SubmissionState::Failed(error) => {
-            let message = format!("{} {}", icons.status_failed, sanitize_untrusted(error));
-            wrap_text(&message, TEXT_WIDTH)
-                .into_iter()
-                .take(MAX_STATUS_ROWS)
-                .map(|row| Line::from(Span::styled(row, Style::default().fg(theme.red))))
-                .collect()
+        SubmissionState::Refused(reason) => {
+            outcome_lines(&icons.status_pending, reason, theme.yellow)
         }
+        SubmissionState::Failed(error) => outcome_lines(&icons.status_failed, error, theme.red),
     }
+}
+
+fn outcome_lines(icon: &str, text: &str, color: Color) -> Vec<Line<'static>> {
+    let message = format!("{icon} {}", sanitize_untrusted(text));
+    wrap_text(&message, TEXT_WIDTH)
+        .into_iter()
+        .take(MAX_STATUS_ROWS)
+        .map(|row| Line::from(Span::styled(row, Style::default().fg(color))))
+        .collect()
 }
 
 fn verdict_lines(overlay: &ReviewSubmit, icons: &Icons, theme: &Theme) -> Vec<Line<'static>> {

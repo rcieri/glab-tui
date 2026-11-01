@@ -2,7 +2,7 @@
 
 use crate::app::{App, REVIEW_SUBMIT_LOG_PREFIX};
 use crate::event::Event;
-use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, SubmissionState};
+use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, ReviewVerdict, SubmissionState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
@@ -41,14 +41,22 @@ pub fn handle_key(app: &mut App, key_event: &KeyEvent, tx: UnboundedSender<Event
 fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifiers) {
     match overlay.focus {
         ReviewSubmitFocus::Verdicts => match code {
-            KeyCode::Char('j') | KeyCode::Down => overlay.verdict = overlay.verdict.stepped(1),
-            KeyCode::Char('k') | KeyCode::Up => overlay.verdict = overlay.verdict.stepped(-1),
+            KeyCode::Char('j') | KeyCode::Down => {
+                select_verdict(overlay, overlay.verdict.stepped(1));
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                select_verdict(overlay, overlay.verdict.stepped(-1));
+            }
             _ => {}
         },
         ReviewSubmitFocus::Summary => match code {
             KeyCode::Up => overlay.focus = ReviewSubmitFocus::Verdicts,
             KeyCode::Down => overlay.focus = ReviewSubmitFocus::SubmitButton,
             _ if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {}
+            KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
+                overlay.summary.apply_edit_key(code);
+                overlay.clear_outcome();
+            }
             _ => overlay.summary.apply_edit_key(code),
         },
         ReviewSubmitFocus::SubmitButton | ReviewSubmitFocus::CancelButton => match code {
@@ -57,6 +65,13 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
             KeyCode::Char('k') | KeyCode::Up => overlay.focus = ReviewSubmitFocus::Summary,
             _ => {}
         },
+    }
+}
+
+fn select_verdict(overlay: &mut ReviewSubmit, verdict: ReviewVerdict) {
+    if overlay.verdict != verdict {
+        overlay.verdict = verdict;
+        overlay.clear_outcome();
     }
 }
 
@@ -75,8 +90,8 @@ pub fn click(app: &mut App, row: u16, col: u16) {
     let contains = |rect: Rect| rect.contains((col, row).into());
     if contains(layout.verdicts) {
         let index = usize::from(row - layout.verdicts.y);
-        if let Some(&verdict) = crate::review_submit::ReviewVerdict::ALL.get(index) {
-            overlay.verdict = verdict;
+        if let Some(&verdict) = ReviewVerdict::ALL.get(index) {
+            select_verdict(overlay, verdict);
             overlay.focus = ReviewSubmitFocus::Verdicts;
         }
     } else if contains(layout.summary) {
@@ -107,12 +122,12 @@ fn submit(app: &mut App, tx: UnboundedSender<Event>) {
             return;
         }
         Err(reason) => {
-            overlay.state = SubmissionState::Failed(reason);
+            overlay.state = SubmissionState::Refused(reason);
             return;
         }
     };
     let Some(client) = app.gitlab_client.clone() else {
-        overlay.state = SubmissionState::Failed("No active backend to submit the review.".into());
+        overlay.state = SubmissionState::Refused("No active backend to submit the review.".into());
         return;
     };
     let mr_iid = overlay.mr_iid;
@@ -234,7 +249,7 @@ mod tests {
         let overlay = app.review_submit.as_ref().expect("stays open");
         assert_eq!(
             overlay.state,
-            SubmissionState::Failed("A comment review needs a summary or draft comments.".into())
+            SubmissionState::Refused("A comment review needs a summary or draft comments.".into())
         );
     }
 
@@ -309,6 +324,41 @@ mod tests {
                 .map(|entry| entry.status.as_str()),
             Some("Failed: HTTP 422: body required")
         );
+    }
+
+    #[test]
+    fn changing_the_verdict_after_a_refusal_returns_to_editing() {
+        let mut app = App::default();
+        open(&mut app, 7, PROJECT.to_string());
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Char('j'));
+
+        let overlay = app.review_submit.as_ref().expect("stays open");
+        assert_eq!(overlay.verdict, ReviewVerdict::Approve);
+        assert_eq!(overlay.state, SubmissionState::Editing);
+    }
+
+    #[test]
+    fn editing_the_summary_after_a_failure_returns_to_editing_but_moving_the_cursor_does_not() {
+        let mut app = submitting_app();
+        finish(&mut app, 7, Err("HTTP 422: body required".to_string()));
+        if let Some(overlay) = app.review_submit.as_mut() {
+            overlay.focus = ReviewSubmitFocus::Summary;
+        }
+
+        press(&mut app, KeyCode::Left);
+        assert_eq!(
+            app.review_submit
+                .as_ref()
+                .map(|overlay| overlay.state.clone()),
+            Some(SubmissionState::Failed("HTTP 422: body required".into()))
+        );
+
+        press(&mut app, KeyCode::Backspace);
+        let overlay = app.review_submit.as_ref().expect("stays open");
+        assert_eq!(overlay.summary.value(), "Looks god");
+        assert_eq!(overlay.state, SubmissionState::Editing);
     }
 
     #[test]

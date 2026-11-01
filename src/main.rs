@@ -2405,6 +2405,7 @@ async fn main() -> Result<()> {
                                 edit_in_editor(overlay.summary.value(), &mut terminal)
                             {
                                 overlay.summary.set_value(summary);
+                                overlay.clear_outcome();
                             }
                             overlay.focus = crate::review_submit::ReviewSubmitFocus::Summary;
                             continue;

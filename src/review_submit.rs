@@ -95,7 +95,9 @@ pub enum SubmissionState {
     Editing,
     /// The review is being posted. Its Terminal-tab entry is `log_row`.
     Submitting { log_row: LogRow },
-    /// The last attempt failed and the drafts are still pending.
+    /// Nothing was sent: why the review cannot be submitted as it stands.
+    Refused(String),
+    /// The server rejected the last attempt and the drafts are still pending.
     Failed(String),
 }
 
@@ -131,6 +133,17 @@ impl ReviewSubmit {
 
     pub fn is_submitting(&self) -> bool {
         matches!(self.state, SubmissionState::Submitting { .. })
+    }
+
+    /// A refusal or failure describes the verdict and summary it was raised
+    /// for, so it goes once either changes. A running submission is kept.
+    pub fn clear_outcome(&mut self) {
+        if matches!(
+            self.state,
+            SubmissionState::Refused(_) | SubmissionState::Failed(_)
+        ) {
+            self.state = SubmissionState::Editing;
+        }
     }
 
     /// The event to post the review with, `Ok(None)` when the drafts are
@@ -226,5 +239,23 @@ mod tests {
             ..ReviewSubmit::new(7, "acme/widget".to_string())
         };
         assert_eq!(overlay.event_to_post(0), Ok(None));
+    }
+
+    #[test]
+    fn clearing_the_outcome_drops_a_refusal_or_failure_but_keeps_a_running_submission() {
+        let mut overlay = ReviewSubmit::new(7, "acme/widget".to_string());
+        for outcome in [
+            SubmissionState::Refused("needs a summary".into()),
+            SubmissionState::Failed("HTTP 422".into()),
+        ] {
+            overlay.state = outcome;
+            overlay.clear_outcome();
+            assert_eq!(overlay.state, SubmissionState::Editing);
+        }
+
+        let log_row = crate::app::App::default().start_command("Submit review: MR #7".into());
+        overlay.state = SubmissionState::Submitting { log_row };
+        overlay.clear_outcome();
+        assert_eq!(overlay.state, SubmissionState::Submitting { log_row });
     }
 }

@@ -13,8 +13,8 @@ fn expected_modifiers(c: char) -> KeyModifiers {
     }
 }
 
-/// A character that can stand in a key sequence. A space is excluded so that
-/// `"Ctrl+w j"` stays free to spell a sequence of modified keys later.
+/// Whitespace and control characters never stand in a key sequence: a space
+/// inside a binding is reserved for separating modified keys.
 fn is_sequence_char(c: char) -> bool {
     !c.is_whitespace() && !c.is_control()
 }

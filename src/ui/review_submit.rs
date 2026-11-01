@@ -15,8 +15,9 @@ use ratatui::{
 };
 
 const DIALOG_WIDTH: u16 = 64;
-/// Text columns inside the border and one padding column on each side.
-const TEXT_WIDTH: usize = DIALOG_WIDTH as usize - 4;
+/// The border plus one padding column on each side, and the border alone
+/// above and below.
+const CONTENT_MARGIN: Margin = Margin::new(2, 1);
 /// Rows of summary text the box shows; a longer summary shows its end.
 const SUMMARY_ROWS: u16 = 3;
 /// Most rows an error takes, so the buttons stay on screen.
@@ -29,11 +30,16 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
     let theme = *THEME.read().unwrap();
     let icons = ICONS.read().unwrap();
     let kind = app.kind();
+    let text_width = usize::from(
+        DIALOG_WIDTH
+            .min(size.width)
+            .saturating_sub(2 * CONTENT_MARGIN.horizontal),
+    );
     let notes = wrap_text(
         &draft_note(overlay.verdict, app.draft_comments.len(), kind.is_gitlab()),
-        TEXT_WIDTH,
+        text_width,
     );
-    let status = status_lines(&overlay.state, &icons, &theme);
+    let status = status_lines(&overlay.state, text_width, &icons, &theme);
     let status_rows = if status.is_empty() {
         0
     } else {
@@ -93,7 +99,7 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
         Constraint::Length(1),
         Constraint::Length(1),
     ])
-    .areas(area.inner(Margin::new(2, 1)));
+    .areas(area.inner(CONTENT_MARGIN));
 
     let text = Style::default().fg(theme.text_normal).bg(theme.bg);
     let muted = Style::default().fg(theme.text_muted).bg(theme.bg);
@@ -168,7 +174,12 @@ fn draft_note(verdict: ReviewVerdict, draft_count: usize, is_gitlab: bool) -> St
     note
 }
 
-fn status_lines(state: &SubmissionState, icons: &Icons, theme: &Theme) -> Vec<Line<'static>> {
+fn status_lines(
+    state: &SubmissionState,
+    width: usize,
+    icons: &Icons,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     match state {
         SubmissionState::Editing => Vec::new(),
         SubmissionState::Submitting { .. } => vec![Line::from(Span::styled(
@@ -178,15 +189,17 @@ fn status_lines(state: &SubmissionState, icons: &Icons, theme: &Theme) -> Vec<Li
                 .add_modifier(Modifier::BOLD),
         ))],
         SubmissionState::Refused(reason) => {
-            outcome_lines(&icons.status_pending, reason, theme.yellow)
+            outcome_lines(&icons.status_pending, reason, width, theme.yellow)
         }
-        SubmissionState::Failed(error) => outcome_lines(&icons.status_failed, error, theme.red),
+        SubmissionState::Failed(error) => {
+            outcome_lines(&icons.status_failed, error, width, theme.red)
+        }
     }
 }
 
-fn outcome_lines(icon: &str, text: &str, color: Color) -> Vec<Line<'static>> {
+fn outcome_lines(icon: &str, text: &str, width: usize, color: Color) -> Vec<Line<'static>> {
     let message = format!("{icon} {}", sanitize_untrusted(text));
-    wrap_text(&message, TEXT_WIDTH)
+    wrap_text(&message, width)
         .into_iter()
         .take(MAX_STATUS_ROWS)
         .map(|row| Line::from(Span::styled(row, Style::default().fg(color))))
@@ -349,11 +362,25 @@ mod tests {
     }
 
     fn render(app: &mut App) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        render_at_width(app, 100)
+    }
+
+    fn render_at_width(app: &mut App, width: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
         terminal
             .draw(|f| render_review_submit(f, app, f.area()))
             .unwrap();
         screen_text(&terminal)
+    }
+
+    fn row_texts(screen: &str) -> Vec<String> {
+        screen
+            .lines()
+            .map(|row| {
+                row.trim_matches(|c: char| c == '│' || c.is_whitespace())
+                    .to_string()
+            })
+            .collect()
     }
 
     fn app_with_overlay(state: SubmissionState) -> App {
@@ -362,6 +389,28 @@ mod tests {
         overlay.state = state;
         app.review_submit = Some(overlay);
         app
+    }
+
+    #[test]
+    fn the_note_and_an_error_wrap_to_the_dialog_a_narrow_terminal_draws() {
+        let mut app = app_with_overlay(SubmissionState::Failed(
+            "HTTP 422: Review body is required when no draft comments are pending".to_string(),
+        ));
+        if let Some(overlay) = app.review_submit.as_mut() {
+            overlay.verdict = ReviewVerdict::Approve;
+        }
+
+        let rows = row_texts(&render_at_width(&mut app, 60));
+
+        let note = rows
+            .iter()
+            .position(|row| row == "No draft comments: the review posts its verdict and")
+            .unwrap_or_else(|| panic!("the note wraps at 56 columns: {rows:#?}"));
+        assert_eq!(rows[note + 1], "summary.");
+        assert!(
+            rows.iter().any(|row| row.ends_with("pending")),
+            "the error keeps its last word: {rows:#?}"
+        );
     }
 
     #[test]

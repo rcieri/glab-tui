@@ -1,5 +1,5 @@
 use super::diff::centered_rect_fixed;
-use super::modal::clear_area;
+use super::modal::{button_style, clear_area};
 use crate::app::{App, OverlayKind};
 use crate::config::{ICONS, Icons, THEME, Theme};
 use crate::review_submit::{
@@ -293,21 +293,11 @@ fn render_buttons(
     theme: &Theme,
 ) {
     let is_submitting = overlay.is_submitting();
-    let button_style = |is_focused: bool, accent: Option<Color>| {
+    let style_for = |is_focused: bool, accent: Option<Color>| {
         if is_submitting {
-            return Style::default().fg(theme.text_muted).bg(theme.bg);
-        }
-        let (fg, bg) = match (is_focused, accent) {
-            (true, Some(accent)) => (theme.bg, accent),
-            (false, Some(accent)) => (accent, theme.bg),
-            (true, None) => (theme.bg, theme.border_focused),
-            (false, None) => (theme.text_normal, theme.bg),
-        };
-        let style = Style::default().fg(fg).bg(bg);
-        if is_focused {
-            style.add_modifier(Modifier::BOLD)
+            Style::default().fg(theme.text_muted).bg(theme.bg)
         } else {
-            style
+            button_style(theme, is_focused, accent)
         }
     };
     let submit_label = match (is_submitting, overlay.verdict) {
@@ -318,7 +308,7 @@ fn render_buttons(
     f.render_widget(
         Paragraph::new(format!("{} {submit_label}", icons.check_on))
             .alignment(Alignment::Center)
-            .style(button_style(
+            .style(style_for(
                 overlay.focus == ReviewSubmitFocus::SubmitButton,
                 Some(theme.green),
             )),
@@ -327,7 +317,7 @@ fn render_buttons(
     f.render_widget(
         Paragraph::new(format!("{} Cancel", icons.check_off))
             .alignment(Alignment::Center)
-            .style(button_style(
+            .style(style_for(
                 overlay.focus == ReviewSubmitFocus::CancelButton,
                 None,
             )),

@@ -1,6 +1,6 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
-use super::modal::{clear_area, modal_area};
+use super::modal::{button_style, clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
@@ -1150,20 +1150,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         } else {
             theme.green
         };
-        let button_style = |selected: bool, accent: Option<Color>| {
-            let (fg, bg) = match (selected, accent) {
-                (true, Some(accent)) => (theme.bg, accent),
-                (false, Some(accent)) => (accent, theme.bg),
-                (true, None) => (theme.bg, theme.border_focused),
-                (false, None) => (theme.text_normal, theme.bg),
-            };
-            let modifier = if selected {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            };
-            Style::default().fg(fg).bg(bg).add_modifier(modifier)
-        };
         let buttons_row: Vec<(usize, String, Option<Color>)> = dialog
             .button_cursors()
             .map(|cursor| {
@@ -1201,7 +1187,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             f.render_widget(
                 Paragraph::new(label)
                     .alignment(Alignment::Center)
-                    .style(button_style(dialog.cursor_idx == cursor, accent)),
+                    .style(button_style(&theme, dialog.cursor_idx == cursor, accent)),
                 cells[i * 2],
             );
         }

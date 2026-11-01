@@ -251,6 +251,49 @@ fn test_failed_review_submission_shows_the_error_in_the_overlay_and_keeps_the_dr
 }
 
 #[test]
+fn test_retrying_a_review_that_failed_before_publishing_leaves_no_duplicate_draft_notes() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_FAIL_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\tLGTM\r");
+    session
+        .wait_for_screen_contains("404 Not Found", 10000)
+        .expect("the failure is shown inside the overlay");
+    session.press_keys(b"\r");
+
+    let is_cleanup = |call: &str| {
+        call.contains("-X DELETE") && call.ends_with("/merge_requests/2/draft_notes/1")
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session
+        .get_cli_calls()
+        .lines()
+        .filter(|c| is_cleanup(c))
+        .count()
+        < 2
+        && Instant::now() < deadline
+    {
+        session.settle(100);
+    }
+    let calls = session.get_cli_calls();
+    let posts = calls
+        .lines()
+        .filter(|c| c.ends_with("/merge_requests/2/draft_notes"))
+        .count();
+    let deletes = calls.lines().filter(|c| is_cleanup(c)).count();
+    assert_eq!(
+        (posts, deletes),
+        (2, 2),
+        "each attempt deletes the draft note it created once publishing fails:\n{calls}"
+    );
+}
+
+#[test]
 fn test_review_submission_in_flight_shows_a_loading_state() {
     let session =
         TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_HANG_MATCH", "bulk_publish")]);

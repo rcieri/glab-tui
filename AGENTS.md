@@ -399,7 +399,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List group labels | `GET /groups/{}/labels?per_page=<N>` | `glab label list -g` has no pagination control |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /projects/{}/deployments?per_page=<N>&order_by=id&sort=desc[&environment=<name>]` | No native command |
-| Review draft notes | `POST /projects/{}/merge_requests/{}/draft_notes` per comment, then one `POST .../draft_notes/bulk_publish` | `glab mr note create` posts one note at a time and cannot batch them into a review |
+| Review draft notes | `POST /projects/{}/merge_requests/{}/draft_notes` per comment, then one `POST .../draft_notes/bulk_publish`. When a later draft note or `bulk_publish` fails, `DELETE .../draft_notes/{id}` for each note the attempt created, so a retry does not publish them twice | `glab mr note create` posts one note at a time and cannot batch them into a review |
 
 ### GhBackend (`src/backend/gh.rs`)
 

@@ -990,6 +990,40 @@ impl GlabBackend {
             .diff_refs
             .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
     }
+
+    /// Deletes the draft notes of a review that failed before they were
+    /// published. `bulk_publish` publishes every pending draft note of the
+    /// user, so a retry would otherwise post these twice. `error` is returned
+    /// with the notes that could not be deleted named in it.
+    async fn discard_draft_notes(
+        &self,
+        endpoint: &str,
+        ids: &[u64],
+        iid: u64,
+        error: anyhow::Error,
+    ) -> anyhow::Error {
+        let mut pending = 0;
+        for id in ids {
+            let deleted = self
+                .raw_api(
+                    &format!("{endpoint}/{id}"),
+                    "DELETE",
+                    None,
+                    "DISCARDING DRAFT NOTE",
+                )
+                .await;
+            if deleted.is_err() {
+                pending += 1;
+            }
+        }
+        if pending == 0 {
+            error
+        } else {
+            error.context(format!(
+                "{pending} draft note(s) of this review stay pending on !{iid}"
+            ))
+        }
+    }
 }
 
 /// Serde shape returned by the GitLab `/closed_by` endpoint.
@@ -1988,24 +2022,40 @@ impl Backend for GlabBackend {
                 Self::encode_path(project),
                 iid
             );
-            for (created, comment) in comments.iter().enumerate() {
-                let payload = gitlab_draft_note_payload(comment, &diff_refs).to_string();
-                self.raw_api(&endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "draft note on {} failed; {} earlier draft note(s) of this review stay pending on !{}",
-                            comment.file_path, created, iid
-                        )
-                    })?;
+            #[derive(Deserialize)]
+            struct GiDraftNote {
+                id: u64,
             }
-            self.raw_api(
-                &format!("{endpoint}/bulk_publish"),
-                "POST",
-                None,
-                "PUBLISHING DRAFT NOTES",
-            )
-            .await?;
+            let mut created = Vec::with_capacity(comments.len());
+            for comment in comments {
+                let payload = gitlab_draft_note_payload(comment, &diff_refs).to_string();
+                let posted = self
+                    .raw_api(&endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
+                    .await
+                    .and_then(|out| Ok(serde_json::from_str::<GiDraftNote>(&out)?.id))
+                    .with_context(|| format!("draft note on {} failed", comment.file_path));
+                match posted {
+                    Ok(id) => created.push(id),
+                    Err(error) => {
+                        return Err(self
+                            .discard_draft_notes(&endpoint, &created, iid, error)
+                            .await);
+                    }
+                }
+            }
+            let published = self
+                .raw_api(
+                    &format!("{endpoint}/bulk_publish"),
+                    "POST",
+                    None,
+                    "PUBLISHING DRAFT NOTES",
+                )
+                .await;
+            if let Err(error) = published {
+                return Err(self
+                    .discard_draft_notes(&endpoint, &created, iid, error)
+                    .await);
+            }
         }
         if event == ReviewEvent::Approve {
             self.approve_mr(project, iid).await?;

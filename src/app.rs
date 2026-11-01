@@ -2819,9 +2819,7 @@ impl TextBuffer {
         rendered
     }
 
-    /// Applies a line-editing key: typing, Backspace, Delete, Left and Right.
-    /// Returns false for any other key.
-    pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) -> bool {
+    pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) {
         use crossterm::event::KeyCode;
         match code {
             KeyCode::Char(c) => self.insert_char(c),
@@ -2829,9 +2827,8 @@ impl TextBuffer {
             KeyCode::Delete => self.delete_char_at_cursor(),
             KeyCode::Left => self.move_cursor_left(),
             KeyCode::Right => self.move_cursor_right(),
-            _ => return false,
+            _ => {}
         }
-        true
     }
 
     fn byte_offset(&self, char_idx: usize) -> usize {

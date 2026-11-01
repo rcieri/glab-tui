@@ -49,9 +49,7 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
             KeyCode::Up => overlay.focus = ReviewSubmitFocus::Verdicts,
             KeyCode::Down => overlay.focus = ReviewSubmitFocus::SubmitButton,
             _ if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {}
-            _ => {
-                overlay.summary.apply_edit_key(code);
-            }
+            _ => overlay.summary.apply_edit_key(code),
         },
         ReviewSubmitFocus::SubmitButton | ReviewSubmitFocus::CancelButton => match code {
             KeyCode::Char('h') | KeyCode::Left => overlay.focus = ReviewSubmitFocus::SubmitButton,

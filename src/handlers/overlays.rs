@@ -784,14 +784,7 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
 
     // When the user is actively typing raw text into a text field, allow F1 to open help,
     // but keep regular character keys (like '?') so they can be typed into the field.
-    let is_typing_text = app.text_input.is_some()
-        || app.is_typing_search
-        || app.job_trace_searching
-        || app.edit_menu.as_ref().is_some_and(|m| m.editing)
-        || app.diff_view.as_ref().is_some_and(|d| d.search_active)
-        || app.selector.as_ref().is_some_and(|s| s.is_filtering);
-
-    if is_typing_text && !is_f1 {
+    if app.is_capturing_text() && !is_f1 {
         return false;
     }
 

@@ -6223,6 +6223,14 @@ impl App {
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
+    /// Counts the drafts whose lines left the diff too, since keeping the
+    /// drafts keeps those as well.
+    pub fn kept_drafts_notice(&self) -> String {
+        let count = self.draft_comments.len() + self.stale_draft_comments.len();
+        let noun = if count == 1 { "comment" } else { "comments" };
+        format!("Kept {count} draft {noun} for later")
+    }
+
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();

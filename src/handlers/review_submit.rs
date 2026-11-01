@@ -103,12 +103,7 @@ fn submit(app: &mut App, tx: UnboundedSender<Event>) {
         Ok(Some(event)) => event,
         Ok(None) => {
             app.review_submit = None;
-            let noun = if draft_count == 1 {
-                "comment"
-            } else {
-                "comments"
-            };
-            app.show_notice(format!("Kept {draft_count} draft {noun} for later"));
+            app.show_notice(app.kept_drafts_notice());
             return;
         }
         Err(reason) => {
@@ -256,6 +251,26 @@ mod tests {
         assert!(app.review_submit.is_none());
         assert_eq!(app.draft_comments.len(), 1);
         assert!(app.in_review_mode);
+    }
+
+    #[test]
+    fn keep_as_draft_counts_the_drafts_whose_lines_left_the_diff() {
+        let mut app = App::default();
+        app.draft_comments = vec![draft("nit"), draft("typo")];
+        app.stale_draft_comments = vec![draft("moved")];
+        open(&mut app, 7, PROJECT.to_string());
+        for code in [KeyCode::Char('k'), KeyCode::Enter] {
+            press(&mut app, code);
+        }
+
+        assert_eq!(
+            app.status_message
+                .as_ref()
+                .map(crate::app::StatusMessage::text),
+            Some("Kept 3 draft comments for later")
+        );
+        assert_eq!(app.draft_comments.len(), 2);
+        assert_eq!(app.stale_draft_comments.len(), 1);
     }
 
     #[test]

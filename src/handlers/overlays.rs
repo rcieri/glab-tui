@@ -113,17 +113,18 @@ fn run_dialog_choice(
     let ConfirmAction::SubmitReview(mr_iid) = *action else {
         return;
     };
-    let count = app.draft_comments.len() + app.stale_draft_comments.len();
-    let noun = if count == 1 { "comment" } else { "comments" };
     match choice {
         DialogChoice::KeepDrafts => {
+            let notice = app.kept_drafts_notice();
             // The project cache already holds them, and opening this diff
             // again restores them from there.
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
-            app.show_notice(format!("Kept {count} draft {noun} for later"));
+            app.show_notice(notice);
         }
         DialogChoice::DiscardDrafts => {
+            let count = app.draft_comments.len() + app.stale_draft_comments.len();
+            let noun = if count == 1 { "comment" } else { "comments" };
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);

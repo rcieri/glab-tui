@@ -1118,6 +1118,12 @@ pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
     let mut keep_open = true;
     match key_event.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('T') => keep_open = false,
+        _ if keybinding_matches(&app.config.keybindings.global.scroll_top, key_event) => {
+            overview.first()
+        }
+        _ if keybinding_matches(&app.config.keybindings.global.scroll_to_end, key_event) => {
+            overview.last()
+        }
         // Ahead of the plain `u` arm, which ignores modifiers.
         _ if keybinding_matches(
             &app.config.keybindings.global.scroll_half_page_down,
@@ -1519,6 +1525,22 @@ diff --git a/src/lib.rs b/src/lib.rs
         handle_review_threads(&mut app, &ctrl('u'));
         assert_eq!(selected_root_id(&app), Some(4));
         assert!(!app.review_threads.as_ref().unwrap().unresolved_only);
+    }
+
+    #[test]
+    fn review_threads_scroll_bindings_bound_to_sequences_jump_to_both_ends() {
+        let mut app = app_with_review_threads(
+            (1..=3)
+                .map(|id| review_note(id, &format!("t{id}"), None))
+                .collect(),
+        );
+        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.config.keybindings.global.scroll_to_end = "ge".to_string();
+
+        handle_review_threads(&mut app, &KeyPress::Sequence("ge".to_string()));
+        assert_eq!(selected_root_id(&app), Some(3));
+        handle_review_threads(&mut app, &KeyPress::Sequence("gg".to_string()));
+        assert_eq!(selected_root_id(&app), Some(1));
     }
 
     #[test]

@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn key_that_completes_nothing_drops_the_whole_sequence() {
-        let mut buffer = buffer(&["g", "gg"]);
+        let mut buffer = buffer(&["gg"]);
         let now = Instant::now();
         type_keys(&mut buffer, "gj", now);
         buffer.push(

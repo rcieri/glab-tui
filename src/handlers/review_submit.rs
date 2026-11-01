@@ -149,7 +149,7 @@ pub fn finish(app: &mut App, mr_iid: u64, result: Result<(), String>) -> bool {
         return false;
     };
     if let SubmissionState::Submitting { log_row } = overlay.state {
-        app.finish_command(log_row, &result);
+        app.settle_command(log_row, &result, None);
     }
     match result {
         Ok(()) => {

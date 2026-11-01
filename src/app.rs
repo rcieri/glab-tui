@@ -5403,23 +5403,17 @@ impl App {
         })
     }
 
-    /// Stamps the outcome, and when the command ran, on a row returned by
-    /// `start_command`.
+    /// Stamps the outcome on a row returned by `start_command`. `execution`
+    /// replaces what the row knew about its run; without one, the row is
+    /// timed from when it started.
     pub fn settle_command(
         &mut self,
         row: LogRow,
         outcome: &Result<(), String>,
-        execution: crate::command_log::Execution,
+        execution: Option<crate::command_log::Execution>,
     ) {
         self.terminal_commands
-            .settle(row, outcome_status(outcome), Some(execution));
-    }
-
-    /// Stamps the outcome on a row returned by `start_command`, timing it
-    /// from when it started.
-    pub fn finish_command(&mut self, row: LogRow, outcome: &Result<(), String>) {
-        self.terminal_commands
-            .settle(row, outcome_status(outcome), None);
+            .settle(row, outcome_status(outcome), execution);
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
@@ -13062,7 +13056,7 @@ index 123456..789012 100644
         app.terminal_scroll = 3;
 
         app.clear_terminal_log();
-        app.settle_command(row, &Ok(()), crate::command_log::Execution::default());
+        app.settle_command(row, &Ok(()), None);
 
         assert!(app.terminal_commands.is_empty());
         assert_eq!(app.terminal_scroll, 0);

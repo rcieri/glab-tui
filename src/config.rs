@@ -1856,8 +1856,9 @@ pub struct Config {
     #[serde(default = "def_api_per_page")]
     pub api_per_page: usize,
     /// How long keys typed towards a longer key sequence wait for the next
-    /// key. Each key restarts it. When it runs out, a binding the typed keys
-    /// complete fires (`g` next to `gg`) and anything else is dropped.
+    /// key. Each key restarts it. When it runs out, a single waiting key is
+    /// handled as typed, a binding the typed keys complete fires, and
+    /// anything else is dropped.
     #[serde(default = "def_keybinding_timeout_ms")]
     pub keybinding_timeout_ms: u64,
     /// Use real label colors from `label list` when available; otherwise use

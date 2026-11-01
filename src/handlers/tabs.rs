@@ -4185,7 +4185,7 @@ mod tests {
 
         dispatch_press(&mut app, &KeyPress::Sequence("zz".to_string())).await;
 
-        assert_ne!(app.active_tab, Tab::Issues);
+        assert_eq!(app.active_tab, Tab::MergeRequests);
     }
 
     /// `J` scrolls the detail pane whatever the config says, but a sequence

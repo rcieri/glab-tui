@@ -153,13 +153,17 @@ fn draft_note(verdict: ReviewVerdict, draft_count: usize, is_gitlab: bool) -> St
         (ReviewVerdict::KeepAsDraft, _) => {
             format!("Nothing is posted. Kept for later: {drafts}.")
         }
-        (_, 0) => "No draft comments: the review posts its verdict and summary.".to_string(),
+        (ReviewVerdict::Approve, 0) => {
+            "No draft comments: the review posts its verdict and summary.".to_string()
+        }
+        (ReviewVerdict::RequestChanges, 0) if !is_gitlab => {
+            "No draft comments: the review posts its verdict and summary.".to_string()
+        }
+        (_, 0) => "No draft comments: only the summary is posted.".to_string(),
         _ => format!("{drafts} will be posted with the review."),
     };
     if verdict == ReviewVerdict::RequestChanges && is_gitlab {
-        note.push_str(
-            "\nGitLab has no request-changes verdict: only the comments and summary are posted.",
-        );
+        note.push_str("\nGitLab has no request-changes verdict, so none is posted.");
     }
     note
 }
@@ -412,8 +416,20 @@ mod tests {
         );
         assert_eq!(
             draft_note(ReviewVerdict::RequestChanges, 0, true),
-            "No draft comments: the review posts its verdict and summary.\n\
-             GitLab has no request-changes verdict: only the comments and summary are posted."
+            "No draft comments: only the summary is posted.\n\
+             GitLab has no request-changes verdict, so none is posted."
+        );
+        assert_eq!(
+            draft_note(ReviewVerdict::RequestChanges, 0, false),
+            "No draft comments: the review posts its verdict and summary."
+        );
+        assert_eq!(
+            draft_note(ReviewVerdict::Comment, 0, false),
+            "No draft comments: only the summary is posted."
+        );
+        assert_eq!(
+            draft_note(ReviewVerdict::Approve, 0, true),
+            "No draft comments: the review posts its verdict and summary."
         );
     }
 }

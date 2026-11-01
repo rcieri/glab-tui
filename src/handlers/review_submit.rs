@@ -7,7 +7,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Opens the overlay for the drafts of MR/PR `mr_iid` in `project_path`.
 pub fn open(app: &mut App, mr_iid: u64, project_path: String) {
     app.review_submit = Some(ReviewSubmit::new(mr_iid, project_path));
 }

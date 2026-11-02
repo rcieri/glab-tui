@@ -75,38 +75,40 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Splits `text` into rows of at most `width` characters, as byte ranges of
-/// `text`. Unlike `wrap_text` it keeps runs of whitespace, so every byte
+/// Splits `text` into rows of at most `width` display columns, as byte ranges
+/// of `text`. Unlike `wrap_text` it keeps runs of whitespace, so every byte
 /// offset (a cursor) falls in one row. Each `\n` ends a row and belongs to
-/// none, and a word longer than `width` is split between two characters.
+/// none, and a word longer than `width` is split between two characters. A
+/// character wider than `width` takes a row of its own.
 pub fn wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
     let width = width.max(1);
     let mut rows = Vec::new();
     let mut line_start = 0;
     for line in text.split('\n') {
         let mut row_start = line_start;
-        let mut row_chars = 0;
+        let mut row_columns = 0;
         let mut follows_whitespace = true;
         for (offset, c) in line.char_indices() {
             let at = line_start + offset;
             let is_whitespace = c.is_whitespace();
-            if !is_whitespace && follows_whitespace && row_chars > 0 {
-                let word_chars = line[offset..]
+            if !is_whitespace && follows_whitespace && row_columns > 0 {
+                let word_columns = line[offset..]
                     .split(char::is_whitespace)
                     .next()
-                    .map_or(0, |word| word.chars().count());
-                if row_chars + word_chars > width {
+                    .map_or(0, |word| Span::raw(word).width());
+                if row_columns + word_columns > width {
                     rows.push(row_start..at);
                     row_start = at;
-                    row_chars = 0;
+                    row_columns = 0;
                 }
             }
-            if row_chars == width {
+            let columns = Span::raw(&line[offset..offset + c.len_utf8()]).width();
+            if row_columns > 0 && row_columns + columns > width {
                 rows.push(row_start..at);
                 row_start = at;
-                row_chars = 0;
+                row_columns = 0;
             }
-            row_chars += 1;
+            row_columns += columns;
             follows_whitespace = is_whitespace;
         }
         rows.push(row_start..line_start + line.len());
@@ -831,6 +833,13 @@ mod tests {
             wrapped("x https://example.com/a", 8),
             ["x ", "https://", "example.", "com/a"]
         );
+    }
+
+    #[test]
+    fn wrap_ranges_measures_wide_characters_in_display_columns() {
+        assert_eq!(wrapped("日本語", 4), ["日本", "語"]);
+        assert_eq!(wrapped("ok 🎉🎉", 5), ["ok ", "🎉🎉"]);
+        assert_eq!(wrapped("日本", 1), ["日", "本"]);
     }
 
     #[test]

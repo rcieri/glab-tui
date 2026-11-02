@@ -2206,7 +2206,7 @@ pub(crate) fn render_tab_runners(
             TableContext {
                 block: main_block,
                 header_style,
-                highlight_style: Style::default().bg(theme.highlight_bg),
+                highlight_style: ctx.highlight_style(),
                 theme,
                 icons,
                 query: &app.search_query,

@@ -103,8 +103,11 @@ impl NoticeQueue {
         self.notices.push_back(notice);
     }
 
-    pub fn expire(&mut self, now: Instant) {
-        self.notices.retain(|notice| !notice.is_expired_at(now));
+    /// Drops notices past their lifetime, except those the open modal draws:
+    /// they stay while the user is looking at them.
+    pub fn expire(&mut self, now: Instant, open_request: Option<RequestTag>) {
+        self.notices
+            .retain(|notice| notice.is_routed_to(open_request) || !notice.is_expired_at(now));
     }
 
     pub fn dismiss(&mut self, level: NoticeLevel, open_request: Option<RequestTag>) {
@@ -222,10 +225,24 @@ mod tests {
         queue.push(Notice::error("old"));
         let pushed = queue.notices[0].raised_at;
 
-        queue.expire(pushed + NOTICE_LIFETIME - Duration::from_millis(1));
+        queue.expire(pushed + NOTICE_LIFETIME - Duration::from_millis(1), None);
         assert_eq!(texts(&queue), ["old"]);
 
-        queue.expire(pushed + NOTICE_LIFETIME);
+        queue.expire(pushed + NOTICE_LIFETIME, None);
+        assert!(queue.notices.is_empty());
+    }
+
+    #[test]
+    fn notice_of_the_open_modal_outlives_its_lifetime_until_the_modal_closes() {
+        let open = RequestTag::default().next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("labels failed").from_request(open));
+        let pushed = queue.notices[0].raised_at;
+
+        queue.expire(pushed + NOTICE_LIFETIME, Some(open));
+        assert_eq!(texts(&queue), ["labels failed"]);
+
+        queue.expire(pushed + NOTICE_LIFETIME, None);
         assert!(queue.notices.is_empty());
     }
 

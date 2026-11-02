@@ -6112,7 +6112,8 @@ impl App {
     }
 
     pub fn tick(&mut self) {
-        self.notices.expire(std::time::Instant::now());
+        let open_request = self.open_modal_request();
+        self.notices.expire(std::time::Instant::now(), open_request);
     }
 
     pub fn unresolved_threads_count(&self) -> usize {

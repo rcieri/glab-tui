@@ -45,3 +45,42 @@ fn test_failed_selector_fetch_is_reported_inside_the_selector() {
     assert_eq!(rows.len(), 1, "the error moves to the toast:\n{screen}");
     assert!(!rows[0].contains('║'), "no longer framed by the selector");
 }
+
+/// The selector keeps reporting its failure for as long as it is open, past
+/// the toast lifetime, and the error does not come back as a toast once the
+/// user has read it in the selector and closed it.
+#[test]
+fn test_selector_failure_stays_while_the_selector_is_open() {
+    let mut session =
+        TestSession::with_envs(false, 30, 140, &[("TEST_GLAB_FAIL_MATCH", "label list")]);
+    session
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("issues listed");
+    session.press_keys(b"n");
+    session
+        .wait_for_screen_contains("Create Issue", 5000)
+        .expect("n opens the create form");
+    session.press_keys(b"jjj\r");
+    session
+        .wait_for_screen_contains(FAILURE, 5000)
+        .expect("the failed label fetch is reported");
+
+    session.settle(5500);
+    let screen = session.emulator.get_text();
+    let rows = rows_with(&screen, FAILURE);
+    assert_eq!(rows.len(), 1, "still reported after 5 seconds:\n{screen}");
+    assert_eq!(
+        rows[0].matches('║').count(),
+        2,
+        "inside the selector:\n{screen}"
+    );
+
+    session.send_input(b"\x1b");
+    session.settle(800);
+    let screen = session.emulator.get_text();
+    assert!(!screen.contains("Select Labels"), "Esc closes the selector");
+    assert!(
+        !screen.contains(FAILURE),
+        "an error already read in the selector is not toasted again:\n{screen}"
+    );
+}

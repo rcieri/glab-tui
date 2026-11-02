@@ -291,11 +291,11 @@ impl KeySequences {
     }
 }
 
-/// The keys typed towards a sequence, resolved the way vim resolves mappings:
-/// keys that start a binding wait, a binding nothing longer starts with fires
-/// at once, and one that also starts a longer binding fires once
-/// `keybinding_timeout_ms` passes without a key. A key that completes nothing
-/// drops the whole sequence.
+/// The keys typed towards a sequence: keys that start a binding wait, a
+/// binding nothing longer starts with fires at once, and one that also starts
+/// a longer binding fires once `keybinding_timeout_ms` passes without a key.
+/// A key that completes nothing drops itself and every waiting key, even a
+/// complete binding among them.
 #[derive(Debug, Default)]
 pub struct KeyBuffer {
     sequences: KeySequences,
@@ -720,6 +720,13 @@ mod tests {
 
         type_keys(&mut buffer, "j", now);
         assert_eq!(drain(&mut buffer), vec![KeyPress::Key(char_event('j'))]);
+    }
+
+    #[test]
+    fn key_that_completes_nothing_drops_a_complete_binding_too() {
+        let mut buffer = buffer(&["gc", "gcc"]);
+        type_keys(&mut buffer, "gcx", Instant::now());
+        assert_eq!(drain(&mut buffer), vec![]);
     }
 
     #[test]

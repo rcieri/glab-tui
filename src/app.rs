@@ -6245,18 +6245,16 @@ impl App {
         }
     }
 
-    /// The drafts that keeping or discarding them acts on, which includes the
-    /// ones whose lines left the diff.
-    pub fn kept_draft_count(&self) -> usize {
+    pub fn all_draft_count(&self) -> usize {
         self.draft_comments.len() + self.stale_draft_comments.len()
     }
 
-    pub fn kept_drafts_phrase(&self) -> String {
-        crate::domain::review::draft_comments_phrase(self.kept_draft_count())
+    pub fn all_drafts_phrase(&self) -> String {
+        crate::domain::review::draft_comments_phrase(self.all_draft_count())
     }
 
     pub fn kept_drafts_notice(&self) -> String {
-        format!("Kept {} for later", self.kept_drafts_phrase())
+        format!("Kept {} for later", self.all_drafts_phrase())
     }
 
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {

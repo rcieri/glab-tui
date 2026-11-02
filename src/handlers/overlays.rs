@@ -123,7 +123,7 @@ fn run_dialog_choice(
             app.show_notice(notice);
         }
         DialogChoice::DiscardDrafts => {
-            let drafts = app.kept_drafts_phrase();
+            let drafts = app.all_drafts_phrase();
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);

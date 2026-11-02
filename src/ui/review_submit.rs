@@ -40,7 +40,7 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
             .saturating_sub(2 * CONTENT_MARGIN.horizontal),
     );
     let draft_count = match overlay.verdict {
-        ReviewVerdict::KeepAsDraft => app.kept_draft_count(),
+        ReviewVerdict::KeepAsDraft => app.all_draft_count(),
         _ => app.draft_comments.len(),
     };
     let notes = wrap_text(

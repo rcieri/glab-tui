@@ -50,3 +50,11 @@ impl DraftComment {
             })
     }
 }
+
+pub fn draft_comments_phrase(count: usize) -> String {
+    if count == 1 {
+        "1 draft comment".to_string()
+    } else {
+        format!("{count} draft comments")
+    }
+}

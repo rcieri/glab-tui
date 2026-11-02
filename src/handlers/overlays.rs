@@ -123,13 +123,12 @@ fn run_dialog_choice(
             app.show_notice(notice);
         }
         DialogChoice::DiscardDrafts => {
-            let count = app.draft_comments.len() + app.stale_draft_comments.len();
-            let noun = if count == 1 { "comment" } else { "comments" };
+            let drafts = app.kept_drafts_phrase();
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
-            app.show_notice(format!("Discarded {count} draft {noun}"));
+            app.show_notice(format!("Discarded {drafts}"));
         }
     }
     app.diff_view = None;

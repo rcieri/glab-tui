@@ -6227,12 +6227,18 @@ impl App {
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
-    /// Counts the drafts whose lines left the diff too, since keeping the
-    /// drafts keeps those as well.
+    /// The drafts that keeping or discarding them acts on, which includes the
+    /// ones whose lines left the diff.
+    pub fn kept_draft_count(&self) -> usize {
+        self.draft_comments.len() + self.stale_draft_comments.len()
+    }
+
+    pub fn kept_drafts_phrase(&self) -> String {
+        crate::domain::review::draft_comments_phrase(self.kept_draft_count())
+    }
+
     pub fn kept_drafts_notice(&self) -> String {
-        let count = self.draft_comments.len() + self.stale_draft_comments.len();
-        let noun = if count == 1 { "comment" } else { "comments" };
-        format!("Kept {count} draft {noun} for later")
+        format!("Kept {} for later", self.kept_drafts_phrase())
     }
 
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {

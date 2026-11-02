@@ -77,9 +77,10 @@ fn test_selector_failure_stays_while_the_selector_is_open() {
     );
 
     session.send_input(b"\x1b");
-    session.settle(800);
+    session
+        .wait_for_screen_without("Select Labels", 5000)
+        .expect("Esc closes the selector");
     let screen = session.emulator.get_text();
-    assert!(!screen.contains("Select Labels"), "Esc closes the selector");
     assert!(
         !screen.contains(FAILURE),
         "an error already read in the selector is not toasted again:\n{screen}"

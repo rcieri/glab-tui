@@ -111,16 +111,21 @@ impl NoticeQueue {
             .retain(|notice| notice.level != level || notice.is_routed_to(open_request));
     }
 
-    /// The newest notice of `level` that the open modal does not show itself.
+    /// The newest notice of `level` that the open modal does not show itself
+    /// and that is still within its lifetime at `now`. A modal's notice
+    /// outlives its lifetime while the modal is open, so it can be expired
+    /// in the frame drawn as the modal closes, before `expire` drops it.
     pub fn latest_outside(
         &self,
         level: NoticeLevel,
         open_request: Option<RequestTag>,
+        now: Instant,
     ) -> Option<&Notice> {
-        self.notices
-            .iter()
-            .rev()
-            .find(|notice| notice.level == level && !notice.is_routed_to(open_request))
+        self.notices.iter().rev().find(|notice| {
+            notice.level == level
+                && !notice.is_routed_to(open_request)
+                && !notice.is_expired_at(now)
+        })
     }
 
     /// The newest notice, of any level, about the request `tag`.
@@ -148,7 +153,7 @@ mod tests {
 
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Error, None)
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
                 .map(Notice::text),
             Some("second")
         );
@@ -164,7 +169,7 @@ mod tests {
 
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Error, None)
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
                 .map(Notice::text),
             Some("push rejected")
         );
@@ -179,13 +184,13 @@ mod tests {
 
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Info, None)
+                .latest_outside(NoticeLevel::Info, None, Instant::now())
                 .map(Notice::text),
             Some("Selected all 3 items")
         );
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Error, None)
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
                 .map(Notice::text),
             Some("push rejected")
         );
@@ -200,7 +205,7 @@ mod tests {
 
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Error, Some(tag))
+                .latest_outside(NoticeLevel::Error, Some(tag), Instant::now())
                 .map(Notice::text),
             Some("toast error")
         );
@@ -219,13 +224,13 @@ mod tests {
 
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Error, Some(open))
+                .latest_outside(NoticeLevel::Error, Some(open), Instant::now())
                 .map(Notice::text),
             Some("labels failed")
         );
         assert_eq!(
             queue
-                .latest_outside(NoticeLevel::Error, None)
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
                 .map(Notice::text),
             Some("labels failed")
         );
@@ -256,6 +261,30 @@ mod tests {
 
         queue.expire(pushed + NOTICE_LIFETIME, None);
         assert!(queue.notices.is_empty());
+    }
+
+    #[test]
+    fn expired_notice_of_a_closed_modal_is_not_drawn_before_expire_drops_it() {
+        let open = RequestTag::default().next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("labels failed").from_request(open));
+        let expired_at = queue.notices[0].raised_at + NOTICE_LIFETIME;
+        queue.expire(expired_at, Some(open));
+
+        assert_eq!(
+            queue
+                .latest_outside(
+                    NoticeLevel::Error,
+                    None,
+                    expired_at - Duration::from_millis(1)
+                )
+                .map(Notice::text),
+            Some("labels failed")
+        );
+        assert_eq!(
+            queue.latest_outside(NoticeLevel::Error, None, expired_at),
+            None
+        );
     }
 
     #[test]

@@ -5348,14 +5348,20 @@ impl App {
 
     /// The newest error for the toast: one the open modal does not draw.
     pub fn toast_notice(&self) -> Option<&crate::notice::Notice> {
-        self.notices
-            .latest_outside(crate::notice::NoticeLevel::Error, self.open_modal_request())
+        self.notices.latest_outside(
+            crate::notice::NoticeLevel::Error,
+            self.open_modal_request(),
+            std::time::Instant::now(),
+        )
     }
 
     /// The newest non-error notice for the header bar.
     pub fn header_notice(&self) -> Option<&crate::notice::Notice> {
-        self.notices
-            .latest_outside(crate::notice::NoticeLevel::Info, self.open_modal_request())
+        self.notices.latest_outside(
+            crate::notice::NoticeLevel::Info,
+            self.open_modal_request(),
+            std::time::Instant::now(),
+        )
     }
 
     /// Appends a finished command to the terminal log. A failure also raises

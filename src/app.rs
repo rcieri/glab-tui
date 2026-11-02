@@ -7431,8 +7431,8 @@ impl App {
     /// Fills the open selector with the items its own request fetched, or
     /// with cached items when the fetch failed or came back empty. A reply
     /// for a selector that has since closed or been replaced is dropped.
-    /// Returns whether the fetch succeeded, in which case the caller saves
-    /// `project_cache`.
+    /// Returns whether the fetched items were stored, in which case the
+    /// caller saves `project_cache`.
     pub fn apply_selector_items(
         &mut self,
         request: crate::notice::RequestTag,

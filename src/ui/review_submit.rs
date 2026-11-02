@@ -202,11 +202,14 @@ fn status_lines(
 }
 
 fn outcome_lines(icon: &str, text: &str, width: usize, color: Color) -> Vec<Line<'static>> {
-    let message = format!("{icon} {}", sanitize_untrusted(text));
-    wrap_text(&message, width)
+    let message = format!("{icon} {}", displayable(text));
+    wrap_ranges(&message, width)
         .into_iter()
         .take(MAX_STATUS_ROWS)
-        .map(|row| Line::from(Span::styled(row, Style::default().fg(color))))
+        .map(|range| {
+            let row = message[range].trim_start().to_string();
+            Line::from(Span::styled(row, Style::default().fg(color)))
+        })
         .collect()
 }
 
@@ -439,6 +442,23 @@ mod tests {
             rows.iter().any(|row| row.ends_with("pending")),
             "the error keeps its last word: {rows:#?}"
         );
+    }
+
+    #[test]
+    fn an_error_word_wider_than_the_dialog_is_split_instead_of_clipped() {
+        let path = "src/main/java/com/acme/billing/service/impl/payments/UserServiceImpl.java";
+        let mut app = app_with_overlay(SubmissionState::Failed(format!(
+            "draft note on {path} failed"
+        )));
+
+        let rows = row_texts(&render_at_width(&mut app, 60));
+
+        let (head, tail) = path.split_at(56);
+        let split = rows
+            .iter()
+            .position(|row| row == head)
+            .unwrap_or_else(|| panic!("the path fills a 56-column row: {rows:#?}"));
+        assert_eq!(rows[split + 1], format!("{tail} failed"));
     }
 
     fn app_with_summary(summary: &str) -> App {

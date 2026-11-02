@@ -994,7 +994,7 @@ impl GlabBackend {
     /// Deletes the draft notes of a review that failed before they were
     /// published. `bulk_publish` publishes every pending draft note of the
     /// user, so a retry would otherwise post these twice. `error` is returned
-    /// with the notes that could not be deleted named in it.
+    /// with how many could not be deleted.
     async fn discard_draft_notes(
         &self,
         endpoint: &str,
@@ -1002,7 +1002,7 @@ impl GlabBackend {
         iid: u64,
         error: anyhow::Error,
     ) -> anyhow::Error {
-        let mut pending = 0;
+        let mut undeleted = 0;
         for id in ids {
             let deleted = self
                 .raw_api(
@@ -1013,14 +1013,14 @@ impl GlabBackend {
                 )
                 .await;
             if deleted.is_err() {
-                pending += 1;
+                undeleted += 1;
             }
         }
-        if pending == 0 {
+        if undeleted == 0 {
             error
         } else {
             error.context(format!(
-                "{pending} draft note(s) of this review stay pending on !{iid}"
+                "{undeleted} draft note(s) of this review could not be deleted from !{iid}"
             ))
         }
     }

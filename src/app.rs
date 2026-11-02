@@ -6227,6 +6227,24 @@ impl App {
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
+    /// Removes the drafts a posted review carried, by value and one occurrence
+    /// each, from the pending and the held-back drafts: a diff refetched while
+    /// the review was posted can have moved them from one list to the other.
+    pub fn drop_sent_drafts(&mut self, sent: &[DraftComment]) {
+        let mut unmatched = sent.to_vec();
+        for drafts in [&mut self.draft_comments, &mut self.stale_draft_comments] {
+            drafts.retain(
+                |draft| match unmatched.iter().position(|sent| sent == draft) {
+                    Some(index) => {
+                        unmatched.swap_remove(index);
+                        false
+                    }
+                    None => true,
+                },
+            );
+        }
+    }
+
     /// The drafts that keeping or discarding them acts on, which includes the
     /// ones whose lines left the diff.
     pub fn kept_draft_count(&self) -> usize {

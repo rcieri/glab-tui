@@ -159,7 +159,10 @@ fn submit(app: &mut App, tx: UnboundedSender<Event>) {
     let mr_short = app.kind().term("mr_short");
     let log_row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}{mr_short} #{mr_iid}"));
     if let Some(overlay) = app.review_submit.as_mut() {
-        overlay.state = SubmissionState::Submitting { log_row };
+        overlay.state = SubmissionState::Submitting {
+            log_row,
+            drafts: comments.clone(),
+        };
     }
     tokio::spawn(async move {
         let result = client
@@ -170,7 +173,7 @@ fn submit(app: &mut App, tx: UnboundedSender<Event>) {
     });
 }
 
-/// Applies the outcome of a submission. A posted review clears the drafts it
+/// Applies the outcome of a submission. A posted review removes the drafts it
 /// carried and closes the overlay. A failed one keeps both and shows the
 /// error in the overlay. Returns whether a review was posted.
 pub fn finish(app: &mut App, mr_iid: u64, result: Result<(), String>) -> bool {
@@ -180,12 +183,13 @@ pub fn finish(app: &mut App, mr_iid: u64, result: Result<(), String>) -> bool {
     else {
         return false;
     };
-    if let SubmissionState::Submitting { log_row } = overlay.state {
-        app.settle_command(log_row, &result, None);
-    }
+    let SubmissionState::Submitting { log_row, drafts } = std::mem::take(&mut overlay.state) else {
+        return false;
+    };
+    app.settle_command(log_row, &result, None);
     match result {
         Ok(()) => {
-            app.draft_comments.clear();
+            app.drop_sent_drafts(&drafts);
             app.persist_draft_comments(&overlay.project_path, mr_iid);
             app.in_review_mode = false;
             let mr_short = app.kind().term("mr_short");
@@ -242,7 +246,10 @@ mod tests {
         let log_row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
         if let Some(overlay) = app.review_submit.as_mut() {
             overlay.summary.set_value("Looks good".to_string());
-            overlay.state = SubmissionState::Submitting { log_row };
+            overlay.state = SubmissionState::Submitting {
+                log_row,
+                drafts: app.draft_comments.clone(),
+            };
         }
         app
     }
@@ -449,6 +456,40 @@ mod tests {
                 .is_empty(),
             "the posted drafts must not come back when the diff reopens"
         );
+    }
+
+    #[test]
+    fn a_posted_review_removes_the_drafts_it_sent_even_after_a_refetch_moved_them() {
+        let _home = crate::config::isolate_home();
+        let mut app = submitting_app();
+        app.draft_comments = vec![draft("held back, now anchored again")];
+        app.stale_draft_comments = vec![draft("nit")];
+        app.persist_draft_comments(PROJECT, 7);
+
+        assert!(finish(&mut app, 7, Ok(())));
+
+        assert_eq!(app.draft_comments, [draft("held back, now anchored again")]);
+        assert!(app.stale_draft_comments.is_empty());
+        assert_eq!(
+            crate::utils::cache::load_cache(app.scope.as_str())
+                .draft_comments
+                .get(PROJECT)
+                .and_then(|drafts| drafts.get(&7))
+                .cloned(),
+            Some(vec![draft("held back, now anchored again")]),
+            "the sent draft is not posted again and the unsent one survives"
+        );
+    }
+
+    #[test]
+    fn a_posted_review_removes_one_copy_per_sent_draft() {
+        let _home = crate::config::isolate_home();
+        let mut app = submitting_app();
+        app.draft_comments = vec![draft("nit"), draft("nit")];
+
+        assert!(finish(&mut app, 7, Ok(())));
+
+        assert_eq!(app.draft_comments, [draft("nit")]);
     }
 
     #[test]

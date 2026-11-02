@@ -572,7 +572,10 @@ mod tests {
         let mut app = App::default();
         let log_row = app.start_command(format!("{}MR #7", crate::app::REVIEW_SUBMIT_LOG_PREFIX));
         let mut overlay = ReviewSubmit::new(7, "acme/widget".to_string());
-        overlay.state = SubmissionState::Submitting { log_row };
+        overlay.state = SubmissionState::Submitting {
+            log_row,
+            drafts: Vec::new(),
+        };
         app.review_submit = Some(overlay);
 
         let screen = render(&mut app);

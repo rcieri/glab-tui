@@ -3,7 +3,7 @@
 
 use crate::app::TextBuffer;
 use crate::command_log::LogRow;
-use crate::domain::review::ReviewEvent;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use ratatui::layout::Rect;
 
 /// The outcomes the overlay offers, top to bottom.
@@ -93,8 +93,12 @@ impl ReviewSubmitFocus {
 pub enum SubmissionState {
     #[default]
     Editing,
-    /// The review is being posted. Its Terminal-tab entry is `log_row`.
-    Submitting { log_row: LogRow },
+    /// The review is being posted with `drafts`. Its Terminal-tab entry is
+    /// `log_row`.
+    Submitting {
+        log_row: LogRow,
+        drafts: Vec<DraftComment>,
+    },
     /// Nothing was sent: why the review cannot be submitted as it stands.
     Refused(String),
     /// The server rejected the last attempt and the drafts are still pending.
@@ -254,8 +258,12 @@ mod tests {
         }
 
         let log_row = crate::app::App::default().start_command("Submit review: MR #7".into());
-        overlay.state = SubmissionState::Submitting { log_row };
+        let running = SubmissionState::Submitting {
+            log_row,
+            drafts: Vec::new(),
+        };
+        overlay.state = running.clone();
         overlay.clear_outcome();
-        assert_eq!(overlay.state, SubmissionState::Submitting { log_row });
+        assert_eq!(overlay.state, running);
     }
 }

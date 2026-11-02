@@ -2404,27 +2404,12 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if key_event
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && key_event.code == KeyCode::Char('e')
-                    {
-                        if let Some(overlay) =
-                            app.review_submit.as_mut().filter(|o| !o.is_submitting())
-                        {
-                            if let Some(summary) =
-                                edit_in_editor(overlay.summary.value(), &mut terminal)
-                            {
-                                overlay.summary.set_value(summary);
-                                overlay.clear_outcome();
-                            }
-                            overlay.focus = crate::review_submit::ReviewSubmitFocus::Summary;
-                            continue;
-                        }
-                    }
-
-                    if handlers::review_submit::handle_key(&mut app, &key_event, events.sender())
-                        || handle_help_overlay(&mut app, &key_event)
+                    if handlers::review_submit::handle_key(
+                        &mut app,
+                        &key_event,
+                        &mut terminal,
+                        events.sender(),
+                    ) || handle_help_overlay(&mut app, &key_event)
                         || handle_help_keybinding(&mut app, &key_event)
                         || handle_submit_dialog(&mut app, &key_event, events.sender())
                         || handle_switch_repo(&mut app, &key_event)

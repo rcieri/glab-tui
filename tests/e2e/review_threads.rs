@@ -326,6 +326,35 @@ fn test_ctrl_c_does_not_quit_while_the_review_is_posted() {
 }
 
 #[test]
+fn test_ctrl_e_writes_the_review_summary_in_the_editor_and_clears_a_refusal() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("EDITOR", "printf 'Edited summary' >")]);
+    let mut session = open_diff_view(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\r");
+    let refusal = "A comment review needs a summary or draft comments.";
+    session
+        .wait_for_screen_contains(refusal, 5000)
+        .expect("an empty comment review is refused");
+
+    session.send_input(b"\x05");
+    // The terminal handoff probes keyboard-enhancement support on the way out
+    // and back, and this emulator never answers: each probe waits out
+    // crossterm's 2 s timeout.
+    session
+        .wait_for_screen_contains("Edited summary", 15_000)
+        .expect("the editor's text becomes the summary");
+    assert!(
+        !session.emulator.get_text().contains(refusal),
+        "a new summary clears the refusal"
+    );
+}
+
+#[test]
 fn test_leaving_the_diff_keeps_drafts_on_esc_and_restores_kept_drafts_on_reopen() {
     let mut session = session_in_diff_view();
 

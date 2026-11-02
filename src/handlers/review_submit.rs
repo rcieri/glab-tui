@@ -1,5 +1,6 @@
 //! Keys, clicks and the background submission of the submit-review overlay.
 
+use crate::AppTerminal;
 use crate::app::{App, REVIEW_SUBMIT_LOG_PREFIX};
 use crate::event::Event;
 use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, ReviewVerdict, SubmissionState};
@@ -13,8 +14,13 @@ pub fn open(app: &mut App, mr_iid: u64, project_path: String) {
 
 /// Keys of the open overlay, which takes every key until it closes. While a
 /// submission runs, keys are swallowed: the result decides whether the
-/// drafts are gone.
-pub fn handle_key(app: &mut App, key_event: &KeyEvent, tx: UnboundedSender<Event>) -> bool {
+/// drafts are gone. `Ctrl+E` hands the summary to `$EDITOR`.
+pub fn handle_key(
+    app: &mut App,
+    key_event: &KeyEvent,
+    terminal: &mut AppTerminal,
+    tx: UnboundedSender<Event>,
+) -> bool {
     let Some(mut overlay) = app.review_submit.take() else {
         return false;
     };
@@ -23,6 +29,14 @@ pub fn handle_key(app: &mut App, key_event: &KeyEvent, tx: UnboundedSender<Event
         return true;
     }
     match key_event.code {
+        KeyCode::Char('e') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(summary) = crate::editor::edit_in_editor(overlay.summary.value(), terminal)
+            {
+                overlay.summary.set_value(summary);
+                overlay.clear_outcome();
+            }
+            overlay.focus = ReviewSubmitFocus::Summary;
+        }
         KeyCode::Esc => return true,
         KeyCode::Tab => overlay.focus = overlay.focus.cycled(1),
         KeyCode::BackTab => overlay.focus = overlay.focus.cycled(-1),
@@ -199,8 +213,14 @@ mod tests {
     }
 
     fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+        let options = ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+        };
+        let mut terminal =
+            ratatui::Terminal::with_options(backend, options).expect("terminal construction");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_key(app, &KeyEvent::new(code, modifiers), tx)
+        handle_key(app, &KeyEvent::new(code, modifiers), &mut terminal, tx)
     }
 
     fn draft(body: &str) -> DraftComment {
@@ -328,10 +348,20 @@ mod tests {
         for code in [KeyCode::Esc, KeyCode::Enter, KeyCode::Char('x')] {
             assert!(press(&mut app, code));
         }
+        assert!(press_with(
+            &mut app,
+            KeyCode::Char('e'),
+            KeyModifiers::CONTROL
+        ));
 
         let overlay = app.review_submit.as_ref().expect("stays open");
         assert!(overlay.is_submitting());
         assert_eq!(overlay.summary.value(), "Looks good");
+        assert_eq!(
+            overlay.focus,
+            ReviewSubmitFocus::Verdicts,
+            "Ctrl+E opens no editor while the review is posted"
+        );
     }
 
     #[test]

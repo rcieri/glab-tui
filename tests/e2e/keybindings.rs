@@ -118,3 +118,26 @@ next_tab = "zz"
         .wait_for_screen_contains("Feature: Add pagination support", 15000)
         .expect("`zz` should switch to the MRs tab");
 }
+
+/// `scroll_top = "gg"` makes `g` wait, so `jump_to_id` on `g` only runs once
+/// `keybinding_timeout_ms` passes without another key.
+#[test]
+fn test_single_key_that_starts_a_sequence_fires_after_the_timeout() {
+    let config_toml = r#"
+icons = "ascii"
+keybinding_timeout_ms = 300
+
+[keybindings.global]
+scroll_top = "gg"
+"#;
+    let mut session = TestSession::with_config(false, 24, 140, Some(config_toml));
+    session
+        .wait_for_screen_contains("Worktree for seven", 30000)
+        .expect("app should list the issues");
+
+    session.send_input(b"g");
+
+    session
+        .wait_for_screen_contains("Jump to Issue/MR", 5000)
+        .expect("the waiting `g` should run `jump_to_id` once the timeout passes");
+}

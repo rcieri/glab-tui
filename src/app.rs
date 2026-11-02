@@ -7422,6 +7422,112 @@ impl App {
         }
     }
 
+    /// Fills the open selector with the items its own request fetched, or
+    /// with cached items when the fetch failed or came back empty. A reply
+    /// for a selector that has since closed or been replaced is dropped.
+    /// Returns whether the fetch succeeded, in which case the caller saves
+    /// `project_cache`.
+    pub fn apply_selector_items(
+        &mut self,
+        request: crate::notice::RequestTag,
+        items: Result<Vec<String>, String>,
+    ) -> bool {
+        if self.selector.as_ref().and_then(|s| s.request) != Some(request) {
+            return false;
+        }
+        let (items, failure) = match items {
+            Ok(items) => (items, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        if items.is_empty() {
+            if let Some(cached) = self.cached_selector_items() {
+                let notice =
+                    crate::notice::Notice::info("Offline fallback: cached selector items.")
+                        .from_request(request);
+                self.push_notice(match failure.as_deref() {
+                    Some(error) => notice.with_detail(error),
+                    None => notice,
+                });
+                if let Some(selector) = self.selector.as_mut() {
+                    selector.all_items = cached;
+                    selector.is_loading = false;
+                }
+                return false;
+            }
+        }
+        if let Some(error) = failure {
+            self.push_notice(
+                crate::notice::Notice::error(format!("Failed to load options: {error}"))
+                    .from_request(request),
+            );
+            if let Some(selector) = self.selector.as_mut() {
+                selector.is_loading = false;
+            }
+            return false;
+        }
+        let Some(selector) = self.selector.as_mut() else {
+            return false;
+        };
+        match selector.field_type.as_str() {
+            "labels" => {
+                self.cached_labels = items.clone();
+                self.project_cache.labels = items.clone();
+            }
+            "assignees" | "reviewers" => {
+                self.cached_members = items.clone();
+                self.project_cache.members = items.clone();
+            }
+            _ => {}
+        }
+        if selector.field_type == "project" {
+            selector.all_items.extend(items);
+            selector.all_items.sort();
+            selector.all_items.dedup();
+        } else {
+            selector.all_items = items;
+        }
+        selector.is_loading = false;
+        true
+    }
+
+    /// The open selector's options known without a fetch, if any.
+    fn cached_selector_items(&self) -> Option<Vec<String>> {
+        let cached: Vec<String> = match self.selector.as_ref()?.field_type.as_str() {
+            "labels" => self.cached_labels.clone(),
+            "assignees" | "reviewers" => self.cached_members.clone(),
+            "milestone" => self
+                .milestones
+                .items
+                .iter()
+                .map(|m| m.title.clone())
+                .collect(),
+            "source_branch" | "target_branch" | "pipeline_branch" | "create_from" => self
+                .branches
+                .items()
+                .iter()
+                .map(|b| b.name.clone())
+                .collect(),
+            "project" => {
+                let mut known: Vec<String> = self
+                    .issues
+                    .items
+                    .iter()
+                    .map(|i| &i.project_path)
+                    .chain(self.mrs.items.iter().map(|m| &m.project_path))
+                    .chain(self.pipelines.items.iter().map(|p| &p.project_path))
+                    .chain(self.milestones.items.iter().map(|ms| &ms.project_path))
+                    .filter(|path| !path.is_empty())
+                    .cloned()
+                    .collect();
+                known.sort();
+                known.dedup();
+                known
+            }
+            _ => return None,
+        };
+        (!cached.is_empty()).then_some(cached)
+    }
+
     /// Applies a todo mutation the server accepted to the local list. Read
     /// and done items stay listed only while the tab shows them. GitHub's
     /// done notifications leave the inbox whatever the filter.
@@ -10332,6 +10438,112 @@ diff --git a/Makefile b/Makefile
         );
         assert!(cancel_jobs.is_on_cancel());
         assert!(cancel_jobs.action.is_destructive());
+    }
+
+    fn loading_labels_selector(request: crate::notice::RequestTag) -> Selector {
+        Selector {
+            title: "Select Labels".to_string(),
+            all_items: Vec::new(),
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: true,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ListState::default(),
+            request: Some(request),
+        }
+    }
+
+    #[test]
+    fn selector_reply_for_a_replaced_selector_is_dropped() {
+        let mut app = App::default();
+        let stale = app.next_request_tag();
+        let current = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(current));
+
+        let applied = app.apply_selector_items(stale, Ok(vec!["bug".to_string()]));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(selector.is_loading);
+        assert!(selector.all_items.is_empty());
+        assert!(app.cached_labels.is_empty());
+    }
+
+    #[test]
+    fn selector_reply_after_the_selector_closed_is_dropped() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        assert_eq!(app.toast_notice(), None);
+        assert!(app.cached_labels.is_empty());
+    }
+
+    #[test]
+    fn selector_reply_fills_the_selector_and_the_label_cache() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+        let labels = vec!["bug".to_string(), "docs".to_string()];
+
+        let applied = app.apply_selector_items(request, Ok(labels.clone()));
+
+        assert!(applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, labels);
+        assert_eq!(app.cached_labels, labels);
+        assert_eq!(app.project_cache.labels, labels);
+    }
+
+    #[test]
+    fn failed_selector_fetch_falls_back_to_cached_labels() {
+        let mut app = App {
+            cached_labels: vec!["bug".to_string()],
+            ..App::default()
+        };
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, ["bug"]);
+        let notice = app.modal_notice().expect("notice inside the selector");
+        assert_eq!(notice.level(), crate::notice::NoticeLevel::Info);
+        assert_eq!(notice.text(), "Offline fallback: cached selector items.");
+        assert_eq!(notice.detail(), Some("HTTP 502"));
+    }
+
+    #[test]
+    fn failed_selector_fetch_without_a_cache_reports_inside_and_leaves_the_cache() {
+        let mut app = App::default();
+        app.project_cache.labels = vec!["persisted".to_string()];
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert!(selector.all_items.is_empty());
+        assert_eq!(
+            app.modal_notice().map(crate::notice::Notice::text),
+            Some("Failed to load options: HTTP 502")
+        );
+        assert_eq!(app.toast_notice(), None);
+        assert!(app.cached_labels.is_empty());
+        assert_eq!(app.project_cache.labels, ["persisted"]);
     }
 
     #[test]

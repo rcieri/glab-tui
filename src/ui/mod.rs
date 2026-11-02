@@ -1297,7 +1297,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(ctx.theme.yellow)
                             .add_modifier(Modifier::BOLD);
 
-                        let bubble = ctx.icons.comment_bubble.clone();
+                        let bubble = &ctx.icons.comment_bubble;
                         let right_prefix_first = format!(" {bubble} Draft Note{range_info}: ");
                         let left_prefix_first = format!(" {bubble} Draft ");
                         let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());

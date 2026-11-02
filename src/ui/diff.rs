@@ -42,10 +42,8 @@ pub(crate) fn format_comment_with_suggestions(
     let mut scope_kinds = ScopeKinds::default();
     let mut suggestion_highlighter: Option<LineHighlighter> = None;
     let continuation_prefix = " ".repeat(Span::raw(prefix).width());
-    let (suggestion_start, suggestion_end) = {
-        let icons = ctx.icons;
-        (icons.suggestion_start.clone(), icons.suggestion_end.clone())
-    };
+    let suggestion_start = &ctx.icons.suggestion_start;
+    let suggestion_end = &ctx.icons.suggestion_end;
 
     // Retrieve original lines for suggestion diff
     let mut original_lines: Vec<crate::app::DiffLine> = Vec::new();

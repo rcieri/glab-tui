@@ -1350,7 +1350,7 @@ pub async fn handle_active_tab_key(
                                 .map(|c| c.is_github)
                                 .unwrap_or(false);
                             if is_github {
-                                app.raise_error_toast(
+                                app.show_error(
                                     "Revoking approval isn't supported on GitHub".to_string(),
                                 );
                             } else {
@@ -1822,7 +1822,7 @@ pub async fn handle_active_tab_key(
                                 .map(|pipeline| pipeline.name().to_string())
                                 .filter(|name| !name.is_empty());
                             let Some(workflow) = workflow else {
-                                app.raise_error_toast(
+                                app.show_error(
                                     "Selected pipeline has no workflow name".to_string(),
                                 );
                                 return false;

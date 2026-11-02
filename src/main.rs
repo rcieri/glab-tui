@@ -2610,9 +2610,7 @@ async fn main() -> Result<()> {
                                                 });
                                             }
                                         } else {
-                                            app.raise_error_toast(
-                                                "Invalid pipeline ID".to_string(),
-                                            );
+                                            app.show_error("Invalid pipeline ID".to_string());
                                         }
                                     }
                                     crate::app::TextInputAction::CreateBranch(ref ref_branch) => {

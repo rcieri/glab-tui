@@ -1235,12 +1235,18 @@ async fn main() -> Result<()> {
         app.discard_stale_deployments();
         terminal.draw(|f| ui::render(f, &mut app))?;
 
-        let event = match app.key_buffer.pop_ready() {
-            Some(press) => Some(Event::KeyPress(press)),
-            None => events
+        let event = loop {
+            if let Some(press) = app.key_buffer.pop_ready() {
+                break Some(Event::KeyPress(press));
+            }
+            match events
                 .next()
                 .await
-                .and_then(|event| event.for_scope(app.scope_generation)),
+                .and_then(|event| event.for_scope(app.scope_generation))
+            {
+                Some(Event::Key(key_event)) => app.receive_key(key_event),
+                other => break other,
+            }
         };
         if let Some(event) = event {
             match event {
@@ -2344,7 +2350,6 @@ async fn main() -> Result<()> {
                 Event::Mouse(mouse_event) => {
                     handle_mouse_event(&mut app, &mouse_event);
                 }
-                Event::Key(key_event) => app.receive_key(key_event),
                 Event::KeyPress(key_event) => {
                     if key_event.code == KeyCode::Char('c')
                         && key_event

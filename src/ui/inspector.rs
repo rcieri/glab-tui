@@ -177,20 +177,20 @@ pub(crate) fn render_entity_inspector(
             .constraints([Constraint::Length(field_height), Constraint::Min(3)])
             .split(main_area);
 
-        render_fields_list(f, ctx, &mut mode, &field_list, chunks[0], theme);
+        render_fields_list(f, ctx, &mut mode, &field_list, chunks[0]);
         render_content_pane(f, ctx, &mut mode, doc, chunks[1], Borders::TOP)
     } else if has_content {
         // Only content.
         render_content_pane(f, ctx, &mut mode, doc, main_area, Borders::NONE)
     } else {
         // Only fields.
-        render_fields_list(f, ctx, &mut mode, &field_list, main_area, theme);
+        render_fields_list(f, ctx, &mut mode, &field_list, main_area);
         0
     };
 
     // Submit/save footer (edit mode only).
     if is_interactive {
-        render_submit_footer(f, &mut mode, submit_area, theme, icons);
+        render_submit_footer(f, ctx, &mut mode, submit_area);
     }
 
     max_scroll
@@ -204,10 +204,9 @@ fn render_fields_list(
     mode: &mut InspectorMode<'_>,
     field_list: &FieldList,
     area: Rect,
-    theme: &crate::config::Theme,
 ) {
     let field_items = build_field_list_items(ctx, field_list, area.width);
-    let list = List::new(field_items).style(Style::default().bg(theme.bg));
+    let list = List::new(field_items).style(Style::default().bg(ctx.theme.bg));
 
     let mut state = match mode {
         InspectorMode::Interactive { menu } => menu.state,
@@ -370,11 +369,12 @@ fn render_content_pane(
 /// navigates here and presses Enter.
 fn render_submit_footer(
     f: &mut Frame,
+    ctx: &RenderCtx<'_>,
     mode: &mut InspectorMode<'_>,
     area: Rect,
-    theme: &crate::config::Theme,
-    icons: &crate::config::Icons,
 ) {
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
     let menu = match mode {
         InspectorMode::Interactive { menu } => menu,
         _ => return,

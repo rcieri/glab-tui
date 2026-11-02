@@ -922,13 +922,14 @@ command = "true"
                 "does not run on the pipelines tab(s): the built-in \"r\" (retry) takes the key first",
             ]
         );
-        assert!(
+        assert_eq!(
             commands
                 .find(
                     Tab::Issues,
                     &KeyPress::Key(binding_key_event("Ctrl+t").unwrap())
                 )
-                .is_some()
+                .map(|command| command.key.as_str()),
+            Some("Ctrl+t")
         );
     }
 

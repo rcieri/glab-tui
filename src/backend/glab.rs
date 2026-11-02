@@ -991,17 +991,44 @@ impl GlabBackend {
             .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
     }
 
-    /// Deletes the draft notes of a review that failed before they were
-    /// published. `bulk_publish` publishes every pending draft note of the
-    /// user, so a retry would otherwise post these twice. `error` is returned
-    /// with how many could not be deleted.
-    async fn discard_draft_notes(
+    /// Creates one draft note per comment, then publishes them. `created`
+    /// collects the notes this attempt posted, so a failure after some were
+    /// created can delete them again.
+    async fn publish_draft_notes(
         &self,
         endpoint: &str,
-        ids: &[u64],
-        iid: u64,
-        error: anyhow::Error,
-    ) -> anyhow::Error {
+        comments: &[DraftComment],
+        diff_refs: &GiDiffRefs,
+        created: &mut Vec<u64>,
+    ) -> Result<()> {
+        #[derive(Deserialize)]
+        struct GiDraftNote {
+            id: u64,
+        }
+        for comment in comments {
+            let payload = gitlab_draft_note_payload(comment, diff_refs).to_string();
+            let id = self
+                .raw_api(endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
+                .await
+                .and_then(|out| Ok(serde_json::from_str::<GiDraftNote>(&out)?.id))
+                .with_context(|| format!("draft note on {} failed", comment.file_path))?;
+            created.push(id);
+        }
+        self.raw_api(
+            &format!("{endpoint}/bulk_publish"),
+            "POST",
+            None,
+            "PUBLISHING DRAFT NOTES",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Deletes the draft notes of a review that failed before they were
+    /// published. `bulk_publish` publishes every pending draft note of the
+    /// user, so a retry would otherwise post these twice. Returns how many
+    /// could not be deleted.
+    async fn delete_draft_notes(&self, endpoint: &str, ids: &[u64]) -> usize {
         let mut undeleted = 0;
         for id in ids {
             let deleted = self
@@ -1016,13 +1043,7 @@ impl GlabBackend {
                 undeleted += 1;
             }
         }
-        if undeleted == 0 {
-            error
-        } else {
-            error.context(format!(
-                "{undeleted} draft note(s) of this review could not be deleted from !{iid}"
-            ))
-        }
+        undeleted
     }
 }
 
@@ -2022,39 +2043,17 @@ impl Backend for GlabBackend {
                 Self::encode_path(project),
                 iid
             );
-            #[derive(Deserialize)]
-            struct GiDraftNote {
-                id: u64,
-            }
             let mut created = Vec::with_capacity(comments.len());
-            for comment in comments {
-                let payload = gitlab_draft_note_payload(comment, &diff_refs).to_string();
-                let posted = self
-                    .raw_api(&endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
-                    .await
-                    .and_then(|out| Ok(serde_json::from_str::<GiDraftNote>(&out)?.id))
-                    .with_context(|| format!("draft note on {} failed", comment.file_path));
-                match posted {
-                    Ok(id) => created.push(id),
-                    Err(error) => {
-                        return Err(self
-                            .discard_draft_notes(&endpoint, &created, iid, error)
-                            .await);
-                    }
-                }
-            }
-            let published = self
-                .raw_api(
-                    &format!("{endpoint}/bulk_publish"),
-                    "POST",
-                    None,
-                    "PUBLISHING DRAFT NOTES",
-                )
-                .await;
-            if let Err(error) = published {
-                return Err(self
-                    .discard_draft_notes(&endpoint, &created, iid, error)
-                    .await);
+            if let Err(error) = self
+                .publish_draft_notes(&endpoint, comments, &diff_refs, &mut created)
+                .await
+            {
+                return Err(match self.delete_draft_notes(&endpoint, &created).await {
+                    0 => error,
+                    undeleted => error.context(format!(
+                        "{undeleted} draft note(s) of this review could not be deleted from !{iid}"
+                    )),
+                });
             }
         }
         if event == ReviewEvent::Approve {

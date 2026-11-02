@@ -1962,7 +1962,7 @@ mod tests {
             .collect()
     }
 
-    fn loading_selector(request: crate::notice::RequestTag) -> crate::app::Selector {
+    fn labels_selector(request: crate::notice::RequestTag) -> crate::app::Selector {
         crate::app::Selector {
             title: "Select Labels".to_string(),
             all_items: vec![],
@@ -1985,7 +1985,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(loading_selector(request));
+        app.selector = Some(labels_selector(request));
         app.push_notice(
             crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
         );
@@ -2019,7 +2019,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(loading_selector(request));
+        app.selector = Some(labels_selector(request));
         app.push_notice(
             crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
         );

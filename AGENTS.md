@@ -134,7 +134,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * `DiffView::without_highlighting` parses the same structure with no highlighting. The headless `glab-tui review` subcommand uses it, since it only checks anchors.
 
 ### Entity Inspector & Form Architecture (`src/ui/inspector.rs`)
-* **Unified Render Pipeline:** Read-only details preview and interactive edit/create modes share a single rendering path driven by `render_entity_inspector(f, &doc, area, mode, &label_colors)`. `InspectorMode` (`ReadOnly` vs `Interactive`) is the only structural switch, and `EntityDocument` is the single source of truth for both modes.
+* **Unified Render Pipeline:** Read-only details preview and interactive edit/create modes share a single rendering path driven by `render_entity_inspector(f, ctx, &doc, area, mode, &label_colors)`. `InspectorMode` (`ReadOnly` vs `Interactive`) is the only structural switch, and `EntityDocument` is the single source of truth for both modes.
 * **Single-Column Layout:** The markdown description spans full-width at the top, and the metadata fields list is cleanly stacked beneath it with aligned `│` separators.
 * **Navigation & Inline Editing:** In interactive mode, `j`/`k`/arrows navigate across all editable rows including Description/Release Notes. `Enter` toggles inline editing (or opens external `$EDITOR` / `Ctrl+E`). `ReadOnly` and `Section` spacer fields are skipped during interactive navigation and render with a muted shield icon (`readonly` nerd font icon).
 * **Mode Indicators:** The top banner right-aligns a vim/helix-style mode badge (`[NORMAL]`, `[PREVIEW]`, `[EDIT]`, `[CREATE]`) mapped to semantic badge theme colors. Pressing `Esc` in edit forms pops back to the previous zoom state predictably.

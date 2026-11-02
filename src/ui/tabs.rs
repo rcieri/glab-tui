@@ -1959,7 +1959,6 @@ pub(crate) fn render_tab_jobs(
         }
 
         let kind = ctx.kind;
-        let is_github = kind.is_github();
         let jobs_title = Tab::Jobs.title(kind, ctx.icons);
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
@@ -2031,8 +2030,7 @@ pub(crate) fn render_tab_jobs(
                 render_job_trace(f, app, trace_rect, theme);
             }
         } else {
-            let summary =
-                InspectorContent::Custom(job_summary_lines(ctx, &app.jobs.items, is_github));
+            let summary = InspectorContent::Custom(job_summary_lines(ctx, &app.jobs.items));
             let document = match selected_job {
                 Some(job) => crate::entity_editor::build_job_document(job, summary),
                 None => EntityDocument {
@@ -2138,9 +2136,9 @@ fn render_job_trace(f: &mut Frame, app: &mut App, area: Rect, theme: &crate::con
 fn job_summary_lines(
     ctx: &RenderCtx<'_>,
     jobs: &[crate::domain::pipelines::Job],
-    is_github: bool,
 ) -> Vec<Line<'static>> {
     let theme = &ctx.theme;
+    let is_github = ctx.kind.is_github();
     let heading = if is_github {
         "Jobs Status:"
     } else {

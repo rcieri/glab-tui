@@ -43,19 +43,10 @@ impl ReviewVerdict {
         }
     }
 
-    fn position(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|&v| v == self)
-            .unwrap_or_default()
-    }
-
     /// The verdict `step` rows below (or above, when negative), wrapping
     /// around like the selectors do.
     pub fn stepped(self, step: isize) -> Self {
-        let len = Self::ALL.len() as isize;
-        let index = (self.position() as isize + step).rem_euclid(len);
-        Self::ALL[index as usize]
+        step_through(&Self::ALL, self, step)
     }
 }
 
@@ -79,14 +70,19 @@ impl ReviewSubmitFocus {
 
     /// The focus `Tab` (positive `step`) or `Shift+Tab` moves to, wrapping
     /// around.
-    pub fn cycled(self, step: isize) -> Self {
-        let len = Self::ORDER.len() as isize;
-        let position = Self::ORDER
-            .iter()
-            .position(|&f| f == self)
-            .unwrap_or_default();
-        Self::ORDER[(position as isize + step).rem_euclid(len) as usize]
+    pub fn stepped(self, step: isize) -> Self {
+        step_through(&Self::ORDER, self, step)
     }
+}
+
+/// `current` moved `step` entries through the non-empty `items`, wrapping at
+/// either end.
+fn step_through<T: Copy + PartialEq>(items: &[T], current: T, step: isize) -> T {
+    let position = items
+        .iter()
+        .position(|&item| item == current)
+        .unwrap_or_default() as isize;
+    items[(position + step).rem_euclid(items.len() as isize) as usize]
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -187,11 +183,11 @@ mod tests {
     }
 
     #[test]
-    fn focus_cycles_through_verdicts_summary_and_both_buttons() {
+    fn focus_steps_through_verdicts_summary_and_both_buttons() {
         let mut focus = ReviewSubmitFocus::Verdicts;
         let mut seen = vec![focus];
         for _ in 0..4 {
-            focus = focus.cycled(1);
+            focus = focus.stepped(1);
             seen.push(focus);
         }
         assert_eq!(
@@ -205,7 +201,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            ReviewSubmitFocus::Verdicts.cycled(-1),
+            ReviewSubmitFocus::Verdicts.stepped(-1),
             ReviewSubmitFocus::CancelButton
         );
     }

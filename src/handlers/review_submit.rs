@@ -38,8 +38,8 @@ pub fn handle_key(
             overlay.focus = ReviewSubmitFocus::Summary;
         }
         KeyCode::Esc => return true,
-        KeyCode::Tab => overlay.focus = overlay.focus.cycled(1),
-        KeyCode::BackTab => overlay.focus = overlay.focus.cycled(-1),
+        KeyCode::Tab => overlay.focus = overlay.focus.stepped(1),
+        KeyCode::BackTab => overlay.focus = overlay.focus.stepped(-1),
         KeyCode::Enter if overlay.focus == ReviewSubmitFocus::CancelButton => return true,
         KeyCode::Enter => {
             app.review_submit = Some(overlay);

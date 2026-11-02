@@ -36,7 +36,8 @@ pub(crate) fn render_terminal_inspector(
     let hints = key_hints(&app.config.keybindings.terminal);
 
     let title = format!("{} Command Details", icons.tab_terminal);
-    let (body, area) = modal_area(f, ctx, &title, centered_rect_min(80, 80, 60, 14, size));
+    let area = centered_rect_min(80, 80, 60, 14, size);
+    let body = modal_area(f, ctx, &title, area);
     app.overlay_stack
         .push((OverlayKind::TerminalInspector, area));
     let [content, hints_area] =

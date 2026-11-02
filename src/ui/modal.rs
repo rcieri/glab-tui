@@ -32,16 +32,11 @@ pub(crate) fn clear_area(f: &mut Frame, ctx: &RenderCtx<'_>, area: Rect) {
     );
 }
 
-/// Clear and render a modal frame over `area`. Returns (inner_area, outer_area) for body content.
-pub(crate) fn modal_area(
-    f: &mut Frame,
-    ctx: &RenderCtx<'_>,
-    title: &str,
-    area: Rect,
-) -> (Rect, Rect) {
+/// Clear `area` and draw a modal frame over it. Returns the area inside the border.
+pub(crate) fn modal_area(f: &mut Frame, ctx: &RenderCtx<'_>, title: &str, area: Rect) -> Rect {
     clear_area(f, ctx, area);
     let block = modal_block(title, &ctx.theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    (inner, area)
+    inner
 }

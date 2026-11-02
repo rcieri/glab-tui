@@ -63,12 +63,8 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(
-                f,
-                ctx,
-                &selector.title,
-                centered_rect_min(70, 70, 60, 8, size),
-            );
+            let selector_area = centered_rect_min(70, 70, 60, 8, size);
+            let body = modal_area(f, ctx, &selector.title, selector_area);
             app.overlay_stack
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
@@ -815,12 +811,8 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // Render value-based column filter selector as overlay on configure view
     if app.focus_column_checklist && app.column_filter_context.is_some() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(
-                f,
-                ctx,
-                &selector.title,
-                centered_rect_min(70, 70, 60, 8, size),
-            );
+            let selector_area = centered_rect_min(70, 70, 60, 8, size);
+            let body = modal_area(f, ctx, &selector.title, selector_area);
             app.overlay_stack
                 .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 

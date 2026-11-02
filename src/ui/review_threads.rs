@@ -27,12 +27,8 @@ pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mu
     };
     let theme = ctx.theme;
 
-    let (body, area) = modal_area(
-        f,
-        ctx,
-        &modal_title(overview),
-        centered_rect_min(85, 85, 70, 16, size),
-    );
+    let area = centered_rect_min(85, 85, 70, 16, size);
+    let body = modal_area(f, ctx, &modal_title(overview), area);
     app.overlay_stack.push((OverlayKind::ReviewThreads, area));
 
     let chunks = Layout::default()

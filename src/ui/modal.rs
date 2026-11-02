@@ -34,8 +34,8 @@ pub(crate) fn clear_area(f: &mut Frame, area: Rect) {
     );
 }
 
-/// Style of a dialog button: filled with `accent` (or `border_focused` when it
-/// has none) while focused, written in it otherwise.
+/// Style of a dialog button, filled with its accent (or `border_focused`
+/// without one) while focused.
 pub(crate) fn button_style(theme: &Theme, is_focused: bool, accent: Option<Color>) -> Style {
     let (fg, bg) = match (is_focused, accent) {
         (true, Some(accent)) => (theme.bg, accent),

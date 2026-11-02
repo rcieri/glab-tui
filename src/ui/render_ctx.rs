@@ -3,8 +3,8 @@ use crate::backend::BackendKind;
 use crate::config::{Icons, Theme};
 use ratatui::style::{Modifier, Style};
 
-/// What every render function draws with, resolved once per frame from `App`
-/// so no widget reads configuration on its own.
+/// The theme, icon set and backend kind every render function draws with,
+/// resolved once per frame from `App`.
 #[derive(Clone, Copy)]
 pub(crate) struct RenderCtx<'a> {
     pub(crate) theme: Theme,

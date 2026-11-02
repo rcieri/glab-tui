@@ -2,6 +2,7 @@ use super::diff::centered_rect_fixed;
 use super::modal::{button_style, clear_area};
 use crate::app::{App, OverlayKind};
 use crate::config::{ICONS, Icons, THEME, Theme};
+use crate::domain::review::draft_comments_phrase;
 use crate::review_submit::{
     ReviewSubmit, ReviewSubmitFocus, ReviewSubmitLayout, ReviewVerdict, SubmissionState,
 };
@@ -35,8 +36,12 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
             .min(size.width)
             .saturating_sub(2 * CONTENT_MARGIN.horizontal),
     );
+    let draft_count = match overlay.verdict {
+        ReviewVerdict::KeepAsDraft => app.kept_draft_count(),
+        _ => app.draft_comments.len(),
+    };
     let notes = wrap_text(
-        &draft_note(overlay.verdict, app.draft_comments.len(), kind.is_gitlab()),
+        &draft_note(overlay.verdict, draft_count, kind.is_gitlab()),
         text_width,
     );
     let status = status_lines(&overlay.state, text_width, &icons, &theme);
@@ -148,12 +153,11 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
     app.review_submit = Some(overlay);
 }
 
+/// `draft_count` is the drafts the verdict acts on: the ones a review posts,
+/// or every kept one for Keep as draft, since drafts whose lines left the diff
+/// are kept but never posted.
 fn draft_note(verdict: ReviewVerdict, draft_count: usize, is_gitlab: bool) -> String {
-    let drafts = if draft_count == 1 {
-        "1 draft comment".to_string()
-    } else {
-        format!("{draft_count} draft comments")
-    };
+    let drafts = draft_comments_phrase(draft_count);
     let mut note = match (verdict, draft_count) {
         (ReviewVerdict::KeepAsDraft, 0) => "There are no draft comments to keep.".to_string(),
         (ReviewVerdict::KeepAsDraft, _) => {
@@ -515,6 +519,41 @@ mod tests {
                 .and_then(|overlay| overlay.layout)
                 .is_some(),
             "the drawn layout is kept for mouse clicks"
+        );
+    }
+
+    #[test]
+    fn keep_as_draft_counts_the_drafts_whose_lines_left_the_diff() {
+        let mut app = app_with_overlay(SubmissionState::Editing);
+        app.stale_draft_comments = vec![crate::domain::review::DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: Some(3),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "moved".to_string(),
+        }];
+        if let Some(overlay) = app.review_submit.as_mut() {
+            overlay.verdict = ReviewVerdict::KeepAsDraft;
+        }
+
+        let rows = row_texts(&render(&mut app));
+
+        assert!(
+            rows.iter()
+                .any(|row| row == "Nothing is posted. Kept for later: 1 draft comment."),
+            "{rows:#?}"
+        );
+
+        if let Some(overlay) = app.review_submit.as_mut() {
+            overlay.verdict = ReviewVerdict::Comment;
+        }
+        let rows = row_texts(&render(&mut app));
+
+        assert!(
+            rows.iter()
+                .any(|row| row == "No draft comments: only the summary is posted."),
+            "a moved draft is never posted: {rows:#?}"
         );
     }
 

@@ -4,10 +4,6 @@ use std::time::{Duration, Instant};
 /// How long a notice stays on screen.
 pub const NOTICE_LIFETIME: Duration = Duration::from_secs(5);
 
-/// Bounds the queue during a burst of failures: only the newest notice of
-/// each kind is ever drawn, and the oldest expire first anyway.
-const MAX_QUEUED_NOTICES: usize = 32;
-
 /// Second line of an error whose full CLI stderr is in the Terminal tab.
 pub const CLI_LOG_HINT: &str = "Full details in the terminal log below";
 
@@ -88,8 +84,9 @@ impl Notice {
     }
 }
 
-/// Every notice still on screen, oldest first. A new notice never replaces
-/// an older one: each surface draws the newest notice meant for it.
+/// Every notice still on screen, oldest first. A new notice replaces only an
+/// older one of the same level and origin, which no surface could draw any
+/// more: each surface draws the newest notice meant for it.
 #[derive(Debug, Default)]
 pub struct NoticeQueue {
     notices: VecDeque<Notice>,
@@ -97,9 +94,8 @@ pub struct NoticeQueue {
 
 impl NoticeQueue {
     pub fn push(&mut self, notice: Notice) {
-        if self.notices.len() == MAX_QUEUED_NOTICES {
-            self.notices.pop_front();
-        }
+        self.notices
+            .retain(|queued| queued.level != notice.level || queued.origin != notice.origin);
         self.notices.push_back(notice);
     }
 
@@ -145,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn newer_error_is_shown_without_discarding_the_older_one() {
+    fn newer_error_is_the_one_drawn() {
         let mut queue = NoticeQueue::default();
         queue.push(Notice::error("first"));
         queue.push(Notice::error("second"));
@@ -156,7 +152,23 @@ mod tests {
                 .map(Notice::text),
             Some("second")
         );
-        assert_eq!(texts(&queue), ["first", "second"]);
+    }
+
+    #[test]
+    fn burst_of_info_notices_keeps_the_live_error() {
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("push rejected"));
+        for i in 0..100 {
+            queue.push(Notice::info(format!("Selected all {i} items")));
+        }
+
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, None)
+                .map(Notice::text),
+            Some("push rejected")
+        );
+        assert_eq!(texts(&queue), ["push rejected", "Selected all 99 items"]);
     }
 
     #[test]
@@ -269,16 +281,5 @@ mod tests {
         queue.dismiss(NoticeLevel::Info, Some(open));
 
         assert_eq!(texts(&queue), ["Offline fallback: cached selector items."]);
-    }
-
-    #[test]
-    fn queue_drops_its_oldest_notice_past_the_cap() {
-        let mut queue = NoticeQueue::default();
-        for i in 0..=MAX_QUEUED_NOTICES {
-            queue.push(Notice::info(i.to_string()));
-        }
-
-        assert_eq!(queue.notices.len(), MAX_QUEUED_NOTICES);
-        assert_eq!(queue.notices.front().map(Notice::text), Some("1"));
     }
 }

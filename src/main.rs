@@ -2380,7 +2380,9 @@ async fn main() -> Result<()> {
                             .as_ref()
                             .is_some_and(|o| o.is_submitting())
                         {
-                            app.show_notice("Waiting for the review to post before quitting");
+                            app.show_notice(
+                                "A review is being posted: press Ctrl+C again once it finishes",
+                            );
                             continue;
                         }
                         app.quit();

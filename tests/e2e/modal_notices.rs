@@ -38,9 +38,10 @@ fn test_failed_selector_fetch_is_reported_inside_the_selector() {
     );
 
     session.send_input(b"\x1b");
-    session.settle(300);
+    session
+        .wait_for_screen_without("Select Labels", 5000)
+        .expect("Esc closes the selector");
     let screen = session.emulator.get_text();
-    assert!(!screen.contains("Select Labels"), "Esc closes the selector");
     let rows = rows_with(&screen, FAILURE);
     assert_eq!(rows.len(), 1, "the error moves to the toast:\n{screen}");
     assert!(!rows[0].contains('║'), "no longer framed by the selector");

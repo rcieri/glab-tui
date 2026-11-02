@@ -685,6 +685,22 @@ impl TestSession {
             self.emulator.get_text()
         ))
     }
+
+    /// Feeds output to the emulator until the screen no longer contains
+    /// `gone`, for a state change that removes text rather than adds it.
+    pub fn wait_for_screen_without(&mut self, gone: &str, timeout_ms: u64) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            self.settle(50);
+            if !self.emulator.get_text().contains(gone) {
+                return Ok(());
+            }
+        }
+        Err(format!(
+            "Timeout waiting for '{gone}' to leave the screen. Current screen:\n{}",
+            self.emulator.get_text()
+        ))
+    }
 }
 
 fn find_glab_tui_binary() -> PathBuf {

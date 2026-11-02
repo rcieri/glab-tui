@@ -23,6 +23,9 @@ const CONTENT_MARGIN: Margin = Margin::new(2, 1);
 const SUMMARY_ROWS: u16 = 3;
 /// Most rows an error takes, so the buttons stay on screen.
 const MAX_STATUS_ROWS: usize = 4;
+/// Shown under a failure cut at `MAX_STATUS_ROWS`: its root cause comes last
+/// in `{e:#}`, and the submission's Terminal-tab entry keeps all of it.
+const CUT_ERROR_HINT: &str = "Full error in the Terminal tab";
 
 pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
     let Some(mut overlay) = app.review_submit.take() else {
@@ -193,24 +196,51 @@ fn status_lines(
                 .add_modifier(Modifier::BOLD),
         ))],
         SubmissionState::Refused(reason) => {
-            outcome_lines(&icons.status_pending, reason, width, theme.yellow)
+            outcome_lines(&icons.status_pending, reason, width, theme.yellow).0
         }
         SubmissionState::Failed(error) => {
-            outcome_lines(&icons.status_failed, error, width, theme.red)
+            let (mut lines, is_cut) = outcome_lines(&icons.status_failed, error, width, theme.red);
+            if is_cut {
+                lines.push(Line::from(Span::styled(
+                    CUT_ERROR_HINT,
+                    Style::default().fg(theme.text_muted),
+                )));
+            }
+            lines
         }
     }
 }
 
-fn outcome_lines(icon: &str, text: &str, width: usize, color: Color) -> Vec<Line<'static>> {
+/// The message's rows, at most `MAX_STATUS_ROWS`, and whether it was cut to
+/// fit them, in which case the last row ends in an ellipsis.
+fn outcome_lines(icon: &str, text: &str, width: usize, color: Color) -> (Vec<Line<'static>>, bool) {
     let message = format!("{icon} {}", displayable(text));
-    wrap_ranges(&message, width)
+    let rows = wrap_ranges(&message, width);
+    let is_cut = rows.len() > MAX_STATUS_ROWS;
+    let lines = rows
         .into_iter()
         .take(MAX_STATUS_ROWS)
-        .map(|range| {
-            let row = message[range].trim_start().to_string();
+        .enumerate()
+        .map(|(index, range)| {
+            let row = message[range].trim_start();
+            let row = if is_cut && index + 1 == MAX_STATUS_ROWS {
+                with_ellipsis(row, width)
+            } else {
+                row.to_string()
+            };
             Line::from(Span::styled(row, Style::default().fg(color)))
         })
-        .collect()
+        .collect();
+    (lines, is_cut)
+}
+
+fn with_ellipsis(row: &str, width: usize) -> String {
+    let mut row = row.trim_end().to_string();
+    while !row.is_empty() && Span::raw(row.as_str()).width() + 1 > width {
+        row.pop();
+    }
+    row.push('…');
+    row
 }
 
 fn verdict_lines(overlay: &ReviewSubmit, icons: &Icons, theme: &Theme) -> Vec<Line<'static>> {
@@ -459,6 +489,41 @@ mod tests {
             .position(|row| row == head)
             .unwrap_or_else(|| panic!("the path fills a 56-column row: {rows:#?}"));
         assert_eq!(rows[split + 1], format!("{tail} failed"));
+    }
+
+    #[test]
+    fn an_error_past_its_last_row_ends_in_an_ellipsis_and_points_at_the_terminal_tab() {
+        let error = "draft note on src/lib.rs failed: ".repeat(8) + "root cause";
+        let mut app = app_with_overlay(SubmissionState::Failed(error));
+
+        let rows = row_texts(&render_at_width(&mut app, 60));
+
+        let last = rows
+            .iter()
+            .position(|row| row.ends_with('…'))
+            .unwrap_or_else(|| panic!("the cut error ends in an ellipsis: {rows:#?}"));
+        assert!(rows[last].chars().count() <= 56, "{rows:#?}");
+        assert_eq!(rows[last + 1], "Full error in the Terminal tab");
+        assert!(
+            !rows.iter().any(|row| row.contains("root cause")),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn an_error_that_fits_has_no_terminal_tab_hint() {
+        let mut app = app_with_overlay(SubmissionState::Failed(
+            "HTTP 422: Review body is required".to_string(),
+        ));
+
+        let rows = row_texts(&render(&mut app));
+
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row == "Full error in the Terminal tab"),
+            "{rows:#?}"
+        );
     }
 
     fn app_with_summary(summary: &str) -> App {

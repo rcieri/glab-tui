@@ -345,13 +345,10 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             12 => "December",
             _ => "",
         };
-        let header_str = {
-            let icons = ctx.icons;
-            format!(
-                "{}  {} {}  {}",
-                icons.nav_prev, month_str, date_picker.year, icons.nav_next
-            )
-        };
+        let header_str = format!(
+            "{}  {} {}  {}",
+            icons.nav_prev, month_str, date_picker.year, icons.nav_next
+        );
         let header_p = Paragraph::new(header_str)
             .alignment(Alignment::Center)
             .style(

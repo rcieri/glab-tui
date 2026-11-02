@@ -52,7 +52,7 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
         ReviewSubmitFocus::Summary => match code {
             KeyCode::Up => overlay.focus = ReviewSubmitFocus::Verdicts,
             KeyCode::Down => overlay.focus = ReviewSubmitFocus::SubmitButton,
-            _ if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {}
+            _ if is_shortcut(code, modifiers) => {}
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
                 overlay.summary.apply_edit_key(code);
                 overlay.clear_outcome();
@@ -66,6 +66,14 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
             _ => {}
         },
     }
+}
+
+/// Windows reports AltGr as Ctrl+Alt with the composed character, so a German
+/// `@` or a Nordic `{` arrives as Ctrl+Alt and is text, not a shortcut.
+fn is_shortcut(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    let is_alt_gr_text = modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && matches!(code, KeyCode::Char(c) if !c.is_ascii_alphanumeric());
+    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) && !is_alt_gr_text
 }
 
 fn select_verdict(overlay: &mut ReviewSubmit, verdict: ReviewVerdict) {
@@ -187,8 +195,12 @@ mod tests {
     const PROJECT: &str = "acme/widget";
 
     fn press(app: &mut App, code: KeyCode) -> bool {
+        press_with(app, code, KeyModifiers::NONE)
+    }
+
+    fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_key(app, &KeyEvent::new(code, KeyModifiers::NONE), tx)
+        handle_key(app, &KeyEvent::new(code, modifiers), tx)
     }
 
     fn draft(body: &str) -> DraftComment {
@@ -225,6 +237,27 @@ mod tests {
         let overlay = app.review_submit.as_ref().expect("still open");
         assert_eq!(overlay.summary.value(), "jq");
         assert_eq!(overlay.verdict, ReviewVerdict::Comment);
+    }
+
+    #[test]
+    fn alt_gr_characters_reach_the_summary_but_ctrl_shortcuts_do_not() {
+        let mut app = App::default();
+        open(&mut app, 7, PROJECT.to_string());
+        press(&mut app, KeyCode::Tab);
+        let alt_gr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+
+        for (c, modifiers) in [
+            ('@', alt_gr),
+            ('€', alt_gr),
+            ('a', KeyModifiers::CONTROL),
+            ('a', alt_gr),
+            ('b', KeyModifiers::ALT),
+        ] {
+            assert!(press_with(&mut app, KeyCode::Char(c), modifiers));
+        }
+
+        let overlay = app.review_submit.as_ref().expect("still open");
+        assert_eq!(overlay.summary.value(), "@€");
     }
 
     #[test]

@@ -5268,9 +5268,12 @@ impl App {
     }
 
     /// Takes down the header-bar notices, e.g. a "Loading…" notice once the
-    /// load it announced has landed. Error toasts stay until they expire.
+    /// load it announced has landed. Error toasts stay until they expire, and
+    /// the open modal keeps the notices about its own request.
     pub fn clear_info_notices(&mut self) {
-        self.notices.dismiss(crate::notice::NoticeLevel::Info);
+        let open_request = self.open_modal_request();
+        self.notices
+            .dismiss(crate::notice::NoticeLevel::Info, open_request);
     }
 
     /// Queues a notice as built, for one that names its own request or

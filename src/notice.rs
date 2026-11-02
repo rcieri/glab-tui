@@ -107,8 +107,9 @@ impl NoticeQueue {
         self.notices.retain(|notice| !notice.is_expired_at(now));
     }
 
-    pub fn dismiss(&mut self, level: NoticeLevel) {
-        self.notices.retain(|notice| notice.level != level);
+    pub fn dismiss(&mut self, level: NoticeLevel, open_request: Option<RequestTag>) {
+        self.notices
+            .retain(|notice| notice.level != level || notice.is_routed_to(open_request));
     }
 
     /// The newest notice of `level` that the open modal does not show itself.
@@ -234,9 +235,23 @@ mod tests {
         queue.push(Notice::info("Loading the stack of PR #4…"));
         queue.push(Notice::error("push rejected"));
 
-        queue.dismiss(NoticeLevel::Info);
+        queue.dismiss(NoticeLevel::Info, None);
 
         assert_eq!(texts(&queue), ["push rejected"]);
+    }
+
+    #[test]
+    fn dismiss_keeps_notices_routed_to_the_open_modal() {
+        let open = RequestTag::default().next();
+        let closed = open.next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::info("Offline fallback: cached selector items.").from_request(open));
+        queue.push(Notice::info("closed selector fallback").from_request(closed));
+        queue.push(Notice::info("Loading…"));
+
+        queue.dismiss(NoticeLevel::Info, Some(open));
+
+        assert_eq!(texts(&queue), ["Offline fallback: cached selector items."]);
     }
 
     #[test]

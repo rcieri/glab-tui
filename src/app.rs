@@ -3824,9 +3824,10 @@ impl EnvironmentDeployments {
 
 pub struct App {
     pub config: Config,
-    /// `config`'s theme and icon set, resolved by `apply_config`. Render code
-    /// reads them through a per-frame `RenderCtx`, never from `config`.
+    /// Resolved from `config.theme_preset` and `config.theme`. Only
+    /// `apply_config` refreshes it.
     pub theme: Theme,
+    /// Built from `config.icons`. Only `apply_config` refreshes it.
     pub icons: Arc<Icons>,
     /// The first keypress of an in-progress key sequence (e.g. the `g` of
     /// `gg`), if one hasn't resolved or timed out yet. Set by the event loop

@@ -2742,7 +2742,8 @@ command = "true"
     }
 
     /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:
-    /// a body line, five options and both buttons.
+    /// a body line, five options and both buttons. Drawn with the ASCII icon
+    /// set, the one the snapshots are written in.
     fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut app = App::default();
@@ -2752,16 +2753,19 @@ command = "true"
             crate::app::ConfirmAction::MergeMr(2),
             &app,
         ));
-        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
         terminal
             .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
             .unwrap();
         terminal
     }
 
-    /// One line per buffer row, trailing blanks trimmed, with the icons the
-    /// dialog draws rewritten into the ASCII set, so the snapshot reads the
-    /// same whichever glyph family the test context renders with.
+    /// One line per buffer row, trailing blanks trimmed.
     fn snapshot_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let mut text = String::new();
@@ -2770,17 +2774,7 @@ command = "true"
             text.push_str(line.trim_end());
             text.push('\n');
         }
-        let icons = crate::ui::render_ctx::RenderCtx::for_tests().icons;
-        let ascii = crate::config::Icons::ascii();
-        [
-            (&icons.action_merge, &ascii.action_merge),
-            (&icons.check_on, &ascii.check_on),
-            (&icons.check_off, &ascii.check_off),
-        ]
-        .into_iter()
-        .fold(text, |text, (icon, replacement)| {
-            text.replace(icon.as_str(), replacement)
-        })
+        text
     }
 
     /// Compares against `src/ui/snapshots/<name>.txt`. Set

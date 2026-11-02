@@ -1365,7 +1365,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(ctx.theme.blue)
                             .add_modifier(Modifier::BOLD);
 
-                        let bubble = ctx.icons.comment_bubble.clone();
+                        let bubble = &ctx.icons.comment_bubble;
                         let right_prefix_first =
                             format!(" {bubble} @{}: ", comment.author.username);
                         let left_prefix_first = format!(" {bubble} Comment ");

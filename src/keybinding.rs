@@ -105,7 +105,7 @@ fn parse_binding(binding: &str) -> Option<Binding<'_>> {
         return Some(Binding::Key(key));
     }
     if let Some(digits) = binding
-        .strip_prefix('F')
+        .strip_prefix(['F', 'f'])
         .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
     {
         return function_key(digits).map(Binding::Key);
@@ -127,50 +127,44 @@ fn parse_binding(binding: &str) -> Option<Binding<'_>> {
     }
 }
 
+/// The key names a binding spells on its own. `Tab` and `Space` keep their
+/// own modifier rules: `Tab` never matches Shift+Tab, and `Space` matches the
+/// space bar whatever the modifiers, unlike a bare `" "`.
+const KEY_NAMES: &[(&str, Key)] = &[
+    ("Tab", Key::Tab),
+    ("Enter", Key::Named(KeyCode::Enter)),
+    ("Return", Key::Named(KeyCode::Enter)),
+    ("Esc", Key::Named(KeyCode::Esc)),
+    ("Backspace", Key::Named(KeyCode::Backspace)),
+    ("Space", Key::Named(KeyCode::Char(' '))),
+    ("Up", Key::Named(KeyCode::Up)),
+    ("Down", Key::Named(KeyCode::Down)),
+    ("Left", Key::Named(KeyCode::Left)),
+    ("Right", Key::Named(KeyCode::Right)),
+    ("Home", Key::Named(KeyCode::Home)),
+    ("End", Key::Named(KeyCode::End)),
+    ("PageUp", Key::Named(KeyCode::PageUp)),
+    ("PageDown", Key::Named(KeyCode::PageDown)),
+];
+
 /// A mis-cased key name (`"home"`) is a typo, not a sequence: read as one it
 /// would hold back its first letter in every context.
 fn is_named_key_ignoring_case(binding: &str) -> bool {
-    const KEY_NAMES: [&str; 13] = [
-        "Tab",
-        "Enter",
-        "Esc",
-        "Backspace",
-        "Space",
-        "Up",
-        "Down",
-        "Left",
-        "Right",
-        "Home",
-        "End",
-        "PageUp",
-        "PageDown",
-    ];
     KEY_NAMES
         .iter()
-        .any(|name| name.eq_ignore_ascii_case(binding))
+        .any(|(name, _)| name.eq_ignore_ascii_case(binding))
 }
 
-fn named_key(name: &str) -> Option<Key> {
-    let code = match name {
-        "Tab" => return Some(Key::Tab),
-        "Ctrl+Enter" | "Ctrl+Return" => return Some(Key::CtrlEnter),
-        "Alt+Enter" | "Alt+Return" => return Some(Key::AltEnter),
-        "Shift+Tab" => KeyCode::BackTab,
-        "Enter" => KeyCode::Enter,
-        "Esc" => KeyCode::Esc,
-        "Backspace" => KeyCode::Backspace,
-        "Space" => KeyCode::Char(' '),
-        "Up" => KeyCode::Up,
-        "Down" => KeyCode::Down,
-        "Left" => KeyCode::Left,
-        "Right" => KeyCode::Right,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        "PageUp" => KeyCode::PageUp,
-        "PageDown" => KeyCode::PageDown,
-        _ => return None,
-    };
-    Some(Key::Named(code))
+fn named_key(binding: &str) -> Option<Key> {
+    if let Some(&(_, key)) = KEY_NAMES.iter().find(|(name, _)| *name == binding) {
+        return Some(key);
+    }
+    match binding {
+        "Ctrl+Enter" | "Ctrl+Return" => Some(Key::CtrlEnter),
+        "Alt+Enter" | "Alt+Return" => Some(Key::AltEnter),
+        "Shift+Tab" => Some(Key::Named(KeyCode::BackTab)),
+        _ => None,
+    }
 }
 
 /// `F1` to `F99`.
@@ -569,6 +563,8 @@ mod tests {
             "Alt++",
             "Ctrl+Enter",
             "Alt+Return",
+            "Return",
+            "f5",
         ] {
             let event =
                 binding_key_event(binding).unwrap_or_else(|| panic!("{binding:?} should parse"));
@@ -584,8 +580,8 @@ mod tests {
     #[test]
     fn binding_key_event_rejects_sequences_and_spellings_that_never_match() {
         for binding in [
-            "", "gg", "enter", "F0", "F100", "Ctrl+1", "Ctrl+ab", "Shift+a", "Meta+x", "Alt+é",
-            "Alt+ ", "g g", "Ctrl+w j", "g+",
+            "", "gg", "enter", "return", "F0", "f0", "F100", "Ctrl+1", "Ctrl+ab", "Shift+a",
+            "Meta+x", "Alt+é", "Alt+ ", "g g", "Ctrl+w j", "g+",
         ] {
             assert_eq!(binding_key_event(binding), None, "{binding:?}");
         }
@@ -596,6 +592,8 @@ mod tests {
         let sequences = KeySequences::new([
             "F1",
             "F5",
+            "f5",
+            "Return",
             "Up",
             "End",
             "PageDown",
@@ -608,9 +606,17 @@ mod tests {
 
     #[test]
     fn mis_cased_key_names_never_start_a_sequence() {
-        let sequences = KeySequences::new(["home", "enter", "PAGEDOWN", "esc"]);
+        let sequences = KeySequences::new(["home", "enter", "PAGEDOWN", "esc", "return", "f0"]);
         assert_eq!(sequences, KeySequences::default());
         assert!(!keybinding_matches("home", &sequence("home")));
+    }
+
+    #[test]
+    fn return_is_enter_and_a_lowercase_f_spells_a_function_key() {
+        let enter = KeyPress::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let f5 = KeyPress::Key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert!(keybinding_matches("Return", &enter));
+        assert!(keybinding_matches("f5", &f5));
     }
 
     const TIMEOUT: Duration = Duration::from_millis(1000);

@@ -134,10 +134,9 @@ pub fn workflow_cell(s: Option<WorkflowStatus>, icons: &Icons) -> String {
 /// icon and text together like the table column does. Reads from the same
 /// `workflow_glyph_and_word` match as `workflow_cell` so the two can never
 /// disagree on which glyph a status gets.
-pub fn workflow_icon(s: Option<WorkflowStatus>, icons: &Icons) -> String {
+pub fn workflow_icon(s: Option<WorkflowStatus>, icons: &Icons) -> &str {
     s.and_then(workflow_glyph_and_word)
-        .map(|(glyph, _)| glyph(icons).clone())
-        .unwrap_or_default()
+        .map_or("", |(glyph, _)| glyph(icons).as_str())
 }
 
 /// GitLab's full wording, for the Preview pane and filter values.

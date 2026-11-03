@@ -55,11 +55,14 @@ pub fn handle_key(
 fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifiers) {
     match overlay.focus {
         ReviewSubmitFocus::Verdicts => match code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                select_verdict(overlay, overlay.verdict.stepped(1));
-            }
+            KeyCode::Char('j') | KeyCode::Down => match overlay.verdict.below() {
+                Some(verdict) => select_verdict(overlay, verdict),
+                None => overlay.focus = ReviewSubmitFocus::Summary,
+            },
             KeyCode::Char('k') | KeyCode::Up => {
-                select_verdict(overlay, overlay.verdict.stepped(-1));
+                if let Some(verdict) = overlay.verdict.above() {
+                    select_verdict(overlay, verdict);
+                }
             }
             _ => {}
         },
@@ -267,6 +270,31 @@ mod tests {
     }
 
     #[test]
+    fn down_past_the_last_verdict_reaches_the_summary_and_up_returns() {
+        let mut app = App::default();
+        open(&mut app, 7, PROJECT.to_string());
+        for code in [
+            KeyCode::Char('k'),
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Char('o'),
+            KeyCode::Char('k'),
+        ] {
+            assert!(press(&mut app, code));
+        }
+        let overlay = app.review_submit.as_ref().expect("still open");
+        assert_eq!(overlay.summary.value(), "ok");
+        assert_eq!(overlay.verdict, ReviewVerdict::KeepAsDraft);
+
+        press(&mut app, KeyCode::Up);
+        let overlay = app.review_submit.as_ref().expect("still open");
+        assert_eq!(overlay.focus, ReviewSubmitFocus::Verdicts);
+        assert_eq!(overlay.verdict, ReviewVerdict::KeepAsDraft);
+    }
+
+    #[test]
     fn alt_gr_characters_reach_the_summary_but_ctrl_shortcuts_do_not() {
         let mut app = App::default();
         open(&mut app, 7, PROJECT.to_string());
@@ -319,7 +347,12 @@ mod tests {
         app.draft_comments = vec![draft("nit")];
         app.in_review_mode = true;
         open(&mut app, 7, PROJECT.to_string());
-        for code in [KeyCode::Char('k'), KeyCode::Enter] {
+        for code in [
+            KeyCode::Char('j'),
+            KeyCode::Char('j'),
+            KeyCode::Char('j'),
+            KeyCode::Enter,
+        ] {
             press(&mut app, code);
         }
 
@@ -334,7 +367,12 @@ mod tests {
         app.draft_comments = vec![draft("nit"), draft("typo")];
         app.stale_draft_comments = vec![draft("moved")];
         open(&mut app, 7, PROJECT.to_string());
-        for code in [KeyCode::Char('k'), KeyCode::Enter] {
+        for code in [
+            KeyCode::Char('j'),
+            KeyCode::Char('j'),
+            KeyCode::Char('j'),
+            KeyCode::Enter,
+        ] {
             press(&mut app, code);
         }
 

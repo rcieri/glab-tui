@@ -43,10 +43,22 @@ impl ReviewVerdict {
         }
     }
 
-    /// The verdict `step` rows below (or above, when negative), wrapping
-    /// around like the selectors do.
-    pub fn stepped(self, step: isize) -> Self {
-        step_through(&Self::ALL, self, step)
+    /// The verdict one row down, `None` on the last row, where the focus
+    /// moves on to the summary instead.
+    pub fn below(self) -> Option<Self> {
+        Self::ALL.get(self.position() + 1).copied()
+    }
+
+    /// The verdict one row up, `None` on the first row.
+    pub fn above(self) -> Option<Self> {
+        self.position().checked_sub(1).map(|row| Self::ALL[row])
+    }
+
+    fn position(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|&verdict| verdict == self)
+            .unwrap_or_default()
     }
 }
 
@@ -71,18 +83,12 @@ impl ReviewSubmitFocus {
     /// The focus `Tab` (positive `step`) or `Shift+Tab` moves to, wrapping
     /// around.
     pub fn stepped(self, step: isize) -> Self {
-        step_through(&Self::ORDER, self, step)
+        let position = Self::ORDER
+            .iter()
+            .position(|&focus| focus == self)
+            .unwrap_or_default() as isize;
+        Self::ORDER[(position + step).rem_euclid(Self::ORDER.len() as isize) as usize]
     }
-}
-
-/// `current` moved `step` entries through the non-empty `items`, wrapping at
-/// either end.
-fn step_through<T: Copy + PartialEq>(items: &[T], current: T, step: isize) -> T {
-    let position = items
-        .iter()
-        .position(|&item| item == current)
-        .unwrap_or_default() as isize;
-    items[(position + step).rem_euclid(items.len() as isize) as usize]
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -167,19 +173,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verdicts_wrap_around_in_both_directions() {
+    fn verdicts_stop_at_the_first_and_last_rows() {
+        assert_eq!(ReviewVerdict::Comment.above(), None);
+        assert_eq!(ReviewVerdict::KeepAsDraft.below(), None);
         assert_eq!(
-            ReviewVerdict::KeepAsDraft.stepped(1),
-            ReviewVerdict::Comment
+            ReviewVerdict::Approve.below(),
+            Some(ReviewVerdict::RequestChanges)
         );
-        assert_eq!(
-            ReviewVerdict::Comment.stepped(-1),
-            ReviewVerdict::KeepAsDraft
-        );
-        assert_eq!(
-            ReviewVerdict::Approve.stepped(1),
-            ReviewVerdict::RequestChanges
-        );
+        assert_eq!(ReviewVerdict::Approve.above(), Some(ReviewVerdict::Comment));
     }
 
     #[test]

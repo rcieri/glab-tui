@@ -399,9 +399,14 @@ fn render_buttons(
 
 fn key_hints(overlay: &ReviewSubmit) -> &'static str {
     if overlay.is_submitting() {
-        "Waiting for the server: keys are ignored until it answers"
-    } else {
-        "Tab next · j/k verdict · Enter submit · Esc cancel"
+        return "Waiting for the server: keys are ignored until it answers";
+    }
+    match overlay.focus {
+        ReviewSubmitFocus::Verdicts => "j/k verdict · Tab summary · Enter submit · Esc cancel",
+        ReviewSubmitFocus::Summary => "Type the summary · Tab next · Enter submit · Esc cancel",
+        ReviewSubmitFocus::SubmitButton | ReviewSubmitFocus::CancelButton => {
+            "h/l button · Tab next · Enter select · Esc cancel"
+        }
     }
 }
 

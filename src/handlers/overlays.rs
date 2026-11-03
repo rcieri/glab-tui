@@ -649,6 +649,7 @@ fn run_submit_action(
                 field_type: "review_submit_status".to_string(),
                 multi_select: false,
                 state: ListState::default(),
+                request: None,
             });
         }
         crate::app::ConfirmAction::MarkAllTodosRead => {
@@ -688,7 +689,7 @@ fn run_submit_action(
             };
             let rows = flip_job_statuses(app, &job_ids, "canceled");
             app.selected_jobs.clear();
-            app.status_message = None;
+            app.clear_info_notices();
             spawn_cancel_jobs(
                 client,
                 app.scoped_sender(tx),
@@ -966,6 +967,7 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
                 s.select(Some(0));
                 s
             },
+            request: None,
         });
         return true;
     }
@@ -1222,10 +1224,10 @@ mod tests {
         handle_help_keybinding, handle_help_overlay, handle_review_threads, handle_submit_dialog,
     };
     use crate::app::{
-        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, StatusMessage,
-        SubmitDialog,
+        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, SubmitDialog,
     };
     use crate::keybinding::KeyPress;
+    use crate::notice::Notice;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -1402,6 +1404,7 @@ mod tests {
             field_type: "labels".to_string(),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
+            request: None,
         });
         assert!(handle_help_keybinding(
             &mut app,
@@ -1608,7 +1611,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(press(&mut app, KeyCode::Enter));
 
         assert!(app.review_threads.is_some());
-        assert!(app.error_message.is_some());
+        assert!(app.toast_notice().is_some());
     }
 
     #[test]
@@ -1747,7 +1750,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.diff_view.is_none());
         assert_eq!(
-            app.status_message.as_ref().map(StatusMessage::text),
+            app.header_notice().map(Notice::text),
             Some("Kept 2 draft comments for later")
         );
         assert_eq!(
@@ -1770,7 +1773,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_ref().map(StatusMessage::text),
+            app.header_notice().map(Notice::text),
             Some("Discarded 2 draft comments")
         );
     }
@@ -1829,7 +1832,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.stale_draft_comments.is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_ref().map(StatusMessage::text),
+            app.header_notice().map(Notice::text),
             Some("Discarded 4 draft comments")
         );
     }

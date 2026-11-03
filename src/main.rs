@@ -344,7 +344,12 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                                 && s.field_type != "related_mrs"
                         });
                         let sr = if has_search { 3 } else { 0 };
-                        handle_selector_mouse(app, inner, row, sr, 1);
+                        let notice_rows = if app.modal_notice().is_some() {
+                            crate::ui::MODAL_NOTICE_ROWS
+                        } else {
+                            0
+                        };
+                        handle_selector_mouse(app, inner, row, sr, 1 + notice_rows);
                         return;
                     }
                     OverlayKind::EditMenu => {
@@ -1064,6 +1069,7 @@ async fn main() -> Result<()> {
                     s.select(Some(0));
                     s
                 },
+                request: None,
             });
         }
     }
@@ -1409,7 +1415,7 @@ async fn main() -> Result<()> {
                 }
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
-                    app.status_message = None;
+                    app.clear_info_notices();
                     app.loaded_tabs.insert(app::Tab::Jobs);
                     app.jobs.items = jobs;
                     app.active_pipeline_id = Some(pipeline_id);
@@ -1448,8 +1454,7 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
-                                app.show_error(e);
-                                app.error_has_cli_detail = true;
+                                app.show_cli_error(e);
                             }
                         }
                     }
@@ -1470,8 +1475,7 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
-                                app.show_error(e);
-                                app.error_has_cli_detail = true;
+                                app.show_cli_error(e);
                             }
                         }
                     }
@@ -1582,7 +1586,7 @@ async fn main() -> Result<()> {
                         .take_if(|(pending, _)| *pending == pr)
                         .map(|(_, action)| action);
                     if awaited.is_some() {
-                        app.status_message = None;
+                        app.clear_info_notices();
                     }
                     match result {
                         Ok(stack) => {
@@ -1666,9 +1670,7 @@ async fn main() -> Result<()> {
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::TodoChanged(change, Err(err)) => {
-                    app.show_error(change.failure_message(app.kind(), &err));
-                    // CLI failure: full stderr is in the terminal log.
-                    app.error_has_cli_detail = true;
+                    app.show_cli_error(change.failure_message(app.kind(), &err));
                 }
                 Event::TodoDetailFetched {
                     id,
@@ -1788,13 +1790,13 @@ async fn main() -> Result<()> {
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
-                    app.status_message = None;
+                    app.clear_info_notices();
                     app.project_cache.milestones = app.milestones.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneDeleted => {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
-                    app.status_message = None;
+                    app.clear_info_notices();
                     if let Some((project_path, iid)) = app.pending_delete_milestone.take() {
                         if let Some(pos) = app.milestone_index(&project_path, iid) {
                             app.milestones.items.remove(pos);
@@ -1811,13 +1813,13 @@ async fn main() -> Result<()> {
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleaseUpdated => {
-                    app.status_message = None;
+                    app.clear_info_notices();
                     app.project_cache.releases = app.releases.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
-                    app.status_message = None;
+                    app.clear_info_notices();
                     if let Some((project, tag)) = app.pending_delete_release.take() {
                         app.releases
                             .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
@@ -1827,7 +1829,7 @@ async fn main() -> Result<()> {
                 }
                 Event::IssueDeleted => {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
-                    app.status_message = None;
+                    app.clear_info_notices();
                     app.issues.items.clear();
                     app.milestone_progress_cache.clear();
                     if let Some(client) = app.gitlab_client.clone() {
@@ -1845,7 +1847,7 @@ async fn main() -> Result<()> {
                 }
                 Event::MrDeleted => {
                     app.complete_loading_tab(app::Tab::MergeRequests, "Success");
-                    app.status_message = None;
+                    app.clear_info_notices();
                     app.mrs.items.clear();
                     if let Some(client) = app.gitlab_client.clone() {
                         if !app.loading_tabs.contains(&app::Tab::MergeRequests) {
@@ -1880,111 +1882,9 @@ async fn main() -> Result<()> {
                     app.project_cache.environments = app.environments.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
-                Event::SelectorItemsFetched(items) => {
-                    let mut applied_from_cache = false;
-                    if items.is_empty() {
-                        // Determine which typed cache to fall back on
-                        if let Some(ref selector) = app.selector {
-                            let fallback = match selector.field_type.as_str() {
-                                "labels" => {
-                                    if !app.cached_labels.is_empty() {
-                                        Some(app.cached_labels.clone())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "assignees" | "reviewers" => {
-                                    if !app.cached_members.is_empty() {
-                                        Some(app.cached_members.clone())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "milestone" => Some(
-                                    app.milestones
-                                        .items
-                                        .iter()
-                                        .map(|m| m.title.clone())
-                                        .collect(),
-                                ),
-                                "source_branch" | "target_branch" | "pipeline_branch"
-                                | "create_from" => Some(
-                                    app.branches
-                                        .items()
-                                        .iter()
-                                        .map(|b| b.name.clone())
-                                        .collect(),
-                                ),
-                                "project" => {
-                                    let mut known = Vec::new();
-                                    for i in &app.issues.items {
-                                        if !i.project_path.is_empty() {
-                                            known.push(i.project_path.clone());
-                                        }
-                                    }
-                                    for m in &app.mrs.items {
-                                        if !m.project_path.is_empty() {
-                                            known.push(m.project_path.clone());
-                                        }
-                                    }
-                                    for p in &app.pipelines.items {
-                                        if !p.project_path.is_empty() {
-                                            known.push(p.project_path.clone());
-                                        }
-                                    }
-                                    for ms in &app.milestones.items {
-                                        if !ms.project_path.is_empty() {
-                                            known.push(ms.project_path.clone());
-                                        }
-                                    }
-                                    known.sort();
-                                    known.dedup();
-                                    if !known.is_empty() { Some(known) } else { None }
-                                }
-                                _ => None,
-                            };
-                            if let Some(cached) = fallback {
-                                if !cached.is_empty() {
-                                    app.show_notice("Offline fallback: cached selector items.");
-                                    if let Some(mut selector) = app.selector.take() {
-                                        selector.all_items = cached;
-                                        selector.is_loading = false;
-                                        app.selector = Some(selector);
-                                    }
-                                    applied_from_cache = true;
-                                }
-                            }
-                        }
-                    }
-                    if !applied_from_cache {
-                        // Update typed cache based on field type
-                        if let Some(ref selector) = app.selector {
-                            match selector.field_type.as_str() {
-                                "labels" => {
-                                    app.cached_labels = items.clone();
-                                    app.project_cache.labels = items.clone();
-                                }
-                                "assignees" | "reviewers" => {
-                                    app.cached_members = items.clone();
-                                    app.project_cache.members = items.clone();
-                                }
-                                _ => {}
-                            }
-                        }
+                Event::SelectorItemsFetched { request, items } => {
+                    if app.apply_selector_items(request, items) {
                         crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
-                        if let Some(mut selector) = app.selector.take() {
-                            if selector.field_type == "project" {
-                                let mut combined = selector.all_items;
-                                combined.extend(items);
-                                combined.sort();
-                                combined.dedup();
-                                selector.all_items = combined;
-                            } else {
-                                selector.all_items = items;
-                            }
-                            selector.is_loading = false;
-                            app.selector = Some(selector);
-                        }
                     }
                 }
                 Event::RepoAttributesFetched { labels, members } => {
@@ -2111,7 +2011,7 @@ async fn main() -> Result<()> {
                     environment,
                     deployments,
                 } => {
-                    app.status_message = None;
+                    app.clear_info_notices();
                     if deployments.is_empty() {
                         app.show_notice(format!("No deployments for {environment}"));
                     }
@@ -2133,8 +2033,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Err(error) => {
-                        app.show_error(format!("Failed to fetch deployment log: {error}"));
-                        app.error_has_cli_detail = true;
+                        app.show_cli_error(format!("Failed to fetch deployment log: {error}"));
                     }
                 },
                 Event::DeploymentLogFetched { .. } => {}
@@ -2187,8 +2086,7 @@ async fn main() -> Result<()> {
                     if app.has_rows(tab) {
                         app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
                     } else {
-                        app.show_error(err_msg);
-                        app.error_has_cli_detail = true;
+                        app.show_cli_error(err_msg);
                     }
                 }
                 Event::DiffFetched {
@@ -2214,14 +2112,17 @@ async fn main() -> Result<()> {
                                 "{held_back} draft comments no longer match the diff and were set aside"
                             )
                         });
-                        app.error_has_cli_detail = false;
                     }
                     match comments {
                         Ok(comments) => app.current_comments = comments,
                         Err(err) => {
                             app.current_comments.clear();
-                            app.raise_error_toast(format!("Failed to load review comments: {err}"));
-                            app.error_has_cli_detail = true;
+                            app.push_notice(
+                                crate::notice::Notice::error(format!(
+                                    "Failed to load review comments: {err}"
+                                ))
+                                .with_detail(crate::notice::CLI_LOG_HINT),
+                            );
                         }
                     }
                     if let (Some(overview), Some(diff_view)) =
@@ -2243,8 +2144,7 @@ async fn main() -> Result<()> {
                 }
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
-                    app.show_error(err_msg);
-                    app.error_has_cli_detail = true;
+                    app.show_cli_error(err_msg);
                 }
                 Event::TerminalCommandLogged(entry) => {
                     app.log_cli_command(*entry);
@@ -2310,9 +2210,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(err) => {
-                            app.show_error(err);
-                            // CLI failure: full stderr is in the terminal log.
-                            app.error_has_cli_detail = true;
+                            app.show_cli_error(err);
                         }
                     }
                 }
@@ -2572,8 +2470,7 @@ async fn main() -> Result<()> {
                                                 });
                                             }
                                         } else {
-                                            app.error_message =
-                                                Some("Invalid pipeline ID".to_string());
+                                            app.show_error("Invalid pipeline ID".to_string());
                                         }
                                     }
                                     crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
@@ -3031,7 +2928,7 @@ async fn main() -> Result<()> {
                                                     app.loaded_tabs.clear();
                                                     app.loading_tabs.clear();
                                                     app.refreshed_tabs.clear();
-                                                    app.status_message = None;
+                                                    app.clear_info_notices();
                                                     app.issues.items.clear();
                                                     app.milestone_progress_cache.clear();
                                                     app.mrs.items.clear();
@@ -6477,7 +6374,8 @@ async fn main() -> Result<()> {
                                             .and_then(|sel| all_items.iter().position(|a| a == sel))
                                             .unwrap_or(0)
                                     };
-
+                                    let request = (is_loading && app.gitlab_client.is_some())
+                                        .then(|| app.next_request_tag());
                                     app.selector = Some(crate::app::Selector {
                                         title: format!("Select {field_name}"),
                                         all_items,
@@ -6499,59 +6397,50 @@ async fn main() -> Result<()> {
                                             s.select(Some(0));
                                             s
                                         },
+                                        request,
                                     });
 
                                     app.edit_menu = Some(menu);
 
-                                    if is_loading {
-                                        if let Some(client) = &app.gitlab_client {
-                                            let client = client.clone();
-                                            let scope = if field_type != "project"
-                                                && !target_project.is_empty()
-                                                && target_project.contains('/')
-                                            {
-                                                crate::scope::Scope::Repository(target_project)
-                                            } else {
-                                                app.scope.clone()
-                                            };
-                                            let field_type = field_type.to_string();
-                                            let tx = app.scoped_sender(events.sender());
-                                            tokio::spawn(async move {
-                                                let res = match field_type.as_str() {
-                                                    "labels" => client
-                                                        .fetch_labels(&scope)
-                                                        .await
-                                                        .map(|labels| {
-                                                            labels
-                                                                .into_iter()
-                                                                .map(|l| l.name)
-                                                                .collect()
-                                                        }),
-                                                    "assignees" | "reviewers" => {
-                                                        client.fetch_members(&scope).await
-                                                    }
-                                                    "milestone" => {
-                                                        client.fetch_milestones(&scope).await
-                                                    }
-                                                    "source_branch" | "target_branch"
-                                                    | "pipeline_branch" | "create_from" => {
-                                                        client.fetch_branches(&scope).await
-                                                    }
-                                                    "project" => {
-                                                        client.fetch_projects(&scope).await
-                                                    }
-                                                    _ => Ok(Vec::new()),
-                                                };
-                                                if let Ok(items) = res {
-                                                    let _ =
-                                                        tx.send(Event::SelectorItemsFetched(items));
-                                                } else {
-                                                    let _ = tx.send(Event::SelectorItemsFetched(
-                                                        Vec::new(),
-                                                    ));
+                                    if let (Some(request), Some(client)) =
+                                        (request, &app.gitlab_client)
+                                    {
+                                        let client = client.clone();
+                                        let scope = if field_type != "project"
+                                            && !target_project.is_empty()
+                                            && target_project.contains('/')
+                                        {
+                                            crate::scope::Scope::Repository(target_project)
+                                        } else {
+                                            app.scope.clone()
+                                        };
+                                        let field_type = field_type.to_string();
+                                        let tx = app.scoped_sender(events.sender());
+                                        tokio::spawn(async move {
+                                            let res = match field_type.as_str() {
+                                                "labels" => client.fetch_labels(&scope).await.map(
+                                                    |labels| {
+                                                        labels.into_iter().map(|l| l.name).collect()
+                                                    },
+                                                ),
+                                                "assignees" | "reviewers" => {
+                                                    client.fetch_members(&scope).await
                                                 }
+                                                "milestone" => {
+                                                    client.fetch_milestones(&scope).await
+                                                }
+                                                "source_branch" | "target_branch"
+                                                | "pipeline_branch" | "create_from" => {
+                                                    client.fetch_branches(&scope).await
+                                                }
+                                                "project" => client.fetch_projects(&scope).await,
+                                                _ => Ok(Vec::new()),
+                                            };
+                                            let _ = tx.send(Event::SelectorItemsFetched {
+                                                request,
+                                                items: res.map_err(|e| e.to_string()),
                                             });
-                                        }
+                                        });
                                     }
                                     continue;
                                 }
@@ -6611,6 +6500,7 @@ async fn main() -> Result<()> {
                                                         s.select(Some(0));
                                                         s
                                                     },
+                                                    request: None,
                                                 });
                                                 app.edit_menu = Some(menu);
                                                 continue;
@@ -7432,6 +7322,7 @@ async fn main() -> Result<()> {
                                     field_type: "review_submit_status".to_string(),
                                     multi_select: false,
                                     state: ListState::default(),
+                                    request: None,
                                 });
                                 app.diff_view = Some(diff_view);
                             }
@@ -7702,6 +7593,7 @@ async fn main() -> Result<()> {
                                                 s.select(Some(0));
                                                 s
                                             },
+                                            request: None,
                                         });
                                     }
                                 }
@@ -7748,6 +7640,7 @@ async fn main() -> Result<()> {
                                                 s.select(Some(0));
                                                 s
                                             },
+                                            request: None,
                                         });
                                     }
                                 } else if idx < group_end {
@@ -7815,6 +7708,7 @@ async fn main() -> Result<()> {
                                                 s.select(Some(0));
                                                 s
                                             },
+                                            request: None,
                                         });
                                     }
                                 } else if idx == save_idx {
@@ -7943,6 +7837,7 @@ async fn main() -> Result<()> {
                                 s.select(Some(0));
                                 s
                             },
+                            request: None,
                         });
                         continue;
                     }

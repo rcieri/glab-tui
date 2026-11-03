@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- **Submit-review overlay**: `r` in the diff view (and **Submit** on the dialog shown when leaving it with drafts) opens one dialog instead of a verdict picker followed by a summary prompt. It holds the verdict as radio buttons (Comment, Approve, Request changes, Keep as draft), the summary (`Ctrl+E` opens `$EDITOR`), how many draft comments the review posts, and Submit / Cancel buttons. `j`/`k` pick the verdict, and `j` or `Down` past the last one (or `Tab`) moves into the summary to type it. The footer names the keys of the focused part. The verdict now starts on Comment: the old picker started on Approve, so `r` `Enter` `Enter` approved. While the review is posted the dialog shows that it is submitting and ignores keys, `Ctrl+C` included. A failure is shown inside the dialog and keeps the draft comments and the summary: before, the drafts were dropped before the request ran and a failure only raised a toast. On GitLab, a failure after the comments are published (the approval or the summary note) leaves them posted, so submitting the kept drafts again posts them twice. An empty Comment or Request changes review is refused in the dialog before anything is sent (#599).
+
 ### Bug Fixes
+- **Failed GitLab reviews no longer leave draft notes behind**: When a draft note or `bulk_publish` failed, the draft notes the attempt had already created stayed pending on the MR, and the next `bulk_publish` (a retry or any later review) published them a second time. They are now deleted again, from the submit-review overlay and from `glab-tui review submit` alike, and the error says how many could not be deleted (#599).
 - **Theme picker keeps color overrides**: Picking a theme in the Configure View now applies the per-color `[theme]` overrides from `config.toml` on top of the preset, as a restart does, instead of dropping them until the next launch. A theme change or repo switch no longer re-reads the config file to resolve the theme and icons (#589).
 
 ## [0.9.4] - 2026-10-29

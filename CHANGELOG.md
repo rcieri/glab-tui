@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Theme picker keeps color overrides**: Picking a theme in the Configure View now applies the per-color `[theme]` overrides from `config.toml` on top of the preset, as a restart does, instead of dropping them until the next launch. A theme change or repo switch no longer re-reads the config file to resolve the theme and icons (#589).
+
 ## [0.9.4] - 2026-10-29
 
 ### Breaking Changes

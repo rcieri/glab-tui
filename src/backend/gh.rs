@@ -483,12 +483,10 @@ pub fn gh_state_from_fields(
 /// rebuilds the backend from scratch (`create_backend`, see
 /// `domain::client`'s `Clone` impl), and every refresh clones the client
 /// (`spawn_refresh_active_tab`), so a per-instance cell would start empty on
-/// every single refresh and never serve a hit. Matches the `ICONS`/`THEME`
-/// precedent of process-global state for values that do not change within a
-/// run. Holds `Option` rather than `String` so a *failed* lookup is cached
-/// too — `get_or_try_init` leaves the cell uninitialised on error and would
-/// retry on every refresh, which is the per-refresh request the design
-/// forbids.
+/// every single refresh and never serve a hit. Holds `Option` rather than
+/// `String` so a *failed* lookup is cached too — `get_or_try_init` leaves the
+/// cell uninitialised on error and would retry on every refresh, which is the
+/// per-refresh request the design forbids.
 static GH_CURRENT_USER: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
 
 pub struct GhBackend {

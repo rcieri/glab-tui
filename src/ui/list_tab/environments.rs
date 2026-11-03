@@ -33,6 +33,7 @@ fn badge_cell(label: &str, value: &str, ctx: &CellContext) -> Cell<'static> {
         false,
         style,
         Alignment::Left,
+        ctx.theme,
     )
 }
 
@@ -104,6 +105,7 @@ impl ColumnDef for EnvironmentColumn {
                 false,
                 ctx.row_style,
                 Alignment::Left,
+                ctx.theme,
             ),
             Self::State => badge_cell("State", &row.state, ctx),
             Self::DeploymentStatus => badge_cell("Deploy Status", &self.text(row), ctx),

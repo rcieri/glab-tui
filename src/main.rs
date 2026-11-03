@@ -3004,8 +3004,6 @@ async fn main() -> Result<()> {
                                                     app.config = crate::config::Config::load();
                                                     app.apply_config();
                                                     app.load_custom_commands();
-                                                    crate::config::reload_theme();
-                                                    crate::config::reload_icons();
                                                     crate::config::reload_command_timeout();
 
                                                     if let Ok(context) =
@@ -3240,7 +3238,6 @@ async fn main() -> Result<()> {
                                         }
                                         app.selector = None;
                                         if let Some(name) = selected_val {
-                                            crate::config::set_theme_preset(&name);
                                             app.config.theme_preset = Some(name);
                                             app.apply_config();
                                         }

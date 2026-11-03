@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **Failed GitLab reviews no longer leave draft notes behind**: When a draft note or `bulk_publish` failed, the draft notes the attempt had already created stayed pending on the MR, and the next `bulk_publish` (a retry or any later review) published them a second time. They are now deleted again, from the submit-review overlay and from `glab-tui review submit` alike, and the error says how many could not be deleted (#599).
+- **Theme picker keeps color overrides**: Picking a theme in the Configure View now applies the per-color `[theme]` overrides from `config.toml` on top of the preset, as a restart does, instead of dropping them until the next launch. A theme change or repo switch no longer re-reads the config file to resolve the theme and icons (#589).
 
 ## [0.9.4] - 2026-10-29
 

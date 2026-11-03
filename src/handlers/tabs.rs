@@ -605,10 +605,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
         app.show_error("This PR has no stack entries to navigate.".to_string());
         return;
     }
-    let current_marker = format!(
-        " {} (current)",
-        crate::config::ICONS.read().unwrap().nav_prev
-    );
+    let current_marker = format!(" {} (current)", app.icons.nav_prev);
     let selector = crate::app::Selector {
         title: format!(
             " Stack #{} — {} PRs ",
@@ -1279,6 +1276,7 @@ pub async fn handle_active_tab_key(
                             is_github,
                             unresolved,
                             is_fetching_issues,
+                            &app.icons,
                         );
                         doc.fields.push(crate::app::Field::text(
                             "Description",
@@ -3033,6 +3031,7 @@ pub async fn handle_active_tab_key(
                                             is_github,
                                             unresolved,
                                             is_fetching_issues,
+                                            &app.icons,
                                         );
                                         doc.fields.push(crate::app::Field::text(
                                             "Description",

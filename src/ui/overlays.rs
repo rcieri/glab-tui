@@ -3,7 +3,8 @@ use super::helpers::highlight_fuzzy_match;
 use super::modal::{button_style, clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
-use crate::config::{ICONS, THEME};
+use crate::ui::render_ctx::RenderCtx;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -42,9 +43,9 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
     (Text::from(lines), count)
 }
 
-pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
+pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
-    let icons = ICONS.read().unwrap();
+    let icons = ctx.icons;
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
@@ -56,13 +57,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     }
 
     // Below every other overlay: its comment actions and reply prompts open on top.
-    super::review_threads::render_review_threads(f, app, size);
+    super::review_threads::render_review_threads(f, ctx, app, size);
     // Below the re-run confirmation it opens.
-    super::terminal_inspector::render_terminal_inspector(f, app, size);
+    super::terminal_inspector::render_terminal_inspector(f, ctx, app, size);
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
+            let selector_area = centered_rect_min(70, 70, 60, 8, size);
+            let body = modal_area(f, ctx, &selector.title, selector_area);
             app.overlay_stack
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
@@ -92,17 +94,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
 
             let border_color_search = if selector.is_filtering {
-                THEME.read().unwrap().border_focused
+                ctx.theme.border_focused
             } else {
-                THEME.read().unwrap().border
+                ctx.theme.border
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(
-                    Style::default()
-                        .fg(border_color_search)
-                        .bg(THEME.read().unwrap().bg),
-                )
+                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
                 .title(" Filter ");
 
             let search_text = if selector.is_filtering {
@@ -115,18 +113,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .bg(THEME.read().unwrap().bg)
+                    .fg(ctx.theme.text_muted)
+                    .bg(ctx.theme.bg)
                     .add_modifier(Modifier::ITALIC)
             } else {
-                Style::default()
-                    .fg(THEME.read().unwrap().text_normal)
-                    .bg(THEME.read().unwrap().bg)
+                Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg)
             };
 
             let search_p = Paragraph::new(Span::styled(search_text, search_style))
                 .block(search_block)
-                .style(Style::default().bg(THEME.read().unwrap().bg))
+                .style(Style::default().bg(ctx.theme.bg))
                 .wrap(ratatui::widgets::Wrap { trim: true });
 
             if let Some(sc) = search_chunk {
@@ -137,8 +133,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let p = Paragraph::new("\n  Loading options from GitLab...")
                     .style(
                         Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(THEME.read().unwrap().bg)
+                            .fg(ctx.theme.text_muted)
+                            .bg(ctx.theme.bg)
                             .add_modifier(Modifier::ITALIC),
                     )
                     .wrap(ratatui::widgets::Wrap { trim: true });
@@ -149,8 +145,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     let p = Paragraph::new("\n  No matching options found.")
                         .style(
                             Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
-                                .bg(THEME.read().unwrap().bg)
+                                .fg(ctx.theme.text_muted)
+                                .bg(ctx.theme.bg)
                                 .add_modifier(Modifier::ITALIC),
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true });
@@ -173,36 +169,34 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 format!(" {} ", icons.check_off)
                             };
                             let marker_color = if is_selected {
-                                THEME.read().unwrap().green
+                                ctx.theme.green
                             } else {
-                                THEME.read().unwrap().text_muted
+                                ctx.theme.text_muted
                             };
 
                             let item_bg = if i == selector.cursor_idx {
-                                THEME.read().unwrap().highlight_bg
+                                ctx.theme.highlight_bg
                             } else {
-                                THEME.read().unwrap().bg
+                                ctx.theme.bg
                             };
 
                             let style = if i == selector.cursor_idx {
                                 Style::default()
                                     .bg(item_bg)
-                                    .fg(THEME.read().unwrap().text_normal)
+                                    .fg(ctx.theme.text_normal)
                                     .add_modifier(Modifier::BOLD)
                             } else {
-                                Style::default()
-                                    .fg(THEME.read().unwrap().text_normal)
-                                    .bg(item_bg)
+                                Style::default().fg(ctx.theme.text_normal).bg(item_bg)
                             };
 
                             let highlight_style = if i == selector.cursor_idx {
                                 Style::default()
                                     .bg(item_bg)
-                                    .fg(THEME.read().unwrap().yellow)
+                                    .fg(ctx.theme.yellow)
                                     .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default()
-                                    .fg(THEME.read().unwrap().yellow)
+                                    .fg(ctx.theme.yellow)
                                     .bg(item_bg)
                                     .add_modifier(Modifier::BOLD)
                             };
@@ -224,9 +218,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             if is_group {
                                 line_spans.push(Span::styled(
                                     format!("{} ", icons.label_group),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().text_muted)
-                                        .bg(item_bg),
+                                    Style::default().fg(ctx.theme.text_muted).bg(item_bg),
                                 ));
                             }
 
@@ -250,9 +242,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(
                                             format!(" {abs_path}"),
-                                            Style::default()
-                                                .fg(THEME.read().unwrap().text_muted)
-                                                .bg(item_bg),
+                                            Style::default().fg(ctx.theme.text_muted).bg(item_bg),
                                         ));
                                     }
                                 }
@@ -263,8 +253,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         })
                         .collect();
 
-                    let list =
-                        List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
+                    let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
                     let mut state = selector.state;
                     f.render_stateful_widget(list, list_chunk, &mut state);
                     selector.state = state;
@@ -278,15 +267,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .title(format!(" {} ", text_input.title))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(ctx.theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             )
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(THEME.read().unwrap().bg));
+            .border_style(Style::default().fg(ctx.theme.border_focused))
+            .style(Style::default().bg(ctx.theme.bg));
 
         let area = centered_rect_min(60, 60, 36, 6, size);
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(block, area);
 
         let chunks = Layout::default()
@@ -301,11 +290,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .split(area);
 
         let value_p = Paragraph::new(text_input.buffer.value_with_cursor('▋'))
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_normal)
-                    .bg(THEME.read().unwrap().bg),
-            )
+            .style(Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(value_p, chunks[0]);
@@ -316,12 +301,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .title(format!(" {} ", date_picker.title))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(ctx.theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             )
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(THEME.read().unwrap().bg));
+            .border_style(Style::default().fg(ctx.theme.border_focused))
+            .style(Style::default().bg(ctx.theme.bg));
 
         // 36 columns wide, 11 rows high
         let area = centered_rect_fixed(36, 11, size);
@@ -355,18 +340,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             12 => "December",
             _ => "",
         };
-        let header_str = {
-            let icons = ICONS.read().unwrap();
-            format!(
-                "{}  {} {}  {}",
-                icons.nav_prev, month_str, date_picker.year, icons.nav_next
-            )
-        };
+        let header_str = format!(
+            "{}  {} {}  {}",
+            icons.nav_prev, month_str, date_picker.year, icons.nav_next
+        );
         let header_p = Paragraph::new(header_str)
             .alignment(Alignment::Center)
             .style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(ctx.theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             );
 
@@ -375,8 +357,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let col_headers = weekday_headers
             .into_iter()
             .map(|h| Cell::from(Line::from(h).alignment(Alignment::Center)));
-        let table_header =
-            Row::new(col_headers).style(Style::default().fg(THEME.read().unwrap().text_muted));
+        let table_header = Row::new(col_headers).style(Style::default().fg(ctx.theme.text_muted));
 
         // Calculate days grid
         let first_date =
@@ -395,11 +376,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     let is_selected = day_num as u32 == date_picker.day;
                     let style = if is_selected {
                         Style::default()
-                            .bg(THEME.read().unwrap().highlight_bg)
-                            .fg(THEME.read().unwrap().header_fg)
+                            .bg(ctx.theme.highlight_bg)
+                            .fg(ctx.theme.header_fg)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
+                        Style::default().fg(ctx.theme.text_normal)
                     };
                     row_cells.push(Cell::from(
                         Line::from(day_num.to_string())
@@ -427,7 +408,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .header(table_header)
             .column_spacing(1);
 
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(block, area);
         f.render_widget(header_p, chunks[0]);
         f.render_widget(table, chunks[1]);
@@ -435,7 +416,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
-        let kind = app.kind();
+        let kind = ctx.kind;
         let cols = tab.columns(kind, app.scope.is_group());
         let active_idx = app.column_checklist_idx;
 
@@ -454,7 +435,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let mut lines: Vec<(Option<usize>, ListItem)> = Vec::new();
         let mut active_line: Option<usize> = None;
 
-        let t = THEME.read().unwrap();
+        let t = &ctx.theme;
 
         // COLUMNS header
         lines.push((
@@ -728,8 +709,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             ListItem::new(save_button_text).style(save_button_style),
         ));
 
-        drop(t);
-
         // Grow the popup with content, but cap it so the whole list scrolls
         // within the available terminal height (headers included).
         let content_len = lines.len() as u16;
@@ -745,20 +724,20 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let checklist_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(THEME.read().unwrap().bg))
+            .border_style(Style::default().fg(ctx.theme.border_focused))
+            .style(Style::default().bg(ctx.theme.bg))
             .title(format!(
                 " {} Configure View: {}",
                 icons.label_configure,
-                tab.title(kind)
+                tab.title(kind, ctx.icons)
             ))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().border_focused)
+                    .fg(ctx.theme.border_focused)
                     .add_modifier(Modifier::BOLD),
             );
 
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(checklist_block.clone(), area);
 
         let inner_area = checklist_block.inner(area);
@@ -777,14 +756,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .push((crate::app::OverlayKind::SaveMenu, submenu_area));
             let submenu_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+                .border_style(Style::default().fg(ctx.theme.border_focused))
                 .title(format!(" {} Save to Config ", icons.label_save))
                 .title_style(
                     Style::default()
-                        .fg(THEME.read().unwrap().border_focused)
+                        .fg(ctx.theme.border_focused)
                         .add_modifier(Modifier::BOLD),
                 );
-            clear_area(f, submenu_area);
+            clear_area(f, ctx, submenu_area);
             f.render_widget(submenu_block.clone(), submenu_area);
             let submenu_inner = submenu_block.inner(submenu_area);
 
@@ -801,11 +780,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     };
                     let style = if is_active {
                         Style::default()
-                            .fg(THEME.read().unwrap().highlight_bg)
-                            .bg(THEME.read().unwrap().border_focused)
+                            .fg(ctx.theme.highlight_bg)
+                            .bg(ctx.theme.border_focused)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
+                        Style::default().fg(ctx.theme.text_normal)
                     };
                     ListItem::new(label).style(style)
                 })
@@ -831,7 +810,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     // Render value-based column filter selector as overlay on configure view
     if app.focus_column_checklist && app.column_filter_context.is_some() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
+            let selector_area = centered_rect_min(70, 70, 60, 8, size);
+            let body = modal_area(f, ctx, &selector.title, selector_area);
             app.overlay_stack
                 .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
@@ -848,17 +828,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
 
             let border_color_search = if selector.is_filtering {
-                THEME.read().unwrap().border_focused
+                ctx.theme.border_focused
             } else {
-                THEME.read().unwrap().border
+                ctx.theme.border
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(
-                    Style::default()
-                        .fg(border_color_search)
-                        .bg(THEME.read().unwrap().bg),
-                )
+                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
                 .title(" Filter ");
 
             let search_text = if selector.is_filtering {
@@ -870,7 +846,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             let search_p = Paragraph::new(search_text)
                 .block(search_block)
-                .style(Style::default().fg(THEME.read().unwrap().text_normal));
+                .style(Style::default().fg(ctx.theme.text_normal));
 
             f.render_widget(search_p, search_chunk);
 
@@ -879,8 +855,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let p = Paragraph::new("\n  No matching options found.")
                     .style(
                         Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(THEME.read().unwrap().bg)
+                            .fg(ctx.theme.text_muted)
+                            .bg(ctx.theme.bg)
                             .add_modifier(Modifier::ITALIC),
                     )
                     .wrap(ratatui::widgets::Wrap { trim: true });
@@ -898,36 +874,34 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             format!(" {} ", icons.check_off)
                         };
                         let marker_color = if is_selected {
-                            THEME.read().unwrap().green
+                            ctx.theme.green
                         } else {
-                            THEME.read().unwrap().text_muted
+                            ctx.theme.text_muted
                         };
 
                         let item_bg = if i == selector.cursor_idx {
-                            THEME.read().unwrap().highlight_bg
+                            ctx.theme.highlight_bg
                         } else {
-                            THEME.read().unwrap().bg
+                            ctx.theme.bg
                         };
 
                         let style = if i == selector.cursor_idx {
                             Style::default()
                                 .bg(item_bg)
-                                .fg(THEME.read().unwrap().text_normal)
+                                .fg(ctx.theme.text_normal)
                                 .add_modifier(Modifier::BOLD)
                         } else {
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .bg(item_bg)
+                            Style::default().fg(ctx.theme.text_normal).bg(item_bg)
                         };
 
                         let highlight_style = if i == selector.cursor_idx {
                             Style::default()
                                 .bg(item_bg)
-                                .fg(THEME.read().unwrap().yellow)
+                                .fg(ctx.theme.yellow)
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()
-                                .fg(THEME.read().unwrap().yellow)
+                                .fg(ctx.theme.yellow)
                                 .bg(item_bg)
                                 .add_modifier(Modifier::BOLD)
                         };
@@ -956,7 +930,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     })
                     .collect();
 
-                let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
+                let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
                 let mut state = selector.state;
                 f.render_stateful_widget(list, list_chunk, &mut state);
                 selector.state = state;
@@ -965,7 +939,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     }
 
     if let Some(dialog) = &app.submit_dialog {
-        let theme = THEME.read().unwrap();
+        let theme = &ctx.theme;
         let icon = match dialog.action {
             crate::app::ConfirmAction::DeleteMilestone(_)
             | crate::app::ConfirmAction::DeleteRelease(_)
@@ -1029,7 +1003,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         // Draw the backdrop + border first so the content below renders
         // on top of it (the block fills the whole area with its bg).
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(block, area);
 
         let v = Layout::default()
@@ -1187,14 +1161,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             f.render_widget(
                 Paragraph::new(label)
                     .alignment(Alignment::Center)
-                    .style(button_style(&theme, dialog.cursor_idx == cursor, accent)),
+                    .style(button_style(theme, dialog.cursor_idx == cursor, accent)),
                 cells[i * 2],
             );
         }
     }
 
-    super::review_submit::render_review_submit(f, app, size);
-    render_help(f, app, size);
+    super::review_submit::render_review_submit(f, ctx, app, size);
+    render_help(f, ctx, app, size);
 }
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
@@ -1205,13 +1179,13 @@ const VIEW_DEPLOYMENT_LOG_ACTION: &str = "Open the selected deployment's job log
 const RUNNER_PAUSE_RESUME_ACTION: &str = "Pause / Resume runner";
 const RUNNER_EDIT_DESCRIPTION_ACTION: &str = "Edit runner description text";
 
-pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
+pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     if !app.show_help {
         return;
     }
 
-    let icons = ICONS.read().unwrap();
-    let is_github = app.is_github();
+    let icons = ctx.icons;
+    let is_github = ctx.kind.is_github();
     let mr_label: &'static str = if is_github {
         "Pull Requests"
     } else {
@@ -1820,7 +1794,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Runners",
             key: d(app.config.keybindings.runners.cycle_status.clone()),
-            action: if app.kind().supports_runner_management() {
+            action: if ctx.kind.supports_runner_management() {
                 "Cycle status filter (Online, Paused, Offline, All)"
             } else {
                 "Cycle status filter (Online, Offline, All)"
@@ -2294,7 +2268,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             action: "Show this help modal",
         },
     ];
-    if !app.kind().supports_runner_management() {
+    if !ctx.kind.supports_runner_management() {
         shortcuts.retain(|shortcut| {
             ![RUNNER_PAUSE_RESUME_ACTION, RUNNER_EDIT_DESCRIPTION_ACTION].contains(&shortcut.action)
         });
@@ -2359,13 +2333,13 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
         .title_style(
             Style::default()
-                .fg(THEME.read().unwrap().header_fg)
+                .fg(ctx.theme.header_fg)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+        .border_style(Style::default().fg(ctx.theme.border_focused))
         .border_type(BorderType::Double)
-        .style(Style::default().bg(THEME.read().unwrap().bg));
+        .style(Style::default().bg(ctx.theme.bg));
 
     let area = centered_rect_min(90, 85, 95, 38, size);
     app.overlay_stack
@@ -2388,9 +2362,9 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     let action_width = help_chunks[1].width.saturating_sub(20 + 24 + 4).max(8);
 
     let border_color = if app.help_search_query.is_empty() {
-        THEME.read().unwrap().border
+        ctx.theme.border
     } else {
-        THEME.read().unwrap().border_focused
+        ctx.theme.border_focused
     };
     let search_block = Block::default()
         .borders(Borders::ALL)
@@ -2398,7 +2372,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         .title(" Filter Shortcuts ")
         .title_style(
             Style::default()
-                .fg(THEME.read().unwrap().text_muted)
+                .fg(ctx.theme.text_muted)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -2410,10 +2384,10 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
 
     let search_style = if app.help_search_query.is_empty() {
         Style::default()
-            .fg(THEME.read().unwrap().text_muted)
+            .fg(ctx.theme.text_muted)
             .add_modifier(Modifier::ITALIC)
     } else {
-        Style::default().fg(THEME.read().unwrap().text_normal)
+        Style::default().fg(ctx.theme.text_normal)
     };
 
     let search_p = Paragraph::new(search_text)
@@ -2436,7 +2410,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             .collect()
     };
 
-    let theme = THEME.read().unwrap();
+    let theme = &ctx.theme;
     let mut rows: Vec<Row> = Vec::new();
     // Table row of each listed shortcut; spacer rows between categories are
     // never selectable.
@@ -2514,9 +2488,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         .block(block)
         .row_highlight_style(Style::default().bg(theme.highlight_bg))
         .column_spacing(2);
-    drop(theme);
-
-    clear_area(f, area);
+    clear_area(f, ctx, area);
     f.render_widget(search_p, help_chunks[0]);
     f.render_stateful_widget(table, help_chunks[1], &mut app.help_table_state);
     let mut scrollbar_state =
@@ -2566,9 +2538,11 @@ mod tests {
         app.show_help = true;
         app.active_tab = Tab::MergeRequests;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2602,9 +2576,11 @@ mod tests {
         app.show_help = true;
         app.active_tab = Tab::MergeRequests;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2641,8 +2617,10 @@ command = "true"
         app.show_help = true;
 
         app.active_tab = Tab::MergeRequests;
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let on_mrs = buffer_text(&terminal);
         assert!(on_mrs.contains("Custom Commands"), "{on_mrs:?}");
@@ -2650,7 +2628,7 @@ command = "true"
 
         app.active_tab = Tab::Issues;
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let on_issues = buffer_text(&terminal);
         assert!(
@@ -2667,8 +2645,10 @@ command = "true"
         app.show_help = true;
         app.active_tab = Tab::Issues;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let top = buffer_text(&terminal);
         assert!(top.contains("Next tab"), "{top:?}");
@@ -2681,7 +2661,7 @@ command = "true"
 
         app.help_selected = usize::MAX;
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let bottom = buffer_text(&terminal);
         assert_eq!(
@@ -2707,9 +2687,11 @@ command = "true"
         app.show_help = true;
         app.active_tab = Tab::Issues;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2723,7 +2705,7 @@ command = "true"
         app.config.keybindings.issues.create_issue = "".to_string();
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2735,7 +2717,8 @@ command = "true"
     }
 
     /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:
-    /// a body line, five options and both buttons.
+    /// a body line, five options and both buttons. Drawn with the ASCII icon
+    /// set, the one the snapshots are written in.
     fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut app = App::default();
@@ -2745,15 +2728,19 @@ command = "true"
             crate::app::ConfirmAction::MergeMr(2),
             &app,
         ));
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
         terminal
-            .draw(|f| render_overlays(f, &mut app, f.area()))
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
             .unwrap();
         terminal
     }
 
-    /// One line per buffer row, trailing blanks trimmed, with the icons the
-    /// dialog draws rewritten into the ASCII set: `ICONS` comes from the
-    /// developer's own config, the snapshot must not.
+    /// One line per buffer row, trailing blanks trimmed.
     fn snapshot_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let mut text = String::new();
@@ -2762,17 +2749,7 @@ command = "true"
             text.push_str(line.trim_end());
             text.push('\n');
         }
-        let icons = crate::config::ICONS.read().unwrap();
-        let ascii = crate::config::Icons::ascii();
-        [
-            (&icons.action_merge, &ascii.action_merge),
-            (&icons.check_on, &ascii.check_on),
-            (&icons.check_off, &ascii.check_off),
-        ]
-        .into_iter()
-        .fold(text, |text, (icon, replacement)| {
-            text.replace(icon.as_str(), replacement)
-        })
+        text
     }
 
     /// Compares against `src/ui/snapshots/<name>.txt`. Set

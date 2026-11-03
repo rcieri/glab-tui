@@ -1,11 +1,12 @@
 use super::diff::centered_rect_fixed;
 use super::modal::{button_style, clear_area};
 use crate::app::{App, OverlayKind};
-use crate::config::{ICONS, Icons, THEME, Theme};
+use crate::config::{Icons, Theme};
 use crate::domain::review::draft_comments_phrase;
 use crate::review_submit::{
     ReviewSubmit, ReviewSubmitFocus, ReviewSubmitLayout, ReviewVerdict, SubmissionState,
 };
+use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{sanitize_untrusted, wrap_ranges, wrap_text};
 use ratatui::{
     Frame,
@@ -27,13 +28,13 @@ const MAX_STATUS_ROWS: usize = 4;
 /// in `{e:#}`, and the submission's Terminal-tab entry keeps all of it.
 const CUT_ERROR_HINT: &str = "Full error in the Terminal tab";
 
-pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
+pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     let Some(mut overlay) = app.review_submit.take() else {
         return;
     };
-    let theme = *THEME.read().unwrap();
-    let icons = ICONS.read().unwrap();
-    let kind = app.kind();
+    let theme = ctx.theme;
+    let icons = ctx.icons;
+    let kind = ctx.kind;
     let text_width = usize::from(
         DIALOG_WIDTH
             .min(size.width)
@@ -47,7 +48,7 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
         &draft_note(overlay.verdict, draft_count, kind.is_gitlab()),
         text_width,
     );
-    let status = status_lines(&overlay.state, text_width, &icons, &theme);
+    let status = status_lines(&overlay.state, text_width, icons, &theme);
     let status_rows = if status.is_empty() {
         0
     } else {
@@ -61,7 +62,7 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
     let area = centered_rect_fixed(DIALOG_WIDTH, height, size);
     app.overlay_stack.push((OverlayKind::ReviewSubmit, area));
 
-    clear_area(f, area);
+    clear_area(f, ctx, area);
     f.render_widget(
         Block::default()
             .title(format!(
@@ -120,7 +121,7 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
         verdict_header,
     );
     f.render_widget(
-        Paragraph::new(verdict_lines(&overlay, &icons, &theme)),
+        Paragraph::new(verdict_lines(&overlay, icons, &theme)),
         verdicts_area,
     );
     render_summary(f, &overlay, summary_area, &theme);
@@ -144,7 +145,7 @@ pub(crate) fn render_review_submit(f: &mut Frame, app: &mut App, size: Rect) {
         Constraint::Ratio(1, 2),
     ])
     .areas(buttons_area);
-    render_buttons(f, &overlay, (submit_button, cancel_button), &icons, &theme);
+    render_buttons(f, &overlay, (submit_button, cancel_button), icons, &theme);
     f.render_widget(Paragraph::new(key_hints(&overlay)).style(muted), hints_area);
 
     overlay.layout = Some(ReviewSubmitLayout {
@@ -428,8 +429,10 @@ mod tests {
 
     fn render_at_width(app: &mut App, width: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+        let icons = crate::config::Icons::nerd();
+        let ctx = RenderCtx::new(app, &icons);
         terminal
-            .draw(|f| render_review_submit(f, app, f.area()))
+            .draw(|f| render_review_submit(f, &ctx, app, f.area()))
             .unwrap();
         screen_text(&terminal)
     }

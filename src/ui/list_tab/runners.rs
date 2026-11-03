@@ -104,7 +104,15 @@ impl ColumnDef for RunnerColumn {
     fn cell(self, row: &Runner, ctx: &CellContext) -> Cell<'static> {
         let theme = ctx.theme;
         let fuzzy = |text: &str, style: Style, alignment: Alignment| {
-            render_fuzzy_cell(text, ctx.query, ctx.is_highlighted, false, style, alignment)
+            render_fuzzy_cell(
+                text,
+                ctx.query,
+                ctx.is_highlighted,
+                false,
+                style,
+                alignment,
+                ctx.theme,
+            )
         };
         match self {
             Self::Id => fuzzy(
@@ -225,5 +233,6 @@ fn optional_cell(text: &str, known_style: Style, ctx: &CellContext) -> Cell<'sta
         false,
         style,
         Alignment::Left,
+        ctx.theme,
     )
 }

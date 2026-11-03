@@ -6,7 +6,7 @@ use crate::handlers::tabs::{
     OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
     spawn_cancel_jobs,
 };
-use crate::keybinding::keybinding_matches;
+use crate::keybinding::{KeyPress, keybinding_matches};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 use std::time::Instant;
@@ -771,7 +771,7 @@ fn run_submit_action(
     }
 }
 
-pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
+pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
     if app.show_help {
         return false;
     }
@@ -785,14 +785,7 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
 
     // When the user is actively typing raw text into a text field, allow F1 to open help,
     // but keep regular character keys (like '?') so they can be typed into the field.
-    let is_typing_text = app.text_input.is_some()
-        || app.is_typing_search
-        || app.job_trace_searching
-        || app.edit_menu.as_ref().is_some_and(|m| m.editing)
-        || app.diff_view.as_ref().is_some_and(|d| d.search_active)
-        || app.selector.as_ref().is_some_and(|s| s.is_filtering);
-
-    if is_typing_text && !is_f1 {
+    if app.is_capturing_text() && !is_f1 {
         return false;
     }
 
@@ -819,7 +812,7 @@ pub fn move_help_selection(app: &mut App, down: bool, rows: usize) {
     };
 }
 
-pub fn handle_help_overlay(app: &mut App, key_event: &KeyEvent) -> bool {
+pub fn handle_help_overlay(app: &mut App, key_event: &KeyPress) -> bool {
     if app.show_help {
         match key_event.code {
             KeyCode::Esc | KeyCode::Enter => {
@@ -867,7 +860,7 @@ pub fn handle_help_overlay(app: &mut App, key_event: &KeyEvent) -> bool {
     false
 }
 
-pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
+pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
     let is_switch_repo = (key_event.code == KeyCode::Char('s')
         && key_event
             .modifiers
@@ -983,7 +976,7 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
 
 pub fn handle_refresh(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     last_refresh: &mut Instant,
     tx: UnboundedSender<Event>,
 ) -> bool {
@@ -1109,7 +1102,7 @@ pub fn handle_date_picker(app: &mut App, key_event: &KeyEvent, tx: UnboundedSend
 
 /// Keys for the review threads overlay. Selectors and text inputs opened from
 /// it (comment actions, replies) sit on top and take their keys first.
-pub fn handle_review_threads(app: &mut App, key_event: &KeyEvent) -> bool {
+pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
     if app.selector.is_some() || app.text_input.is_some() {
         return false;
     }
@@ -1120,6 +1113,12 @@ pub fn handle_review_threads(app: &mut App, key_event: &KeyEvent) -> bool {
     let mut keep_open = true;
     match key_event.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('T') => keep_open = false,
+        _ if keybinding_matches(&app.config.keybindings.global.scroll_top, key_event) => {
+            overview.first()
+        }
+        _ if keybinding_matches(&app.config.keybindings.global.scroll_to_end, key_event) => {
+            overview.last()
+        }
         // Ahead of the plain `u` arm, which ignores modifiers.
         _ if keybinding_matches(
             &app.config.keybindings.global.scroll_half_page_down,
@@ -1227,6 +1226,7 @@ mod tests {
     use crate::app::{
         App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, SubmitDialog,
     };
+    use crate::keybinding::KeyPress;
     use crate::notice::Notice;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -1234,7 +1234,7 @@ mod tests {
     fn help_ctrl_d_u_move_half_a_page_without_typing_into_the_search() {
         let mut app = App::default();
         app.show_help = true;
-        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let ctrl = |c| KeyPress::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 
         handle_help_overlay(&mut app, &ctrl('d'));
         handle_help_overlay(&mut app, &ctrl('d'));
@@ -1249,7 +1249,7 @@ mod tests {
         use crossterm::event::KeyModifiers;
         let mut app = App::default();
         app.show_help = true;
-        let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let press = |code| KeyPress::Key(KeyEvent::new(code, KeyModifiers::NONE));
 
         handle_help_overlay(&mut app, &press(KeyCode::Down));
         handle_help_overlay(&mut app, &press(KeyCode::Down));
@@ -1269,7 +1269,7 @@ mod tests {
 
         let handled = handle_help_overlay(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE).into(),
         );
 
         assert!(handled);
@@ -1288,7 +1288,7 @@ mod tests {
         let mut last_refresh = Instant::now();
         let handled_refresh = super::handle_refresh(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE).into(),
             &mut last_refresh,
             tx,
         );
@@ -1296,7 +1296,7 @@ mod tests {
 
         let handled_switch = super::handle_switch_repo(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE).into(),
         );
         assert!(!handled_switch);
     }
@@ -1308,14 +1308,14 @@ mod tests {
         // 1. Normal view with '?' and F1
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
 
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1338,7 +1338,7 @@ mod tests {
         });
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1349,12 +1349,12 @@ mod tests {
         }
         assert!(!handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(!app.show_help);
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1368,7 +1368,7 @@ mod tests {
         ));
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1379,12 +1379,12 @@ mod tests {
         }
         assert!(!handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(!app.show_help);
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1408,7 +1408,7 @@ mod tests {
         });
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1418,7 +1418,7 @@ mod tests {
         app.focus_column_checklist = true;
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1432,7 +1432,7 @@ mod tests {
         ));
         assert!(handle_help_keybinding(
             &mut app,
-            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
         assert!(app.show_help);
         app.show_help = false;
@@ -1491,7 +1491,7 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     fn press(app: &mut App, code: KeyCode) -> bool {
-        handle_review_threads(app, &KeyEvent::new(code, KeyModifiers::NONE))
+        handle_review_threads(app, &KeyEvent::new(code, KeyModifiers::NONE).into())
     }
 
     fn selected_root_id(app: &App) -> Option<u64> {
@@ -1511,7 +1511,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         // 4 visible rows, so half a page is 2.
         app.review_threads.as_mut().unwrap().list_rect =
             Some(ratatui::layout::Rect::new(0, 0, 40, 4));
-        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let ctrl = |c| KeyPress::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 
         handle_review_threads(&mut app, &ctrl('d'));
         assert_eq!(selected_root_id(&app), Some(3));
@@ -1521,6 +1521,22 @@ diff --git a/src/lib.rs b/src/lib.rs
         handle_review_threads(&mut app, &ctrl('u'));
         assert_eq!(selected_root_id(&app), Some(4));
         assert!(!app.review_threads.as_ref().unwrap().unresolved_only);
+    }
+
+    #[test]
+    fn review_threads_scroll_bindings_bound_to_sequences_jump_to_both_ends() {
+        let mut app = app_with_review_threads(
+            (1..=3)
+                .map(|id| review_note(id, &format!("t{id}"), None))
+                .collect(),
+        );
+        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.config.keybindings.global.scroll_to_end = "ge".to_string();
+
+        handle_review_threads(&mut app, &KeyPress::Sequence("ge".to_string()));
+        assert_eq!(selected_root_id(&app), Some(3));
+        handle_review_threads(&mut app, &KeyPress::Sequence("gg".to_string()));
+        assert_eq!(selected_root_id(&app), Some(1));
     }
 
     #[test]

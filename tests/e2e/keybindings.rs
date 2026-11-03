@@ -97,32 +97,47 @@ fn test_page_scroll_keybindings() {
     session.send_input(b"q");
 }
 
+/// `z` alone is bound to nothing, so the first `z` only waits for the second
+/// one. The MR list proves the sequence reached `next_tab`.
 #[test]
 fn test_multi_key_sequence_keybinding() {
     let config_toml = r#"
+icons = "ascii"
+
+[keybindings.global]
+next_tab = "zz"
+"#;
+    let mut session = TestSession::with_config(false, 24, 140, Some(config_toml));
+    session
+        .wait_for_screen_contains("Worktree for seven", 30000)
+        .expect("app should list the issues");
+
+    session.press_keys(b"zz");
+
+    session
+        .wait_for_screen_contains("Feature: Add pagination support", 15000)
+        .expect("`zz` should switch to the MRs tab");
+}
+
+/// `scroll_top = "gg"` makes `g` wait, so `jump_to_id` on `g` only runs once
+/// `keybinding_timeout_ms` passes without another key.
+#[test]
+fn test_single_key_that_starts_a_sequence_fires_after_the_timeout() {
+    let config_toml = r#"
+icons = "ascii"
+keybinding_timeout_ms = 300
+
 [keybindings.global]
 scroll_top = "gg"
 "#;
-    let mut session = TestSession::with_config(false, 24, 80, Some(config_toml));
+    let mut session = TestSession::with_config(false, 24, 140, Some(config_toml));
     session
-        .wait_for_screen_contains("Issues", 5000)
-        .expect("app should reach the Issues tab");
+        .wait_for_screen_contains("Worktree for seven", 30000)
+        .expect("app should list the issues");
 
-    // `gg` is bound to `scroll_top`. Resolving the sequence triggers the
-    // action handler, which is gated on `detail_visible` and is a no-op
-    // on the default Issues tab — but the sequence machine must still
-    // resolve the binding without crashing the event loop or leaving
-    // the input loop in a bad state.
     session.send_input(b"g");
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    session.send_input(b"g");
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
-    // The tab bar is still rendered after the sequence lands, which is
-    // the loosest signal we have from the harness that the app is still
-    // alive and ticking. Behaviour-level assertions live in the unit
-    // tests for `matches_with_pending` and `scroll_top`.
     session
-        .wait_for_screen_contains("Issues", 1000)
-        .expect("Issues tab should still be visible after `gg`");
+        .wait_for_screen_contains("Jump to Issue/MR", 5000)
+        .expect("the waiting `g` should run `jump_to_id` once the timeout passes");
 }

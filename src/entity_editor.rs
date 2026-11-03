@@ -318,8 +318,8 @@ pub fn build_mr_document(
     is_github: bool,
     unresolved_threads_count: Option<usize>,
     fetching_linked_issues: bool,
+    icons: &crate::config::Icons,
 ) -> crate::app::EntityDocument {
-    let icons = crate::config::ICONS.read().unwrap();
     let mut fields = vec![
         crate::app::Field::read_only("ID", format!("!{}", mr.iid)),
         crate::app::Field::text("Title", mr.title.clone()),
@@ -345,19 +345,19 @@ pub fn build_mr_document(
 
     if let Some(wf) = mr.workflow {
         let text = if let Some(label) = crate::domain::mr_state::workflow_label(Some(wf)) {
-            let glyph = crate::domain::mr_state::workflow_icon(Some(wf));
+            let glyph = crate::domain::mr_state::workflow_icon(Some(wf), icons);
             if glyph.is_empty() {
                 label.to_string()
             } else {
                 format!("{glyph} {label}")
             }
         } else {
-            crate::domain::mr_state::workflow_cell(Some(wf))
+            crate::domain::mr_state::workflow_cell(Some(wf), icons)
         };
         fields.push(crate::app::Field::read_only("Workflow", text));
     }
     if let Some(approval) = &mr.approval {
-        let (text, tone) = crate::domain::mr_state::approval_cell(Some(approval), is_github);
+        let (text, tone) = crate::domain::mr_state::approval_cell(Some(approval), is_github, icons);
         fields.push(crate::app::Field::read_only_toned(
             "Approval",
             text,
@@ -373,7 +373,7 @@ pub fn build_mr_document(
         ));
     }
     if let Some(mergeability) = &mr.mergeability {
-        let (text, tone) = crate::domain::mr_state::mergeable_cell(Some(mergeability));
+        let (text, tone) = crate::domain::mr_state::mergeable_cell(Some(mergeability), icons);
         fields.push(crate::app::Field::read_only_toned(
             "Mergeable",
             text,
@@ -391,7 +391,7 @@ pub fn build_mr_document(
         if let Some((text, _)) = crate::domain::mr_state::threads_line_text(
             Some(blocking),
             unresolved_threads_count,
-            &icons,
+            icons,
         ) {
             fields.push(crate::app::Field::read_only("Threads", text));
         }
@@ -1719,7 +1719,8 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             };
 
             let is_fetching_issues = app.fetching_mr_related_issues.contains(&mr.iid);
-            let mut doc = build_mr_document(&mr, is_github, unresolved, is_fetching_issues);
+            let mut doc =
+                build_mr_document(&mr, is_github, unresolved, is_fetching_issues, &app.icons);
             doc.fields.push(crate::app::Field::text(
                 "Description",
                 mr.description.clone().unwrap_or_default(),
@@ -2409,7 +2410,7 @@ mod tests {
             ]),
         };
 
-        let doc = build_mr_document(&mr, true, None, false);
+        let doc = build_mr_document(&mr, true, None, false, &crate::config::Icons::nerd());
         assert!(
             doc.fields
                 .iter()
@@ -2419,7 +2420,7 @@ mod tests {
         if let crate::app::InspectorContent::Markdown(content) = doc.content {
             assert!(content.contains("### Stack #7 (3 PRs)"));
             assert!(content.contains("1. #101: Base PR (MERGED)"));
-            let nav_prev = crate::config::ICONS.read().unwrap().nav_prev.clone();
+            let nav_prev = crate::config::Icons::nerd().nav_prev;
             assert!(content.contains(&format!("2. #102: Middle PR (OPEN) {nav_prev} (current)")));
             assert!(content.contains("3. #103: Top PR (OPEN) [draft]"));
         } else {

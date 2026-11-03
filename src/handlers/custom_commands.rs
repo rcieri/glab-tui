@@ -3,8 +3,8 @@ use crate::app::{App, CUSTOM_COMMAND_LOG_PREFIX};
 use crate::command_log::Execution;
 use crate::custom_commands::{CommandPane, CustomCommand, TemplateValues, render, shell_process};
 use crate::event::Event;
+use crate::keybinding::KeyPress;
 use crate::scope::Scope;
-use crossterm::event::KeyEvent;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Runs the custom command bound to `key_event` on the active tab, handing it
@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 /// key; every claimed keypress leaves one entry in the terminal log.
 pub fn run_bound_command(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     terminal: &mut AppTerminal,
     tx: &UnboundedSender<Event>,
 ) -> bool {
@@ -27,7 +27,7 @@ pub fn run_bound_command(
 /// diff view is open.
 pub fn run_bound_diff_command(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     terminal: &mut AppTerminal,
     tx: &UnboundedSender<Event>,
 ) -> bool {

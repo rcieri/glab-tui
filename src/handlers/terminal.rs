@@ -1,17 +1,17 @@
 //! Terminal tab actions: filtering the log, inspecting an entry, copying it
 //! and running its CLI call again.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyCode;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::App;
 use crate::command_log::Invocation;
 use crate::event::Event;
-use crate::keybinding::keybinding_matches;
+use crate::keybinding::{KeyPress, keybinding_matches};
 
 /// Keys of the Terminal tab's log view. Returns false for a key it does not
 /// handle.
-pub fn handle_tab_key(app: &mut App, key_event: &KeyEvent) -> bool {
+pub fn handle_tab_key(app: &mut App, key_event: &KeyPress) -> bool {
     let terminal = &app.config.keybindings.terminal;
     if keybinding_matches(&terminal.toggle_wrap, key_event) {
         app.terminal_wrap = !app.terminal_wrap;
@@ -36,7 +36,7 @@ pub fn handle_tab_key(app: &mut App, key_event: &KeyEvent) -> bool {
 /// on top and takes its keys first. A selector or text input opened over it,
 /// such as the repo switcher, reads its keys later in the main loop, so the
 /// inspector leaves them alone.
-pub fn handle_inspector_key(app: &mut App, key_event: &KeyEvent) -> bool {
+pub fn handle_inspector_key(app: &mut App, key_event: &KeyPress) -> bool {
     if app.selector.is_some() || app.text_input.is_some() {
         return false;
     }
@@ -86,7 +86,7 @@ pub fn handle_inspector_key(app: &mut App, key_event: &KeyEvent) -> bool {
 
 /// Copy and re-run, which act on the inspected entry while the inspector is
 /// open and on the highlighted one otherwise.
-fn handle_entry_action(app: &mut App, key_event: &KeyEvent) -> bool {
+fn handle_entry_action(app: &mut App, key_event: &KeyPress) -> bool {
     let terminal = &app.config.keybindings.terminal;
     let (result, failure) = if keybinding_matches(&terminal.copy_command, key_event) {
         (app.copy_terminal_command(), "Failed to copy command")
@@ -120,7 +120,7 @@ pub fn rerun(app: &mut App, invocation: Invocation, tx: UnboundedSender<Event>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyEvent, KeyModifiers};
 
     #[test]
     fn inspector_leaves_keys_to_a_selector_opened_over_it() {
@@ -130,7 +130,7 @@ mod tests {
         app.selector = Some(crate::app::Selector::draft_actions(0));
 
         for code in [KeyCode::Char('j'), KeyCode::Enter, KeyCode::Esc] {
-            let key = KeyEvent::new(code, KeyModifiers::NONE);
+            let key = KeyEvent::new(code, KeyModifiers::NONE).into();
             assert!(!handle_inspector_key(&mut app, &key), "{code:?}");
         }
         assert_eq!(
@@ -147,7 +147,10 @@ mod tests {
         app.config.keybindings.global.scroll_down = "z".to_string();
         app.config.keybindings.global.scroll_to_end = "x".to_string();
         let scroll_after = |app: &mut App, key: char| {
-            handle_inspector_key(app, &KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+            handle_inspector_key(
+                app,
+                &KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE).into(),
+            );
             app.terminal_inspector.map(|inspector| inspector.scroll)
         };
 

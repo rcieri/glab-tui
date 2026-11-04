@@ -905,7 +905,7 @@ All API calls are made by shelling out to `gh api` or `glab api` (depending on t
 src/
 ├── main.rs          # Entry point: terminal setup and the effect-executing event loop
 ├── update/          # update(app, event) -> Vec<Effect>: applies every event to App
-├── effect.rs        # Effect: what update asks the loop to do (spawn, suspend, redraw, quit)
+├── effect.rs        # Effect: what update asks the loop to do (spawn, suspend, quit)
 ├── app.rs           # App state, Tab enum, DiffView, DatePicker, filtering logic
 ├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
 ├── event.rs         # Async event handler (keyboard, tick, async data events)

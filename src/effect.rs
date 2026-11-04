@@ -1,7 +1,7 @@
 //! What `update::update` asks the event loop to do once it has applied an
-//! event: start background work, hand the terminal to a child process, draw
-//! early or stop. `update` never awaits or spawns anything itself, so every
-//! side effect it causes is in the list it returns.
+//! event: start background work, hand the terminal to a child process or
+//! stop. `update` never awaits or spawns anything itself, so every side
+//! effect it causes is in the list it returns.
 
 use crate::AppTerminal;
 use crate::app::App;
@@ -22,8 +22,6 @@ pub enum Effect {
     SpawnThread(Box<dyn FnOnce() + Send + 'static>),
     /// Hands the terminal to a foreground child process until it exits.
     Suspend(Box<ForegroundJob>),
-    /// Draws a frame before the next event is read.
-    Redraw,
     /// Leaves the event loop.
     Quit,
 }
@@ -34,7 +32,6 @@ impl std::fmt::Debug for Effect {
             Effect::Spawn(_) => f.write_str("Spawn"),
             Effect::SpawnThread(_) => f.write_str("SpawnThread"),
             Effect::Suspend(job) => f.debug_tuple("Suspend").field(job).finish(),
-            Effect::Redraw => f.write_str("Redraw"),
             Effect::Quit => f.write_str("Quit"),
         }
     }
@@ -73,10 +70,6 @@ impl Effects {
 
     pub fn suspend(&mut self, job: ForegroundJob) {
         self.0.push(Effect::Suspend(Box::new(job)));
-    }
-
-    pub fn redraw(&mut self) {
-        self.0.push(Effect::Redraw);
     }
 
     pub fn quit(&mut self) {

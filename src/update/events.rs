@@ -872,9 +872,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::CommandStarted(msg) => {
             app.show_notice(msg.clone());
             app.start_command(msg);
-            // Draw before the next event so the "Running..." banner is
-            // visible even if CommandCompleted arrives right behind it.
-            fx.redraw();
         }
         Event::CommandCompleted(tab, Ok(outcome)) => {
             if let Some(row) = app.latest_running_cli_command() {

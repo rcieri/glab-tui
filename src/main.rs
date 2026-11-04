@@ -15,11 +15,7 @@ use std::io;
 /// Runs what `update` asked for, in order. A foreground job's outcome goes
 /// back through `update` before the next effect runs. Returns `false` once an
 /// effect quits.
-fn run_effects(
-    app: &mut App,
-    terminal: &mut AppTerminal,
-    effects: Vec<Effect>,
-) -> io::Result<bool> {
+fn run_effects(app: &mut App, terminal: &mut AppTerminal, effects: Vec<Effect>) -> bool {
     let mut queue = std::collections::VecDeque::from(effects);
     while let Some(effect) = queue.pop_front() {
         match effect {
@@ -34,14 +30,10 @@ fn run_effects(
                     queue.extend(update::update(app, event));
                 }
             }
-            Effect::Redraw => {
-                app.sync_list_views();
-                terminal.draw(|f| ui::render(f, app))?;
-            }
-            Effect::Quit => return Ok(false),
+            Effect::Quit => return false,
         }
     }
-    Ok(true)
+    true
 }
 
 #[tokio::main]
@@ -311,7 +303,7 @@ async fn main() -> Result<()> {
     fetch::prefetch_highlighted(&mut app, &tx, &mut fx);
     let mut effects = fx.into_vec();
     loop {
-        if !run_effects(&mut app, &mut terminal, effects)? {
+        if !run_effects(&mut app, &mut terminal, effects) {
             break;
         }
         app.sync_list_views();

@@ -1,6 +1,6 @@
 use crate::backend::BackendKind;
 
-/// A pure local read, safe on the UI thread: `git symbolic-ref --short HEAD`
+/// A local read, safe on the UI thread: `git symbolic-ref --short HEAD`
 /// and `git branch --show-current` read the local `.git` only. No network
 /// roundtrip, no prompt for credentials.
 pub fn get_current_branch() -> Option<String> {

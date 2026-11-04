@@ -76,10 +76,6 @@ impl Effects {
         self.0.push(Effect::Quit);
     }
 
-    pub fn as_slice(&self) -> &[Effect] {
-        &self.0
-    }
-
     pub fn into_vec(self) -> Vec<Effect> {
         self.0
     }

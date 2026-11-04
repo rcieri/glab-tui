@@ -887,7 +887,7 @@ pub fn handle_key(
                                 }
                                 "Delete Comment" => {
                                     let client = app.gitlab_client.clone();
-                                    let project_context = app.scope.as_str().to_string();
+                                    let project_context = app.project_path_for_open_mr(mr_iid);
                                     let tx = tx.clone();
                                     let is_github = client.as_ref().is_some_and(|c| c.is_github);
 

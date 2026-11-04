@@ -4500,6 +4500,16 @@ impl App {
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
+    /// The project of MR `iid`, read from the open diff when it shows that
+    /// MR. In group scope the iid alone can match another project's MR.
+    pub fn project_path_for_open_mr(&self, iid: u64) -> String {
+        self.diff_view
+            .as_ref()
+            .filter(|diff| diff.mr_iid == iid)
+            .map(|diff| diff.project_path.clone())
+            .unwrap_or_else(|| self.project_path_for_mr(iid))
+    }
+
     /// Position of issue `iid` of `project_path` in `issues.items`. Matching
     /// on the iid alone would hit another project's issue in group scope.
     pub fn issue_index(&self, project_path: &str, iid: u64) -> Option<usize> {
@@ -10266,6 +10276,27 @@ diff --git a/Makefile b/Makefile
                 .all_lines
                 .len()
         );
+    }
+
+    #[test]
+    fn a_comment_action_in_group_scope_targets_the_open_diffs_project() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
+        let mut listed_first = mr_fixture(5, "opened", "a", false, "alpha !5");
+        listed_first.project_path = "acme/alpha".to_string();
+        let mut opened = mr_fixture(5, "opened", "b", false, "beta !5");
+        opened.project_path = "acme/beta".to_string();
+        app.mrs.items = vec![listed_first, opened];
+        app.diff_view = Some(DiffView::without_highlighting(
+            5,
+            "acme/beta".to_string(),
+            String::new(),
+        ));
+
+        assert_eq!(app.project_path_for_open_mr(5), "acme/beta");
+        assert_eq!(app.project_path_for_open_mr(9), "acme");
     }
 
     #[test]

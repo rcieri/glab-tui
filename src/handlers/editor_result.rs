@@ -77,7 +77,7 @@ fn spawn_comment_edit(
         return;
     };
     let is_github = client.is_github;
-    let project_context = app.scope.as_str().to_string();
+    let project_context = app.project_path_for_open_mr(mr_iid);
     let comment_id = comment.id;
     let _ = tx.send(Event::CommandStarted(format!(
         "Editing comment MR #{mr_iid}"

@@ -282,12 +282,7 @@ pub fn handle_key(
                 }
                 crate::app::TextInputAction::SubmitReviewFinal { mr_iid, status } => {
                     let comments = std::mem::take(&mut app.draft_comments);
-                    let project = app
-                        .diff_view
-                        .as_ref()
-                        .filter(|diff| diff.mr_iid == mr_iid)
-                        .map(|diff| diff.project_path.clone())
-                        .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
+                    let project = app.project_path_for_open_mr(mr_iid);
                     app.persist_draft_comments(&project, mr_iid);
                     app.in_review_mode = false;
                     if let Some(client) = app.gitlab_client.clone() {

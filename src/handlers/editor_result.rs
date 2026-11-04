@@ -84,47 +84,32 @@ fn spawn_comment_edit(
     )));
     let tx = tx.clone();
     fx.spawn(async move {
-        let output = if is_github {
-            let endpoint = if comment.position.is_some() {
-                format!("repos/{project_context}/pulls/comments/{comment_id}")
+        let (program, endpoint, method) = if is_github {
+            let kind = if comment.position.is_some() {
+                "pulls"
             } else {
-                format!("repos/{project_context}/issues/comments/{comment_id}")
+                "issues"
             };
-            let payload = serde_json::json!({ "body": body });
-            let temp_path = std::env::temp_dir().join(format!("glab-tui-edit-{comment_id}.json"));
-            let _ = std::fs::write(&temp_path, payload.to_string());
-            let temp_str = temp_path.to_string_lossy().to_string();
-
-            let res = crate::backend::subprocess::output(
-                tokio::process::Command::new("gh")
-                    .args(["api", &endpoint, "--input", &temp_str, "-X", "PATCH"]),
-                None,
+            (
+                "gh",
+                format!("repos/{project_context}/{kind}/comments/{comment_id}"),
+                "PATCH",
             )
-            .await;
-            let _ = std::fs::remove_file(&temp_path);
-            res
         } else {
-            let encoded_path = project_context.replace("/", "%2F");
-            let payload = serde_json::json!({ "body": body });
-            let temp_path = std::env::temp_dir().join(format!("glab-tui-edit-{comment_id}.json"));
-            let _ = std::fs::write(&temp_path, payload.to_string());
-            let temp_str = temp_path.to_string_lossy().to_string();
-
-            let res = crate::backend::subprocess::output(
-                tokio::process::Command::new("glab").args([
-                    "api",
-                    &format!("projects/{encoded_path}/merge_requests/{mr_iid}/notes/{comment_id}"),
-                    "--input",
-                    &temp_str,
-                    "-X",
-                    "PUT",
-                ]),
-                None,
+            let encoded_path = project_context.replace('/', "%2F");
+            (
+                "glab",
+                format!("projects/{encoded_path}/merge_requests/{mr_iid}/notes/{comment_id}"),
+                "PUT",
             )
-            .await;
-            let _ = std::fs::remove_file(&temp_path);
-            res
         };
+        let payload = serde_json::json!({ "body": body }).to_string();
+        let output = crate::backend::subprocess::output(
+            tokio::process::Command::new(program)
+                .args(["api", &endpoint, "--input", "-", "-X", method]),
+            Some(payload.as_bytes()),
+        )
+        .await;
 
         let result = match output {
             Ok(out) if out.status.success() => Ok(CommandOutcome::Mutated),

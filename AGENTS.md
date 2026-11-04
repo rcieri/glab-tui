@@ -487,7 +487,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 Key handlers in [src/handlers/](src/handlers/) (`tabs.rs`, `overlays/`, `diff_view.rs`) run these through `GitlabClient`, which forwards to the matching `Backend` method (`close_issue`, `merge_mr`, `toggle_mr_draft`, `create_release`, `open_in_browser`, …) in `glab.rs` / `gh.rs`. Three calls bypass the backend and run `tokio::process::Command` in a task queued by their handler:
 
 * `TextInputAction::CreateRelease` builds release notes from `git log` since the last tag, writes them to a temp file and runs `gh|glab release create <tag> -F <file>`.
-* "Edit Comment" in the diff view's comment actions runs `gh api repos/{}/pulls/comments/{}` (or `issues/comments/{}`) `-X PATCH` / `glab api projects/{}/merge_requests/{}/notes/{}` `-X PUT`, with the new body passed through `--input`, once the editor it opens closes (`handlers::editor_result`).
+* "Edit Comment" in the diff view's comment actions runs `gh api repos/{}/pulls/comments/{}` (or `issues/comments/{}`) `-X PATCH` / `glab api projects/{}/merge_requests/{}/notes/{}` `-X PUT`, with the new body written to stdin through `--input -`, once the editor it opens closes (`handlers::editor_result`).
 * "Delete Comment" runs the same endpoints with `-X DELETE`.
 
 | Action | Command |

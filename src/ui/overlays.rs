@@ -1911,6 +1911,47 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             key: d(app.config.keybindings.todos.toggle_preview.clone()),
             action: "Show / hide the todo preview",
         },
+        // ── Dashboard ──
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter"),
+            action: "Go one level down: tab → cards → queues/people → items → open the item",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Esc"),
+            action: "Go one level up",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("h / j / k / l / ← / ↓ / ↑ / →"),
+            action: "Move between cards (on the tab level, h / l still switch tabs)",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("j / k / ↓ / ↑ / Home / End"),
+            action: "Pick a queue or person inside a card, or an item inside the list",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter (in the list)"),
+            action: "Open the issue, MR/PR, pipeline, milestone or release in its tab",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: d(app.config.keybindings.dashboard.cycle_window.clone()),
+            action: "Contributors: open work, then activity in the last day, week, month",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: d(format!(
+                "{} / {} / {}",
+                app.config.keybindings.global.sort_next,
+                app.config.keybindings.global.sort_prev,
+                app.config.keybindings.global.sort_reverse
+            )),
+            action: "Sort contributors by a column (highest first) / reverse",
+        },
         // ── Terminal ──
         Shortcut {
             category: "Terminal",
@@ -2334,6 +2375,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             Tab::Branches => &["Global & Nav", "Branches", CUSTOM_COMMANDS_CATEGORY],
             Tab::Environments => &["Global & Nav", "Environments", CUSTOM_COMMANDS_CATEGORY],
             Tab::Terminal => &["Global & Nav", "Terminal", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Dashboard => &["Global & Nav", "Dashboard", CUSTOM_COMMANDS_CATEGORY],
         }
     };
 

@@ -6,6 +6,7 @@ pub mod rate_limit;
 pub mod subprocess;
 
 use crate::domain::branches::Branch;
+use crate::domain::contributions::FeedPage;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JobTrace, TraceCursor, TraceUpdate};
@@ -700,6 +701,17 @@ pub trait Backend: Send + Sync {
         environment: &str,
         deployment: &Deployment,
     ) -> Result<()>;
+
+    // ── Contributions ──
+    /// Page `page` (from 1) of a repository's activity feed, newest first,
+    /// `EVENTS_PER_PAGE` events a page. GitLab leaves out events before
+    /// `since`, GitHub has no date filter. Repository scope only.
+    async fn list_contribution_page(
+        &self,
+        scope: &Scope,
+        since: chrono::NaiveDate,
+        page: usize,
+    ) -> Result<FeedPage>;
 
     // ── Labels / Members / Misc ──
     async fn fetch_labels(

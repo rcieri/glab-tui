@@ -1,4 +1,17 @@
 #!/bin/bash
+
+# Prints a fixture with every HOURS_AGO_<n> replaced by the UTC time n hours
+# before now, for fixtures whose readers only keep recent entries.
+cat_relative() {
+    local text hours at
+    text=$(cat "$1")
+    for hours in $(grep -o 'HOURS_AGO_[0-9]*' "$1" | sort -u | sed 's/HOURS_AGO_//'); do
+        at=$(( $(date +%s) - hours * 3600 ))
+        at=$(date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ)
+        text=${text//HOURS_AGO_$hours/$at}
+    done
+    printf '%s\n' "$text"
+}
 LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
 FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
@@ -34,6 +47,8 @@ if [[ "$*" == *"api"* ]]; then
     fi
     if [[ "$2" == runners/* ]]; then
         cat "$FIXTURES_DIR/runner_${2#runners/}.json"
+    elif [[ "$*" == *"/events?"* ]]; then
+        cat_relative "$FIXTURES_DIR/events.json"
     elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then

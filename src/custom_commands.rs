@@ -96,6 +96,7 @@ fn same_key_code(binding: &str, event: &KeyEvent) -> bool {
 fn tab_keybindings(config: &Config, tab: Tab) -> (&'static str, Option<toml::Value>) {
     let keybindings = &config.keybindings;
     let (table, bindings) = match tab {
+        Tab::Dashboard => ("dashboard", toml::Value::try_from(&keybindings.dashboard)),
         Tab::Issues => ("issues", toml::Value::try_from(&keybindings.issues)),
         Tab::MergeRequests => ("mrs", toml::Value::try_from(&keybindings.mrs)),
         Tab::Pipelines => ("pipelines", toml::Value::try_from(&keybindings.pipelines)),

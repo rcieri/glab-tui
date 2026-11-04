@@ -215,6 +215,17 @@ impl<C: ColumnDef> ListTab<C> {
         self.items.iter().find(|r| r.has_key(key))
     }
 
+    /// Put the cursor on the row with `key`; false when no row has it. The
+    /// next refresh places it in the view.
+    pub fn select(&mut self, key: &<C::Row as Row>::Key) -> bool {
+        if self.get(key).is_none() {
+            return false;
+        }
+        self.cursor = Some(key.clone());
+        self.spec = None;
+        true
+    }
+
     /// Rebuild the view if the rows or `inputs` changed since the last build.
     pub fn refresh(&mut self, inputs: ViewInputs) {
         if self.spec.as_ref().is_some_and(|spec| spec.matches(inputs)) {

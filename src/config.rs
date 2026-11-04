@@ -143,6 +143,8 @@ impl IconSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
+    pub tab_dashboard: String,
+    pub commit: String,
     pub tab_issue: String,
     pub tab_pr: String,
     pub tab_pipeline: String,
@@ -263,6 +265,8 @@ pub struct Icons {
 impl Icons {
     pub fn nerd() -> Self {
         Self {
+            tab_dashboard: "\u{f463}".to_string(),
+            commit: "\u{f417}".to_string(),
             tab_issue: "\u{f41b}".to_string(),
             tab_pr: "\u{f407}".to_string(),
             tab_pipeline: "\u{f500}".to_string(),
@@ -385,6 +389,8 @@ impl Icons {
     /// font.
     pub fn ascii() -> Self {
         Self {
+            tab_dashboard: "&".to_string(),
+            commit: "*".to_string(),
             tab_issue: "#".to_string(),
             tab_pr: "!".to_string(),
             tab_pipeline: ">".to_string(),
@@ -1358,6 +1364,12 @@ pub struct KeybindingTerminal {
     pub cycle_status_filter: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingDashboard {
+    #[serde(default = "def_cycle_dashboard_window")]
+    pub cycle_window: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingConfig {
     #[serde(default)]
@@ -1384,6 +1396,8 @@ pub struct KeybindingConfig {
     pub environments: KeybindingEnvironments,
     #[serde(default)]
     pub terminal: KeybindingTerminal,
+    #[serde(default)]
+    pub dashboard: KeybindingDashboard,
 }
 
 /// A user-defined shell command bound to a key, in the gh-dash shape.
@@ -1536,6 +1550,7 @@ keybind_defaults! {
     def_inspect_terminal_command = "Enter",
     def_rerun_terminal_command = "r",
     def_cycle_terminal_status_filter = "s",
+    def_cycle_dashboard_window = "w",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
@@ -1763,6 +1778,14 @@ impl Default for KeybindingEnvironments {
     }
 }
 
+impl Default for KeybindingDashboard {
+    fn default() -> Self {
+        Self {
+            cycle_window: def_cycle_dashboard_window(),
+        }
+    }
+}
+
 impl Default for KeybindingTerminal {
     fn default() -> Self {
         Self {
@@ -1841,6 +1864,40 @@ impl Default for UiConfig {
     }
 }
 
+/// The `[dashboard]` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DashboardConfig {
+    /// The Dashboard tab is opt-in, so it does not take the first tab from
+    /// people used to starting on Issues.
+    pub enabled: bool,
+    /// Whose work the Dashboard opens on: `me`, `everyone` or a login.
+    pub person: String,
+    pub mr_idle_days: u32,
+    pub issue_idle_days: u32,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        let idle = crate::domain::dashboard::IdleDays::default();
+        Self {
+            enabled: false,
+            person: "me".to_string(),
+            mr_idle_days: u32::try_from(idle.mrs).unwrap_or(u32::MAX),
+            issue_idle_days: u32::try_from(idle.issues).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl DashboardConfig {
+    pub fn idle_days(&self) -> crate::domain::dashboard::IdleDays {
+        crate::domain::dashboard::IdleDays {
+            mrs: i64::from(self.mr_idle_days),
+            issues: i64::from(self.issue_idle_days),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -1876,6 +1933,7 @@ pub struct Config {
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
+    pub dashboard: DashboardConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1907,6 +1965,7 @@ impl Default for Config {
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
+            dashboard: DashboardConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -2161,6 +2220,17 @@ copy_output = "Y"
 inspect_command = "Enter"
 rerun_command = "r"
 cycle_status_filter = "s"
+
+[keybindings.dashboard]
+cycle_window = "w"
+
+[dashboard]
+# The Dashboard tab is off until enabled here.
+enabled = false
+# Whose work it opens on: "me", "everyone" or a login.
+person = "me"
+mr_idle_days = 7
+issue_idle_days = 14
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

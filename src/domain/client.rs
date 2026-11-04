@@ -730,7 +730,7 @@ impl std::fmt::Debug for GitlabClient {
     }
 }
 
-pub async fn get_project_context() -> Result<String> {
+pub fn get_project_context() -> Result<String> {
     // An explicit `gh repo set-default` wins: in a fork it is the only signal
     // that says which repository the user actually works against.
     if let Some(project) = crate::git_helpers::gh_resolved_project() {

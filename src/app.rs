@@ -3804,7 +3804,6 @@ pub struct App {
     /// the config is loaded.
     pub custom_commands: crate::custom_commands::CustomCommands,
     pub active_tab: Tab,
-    pub running: bool,
     pub scope: crate::scope::Scope,
     pub prev_scope: Option<crate::scope::Scope>,
     /// Bumped on every repository/group switch; background fetches carry the
@@ -3975,7 +3974,10 @@ pub struct App {
     pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
-    pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    /// Where background tasks report. `App::default()` holds a sender whose
+    /// receiver is already gone, so whatever is sent before the event loop
+    /// installs its own is dropped.
+    pub tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
     pub enabled_columns: std::collections::HashMap<Tab, std::collections::HashSet<String>>,
     pub focus_column_checklist: bool,
     pub column_checklist_idx: usize,
@@ -3994,7 +3996,7 @@ pub struct App {
     pub milestones: StatefulTable<crate::domain::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::domain::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
-    pub milestone_prefetch: Option<tokio::task::AbortHandle>,
+    pub milestone_prefetch: Option<crate::effect::CancelHandle>,
     pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
     /// `(closed, total)` issue counts per milestone iid, derived from
     /// `issues.items.iter().filter_map(|i| i.milestone.as_ref())`.
@@ -4023,6 +4025,11 @@ pub struct App {
     pub label_colors: std::collections::HashMap<String, ratatui::style::Color>,
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
+    /// When the active tab's list was last refreshed, by the user or by the
+    /// periodic refresh of `refresh_timer_tab`.
+    pub last_list_refresh: std::time::Instant,
+    /// The tab `last_list_refresh` times. Switching tabs restarts the timer.
+    pub refresh_timer_tab: Tab,
     /// (project path, iid) of the milestone whose deletion is in flight.
     pub pending_delete_milestone: Option<(String, u64)>,
     /// (project path, tag) of the release whose deletion is in flight.
@@ -4040,7 +4047,6 @@ impl Default for App {
             key_buffer,
             custom_commands: crate::custom_commands::CustomCommands::default(),
             active_tab: Tab::default(),
-            running: true,
             scope: crate::scope::Scope::default(),
             prev_scope: None,
             scope_generation: crate::event::ScopeGeneration::default(),
@@ -4136,7 +4142,7 @@ impl Default for App {
             stale_tabs: std::collections::HashMap::new(),
             clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
-            tx: None,
+            tx: tokio::sync::mpsc::unbounded_channel().0,
             enabled_columns: {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
@@ -4182,6 +4188,8 @@ impl Default for App {
             label_colors: std::collections::HashMap::new(),
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
+            last_list_refresh: std::time::Instant::now(),
+            refresh_timer_tab: Tab::default(),
             pending_delete_milestone: None,
             pending_delete_release: None,
         }
@@ -4379,9 +4387,7 @@ impl App {
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
-        if let Some(handle) = self.milestone_prefetch.take() {
-            handle.abort();
-        }
+        self.milestone_prefetch = None;
         self.issues.state.select(Some(0));
         self.mrs.state.select(Some(0));
         self.pipelines.state.select(Some(0));
@@ -6045,8 +6051,6 @@ impl App {
         }
     }
 
-    pub fn tick(&mut self) {}
-
     pub fn unresolved_threads_count(&self) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -6178,10 +6182,6 @@ impl App {
             .values()
             .filter(|&&resolved| !resolved)
             .count()
-    }
-
-    pub fn quit(&mut self) {
-        self.running = false;
     }
 
     pub fn next_tab(&mut self) {
@@ -9132,17 +9132,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_on_scope_change_aborts_running_milestone_prefetch() {
+    async fn reset_on_scope_change_cancels_running_milestone_prefetch() {
         let mut app = App::default();
-        let handle = tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-        });
-        app.milestone_prefetch = Some(handle.abort_handle());
+        let mut fx = crate::effect::Effects::default();
+        app.milestone_prefetch = Some(fx.spawn_cancellable(std::future::pending()));
+        let [crate::effect::Effect::Spawn(prefetch)] =
+            <[_; 1]>::try_from(fx.into_vec()).expect("one effect")
+        else {
+            panic!("the prefetch is a spawned task");
+        };
+        let prefetch = tokio::spawn(prefetch);
 
         app.reset_on_scope_change();
 
         assert!(app.milestone_prefetch.is_none());
-        let _ = handle.await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), prefetch)
+            .await
+            .expect("the prefetch ends once cancelled")
+            .expect("the prefetch task does not panic");
     }
 
     fn issue_with_milestone(iid: u64, state: &str, milestone_iid: u64) -> Issue {

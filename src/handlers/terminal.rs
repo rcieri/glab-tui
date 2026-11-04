@@ -6,6 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::App;
 use crate::command_log::Invocation;
+use crate::effect::Effects;
 use crate::event::Event;
 use crate::keybinding::{KeyPress, keybinding_matches};
 
@@ -105,9 +106,9 @@ fn handle_entry_action(app: &mut App, key_event: &KeyPress) -> bool {
 
 /// Runs a confirmed re-run in the background. Its entry is logged as
 /// running now and settled by `Event::CommandRerun`.
-pub fn rerun(app: &mut App, invocation: Invocation, tx: UnboundedSender<Event>) {
+pub fn rerun(app: &mut App, invocation: Invocation, tx: UnboundedSender<Event>, fx: &mut Effects) {
     let row = app.start_rerun(&invocation);
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let (status, execution) = crate::backend::logged_command::rerun(invocation).await;
         let _ = tx.send(Event::CommandRerun {
             row,

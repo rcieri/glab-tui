@@ -14,7 +14,8 @@ pub fn branch_fields(
 
 use crate::app::App;
 use crate::domain::issues::Issue;
-use crate::event::Event;
+use crate::effect::Effects;
+use crate::event::{CommandOutcome, Event};
 
 fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
     if entity_type.contains("issue") {
@@ -1133,8 +1134,9 @@ pub fn apply_field_text_change(
     field_type: &str,
     value: String,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
+    fx: &mut Effects,
 ) {
+    let tab = app.active_tab;
     if entity_is_milestone(entity_type) {
         if let Some(item) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
             match field_type {
@@ -1189,7 +1191,7 @@ pub fn apply_field_text_change(
             };
             let project_path = app.project_path_for_milestone(iid);
             let tx_spawn = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let res = crate::domain::milestones::update_milestone(
                     &client,
                     &project_path,
@@ -1233,7 +1235,7 @@ pub fn apply_field_text_change(
             };
             let et = entity_type.to_string();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = if entity_is_issue(&et) {
                     client.update_issue_title(&project_path, iid, &value).await
                 } else {
@@ -1241,7 +1243,9 @@ pub fn apply_field_text_change(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    result
+                        .map_err(|e| e.to_string())
+                        .map(|()| CommandOutcome::Mutated),
                 ));
             });
         }
@@ -1265,13 +1269,15 @@ pub fn apply_field_text_change(
                     return;
                 };
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client
                         .update_mr_target_branch(&project_path, iid, &value)
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        result
+                            .map_err(|e| e.to_string())
+                            .map(|()| CommandOutcome::Mutated),
                     ));
                 });
             }
@@ -1295,13 +1301,15 @@ pub fn apply_field_text_change(
                     return;
                 };
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client
                         .update_issue_due_date(&project_path, iid, &flag_value)
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        result
+                            .map_err(|e| e.to_string())
+                            .map(|()| CommandOutcome::Mutated),
                     ));
                 });
             }
@@ -1313,11 +1321,13 @@ pub fn apply_field_text_change(
                     return;
                 };
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client.update_issue_weight(&project_path, iid, &value).await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        result
+                            .map_err(|e| e.to_string())
+                            .map(|()| CommandOutcome::Mutated),
                     ));
                 });
             }
@@ -1331,11 +1341,13 @@ pub fn apply_field_text_change(
             };
             let scope = app.scope.clone();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = client.update_runner_description(&scope, iid, &value).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    result
+                        .map_err(|e| e.to_string())
+                        .map(|()| CommandOutcome::Mutated),
                 ));
             });
         }
@@ -1355,7 +1367,7 @@ pub fn apply_field_text_change(
             };
             let et = entity_type.to_string();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = if entity_is_issue(&et) {
                     client
                         .update_issue_description(&project_path, iid, &value)
@@ -1367,7 +1379,9 @@ pub fn apply_field_text_change(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    result
+                        .map_err(|e| e.to_string())
+                        .map(|()| CommandOutcome::Mutated),
                 ));
             });
         }
@@ -1382,8 +1396,9 @@ pub fn apply_selector_changes(
     field_type: &str,
     values: Vec<String>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
+    fx: &mut Effects,
 ) {
+    let tab = app.active_tab;
     match field_type {
         "labels" => {
             let current_labels: Vec<String> = if entity_is_issue(entity_type) {
@@ -1419,7 +1434,7 @@ pub fn apply_selector_changes(
                 let project_path = get_entity_project_path(app, entity_type, iid);
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = if entity_is_issue(&et) {
                         client
                             .update_issue_labels(&project_path, iid, &to_add, &to_remove)
@@ -1431,7 +1446,9 @@ pub fn apply_selector_changes(
                     };
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        result
+                            .map_err(|e| e.to_string())
+                            .map(|()| CommandOutcome::Mutated),
                     ));
                 });
             }
@@ -1484,7 +1501,7 @@ pub fn apply_selector_changes(
                 let project_path = get_entity_project_path(app, entity_type, iid);
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = if entity_is_issue(&et) {
                         client
                             .update_issue_assignees(&project_path, iid, &to_add, &to_remove)
@@ -1496,7 +1513,9 @@ pub fn apply_selector_changes(
                     };
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        result
+                            .map_err(|e| e.to_string())
+                            .map(|()| CommandOutcome::Mutated),
                     ));
                 });
             }
@@ -1551,13 +1570,15 @@ pub fn apply_selector_changes(
                     };
                     let project_path = app.project_path_for_mr(iid);
                     let tx2 = tx.clone();
-                    tokio::spawn(async move {
+                    fx.spawn(async move {
                         let result = client
                             .update_mr_reviewers(&project_path, iid, &to_add, &to_remove)
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             tab,
-                            result.map_err(|e| e.to_string()),
+                            result
+                                .map_err(|e| e.to_string())
+                                .map(|()| CommandOutcome::Mutated),
                         ));
                     });
                 }
@@ -1605,7 +1626,7 @@ pub fn apply_selector_changes(
             let project_path = get_entity_project_path(app, entity_type, iid);
             let et = entity_type.to_string();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = if entity_is_issue(&et) {
                     client
                         .update_issue_milestone(&project_path, iid, &first_val)
@@ -1617,7 +1638,9 @@ pub fn apply_selector_changes(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    result
+                        .map_err(|e| e.to_string())
+                        .map(|()| CommandOutcome::Mutated),
                 ));
             });
         }
@@ -1629,13 +1652,15 @@ pub fn apply_selector_changes(
                 };
                 let project_path = app.project_path_for_issue(iid);
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client
                         .update_issue_confidential(&project_path, iid, is_confidential)
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        result
+                            .map_err(|e| e.to_string())
+                            .map(|()| CommandOutcome::Mutated),
                     ));
                 });
             }
@@ -2070,7 +2095,7 @@ mod tests {
             "milestone",
             vec![],
             tx.clone(),
-            crate::app::Tab::Issues,
+            &mut crate::effect::Effects::default(),
         );
 
         assert!(app.issues.items[0].milestone.is_none());
@@ -2083,7 +2108,7 @@ mod tests {
             "milestone",
             vec![],
             tx,
-            crate::app::Tab::MergeRequests,
+            &mut crate::effect::Effects::default(),
         );
 
         assert!(app.mrs.items[0].milestone.is_none());

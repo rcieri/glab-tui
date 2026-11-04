@@ -1,6 +1,7 @@
 use crate::app;
 use crate::domain;
 use crate::domain::state_query::StateQueries;
+use crate::effect::Effects;
 use crate::event::{Event, ScopedSender};
 use crate::git_helpers::get_current_branch;
 
@@ -207,13 +208,14 @@ pub fn sync_linked_references(
 }
 
 pub fn spawn_fetch_repo_attributes(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
     tx: ScopedSender,
 ) {
     let client = client.clone();
     let scope = scope.clone();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let (labels_res, members_res) =
             tokio::join!(client.fetch_labels(&scope), client.fetch_members(&scope),);
         let labels = labels_res.unwrap_or_default();
@@ -226,6 +228,7 @@ pub fn spawn_fetch_repo_attributes(
 /// the terminal command log so the issue preview stays quiet, matching the
 /// convention used by every other background `spawn_refresh_*` helper.
 pub fn spawn_fetch_related_mrs(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     project_context: &str,
     issue_iid: u64,
@@ -234,7 +237,7 @@ pub fn spawn_fetch_related_mrs(
     let mut client = client.clone();
     client.tx = None;
     let project_context = project_context.to_string();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = domain::issues::fetch_related_mrs(&client, &project_context, issue_iid).await;
         let result = result.map_err(|e| e.to_string());
         let _ = tx.send(Event::RelatedMrsFetched { issue_iid, result });
@@ -257,6 +260,7 @@ pub const RELATED_MRS_DEBOUNCE: std::time::Duration = std::time::Duration::from_
 /// this call, so tests can assert the gating behavior without standing up a
 /// tokio runtime.
 pub fn dispatch_pending_related_mrs_fetch(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     app: &mut app::App,
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
@@ -286,11 +290,18 @@ pub fn dispatch_pending_related_mrs_fetch(
         return false;
     }
     let project_path = app.project_path_for_issue(iid);
-    spawn_fetch_related_mrs(client, &project_path, iid, app.scoped_sender(tx.clone()));
+    spawn_fetch_related_mrs(
+        fx,
+        client,
+        &project_path,
+        iid,
+        app.scoped_sender(tx.clone()),
+    );
     true
 }
 
 pub fn spawn_fetch_mr_related_issues(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     project_context: &str,
     mr_iid: u64,
@@ -299,7 +310,7 @@ pub fn spawn_fetch_mr_related_issues(
     let mut client = client.clone();
     client.tx = None;
     let project_context = project_context.to_string();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = domain::mr::fetch_related_issues(&client, &project_context, mr_iid).await;
         let result = result.map_err(|e| e.to_string());
         let _ = tx.send(Event::MrRelatedIssuesFetched { mr_iid, result });
@@ -307,6 +318,7 @@ pub fn spawn_fetch_mr_related_issues(
 }
 
 pub fn dispatch_pending_mr_related_issues_fetch(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     app: &mut app::App,
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
@@ -336,7 +348,13 @@ pub fn dispatch_pending_mr_related_issues_fetch(
         return false;
     }
     let project_path = app.project_path_for_mr(iid);
-    spawn_fetch_mr_related_issues(client, &project_path, iid, app.scoped_sender(tx.clone()));
+    spawn_fetch_mr_related_issues(
+        fx,
+        client,
+        &project_path,
+        iid,
+        app.scoped_sender(tx.clone()),
+    );
     true
 }
 
@@ -345,6 +363,7 @@ pub fn dispatch_pending_mr_related_issues_fetch(
 /// failed fetch leaves the level as it was: stale data is honest here, where an
 /// emptied list would not be.
 pub fn spawn_refresh_child_level(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     project_context: &str,
     parent_id: u64,
@@ -353,7 +372,7 @@ pub fn spawn_refresh_child_level(
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
     let project_context = project_context.to_string();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         if let Ok(bridges) =
             domain::pipelines::list_pipeline_bridges(&client, &project_context, parent_id).await
         {
@@ -370,8 +389,10 @@ async fn fetch_current_branch_jobs(
     client: &domain::client::GitlabClient,
     project_path: &str,
 ) -> Result<(u64, Vec<domain::pipelines::Job>), String> {
-    let branch = get_current_branch()
+    let branch = tokio::task::spawn_blocking(get_current_branch)
         .await
+        .ok()
+        .flatten()
         .ok_or_else(|| "Not on a git branch, so there is no pipeline to show.".to_string())?;
     let pipeline_id = domain::pipelines::find_branch_pipeline_id(client, project_path, &branch)
         .await
@@ -388,6 +409,7 @@ async fn fetch_current_branch_jobs(
 /// filter (the picker, jumping to an item, a scope switch) refetches without
 /// each one having to remember to.
 pub fn dispatch_state_query_refetch(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     app: &mut app::App,
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
@@ -400,6 +422,7 @@ pub fn dispatch_state_query_refetch(
     for tab in tabs {
         app.start_loading_tab(tab);
         spawn_refresh_active_tab(
+            fx,
             client,
             &app.scope,
             states,
@@ -410,194 +433,203 @@ pub fn dispatch_state_query_refetch(
 }
 
 pub fn spawn_refresh_active_tab(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
     states: StateQueries,
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if !tab.is_fetchable_in(scope) {
+    if tab.is_fetchable_in(scope) {
+        fx.spawn(refresh_tab(client.clone(), scope.clone(), states, tab, tx));
+    }
+}
+
+/// Lists `tab`'s rows and reports them, or the failure, on `tx`. Code
+/// already running inside a task awaits it. Event handlers go through
+/// `spawn_refresh_active_tab`.
+pub async fn refresh_tab(
+    mut client: domain::client::GitlabClient,
+    scope: crate::scope::Scope,
+    states: StateQueries,
+    tab: app::Tab,
+    tx: ScopedSender,
+) {
+    if !tab.is_fetchable_in(&scope) {
         return;
     }
-    let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
-    let scope = scope.clone();
-    tokio::spawn(async move {
-        let repo_path = scope.as_str().to_string();
-        match tab {
-            app::Tab::Issues => {
-                match domain::issues::list_issues(&client, &scope, states.issues).await {
-                    Ok(issues) => {
-                        let _ = tx.send(Event::IssuesFetched(states.issues, issues));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch issues: {e}"),
-                        ));
-                    }
+    let repo_path = scope.as_str().to_string();
+    match tab {
+        app::Tab::Issues => {
+            match domain::issues::list_issues(&client, &scope, states.issues).await {
+                Ok(issues) => {
+                    let _ = tx.send(Event::IssuesFetched(states.issues, issues));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch issues: {e}"),
+                    ));
                 }
             }
-            app::Tab::MergeRequests => {
-                match domain::mr::list_mrs(&client, &scope, states.mrs).await {
-                    Ok(mut mrs) => {
-                        // GitHub already populated both axes during list_mrs.
-                        // GitLab needs one bulk GraphQL call for the same iids.
-                        if !client.is_github && !mrs.is_empty() {
-                            let mut by_project: std::collections::HashMap<String, Vec<u64>> =
-                                std::collections::HashMap::new();
-                            for mr in mrs.iter() {
-                                let proj =
-                                    if !mr.project_path.is_empty() {
+        }
+        app::Tab::MergeRequests => {
+            match domain::mr::list_mrs(&client, &scope, states.mrs).await {
+                Ok(mut mrs) => {
+                    // GitHub already populated both axes during list_mrs.
+                    // GitLab needs one bulk GraphQL call for the same iids.
+                    if !client.is_github && !mrs.is_empty() {
+                        let mut by_project: std::collections::HashMap<String, Vec<u64>> =
+                            std::collections::HashMap::new();
+                        for mr in mrs.iter() {
+                            let proj = if !mr.project_path.is_empty() {
+                                mr.project_path.clone()
+                            } else if let Some(p) = mr
+                                .web_url
+                                .as_deref()
+                                .and_then(crate::git_helpers::parse_project_path_from_web_url)
+                            {
+                                p
+                            } else {
+                                repo_path.clone()
+                            };
+                            by_project.entry(proj).or_default().push(mr.iid);
+                        }
+                        for (proj, iids) in by_project {
+                            if let Ok(state) = client.list_mr_state(&proj, &iids).await {
+                                for mr in mrs.iter_mut() {
+                                    let mr_proj = if !mr.project_path.is_empty() {
                                         mr.project_path.clone()
-                                    } else if let Some(p) = mr.web_url.as_deref().and_then(
-                                        crate::git_helpers::parse_project_path_from_web_url,
-                                    ) {
-                                        p
                                     } else {
-                                        repo_path.clone()
+                                        mr.web_url
+                                            .as_deref()
+                                            .and_then(
+                                                crate::git_helpers::parse_project_path_from_web_url,
+                                            )
+                                            .unwrap_or_default()
                                     };
-                                by_project.entry(proj).or_default().push(mr.iid);
-                            }
-                            for (proj, iids) in by_project {
-                                if let Ok(state) = client.list_mr_state(&proj, &iids).await {
-                                    for mr in mrs.iter_mut() {
-                                        let mr_proj = if !mr.project_path.is_empty() {
-                                            mr.project_path.clone()
-                                        } else {
-                                            mr.web_url
-                                                .as_deref()
-                                                .and_then(
-                                                    crate::git_helpers::parse_project_path_from_web_url,
-                                                )
-                                                .unwrap_or_default()
-                                        };
-                                        if mr_proj == proj || scope.is_repository() {
-                                            if let Some((approval, mergeability)) =
-                                                state.get(&mr.iid)
-                                            {
-                                                mr.approval = approval.clone();
-                                                mr.mergeability = mergeability.clone();
-                                            }
+                                    if mr_proj == proj || scope.is_repository() {
+                                        if let Some((approval, mergeability)) = state.get(&mr.iid) {
+                                            mr.approval = approval.clone();
+                                            mr.mergeability = mergeability.clone();
                                         }
                                     }
                                 }
                             }
                         }
-                        // Derive the workflow status once the approval state
-                        // is merged, since the cascade reads from it.
-                        derive_workflow(&mut mrs);
-                        let _ = tx.send(Event::MrsFetched(states.mrs, mrs));
                     }
-                    Err(e) => {
-                        let _ =
-                            tx.send(Event::FetchFailed(tab, format!("Failed to fetch MRs: {e}")));
-                    }
-                }
-            }
-            app::Tab::Pipelines => match domain::pipelines::list_pipelines(&client, &scope).await {
-                Ok(pipelines) => {
-                    let _ = tx.send(Event::PipelinesFetched(pipelines));
+                    // Derive the workflow status once the approval state
+                    // is merged, since the cascade reads from it.
+                    derive_workflow(&mut mrs);
+                    let _ = tx.send(Event::MrsFetched(states.mrs, mrs));
                 }
                 Err(e) => {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        format!("Failed to fetch pipelines: {e}"),
-                    ));
-                }
-            },
-            app::Tab::Runners => match domain::runners::list_runners(&client, &scope).await {
-                Ok(runners) => {
-                    let _ = tx.send(Event::RunnersFetched(runners));
-                }
-                Err(e) => {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        format!("Failed to fetch runners: {e}"),
-                    ));
-                }
-            },
-            app::Tab::Releases => match domain::releases::list_releases(&client, &scope).await {
-                Ok(releases) => {
-                    let _ = tx.send(Event::ReleasesFetched(releases));
-                }
-                Err(e) => {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        format!("Failed to fetch releases: {e}"),
-                    ));
-                }
-            },
-            app::Tab::Todos => {
-                let show_read = client.show_read_notifications;
-                match domain::notifications::list_notifications(&client, show_read).await {
-                    Ok(notifications) => {
-                        let _ = tx.send(Event::TodosFetched {
-                            notifications,
-                            show_read,
-                        });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch notifications: {e}"),
-                        ));
-                    }
+                    let _ = tx.send(Event::FetchFailed(tab, format!("Failed to fetch MRs: {e}")));
                 }
             }
-            app::Tab::Jobs => match fetch_current_branch_jobs(&client, &repo_path).await {
-                Ok((pipeline_id, jobs)) => {
-                    let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
-                }
-                Err(message) => {
-                    let _ = tx.send(Event::FetchFailed(tab, message));
-                }
-            },
-            app::Tab::Milestones => {
-                match domain::milestones::list_milestones(&client, &scope).await {
-                    Ok(milestones) => {
-                        let _ = tx.send(Event::MilestonesFetched(milestones));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch milestones: {e}"),
-                        ));
-                    }
-                }
-            }
-            app::Tab::Branches => match domain::branches::list_branches(&client, &scope).await {
-                Ok(branches) => {
-                    let _ = tx.send(Event::BranchesFetched(branches));
-                }
-                Err(e) => {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        format!("Failed to fetch branches: {e}"),
-                    ));
-                }
-            },
-            app::Tab::Environments => {
-                match domain::deployments::list_environments(&client, &scope).await {
-                    Ok(envs) => {
-                        let _ = tx.send(Event::EnvironmentsFetched(envs));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch environments: {e}"),
-                        ));
-                    }
-                }
-            }
-            app::Tab::Terminal => {}
         }
-    });
+        app::Tab::Pipelines => match domain::pipelines::list_pipelines(&client, &scope).await {
+            Ok(pipelines) => {
+                let _ = tx.send(Event::PipelinesFetched(pipelines));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    tab,
+                    format!("Failed to fetch pipelines: {e}"),
+                ));
+            }
+        },
+        app::Tab::Runners => match domain::runners::list_runners(&client, &scope).await {
+            Ok(runners) => {
+                let _ = tx.send(Event::RunnersFetched(runners));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    tab,
+                    format!("Failed to fetch runners: {e}"),
+                ));
+            }
+        },
+        app::Tab::Releases => match domain::releases::list_releases(&client, &scope).await {
+            Ok(releases) => {
+                let _ = tx.send(Event::ReleasesFetched(releases));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    tab,
+                    format!("Failed to fetch releases: {e}"),
+                ));
+            }
+        },
+        app::Tab::Todos => {
+            let show_read = client.show_read_notifications;
+            match domain::notifications::list_notifications(&client, show_read).await {
+                Ok(notifications) => {
+                    let _ = tx.send(Event::TodosFetched {
+                        notifications,
+                        show_read,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch notifications: {e}"),
+                    ));
+                }
+            }
+        }
+        app::Tab::Jobs => match fetch_current_branch_jobs(&client, &repo_path).await {
+            Ok((pipeline_id, jobs)) => {
+                let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
+            }
+            Err(message) => {
+                let _ = tx.send(Event::FetchFailed(tab, message));
+            }
+        },
+        app::Tab::Milestones => match domain::milestones::list_milestones(&client, &scope).await {
+            Ok(milestones) => {
+                let _ = tx.send(Event::MilestonesFetched(milestones));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    tab,
+                    format!("Failed to fetch milestones: {e}"),
+                ));
+            }
+        },
+        app::Tab::Branches => match domain::branches::list_branches(&client, &scope).await {
+            Ok(branches) => {
+                let _ = tx.send(Event::BranchesFetched(branches));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    tab,
+                    format!("Failed to fetch branches: {e}"),
+                ));
+            }
+        },
+        app::Tab::Environments => {
+            match domain::deployments::list_environments(&client, &scope).await {
+                Ok(envs) => {
+                    let _ = tx.send(Event::EnvironmentsFetched(envs));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch environments: {e}"),
+                    ));
+                }
+            }
+        }
+        app::Tab::Terminal => {}
+    }
 }
 
 /// Fetch a single issue by iid from `project_path` for the "go to issue/MR by
 /// ID" prompt. Suppresses the terminal command log like other background fetches.
 pub fn spawn_fetch_issue(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     project_path: &str,
     iid: u64,
@@ -606,7 +638,7 @@ pub fn spawn_fetch_issue(
     let mut client = client.clone();
     client.tx = None;
     let project_path = project_path.to_string();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = domain::issues::get_issue(&client, &project_path, iid).await;
         let result = result.map(|mut issue| {
             if issue.project_path.is_empty() {
@@ -626,6 +658,7 @@ pub fn spawn_fetch_issue(
 /// GraphQL state query used by the list path; GitHub derives both inside
 /// `gh pr view`. Suppresses the terminal command log like other background fetches.
 pub fn spawn_fetch_mr(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     project_path: &str,
     iid: u64,
@@ -634,7 +667,7 @@ pub fn spawn_fetch_mr(
     let mut client = client.clone();
     client.tx = None;
     let project_path = project_path.to_string();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = domain::mr::get_mr(&client, &project_path, iid).await;
         let result = match result {
             Ok(mut mr) => {
@@ -667,6 +700,7 @@ pub fn spawn_fetch_mr(
 /// The result arrives as `Event::PrStackFetched`; returns whether a fetch
 /// was started.
 pub fn request_pr_stack(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     app: &mut app::App,
     pr: (String, u64),
@@ -678,7 +712,7 @@ pub fn request_pr_stack(
     let (project_path, pr_number) = pr;
     let client = client.clone().muted();
     let tx = app.scoped_sender(tx.clone());
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = client.get_pr_stack(&project_path, pr_number).await;
         let _ = tx.send(Event::PrStackFetched {
             pr_number,
@@ -693,6 +727,7 @@ pub fn request_pr_stack(
 /// query. A failure sends nothing, so the column keeps what it showed: stack
 /// positions decorate the list and nothing acts on them.
 pub fn spawn_fetch_pr_stack_summaries(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     project_path: &str,
     pr_numbers: Vec<u64>,
@@ -700,7 +735,7 @@ pub fn spawn_fetch_pr_stack_summaries(
 ) {
     let client = client.clone().muted();
     let project_path = project_path.to_string();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         if let Ok(stacks) = client
             .list_pr_stack_summaries(&project_path, &pr_numbers)
             .await
@@ -719,6 +754,7 @@ pub fn spawn_fetch_pr_stack_summaries(
 /// only fetches where the user stops. Called from `Event::Tick`; returns
 /// whether a fetch was started.
 pub fn dispatch_inspected_pr_stack_fetch(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     app: &mut app::App,
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
@@ -739,7 +775,7 @@ pub fn dispatch_inspected_pr_stack_fetch(
         }
     }
     app.pr_stack_candidate = None;
-    request_pr_stack(client, app, pr, tx)
+    request_pr_stack(fx, client, app, pr, tx)
 }
 
 /// The PR shown in the inspector, when the session has neither its entries
@@ -769,6 +805,7 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
 /// scrolling through the list only fetches where the user stops. Called
 /// from `Event::Tick`; returns whether a fetch was started.
 pub fn dispatch_inspected_todo_detail_fetch(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
     app: &mut app::App,
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
@@ -792,7 +829,7 @@ pub fn dispatch_inspected_todo_detail_fetch(
     app.fetching_todo_details.insert(id.clone());
     let client = client.clone().muted();
     let tx = app.scoped_sender(tx.clone());
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result =
             domain::notifications::get_notification_detail(&client, &detail_api_path).await;
         let _ = tx.send(Event::TodoDetailFetched {
@@ -820,35 +857,234 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
     Some((todo.id.clone(), todo.detail_api_path.clone()?))
 }
 
-/// Kick off background fetches for enabled tabs in order,
+/// Kick off background fetches for `app`'s enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
 /// synchronous fetch), `Tab::Terminal`, and any tab whose data is
 /// already loaded.
 ///
-/// Each tab fetches through `spawn_refresh_active_tab` so it shares
-/// the existing per-tab error handling; the queue paces itself
-/// through `ApiRateLimiter::pace_bulk_operation` between tabs to stay
-/// under the GitLab/GitHub rate limit on cold start.
+/// Each tab fetches through `refresh_tab` so it shares the existing
+/// per-tab error handling. The queue paces itself through
+/// `ApiRateLimiter::pace_bulk_operation` between tabs to stay under the
+/// GitLab/GitHub rate limit on cold start.
 pub fn spawn_refresh_all_tabs(
+    fx: &mut Effects,
     client: &domain::client::GitlabClient,
-    scope: &crate::scope::Scope,
-    states: StateQueries,
-    active_tab: app::Tab,
-    available_tabs: Vec<app::Tab>,
-    already_loaded: std::collections::HashSet<app::Tab>,
+    app: &app::App,
     tx: ScopedSender,
 ) {
     let client = client.clone();
-    let scope = scope.clone();
-    tokio::spawn(async move {
-        for tab in available_tabs {
-            if tab == active_tab || tab == app::Tab::Terminal || already_loaded.contains(&tab) {
-                continue;
-            }
+    let scope = app.scope.clone();
+    let states = app.requested_state_queries();
+    let tabs: Vec<app::Tab> = app
+        .available_tabs()
+        .into_iter()
+        .filter(|tab| {
+            *tab != app.active_tab && *tab != app::Tab::Terminal && !app.loaded_tabs.contains(tab)
+        })
+        .collect();
+    fx.spawn(async move {
+        for tab in tabs {
             crate::backend::rate_limit::pace_bulk_operation().await;
-            spawn_refresh_active_tab(&client, &scope, states, tab, tx.clone());
+            tokio::spawn(refresh_tab(
+                client.clone(),
+                scope.clone(),
+                states,
+                tab,
+                tx.clone(),
+            ));
         }
     });
+}
+
+/// Fetches what the preview of the highlighted row needs and is not cached:
+/// a pipeline's jobs, the jobs of an MR's head pipeline, or a milestone's
+/// issues. `update` calls it after every event that can move the highlight
+/// or change what is cached, never on a bare tick.
+pub fn prefetch_highlighted(
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    match app.active_tab {
+        app::Tab::Pipelines => prefetch_pipeline_jobs(app, tx, fx),
+        app::Tab::MergeRequests => prefetch_mr_head_jobs(app, tx, fx),
+        app::Tab::Milestones => select_milestone_issues(app, tx, fx),
+        _ => {}
+    }
+}
+
+/// The highlighted pipeline's jobs, which the inspector's failed jobs and
+/// the `Stages` dots read.
+fn prefetch_pipeline_jobs(
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    if let Some(client) = &app.gitlab_client {
+        if let Some(idx) = app.pipelines.state.selected() {
+            let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
+            if let Some(pipe_id) = pipe_id {
+                if !app.pipeline_jobs.contains_key(&pipe_id)
+                    && !app.fetching_pipelines.contains(&pipe_id)
+                {
+                    app.fetching_pipelines.insert(pipe_id);
+                    let client_clone = client.clone();
+                    let project_context = app.project_path_for_pipeline(pipe_id);
+                    let tx = app.scoped_sender(tx.clone());
+                    fx.spawn(async move {
+                        if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
+                            &client_clone,
+                            &project_context,
+                            pipe_id,
+                        )
+                        .await
+                        {
+                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
+                        } else {
+                            let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The jobs of the highlighted MR's head pipeline, or on GitHub of the
+/// first listed run of its source branch.
+fn prefetch_mr_head_jobs(
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    if let Some(client) = &app.gitlab_client {
+        if let Some(idx) = app.mrs.state.selected() {
+            let mr_info = app.filtered_mrs().get(idx).map(|m| {
+                (
+                    m.source_branch.clone(),
+                    m.head_pipeline.as_ref().map(|p| p.id()),
+                    m.project_path.clone(),
+                )
+            });
+            if let Some((source_branch, head_pipeline_id, mr_project_path)) = mr_info {
+                let is_github = client.is_github;
+                let resolved_pipe = head_pipeline_id.or_else(|| {
+                    if is_github {
+                        app.pipelines
+                            .items
+                            .iter()
+                            .find(|p| p.ref_branch() == source_branch)
+                            .map(|p| p.id())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(pipe_id) = resolved_pipe {
+                    if !app.pipeline_jobs.contains_key(&pipe_id)
+                        && !app.fetching_pipelines.contains(&pipe_id)
+                    {
+                        app.fetching_pipelines.insert(pipe_id);
+                        let client_clone = client.clone();
+                        let project_context = if !mr_project_path.is_empty() {
+                            mr_project_path
+                        } else {
+                            app.project_path_for_pipeline(pipe_id)
+                        };
+                        let tx = app.scoped_sender(tx.clone());
+                        fx.spawn(async move {
+                            if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
+                                &client_clone,
+                                &project_context,
+                                pipe_id,
+                            )
+                            .await
+                            {
+                                let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
+                            } else {
+                                let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Shows the issues of the highlighted milestone, from the cache or, on a
+/// miss, from a fetch.
+fn select_milestone_issues(
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    if let Some(client) = &app.gitlab_client {
+        if let Some(idx) = app.milestones.state.selected() {
+            let milestone = app
+                .filtered_milestones()
+                .get(idx)
+                .map(|m| (m.iid, m.title.clone(), m.project_path.clone()));
+            if let Some((milestone_iid, milestone_title, m_proj)) = milestone {
+                if app.selected_milestone_iid != Some(milestone_iid) {
+                    app.selected_milestone_iid = Some(milestone_iid);
+                    if app.scope.is_group() {
+                        // In group scope milestones aggregate across projects; per-milestone
+                        // issue previews require repository scope. Skip the fetch and rely on
+                        // the progress cache + drill-in via the project selector.
+                        app.selected_milestone_issues = None;
+                    } else {
+                        // Use the issues cache when we already have it
+                        // (set by an earlier selection). The progress cache
+                        // alone only holds `(closed, total)` counts — not the
+                        // actual issue list — so it does NOT suppress the
+                        // fetch: the milestone preview renders the issues,
+                        // not just their counts.
+                        let cached = app.milestone_issues_cache.get(&milestone_iid);
+                        if let Some(cached) = cached {
+                            app.selected_milestone_issues = Some(cached.clone());
+                        } else {
+                            app.selected_milestone_issues = None;
+                            let client_clone = client.clone();
+                            let project_context = if !m_proj.is_empty() {
+                                m_proj
+                            } else {
+                                app.scope.as_str().to_string()
+                            };
+                            // `glab issue list --milestone` filters by milestone
+                            // title, not iid — passing the title here is required
+                            // for the glab backend to return any issues.
+                            let tx = app.scoped_sender(tx.clone());
+                            fx.spawn(async move {
+                                match domain::milestones::list_milestone_issues(
+                                    &client_clone,
+                                    &project_context,
+                                    milestone_iid,
+                                    &milestone_title,
+                                )
+                                .await
+                                {
+                                    Ok(issues) => {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(
+                                            milestone_iid,
+                                            issues,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        // Don't silently substitute an empty list: that
+                                        // renders as 0% progress with no explanation.
+                                        let _ = tx.send(Event::CommandCompleted(
+                                            app::Tab::Milestones,
+                                            Err(format!("Failed to fetch milestone issues: {e}")),
+                                        ));
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -936,7 +1172,12 @@ mod tests {
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
-        assert!(!dispatch_pending_related_mrs_fetch(&client, &mut app, &tx));
+        assert!(!dispatch_pending_related_mrs_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
     }
 
     #[test]
@@ -949,7 +1190,12 @@ mod tests {
         app.pending_related_mrs_since = Some(std::time::Instant::now());
 
         assert!(
-            !dispatch_pending_related_mrs_fetch(&client, &mut app, &tx),
+            !dispatch_pending_related_mrs_fetch(
+                &mut crate::effect::Effects::default(),
+                &client,
+                &mut app,
+                &tx
+            ),
             "a fresh request must wait the full debounce window",
         );
         // Pending state must survive a no-op dispatch so the next tick can
@@ -992,7 +1238,12 @@ mod tests {
             related_mrs: Some(crate::domain::issues::RelatedMrsState::Empty),
         });
 
-        assert!(!dispatch_pending_related_mrs_fetch(&client, &mut app, &tx));
+        assert!(!dispatch_pending_related_mrs_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
         assert_eq!(app.pending_related_mrs_iid, None);
         assert_eq!(app.pending_related_mrs_since, None);
         assert!(app.fetching_related_mrs.is_empty());
@@ -1027,18 +1278,38 @@ mod tests {
         let client = app.gitlab_client.clone().unwrap();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
-        assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
-        assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert!(!dispatch_inspected_pr_stack_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
+        assert!(!dispatch_inspected_pr_stack_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
         assert!(app.fetching_pr_stacks.is_empty());
 
         let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
         app.pr_stack_candidate = Some((pr_11(), rested));
-        assert!(dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert!(dispatch_inspected_pr_stack_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
         assert_eq!(app.fetching_pr_stacks, [pr_11()].into_iter().collect());
         assert_eq!(app.pr_stack_candidate, None);
 
         assert!(
-            !dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx),
+            !dispatch_inspected_pr_stack_fetch(
+                &mut crate::effect::Effects::default(),
+                &client,
+                &mut app,
+                &tx
+            ),
             "an in-flight fetch is not requested again"
         );
     }
@@ -1053,7 +1324,12 @@ mod tests {
             app.pr_stack_candidate =
                 Some((pr_11(), std::time::Instant::now() - RELATED_MRS_DEBOUNCE));
 
-            assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+            assert!(!dispatch_inspected_pr_stack_fetch(
+                &mut crate::effect::Effects::default(),
+                &client,
+                &mut app,
+                &tx
+            ));
             assert_eq!(app.pr_stack_candidate, None);
         }
     }
@@ -1066,7 +1342,12 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         app.pr_stack_candidate = Some((pr_11(), std::time::Instant::now() - RELATED_MRS_DEBOUNCE));
 
-        assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert!(!dispatch_inspected_pr_stack_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
         assert_eq!(app.pr_stack_candidate, None);
     }
 
@@ -1093,13 +1374,21 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
         assert!(!dispatch_inspected_todo_detail_fetch(
-            &client, &mut app, &tx
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
         ));
         assert!(app.fetching_todo_details.is_empty());
 
         let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
         app.todo_detail_candidate = Some(("1".to_string(), rested));
-        assert!(dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx));
+        assert!(dispatch_inspected_todo_detail_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
         assert_eq!(
             app.fetching_todo_details,
             ["1".to_string()].into_iter().collect()
@@ -1107,7 +1396,12 @@ mod tests {
 
         app.todo_detail_candidate = Some(("1".to_string(), rested));
         assert!(
-            !dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx),
+            !dispatch_inspected_todo_detail_fetch(
+                &mut crate::effect::Effects::default(),
+                &client,
+                &mut app,
+                &tx
+            ),
             "an in-flight fetch is not requested again"
         );
     }
@@ -1130,7 +1424,10 @@ mod tests {
             app.todo_detail_candidate = Some(("1".to_string(), rested));
 
             assert!(!dispatch_inspected_todo_detail_fetch(
-                &client, &mut app, &tx
+                &mut crate::effect::Effects::default(),
+                &client,
+                &mut app,
+                &tx
             ));
             assert!(app.fetching_todo_details.is_empty());
             assert_eq!(app.todo_detail_candidate, None);
@@ -1148,13 +1445,21 @@ mod tests {
         let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
         app.todo_detail_candidate = Some(("1".to_string(), rested));
         assert!(!dispatch_inspected_todo_detail_fetch(
-            &client, &mut app, &tx
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
         ));
 
         app.set_todos(listed);
 
         app.todo_detail_candidate = Some(("1".to_string(), rested));
-        assert!(dispatch_inspected_todo_detail_fetch(&client, &mut app, &tx));
+        assert!(dispatch_inspected_todo_detail_fetch(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            &tx
+        ));
     }
 
     fn pr_stack_of_11() -> crate::domain::mr::PrStack {

@@ -82,11 +82,19 @@ pub enum Event {
     },
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),
-    CommandCompleted(crate::app::Tab, Result<(), String>),
+    CommandCompleted(crate::app::Tab, Result<CommandOutcome, String>),
     /// Non-error feedback from a background task, shown in the header bar.
     Notice(String),
     /// A background custom command finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
+    /// The editor opened for `purpose` closed. `text` is what it saved,
+    /// trimmed, or `None` when it failed or saved nothing.
+    EditorClosed {
+        purpose: crate::effect::EditPurpose,
+        text: Option<String>,
+    },
+    /// A read-only editor view could not be opened.
+    ViewerFailed(String),
     /// A `glab`/`gh`/`git` call a backend finished.
     TerminalCommandLogged(Box<crate::command_log::TerminalCommand>),
     /// A command re-run from the Terminal tab finished; `row` is the entry
@@ -170,6 +178,17 @@ pub enum Event {
     /// A background fetch result, tagged with the scope generation that was
     /// current when the fetch started. Built only by `ScopedSender`.
     Scoped(ScopeGeneration, Box<Event>),
+}
+
+/// What a command that succeeded did, which decides whether the lists it
+/// may have changed are fetched again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandOutcome {
+    /// It changed data on the forge that the tab or the open diff shows.
+    Mutated,
+    /// It changed nothing glab-tui lists, such as opening a page in the
+    /// browser.
+    ReadOnly,
 }
 
 impl Event {

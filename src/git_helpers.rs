@@ -1,19 +1,15 @@
 use crate::backend::BackendKind;
 
-/// Safe to await on the UI thread: `git symbolic-ref --short HEAD` and
-/// `git branch --show-current` read the local `.git` only. No network
+/// A pure local read, safe on the UI thread: `git symbolic-ref --short HEAD`
+/// and `git branch --show-current` read the local `.git` only. No network
 /// roundtrip, no prompt for credentials.
-pub async fn get_current_branch() -> Option<String> {
+pub fn get_current_branch() -> Option<String> {
     let probes: [&[&str]; 2] = [
         &["symbolic-ref", "--short", "HEAD"],
         &["branch", "--show-current"],
     ];
     for args in probes {
-        let output = tokio::process::Command::new("git")
-            .args(args)
-            .output()
-            .await
-            .ok()?;
+        let output = std::process::Command::new("git").args(args).output().ok()?;
         if output.status.success() {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !branch.is_empty() {

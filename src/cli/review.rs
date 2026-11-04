@@ -238,7 +238,7 @@ impl From<&ReviewThread> for ThreadOutput {
 pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_json::Value> {
     let project = match repo {
         Some(repo) => repo,
-        None => crate::domain::client::get_project_context().await?,
+        None => crate::domain::client::get_project_context()?,
     };
     if project == "unknown/unknown" {
         bail!("cannot tell which repository to use; run inside a checkout or pass --repo");

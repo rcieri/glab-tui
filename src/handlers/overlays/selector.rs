@@ -795,15 +795,15 @@ pub fn handle_key(
                                     }
                                     "Delete Draft" => {
                                         app.draft_comments.remove(draft_idx);
+                                        if let Some((project, mr_iid)) = app
+                                            .diff_view
+                                            .as_ref()
+                                            .map(|d| (d.project_path.clone(), d.mr_iid))
+                                        {
+                                            app.persist_draft_comments(&project, mr_iid);
+                                        }
                                     }
                                     _ => {}
-                                }
-                                if let Some((project, mr_iid)) = app
-                                    .diff_view
-                                    .as_ref()
-                                    .map(|d| (d.project_path.clone(), d.mr_iid))
-                                {
-                                    app.persist_draft_comments(&project, mr_iid);
                                 }
                             }
                             return;

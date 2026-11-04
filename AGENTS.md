@@ -300,7 +300,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Mouse events (`crossterm::event::MouseEvent`) are handled by `handlers::mouse::handle_mouse_event` for selecting tabs, scrolling tables, and interacting with overlays.
 * All modal and overlay interactions (submit dialogs, selectors, date picker, help) have click handlers routed through their respective state components.
 * Selector overlays compute mouse target positions based on search bar presence (determined by `field_type`) and footer height.
-* Add new mouse handlers following the pattern in [src/handlers/mouse.rs](src/handlers/mouse.rs) and [src/handlers/tabs.rs](src/handlers/tabs.rs).
+* Add new mouse handlers following the pattern in [src/handlers/mouse.rs](src/handlers/mouse.rs).
 
 ### Column Configure Popup
 * The configure overlay (`Tab`) has three sections: **COLUMNS** (checkbox toggle), **GROUP BY** (single-select), and **ORDER** (Ascending/Descending).

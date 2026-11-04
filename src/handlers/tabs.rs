@@ -396,9 +396,7 @@ fn handle_environments_key(
                 .await;
             let _ = tx.send(Event::CommandCompleted(
                 crate::app::Tab::Environments,
-                result
-                    .map_err(|e| e.to_string())
-                    .map(|()| CommandOutcome::ReadOnly),
+                CommandOutcome::read_only(result),
             ));
         });
     } else if keybinding_matches(&keys.view_deployments, key_event) {
@@ -1038,9 +1036,7 @@ pub fn handle_active_tab_key(
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Issues,
-                                result
-                                    .map_err(|e| e.to_string())
-                                    .map(|()| CommandOutcome::ReadOnly),
+                                CommandOutcome::read_only(result),
                             ));
                         });
                     }
@@ -1300,9 +1296,7 @@ pub fn handle_active_tab_key(
                                     let result = client.approve_mr(&project_path, mr_iid).await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::MergeRequests,
-                                        result
-                                            .map_err(|e| e.to_string())
-                                            .map(|()| CommandOutcome::Mutated),
+                                        CommandOutcome::mutation(result),
                                     ));
                                 });
                             }
@@ -1434,9 +1428,7 @@ pub fn handle_active_tab_key(
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::MergeRequests,
-                                    result
-                                        .map_err(|e| e.to_string())
-                                        .map(|()| CommandOutcome::ReadOnly),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -1466,9 +1458,7 @@ pub fn handle_active_tab_key(
                                         .await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::MergeRequests,
-                                        result
-                                            .map_err(|e| e.to_string())
-                                            .map(|()| CommandOutcome::Mutated),
+                                        CommandOutcome::mutation(result),
                                     ));
                                 });
                             }
@@ -1734,9 +1724,7 @@ pub fn handle_active_tab_key(
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Pipelines,
-                            result
-                                .map_err(|e| e.to_string())
-                                .map(|()| CommandOutcome::Mutated),
+                            CommandOutcome::mutation(result),
                         ));
                     });
                 }
@@ -1822,9 +1810,7 @@ pub fn handle_active_tab_key(
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Pipelines,
-                                    result
-                                        .map_err(|e| e.to_string())
-                                        .map(|()| CommandOutcome::ReadOnly),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -1849,9 +1835,7 @@ pub fn handle_active_tab_key(
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Pipelines,
-                                    result
-                                        .map_err(|e| e.to_string())
-                                        .map(|()| CommandOutcome::ReadOnly),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -2114,9 +2098,7 @@ pub fn handle_active_tab_key(
                                         .await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::Jobs,
-                                        result
-                                            .map_err(|e| e.to_string())
-                                            .map(|()| CommandOutcome::ReadOnly),
+                                        CommandOutcome::read_only(result),
                                     ));
                                 });
                             }
@@ -2148,9 +2130,7 @@ pub fn handle_active_tab_key(
                                     client.open_job_in_browser(&project_path, &jid_str).await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Jobs,
-                                    result
-                                        .map_err(|e| e.to_string())
-                                        .map(|()| CommandOutcome::ReadOnly),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -2280,9 +2260,7 @@ pub fn handle_active_tab_key(
                                 }
                                 let _ = tx.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
-                                    result
-                                        .map_err(|e| e.to_string())
-                                        .map(|()| CommandOutcome::Mutated),
+                                    CommandOutcome::mutation(result),
                                 ));
                             });
                         }
@@ -2309,9 +2287,7 @@ pub fn handle_active_tab_key(
                                 }
                                 let _ = tx.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
-                                    result
-                                        .map_err(|e| e.to_string())
-                                        .map(|()| CommandOutcome::Mutated),
+                                    CommandOutcome::mutation(result),
                                 ));
                             });
                         }
@@ -2349,9 +2325,7 @@ pub fn handle_active_tab_key(
                                 client.open_runner_in_browser(&scope, runner_id_local).await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Runners,
-                                result
-                                    .map_err(|e| e.to_string())
-                                    .map(|()| CommandOutcome::ReadOnly),
+                                CommandOutcome::read_only(result),
                             ));
                         });
                     }
@@ -2444,9 +2418,7 @@ pub fn handle_active_tab_key(
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Releases,
-                            result
-                                .map_err(|e| e.to_string())
-                                .map(|()| CommandOutcome::ReadOnly),
+                            CommandOutcome::read_only(result),
                         ));
                     });
                 }
@@ -2658,9 +2630,7 @@ pub fn handle_active_tab_key(
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Milestones,
-                                result
-                                    .map_err(|e| e.to_string())
-                                    .map(|()| CommandOutcome::ReadOnly),
+                                CommandOutcome::read_only(result),
                             ));
                         });
                     }
@@ -2805,9 +2775,7 @@ pub fn handle_active_tab_key(
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Branches,
-                            result
-                                .map_err(|e| e.to_string())
-                                .map(|()| CommandOutcome::ReadOnly),
+                            CommandOutcome::read_only(result),
                         ));
                     });
                 } else if keybinding_matches(

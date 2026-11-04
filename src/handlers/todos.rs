@@ -175,9 +175,7 @@ pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>, fx: 
             .await;
         let _ = tx.send(Event::CommandCompleted(
             Tab::Todos,
-            result
-                .map_err(|e| e.to_string())
-                .map(|()| CommandOutcome::ReadOnly),
+            CommandOutcome::read_only(result),
         ));
     });
 }

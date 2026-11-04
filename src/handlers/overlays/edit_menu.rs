@@ -1291,11 +1291,8 @@ pub fn handle_key(
                             return;
                         }
                         let res = client.update_issue(&project, entity_iid, &update).await;
-                        let _ = tx.send(Event::CommandCompleted(
-                            tab,
-                            res.map_err(|e| e.to_string())
-                                .map(|()| CommandOutcome::Mutated),
-                        ));
+                        let _ =
+                            tx.send(Event::CommandCompleted(tab, CommandOutcome::mutation(res)));
                     });
                     return;
                 } else if crate::entity_editor::entity_is_mr(&entity_type) {
@@ -1514,11 +1511,8 @@ pub fn handle_key(
                             return;
                         }
                         let res = client.update_mr(&project, entity_iid, &update).await;
-                        let _ = tx.send(Event::CommandCompleted(
-                            tab,
-                            res.map_err(|e| e.to_string())
-                                .map(|()| CommandOutcome::Mutated),
-                        ));
+                        let _ =
+                            tx.send(Event::CommandCompleted(tab, CommandOutcome::mutation(res)));
                     });
                     return;
                 } else if crate::entity_editor::entity_is_milestone(&entity_type) {

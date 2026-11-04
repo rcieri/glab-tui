@@ -1243,9 +1243,7 @@ pub fn apply_field_text_change(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1275,9 +1273,7 @@ pub fn apply_field_text_change(
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result
-                            .map_err(|e| e.to_string())
-                            .map(|()| CommandOutcome::Mutated),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1307,9 +1303,7 @@ pub fn apply_field_text_change(
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result
-                            .map_err(|e| e.to_string())
-                            .map(|()| CommandOutcome::Mutated),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1325,9 +1319,7 @@ pub fn apply_field_text_change(
                     let result = client.update_issue_weight(&project_path, iid, &value).await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result
-                            .map_err(|e| e.to_string())
-                            .map(|()| CommandOutcome::Mutated),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1345,9 +1337,7 @@ pub fn apply_field_text_change(
                 let result = client.update_runner_description(&scope, iid, &value).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1379,9 +1369,7 @@ pub fn apply_field_text_change(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1446,9 +1434,7 @@ pub fn apply_selector_changes(
                     };
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result
-                            .map_err(|e| e.to_string())
-                            .map(|()| CommandOutcome::Mutated),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1513,9 +1499,7 @@ pub fn apply_selector_changes(
                     };
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result
-                            .map_err(|e| e.to_string())
-                            .map(|()| CommandOutcome::Mutated),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1576,9 +1560,7 @@ pub fn apply_selector_changes(
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             tab,
-                            result
-                                .map_err(|e| e.to_string())
-                                .map(|()| CommandOutcome::Mutated),
+                            CommandOutcome::mutation(result),
                         ));
                     });
                 }
@@ -1638,9 +1620,7 @@ pub fn apply_selector_changes(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1658,9 +1638,7 @@ pub fn apply_selector_changes(
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result
-                            .map_err(|e| e.to_string())
-                            .map(|()| CommandOutcome::Mutated),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }

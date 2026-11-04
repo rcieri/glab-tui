@@ -191,6 +191,18 @@ pub enum CommandOutcome {
     ReadOnly,
 }
 
+impl CommandOutcome {
+    /// The `CommandCompleted` result of a call that changes forge data.
+    pub fn mutation(result: anyhow::Result<()>) -> Result<Self, String> {
+        result.map(|()| Self::Mutated).map_err(|e| e.to_string())
+    }
+
+    /// The `CommandCompleted` result of a call that changes nothing listed.
+    pub fn read_only(result: anyhow::Result<()>) -> Result<Self, String> {
+        result.map(|()| Self::ReadOnly).map_err(|e| e.to_string())
+    }
+}
+
 impl Event {
     /// Unwraps a `Scoped` event requested in the `current` generation and
     /// drops one requested before the last repository or group switch, so a

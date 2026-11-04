@@ -369,9 +369,7 @@ fn run_submit_action(
                 let result = client.close_issue(&project_path, iid).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::Issues,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -408,9 +406,7 @@ fn run_submit_action(
                 let result = client.reopen_issue(&project_path, iid).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::Issues,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -427,9 +423,7 @@ fn run_submit_action(
                 let result = client.close_mr(&project_path, iid).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -466,9 +460,7 @@ fn run_submit_action(
                 let result = client.reopen_mr(&project_path, iid).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -535,9 +527,7 @@ fn run_submit_action(
                     .await;
                 let _ = tx.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -642,9 +632,7 @@ fn run_submit_action(
                 let result = client.revoke_mr(&project_path, iid).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -657,9 +645,7 @@ fn run_submit_action(
                 let result = client.rebase_mr(&project_path, iid).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
-                    result
-                        .map_err(|e| e.to_string())
-                        .map(|()| CommandOutcome::Mutated),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }

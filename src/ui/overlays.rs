@@ -1914,23 +1914,28 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         // ── Dashboard ──
         Shortcut {
             category: "Dashboard",
-            key: s("j / k / ↓ / ↑ / Home / End"),
-            action: "Select a queue, contributor or card (an item inside the list)",
-        },
-        Shortcut {
-            category: "Dashboard",
             key: s("Enter"),
-            action: "Browse the queue's items / show a contributor's work / open the card's tab",
-        },
-        Shortcut {
-            category: "Dashboard",
-            key: s("Enter (in the list)"),
-            action: "Open the issue or MR/PR with its preview",
+            action: "Go one level down: tab → cards → queues/people → items → open the item",
         },
         Shortcut {
             category: "Dashboard",
             key: s("Esc"),
-            action: "Leave the item list",
+            action: "Go one level up",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("h / j / k / l / ← / ↓ / ↑ / →"),
+            action: "Move between cards (on the tab level, h / l still switch tabs)",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("j / k / ↓ / ↑ / Home / End"),
+            action: "Pick a queue or person inside a card, or an item inside the list",
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter (in the list)"),
+            action: "Open the issue, MR/PR, pipeline, milestone or release in its tab",
         },
         Shortcut {
             category: "Dashboard",

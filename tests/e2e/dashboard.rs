@@ -4,10 +4,11 @@
 //! active milestones and two releases. It reports no signed-in user, so the
 //! Dashboard starts on everyone's work.
 //!
-//! Rows, top to bottom: seven MR queues, five issue queues, the
-//! contributors (everyone, you, `@reviewer-user`, `@test-user`), then the
-//! Pipelines, Milestones and Releases cards. `k` from the first row wraps to
-//! the last.
+//! At 150 columns the cards sit three to a line: MRs, Issues and
+//! Contributors, then Pipelines, Milestones and Releases. `Enter` goes from
+//! the tab into the cards, from a card into its rows (the contributors are
+//! everyone, you, `@reviewer-user` and `@test-user`, so `k` from the first
+//! wraps to `@test-user`), and from a row into its item list.
 //!
 //! The activity feed (`events.json`) holds a push by `test-user` 2 hours
 //! ago, a diff comment by `reviewer-user` 30 hours ago, a comment by
@@ -16,16 +17,11 @@
 
 use crate::TestSession;
 
-const ASCII_ICONS: &str = "icons = \"ascii\"\n";
+const CONFIG: &str = "icons = \"ascii\"\n[dashboard]\nenabled = true\n";
 
 fn dashboard_session() -> TestSession {
-    let mut session = TestSession::with_config_and_args(
-        false,
-        40,
-        150,
-        Some(ASCII_ICONS),
-        &["--tab", "dashboard"],
-    );
+    let mut session =
+        TestSession::with_config_and_args(false, 40, 150, Some(CONFIG), &["--tab", "dashboard"]);
     for call in [
         "issue list",
         "mr list",
@@ -70,10 +66,10 @@ fn a_queue_lists_its_items_and_enter_opens_one() {
         session.emulator.get_text()
     );
 
-    session.press_keys(b"\r");
+    session.press_keys(b"\r\r\r");
     session
         .wait_for_screen_contains("Enter open · Esc back", 5000)
-        .expect("Enter moves the keys into the list");
+        .expect("Enter goes into the cards, the MR queues, then the list");
     session.press_keys(b"\r");
     session
         .wait_for_screen_contains("┌ ! MRs ", 5000)
@@ -89,7 +85,7 @@ fn choosing_a_contributor_scopes_the_cards_and_lists_their_activity() {
     session
         .wait_for_cli_call("/events?after=", 15000)
         .expect("the dashboard reads the project's activity feed");
-    session.press_keys(b"kkkk\r");
+    session.press_keys(b"\rll\rk\r");
     session
         .wait_for_screen_contains("Activity of @test-user, last 30 days · 5 ", 5000)
         .expect("Enter on a contributor lists their MRs, issues, commits and comments");
@@ -121,16 +117,37 @@ fn choosing_a_contributor_scopes_the_cards_and_lists_their_activity() {
 }
 
 #[test]
-fn esc_hands_the_keys_back_from_a_contributors_activity() {
+fn esc_climbs_back_one_level_at_a_time() {
     let mut session = dashboard_session();
-    session.press_keys(b"kkkk\r");
+    session.press_keys(b"\rll\rk\r");
     session
         .wait_for_screen_contains("Enter open · Esc back", 5000)
         .expect("Enter on a contributor moves the keys into the list");
     session.press_keys(b"\x1b");
     session
-        .wait_for_screen_contains("Enter browse", 5000)
-        .expect("Esc hands the keys back to the rows");
+        .wait_for_screen_contains("j/k pick · Enter list · Esc cards", 5000)
+        .expect("Esc hands the keys back to the contributors");
+    session.press_keys(b"\x1b");
+    session
+        .wait_for_screen_contains("h/j/k/l move · Enter open card · Esc leave", 5000)
+        .expect("Esc again hands them back to the cards");
+    session.press_keys(b"\x1b");
+    session
+        .wait_for_screen_contains("Enter navigate the cards", 5000)
+        .expect("and once more to the tab, where h/l switch tabs");
+}
+
+#[test]
+fn the_pipelines_card_lists_its_runs_and_opens_one_in_its_tab() {
+    let mut session = dashboard_session();
+    session.press_keys(b"\rj\r");
+    session
+        .wait_for_screen_contains("Enter open · Esc back", 5000)
+        .expect("Enter on a card without rows goes straight to its list");
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("┌ > Pipelines ", 5000)
+        .expect("Enter on a run opens the Pipelines tab");
 }
 
 #[test]

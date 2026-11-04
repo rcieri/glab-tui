@@ -546,7 +546,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
             main_block.clone(),
         ),
         Tab::Terminal => tabs::render_tab_terminal(f, ctx, app, content_area),
-        Tab::Dashboard => dashboard::render_tab_dashboard(f, app, content_area, main_block.clone()),
+        Tab::Dashboard => {
+            dashboard::render_tab_dashboard(f, ctx, app, content_area, main_block.clone())
+        }
     }
 
     // Compact terminal pane at bottom of the middle column

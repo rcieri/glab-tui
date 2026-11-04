@@ -1,3 +1,4 @@
+use crate::ui::render_ctx::RenderCtx;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -11,17 +12,19 @@ use ratatui::{
 use super::helpers::{badge_style_for, progress_bar, sort_header_label, status_dot};
 use crate::app::{App, StaleData, Tab};
 use crate::backend::BackendKind;
-use crate::config::{ICONS, Icons, THEME, Theme};
+use crate::config::{Icons, Theme};
 use crate::dashboard::{
-    ContributionFeed, ContributorsView, DashboardCard, DashboardPerson, DashboardRow,
+    ContributionFeed, ContributorsView, DashboardCard, DashboardFocus, DashboardItem,
+    DashboardPerson, DashboardRow,
 };
 use crate::domain::contributions::{ContributionKind, TargetKind};
 use crate::domain::dashboard::{
-    self, Activity, ISSUE_IDLE_DAYS, IssueQueue, MR_IDLE_DAYS, MilestoneProgress, MrQueue, Now,
-    Person, PipelineOutcome,
+    self, Activity, IdleDays, IssueQueue, MilestoneProgress, MrQueue, Now, Person, PipelineOutcome,
 };
 use crate::domain::issues::Issue;
 use crate::domain::mr::MergeRequest;
+use crate::domain::pipelines::Pipeline;
+use crate::domain::releases::Release;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 
 /// Rows of one card, borders included.
@@ -39,6 +42,8 @@ const PROGRESS_BAR_CHARS: usize = 17;
 /// Width of one number column of the Contributors card.
 const CONTRIBUTOR_COLUMN_CHARS: usize = 5;
 const LIST_REF_WIDTH: u16 = 7;
+/// GitHub run ids run to 11 digits and release tags can be long.
+const LIST_REF_MAX_WIDTH: u16 = 14;
 const LIST_AUTHOR_WIDTH: u16 = 16;
 const LIST_PEOPLE_WIDTH: u16 = 20;
 const LIST_NOTE_WIDTH: u16 = 24;
@@ -80,6 +85,8 @@ struct Context<'a> {
     person: Person<'a>,
     rows: Vec<DashboardRow>,
     selected: Option<DashboardRow>,
+    selected_card: Option<DashboardCard>,
+    focus: DashboardFocus,
 }
 
 impl Context<'_> {
@@ -87,9 +94,16 @@ impl Context<'_> {
         Who::of(self.person, self.signed_in)
     }
 
-    /// Whether `row` has the keys: selected while the item list is not focused.
+    /// Whether `row` has the keys: picked while its card's rows are walked.
     fn has_keys(&self, row: &DashboardRow) -> bool {
-        self.is_selected(row) && !self.app.dashboard.is_list_focused
+        self.is_selected(row) && self.focus == DashboardFocus::Rows
+    }
+
+    /// Whether `card` has the keys: selected while the cards or its rows
+    /// are walked.
+    fn is_card_focused(&self, card: DashboardCard) -> bool {
+        self.selected_card == Some(card)
+            && matches!(self.focus, DashboardFocus::Cards | DashboardFocus::Rows)
     }
 
     fn is_selected(&self, row: &DashboardRow) -> bool {
@@ -116,25 +130,32 @@ impl Context<'_> {
     }
 }
 
-pub(crate) fn render_tab_dashboard(f: &mut Frame, app: &App, area: Rect, block: Block) {
-    let theme = THEME.read().unwrap();
-    let icons = ICONS.read().unwrap();
+pub(crate) fn render_tab_dashboard(
+    f: &mut Frame,
+    render: &RenderCtx<'_>,
+    app: &App,
+    area: Rect,
+    block: Block,
+) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let now = Now::current();
+    let now = app.dashboard_now();
     let rows = app.dashboard_rows(now);
     let selected = app.dashboard.selected_row(&rows).cloned();
+    let selected_card = app.dashboard.selected_card(&rows);
     let ctx = Context {
         app,
-        theme: &theme,
-        icons: &icons,
-        kind: app.kind(),
+        theme: &render.theme,
+        icons: render.icons,
+        kind: render.kind,
         now,
         signed_in: app.dashboard_signed_in_user(),
         person: app.dashboard_person(),
         rows,
         selected,
+        selected_card,
+        focus: app.dashboard.focus,
     };
     let cards = app.dashboard_cards();
     let columns = if inner.width >= THREE_COLUMN_MIN_WIDTH {
@@ -142,6 +163,7 @@ pub(crate) fn render_tab_dashboard(f: &mut Frame, app: &App, area: Rect, block: 
     } else {
         2
     };
+    app.dashboard.grid_columns.set(columns);
     let grid_rows = u16::try_from(cards.len().div_ceil(columns)).unwrap_or(u16::MAX);
     let [grid_area, list_area] = Layout::vertical([
         Constraint::Length(grid_rows.saturating_mul(CARD_HEIGHT)),
@@ -216,10 +238,17 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
             spans
         }
         (DashboardCard::MergeRequests | DashboardCard::Issues, Some(tab)) => vec![Span::styled(
-            format!(" {} · {} ", tab.title(ctx.kind), ctx.who().card_suffix()),
+            format!(
+                " {} · {} ",
+                tab.title(ctx.kind, ctx.icons),
+                ctx.who().card_suffix()
+            ),
             header,
         )],
-        (_, Some(tab)) => vec![Span::styled(format!(" {} ", tab.title(ctx.kind)), header)],
+        (_, Some(tab)) => vec![Span::styled(
+            format!(" {} ", tab.title(ctx.kind, ctx.icons)),
+            header,
+        )],
     };
     if let Some(stale) = card.tab().and_then(|tab| ctx.app.stale_tabs.get(&tab)) {
         title.push(Span::styled(
@@ -238,13 +267,14 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
 
 fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
     let theme = ctx.theme;
-    let has_keys = ctx
-        .selected
-        .as_ref()
-        .is_some_and(|row| row.card() == card && ctx.has_keys(row));
+    let has_keys = ctx.is_card_focused(card);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(if has_keys && ctx.focus == DashboardFocus::Cards {
+            BorderType::Thick
+        } else {
+            BorderType::Rounded
+        })
         .border_style(Style::default().fg(if has_keys {
             theme.border_focused
         } else {
@@ -321,7 +351,7 @@ fn queue_line(
     .style(background)
 }
 
-fn mr_queue_label(queue: MrQueue, who: Who) -> String {
+fn mr_queue_label(queue: MrQueue, who: Who, idle: IdleDays) -> String {
     match (queue, who) {
         (MrQueue::Open, Who::Everyone) => "open".to_string(),
         (MrQueue::Open, Who::You) => "open, involving you".to_string(),
@@ -334,7 +364,7 @@ fn mr_queue_label(queue: MrQueue, who: Who) -> String {
         (MrQueue::ChangesRequested, Who::Someone(login)) => format!("returned to @{login}"),
         (MrQueue::ReadyToMerge, _) => "ready to merge".to_string(),
         (MrQueue::Blocked, _) => "conflict or rebase needed".to_string(),
-        (MrQueue::Idle, _) => format!("idle {MR_IDLE_DAYS}+ days"),
+        (MrQueue::Idle, _) => format!("idle {}+ days", idle.mrs),
         (MrQueue::Drafts, _) => "drafts".to_string(),
     }
 }
@@ -363,21 +393,21 @@ fn merge_requests_body(ctx: &Context) -> Vec<Line<'static>> {
                 &DashboardRow::Mr(queue),
                 queue.count(mrs, ctx.person, ctx.signed_in, ctx.now),
                 icon,
-                mr_queue_label(queue, ctx.who()),
+                mr_queue_label(queue, ctx.who(), ctx.now.idle),
                 color,
             )
         })
         .collect()
 }
 
-fn issue_queue_label(queue: IssueQueue, who: Who) -> String {
+fn issue_queue_label(queue: IssueQueue, who: Who, idle: IdleDays) -> String {
     match (queue, who) {
         (IssueQueue::Open, Who::Everyone) => "open".to_string(),
         (IssueQueue::Open, Who::You) => "assigned to you".to_string(),
         (IssueQueue::Open, Who::Someone(login)) => format!("assigned to @{login}"),
         (IssueQueue::Overdue, _) => "overdue".to_string(),
         (IssueQueue::DueSoon, _) => format!("due within {} days", dashboard::DUE_SOON_DAYS),
-        (IssueQueue::Idle, _) => format!("idle {ISSUE_IDLE_DAYS}+ days"),
+        (IssueQueue::Idle, _) => format!("idle {}+ days", idle.issues),
         (IssueQueue::Unassigned, Who::Everyone) => "unassigned".to_string(),
         (IssueQueue::Unassigned, Who::You) => "opened by you, unassigned".to_string(),
         (IssueQueue::Unassigned, Who::Someone(login)) => {
@@ -409,7 +439,7 @@ fn issues_body(ctx: &Context) -> Vec<Line<'static>> {
                 &DashboardRow::Issue(queue),
                 queue.count(issues, ctx.person, ctx.now),
                 icon,
-                issue_queue_label(queue, ctx.who()),
+                issue_queue_label(queue, ctx.who(), ctx.now.idle),
                 color,
             )
         })
@@ -716,13 +746,22 @@ fn item_list_title(ctx: &Context) -> String {
         Who::Someone(login) => format!("Activity of @{login}, {window}"),
     };
     let mut label = match &ctx.selected {
-        Some(DashboardRow::Mr(queue)) => return capitalized(mr_queue_label(*queue, ctx.who())),
+        Some(DashboardRow::Mr(queue)) => {
+            return capitalized(mr_queue_label(*queue, ctx.who(), ctx.now.idle));
+        }
         Some(DashboardRow::Issue(queue)) => {
-            return capitalized(issue_queue_label(*queue, ctx.who()));
+            return capitalized(issue_queue_label(*queue, ctx.who(), ctx.now.idle));
         }
         Some(DashboardRow::Contributor(person)) => {
             activity_of(Who::of(person.resolve(ctx.signed_in), ctx.signed_in))
         }
+        Some(DashboardRow::Card(DashboardCard::Pipelines)) => {
+            return Tab::Pipelines.title(ctx.kind, ctx.icons);
+        }
+        Some(DashboardRow::Card(DashboardCard::Milestones)) => {
+            return "Open milestones, soonest due first".to_string();
+        }
+        Some(DashboardRow::Card(DashboardCard::Releases)) => return "Releases".to_string(),
         Some(DashboardRow::Card(_)) | None => activity_of(ctx.who()),
     };
     if let ContributionFeed::Failed(reason) = &ctx.app.dashboard.contributions {
@@ -745,11 +784,12 @@ fn capitalized(label: String) -> String {
 fn render_item_list(f: &mut Frame, ctx: &Context, area: Rect) {
     let (theme, app) = (ctx.theme, ctx.app);
     let items = app.dashboard_items_for(ctx.selected.as_ref(), ctx.now);
-    let is_focused = app.dashboard.is_list_focused;
-    let hint = if is_focused {
-        " Enter open · Esc back "
-    } else {
-        " Enter browse "
+    let is_focused = ctx.focus == DashboardFocus::List;
+    let hint = match ctx.focus {
+        DashboardFocus::Tab => " Enter navigate the cards ",
+        DashboardFocus::Cards => " h/j/k/l move · Enter open card · Esc leave ",
+        DashboardFocus::Rows => " j/k pick · Enter list · Esc cards ",
+        DashboardFocus::List => " Enter open · Esc back ",
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -783,7 +823,7 @@ fn render_item_list(f: &mut Frame, ctx: &Context, area: Rect) {
         rows,
         [
             Constraint::Length(2),
-            Constraint::Length(LIST_REF_WIDTH),
+            Constraint::Length(reference_width(&items)),
             Constraint::Fill(1),
             Constraint::Length(LIST_AUTHOR_WIDTH),
             Constraint::Length(LIST_PEOPLE_WIDTH),
@@ -800,7 +840,162 @@ fn render_item_list(f: &mut Frame, ctx: &Context, area: Rect) {
     f.render_stateful_widget(table, area, &mut state);
 }
 
-fn item_row(ctx: &Context, item: &Activity) -> Row<'static> {
+/// The reference column fits the longest pipeline id or release tag listed.
+fn reference_width(items: &[DashboardItem]) -> u16 {
+    let widest = items
+        .iter()
+        .map(|item| match item {
+            DashboardItem::Pipeline(pipeline) => format!("#{}", pipeline.id).len(),
+            DashboardItem::Release(release) => release.tag_name.chars().count(),
+            DashboardItem::Activity(_) | DashboardItem::Milestone(_) => 0,
+        })
+        .max()
+        .unwrap_or(0);
+    u16::try_from(widest)
+        .unwrap_or(u16::MAX)
+        .saturating_add(1)
+        .clamp(LIST_REF_WIDTH, LIST_REF_MAX_WIDTH)
+}
+
+fn item_row(ctx: &Context, item: &DashboardItem) -> Row<'static> {
+    match item {
+        DashboardItem::Activity(activity) => activity_row(ctx, activity),
+        DashboardItem::Pipeline(pipeline) => pipeline_row(ctx, pipeline),
+        DashboardItem::Milestone(progress) => milestone_row(ctx, progress),
+        DashboardItem::Release(release) => release_row(ctx, release),
+    }
+}
+
+/// One entry of the item list, in its columns.
+struct ListRow<'a> {
+    icon: String,
+    color: Color,
+    reference: String,
+    title: String,
+    author: &'a str,
+    people: String,
+    note: Vec<Span<'static>>,
+    when: String,
+}
+
+fn list_row(ctx: &Context, row: ListRow) -> Row<'static> {
+    let theme = ctx.theme;
+    let author = if row.author.is_empty() {
+        String::new()
+    } else {
+        format!("@{}", sanitize_untrusted(row.author))
+    };
+    Row::new(vec![
+        Cell::from(row.icon).style(Style::default().fg(row.color)),
+        Cell::from(row.reference).style(Style::default().fg(row.color)),
+        Cell::from(row.title).style(Style::default().fg(theme.text_normal)),
+        Cell::from(author).style(Style::default().fg(theme.text_muted)),
+        Cell::from(row.people).style(Style::default().fg(theme.text_muted)),
+        Cell::from(Line::from(row.note)),
+        Cell::from(row.when).style(Style::default().fg(theme.text_muted)),
+    ])
+}
+
+/// A run: its ref and commit, who triggered it, status and duration.
+fn pipeline_row(ctx: &Context, pipeline: &Pipeline) -> Row<'static> {
+    let (theme, icons) = (ctx.theme, ctx.icons);
+    let color = outcome_color(&pipeline.status, theme);
+    let commit = pipeline
+        .commit
+        .as_ref()
+        .map(|commit| commit.title.as_str())
+        .filter(|title| !title.is_empty())
+        .unwrap_or(pipeline.display_title());
+    let r#ref = sanitize_untrusted(&format_ref(&pipeline.r#ref)).into_owned();
+    let title = if commit.is_empty() {
+        r#ref
+    } else {
+        format!("{ref} · {}", sanitize_untrusted(commit))
+    };
+    let author = if pipeline.actor_login.is_empty() {
+        pipeline
+            .commit
+            .as_ref()
+            .map_or("", |commit| commit.author_name.as_str())
+    } else {
+        pipeline.actor_login.as_str()
+    };
+    let duration = pipeline
+        .duration_seconds
+        .map(|seconds| format!("{}m {:02}s", seconds / 60, seconds % 60))
+        .unwrap_or_default();
+    list_row(
+        ctx,
+        ListRow {
+            icon: status_dot(&pipeline.status, icons).to_string(),
+            color,
+            reference: format!("#{}", pipeline.id),
+            title,
+            author,
+            people: pipeline.status.clone(),
+            note: vec![note_span(duration, theme.text_muted)],
+            when: time_ago(pipeline.created_at().unwrap_or(pipeline.updated_at())),
+        },
+    )
+}
+
+/// A milestone: its issue progress and due date.
+fn milestone_row(ctx: &Context, progress: &MilestoneProgress) -> Row<'static> {
+    let theme = ctx.theme;
+    let [_, progress_line] = milestone_lines(progress, theme);
+    let milestone = progress.milestone;
+    let issues = match progress.issues {
+        Some((closed, total)) => format!("{closed}/{total} issues closed"),
+        None => "no issues".to_string(),
+    };
+    list_row(
+        ctx,
+        ListRow {
+            icon: ctx.icons.tab_milestone.clone(),
+            color: theme.blue,
+            reference: format!("%{}", milestone.iid),
+            title: sanitize_untrusted(&milestone.title).into_owned(),
+            author: "",
+            people: issues,
+            note: progress_line.spans,
+            when: milestone.due_date.clone().unwrap_or_default(),
+        },
+    )
+}
+
+/// A release: its tag, name and the first line of its notes.
+fn release_row(ctx: &Context, release: &Release) -> Row<'static> {
+    let theme = ctx.theme;
+    let notes = release
+        .description
+        .as_deref()
+        .and_then(|notes| notes.lines().map(str::trim).find(|line| !line.is_empty()))
+        .map(|line| sanitize_untrusted(line).into_owned());
+    let name = sanitize_untrusted(&release.name).into_owned();
+    let title = match notes {
+        Some(notes) => format!("{name} · {notes}"),
+        None => name,
+    };
+    list_row(
+        ctx,
+        ListRow {
+            icon: ctx.icons.tab_release.clone(),
+            color: theme.green,
+            reference: sanitize_untrusted(&release.tag_name).into_owned(),
+            title,
+            author: release.author_name.as_deref().unwrap_or(""),
+            people: release
+                .commit_title
+                .as_deref()
+                .map(|title| sanitize_untrusted(title).into_owned())
+                .unwrap_or_default(),
+            note: Vec::new(),
+            when: time_ago(&release.released_at),
+        },
+    )
+}
+
+fn activity_row(ctx: &Context, item: &Activity) -> Row<'static> {
     let (theme, icons) = (ctx.theme, ctx.icons);
     let mr_marker = if ctx.kind.is_github() { '#' } else { '!' };
     let (icon, color, reference, title, author, people, note) = match item {
@@ -867,16 +1062,19 @@ fn item_row(ctx: &Context, item: &Activity) -> Row<'static> {
             )
         }
     };
-    Row::new(vec![
-        Cell::from(icon.clone()).style(Style::default().fg(color)),
-        Cell::from(reference).style(Style::default().fg(color)),
-        Cell::from(title).style(Style::default().fg(theme.text_normal)),
-        Cell::from(format!("@{}", sanitize_untrusted(author)))
-            .style(Style::default().fg(theme.text_muted)),
-        Cell::from(people).style(Style::default().fg(theme.text_muted)),
-        Cell::from(Line::from(note)),
-        Cell::from(time_ago(item.updated_at())).style(Style::default().fg(theme.text_muted)),
-    ])
+    list_row(
+        ctx,
+        ListRow {
+            icon: icon.clone(),
+            color,
+            reference,
+            title,
+            author,
+            people,
+            note,
+            when: time_ago(item.updated_at()),
+        },
+    )
 }
 
 /// `text` cut to at most `width` characters, its `...` included.
@@ -935,7 +1133,7 @@ fn mr_note(ctx: &Context, mr: &MergeRequest) -> Vec<Span<'static>> {
     if mr.draft {
         notes.push(note_span("draft".to_string(), theme.text_muted));
     }
-    notes.extend(idle_note(ctx, &mr.updated_at, MR_IDLE_DAYS));
+    notes.extend(idle_note(ctx, &mr.updated_at, ctx.now.idle.mrs));
     notes
 }
 
@@ -955,6 +1153,6 @@ fn issue_note(ctx: &Context, issue: &Issue) -> Vec<Span<'static>> {
         Some(days) => notes.push(note_span(format!("due in {days}d"), theme.text_muted)),
         None => {}
     }
-    notes.extend(idle_note(ctx, &issue.updated_at, ISSUE_IDLE_DAYS));
+    notes.extend(idle_note(ctx, &issue.updated_at, ctx.now.idle.issues));
     notes
 }

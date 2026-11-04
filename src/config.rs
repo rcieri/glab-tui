@@ -1864,6 +1864,40 @@ impl Default for UiConfig {
     }
 }
 
+/// The `[dashboard]` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DashboardConfig {
+    /// The Dashboard tab is opt-in, so it does not take the first tab from
+    /// people used to starting on Issues.
+    pub enabled: bool,
+    /// Whose work the Dashboard opens on: `me`, `everyone` or a login.
+    pub person: String,
+    pub mr_idle_days: u32,
+    pub issue_idle_days: u32,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        let idle = crate::domain::dashboard::IdleDays::default();
+        Self {
+            enabled: false,
+            person: "me".to_string(),
+            mr_idle_days: u32::try_from(idle.mrs).unwrap_or(u32::MAX),
+            issue_idle_days: u32::try_from(idle.issues).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl DashboardConfig {
+    pub fn idle_days(&self) -> crate::domain::dashboard::IdleDays {
+        crate::domain::dashboard::IdleDays {
+            mrs: i64::from(self.mr_idle_days),
+            issues: i64::from(self.issue_idle_days),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -1899,6 +1933,7 @@ pub struct Config {
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
+    pub dashboard: DashboardConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1930,6 +1965,7 @@ impl Default for Config {
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
+            dashboard: DashboardConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -2187,6 +2223,14 @@ cycle_status_filter = "s"
 
 [keybindings.dashboard]
 cycle_window = "w"
+
+[dashboard]
+# The Dashboard tab is off until enabled here.
+enabled = false
+# Whose work it opens on: "me", "everyone" or a login.
+person = "me"
+mr_idle_days = 7
+issue_idle_days = 14
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

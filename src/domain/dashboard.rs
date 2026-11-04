@@ -17,26 +17,37 @@ pub const PIPELINE_HISTORY_LEN: usize = 20;
 pub const LATEST_REFS_SHOWN: usize = 3;
 /// An open issue due within this many days counts as due soon.
 pub const DUE_SOON_DAYS: i64 = 7;
-/// An open MR/PR not updated for this many days counts as idle.
-pub const MR_IDLE_DAYS: i64 = 7;
-/// An open issue not updated for this many days counts as idle.
-pub const ISSUE_IDLE_DAYS: i64 = 14;
+/// How many days without an update make an open MR/PR or issue idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdleDays {
+    pub mrs: i64,
+    pub issues: i64,
+}
+
+impl Default for IdleDays {
+    fn default() -> Self {
+        Self { mrs: 7, issues: 14 }
+    }
+}
 
 const DUE_DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// The moment a summary is taken at. Idle ages count from `instant`; due
-/// dates are calendar dates, so they count from the local `today`.
+/// The moment a summary is taken at, and the age from which it counts open
+/// work as idle. Idle ages count from `instant`; due dates are calendar
+/// dates, so they count from the local `today`.
 #[derive(Debug, Clone, Copy)]
 pub struct Now {
     pub instant: DateTime<Utc>,
     pub today: NaiveDate,
+    pub idle: IdleDays,
 }
 
 impl Now {
-    pub fn current() -> Self {
+    pub fn current(idle: IdleDays) -> Self {
         Self {
             instant: Utc::now(),
             today: Local::now().date_naive(),
+            idle,
         }
     }
 }
@@ -170,7 +181,7 @@ pub enum MrQueue {
     ReadyToMerge,
     /// A conflict or a needed rebase.
     Blocked,
-    /// Not updated for `MR_IDLE_DAYS`.
+    /// Not updated for `IdleDays::mrs`.
     Idle,
     Drafts,
 }
@@ -198,7 +209,7 @@ impl MrQueue {
         if !is_open_mr(mr) {
             return false;
         }
-        let is_idle = || is_idle(&mr.updated_at, MR_IDLE_DAYS, now.instant);
+        let is_idle = || is_idle(&mr.updated_at, now.idle.mrs, now.instant);
         match person {
             Person::Everyone => match self {
                 MrQueue::Open => true,
@@ -262,7 +273,7 @@ pub enum IssueQueue {
     Overdue,
     /// Due within `DUE_SOON_DAYS`, a person's among the ones assigned to them.
     DueSoon,
-    /// Not updated for `ISSUE_IDLE_DAYS`, a person's among the ones assigned
+    /// Not updated for `IdleDays::issues`, a person's among the ones assigned
     /// to them.
     Idle,
     /// Nobody assigned, a person's among the ones they opened.
@@ -300,7 +311,7 @@ impl IssueQueue {
                 IssueQueue::DueSoon => {
                     due_in().is_some_and(|days| (0..=DUE_SOON_DAYS).contains(&days))
                 }
-                IssueQueue::Idle => is_idle(&issue.updated_at, ISSUE_IDLE_DAYS, now.instant),
+                IssueQueue::Idle => is_idle(&issue.updated_at, now.idle.issues, now.instant),
                 IssueQueue::Unassigned => issue.assignees.is_empty(),
             }
     }
@@ -638,6 +649,7 @@ mod tests {
                 .expect("valid timestamp")
                 .with_timezone(&Utc),
             today: NaiveDate::from_ymd_opt(2026, 10, 29).expect("valid date"),
+            idle: IdleDays::default(),
         }
     }
 

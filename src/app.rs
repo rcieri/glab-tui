@@ -4477,6 +4477,39 @@ impl App {
         found
     }
 
+    /// Switch to the Pipelines tab at its top level, drop filters that would
+    /// hide the target, and select pipeline `id`. Returns whether it is listed.
+    pub fn focus_pipeline(&mut self, id: u64) -> bool {
+        while self.ascend() {}
+        self.clear_tab_filters(Tab::Pipelines);
+        self.activate_tab(Tab::Pipelines);
+        let idx = self.filtered_pipelines().iter().position(|p| p.id() == id);
+        if let Some(idx) = idx {
+            self.pipelines.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Switch to the Milestones tab, drop filters that would hide the
+    /// target, and select milestone `iid`. Returns whether it is listed.
+    pub fn focus_milestone(&mut self, iid: u64) -> bool {
+        self.clear_tab_filters(Tab::Milestones);
+        self.activate_tab(Tab::Milestones);
+        let idx = self.filtered_milestones().iter().position(|m| m.iid == iid);
+        if let Some(idx) = idx {
+            self.milestones.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Switch to the Releases tab, drop filters that would hide the target,
+    /// and select the release tagged `tag`. Returns whether it is listed.
+    pub fn focus_release(&mut self, tag: &str) -> bool {
+        self.clear_tab_filters(Tab::Releases);
+        self.activate_tab(Tab::Releases);
+        self.releases.select(&tag.to_string())
+    }
+
     /// Highlight issue `iid` (in `project` when given) among the rows the
     /// Issues table shows. Returns false, leaving the selection alone, when no
     /// visible row matches.
@@ -5805,6 +5838,7 @@ impl App {
         let mut tabs: Vec<Tab> = Tab::ALL
             .iter()
             .filter(|t| t.available_on_platform(kind))
+            .filter(|t| **t != Tab::Dashboard || self.config.dashboard.enabled)
             .copied()
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {
@@ -6068,6 +6102,8 @@ impl App {
             .set_sequences(key_sequences(&self.config.keybindings));
         self.theme = self.config.resolve_theme();
         self.icons = Arc::new(self.config.icons.icons());
+        self.dashboard.person =
+            crate::dashboard::DashboardPerson::from_config(&self.config.dashboard.person);
 
         for tab in Tab::ALL {
             let pane = match tab {

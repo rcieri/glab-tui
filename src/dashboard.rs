@@ -4,9 +4,14 @@
 use crate::app::{App, Tab};
 use crate::domain::contributions::{Contribution, ContributionHistory, TargetKind};
 use crate::domain::dashboard::{
-    self, Activity, ActivityWindow, IssueQueue, MrQueue, Now, Person, recent_activity,
+    self, Activity, ActivityWindow, IssueQueue, MilestoneProgress, MrQueue, Now, Person,
+    recent_activity,
 };
+use crate::domain::pipelines::Pipeline;
+use crate::domain::releases::Release;
 use chrono::{DateTime, Utc};
+use std::cell::Cell;
+use std::collections::HashMap;
 
 /// The repository's activity feed as the Dashboard last fetched it.
 #[derive(Debug, Default, Clone)]
@@ -97,6 +102,19 @@ pub enum DashboardPerson {
 }
 
 impl DashboardPerson {
+    /// `me`, `everyone` or a login (with or without its `@`), as
+    /// `dashboard.person` takes it.
+    pub fn from_config(value: &str) -> Self {
+        let value = value.trim();
+        if value.is_empty() || value.eq_ignore_ascii_case("me") {
+            DashboardPerson::Me
+        } else if value.eq_ignore_ascii_case("everyone") {
+            DashboardPerson::Everyone
+        } else {
+            DashboardPerson::User(value.trim_start_matches('@').to_string())
+        }
+    }
+
     /// `Me` is the signed-in user, and everyone while their login is unknown.
     pub fn resolve<'a>(&'a self, signed_in: Option<&'a str>) -> Person<'a> {
         match self {
@@ -108,7 +126,7 @@ impl DashboardPerson {
 }
 
 /// A card on the Dashboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DashboardCard {
     MergeRequests,
     Issues,
@@ -142,6 +160,14 @@ impl DashboardCard {
             Self::Releases => Some(Tab::Releases),
         }
     }
+
+    /// Whether the card has lines of its own to pick before its item list.
+    pub fn has_rows(self) -> bool {
+        matches!(
+            self,
+            Self::MergeRequests | Self::Issues | Self::Contributors
+        )
+    }
 }
 
 /// One selectable line of the Dashboard: a queue, a person, or a whole card
@@ -165,58 +191,156 @@ impl DashboardRow {
     }
 }
 
+/// One entry of the list below the cards.
+#[derive(Debug, Clone, Copy)]
+pub enum DashboardItem<'a> {
+    Activity(Activity<'a>),
+    Pipeline(&'a Pipeline),
+    Milestone(MilestoneProgress<'a>),
+    Release(&'a Release),
+}
+
+/// Where the Dashboard's keys go. Each `Enter` goes one level down and each
+/// `Esc` one level up.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardFocus {
+    /// The tab itself: `h`/`l` still switch tabs.
+    #[default]
+    Tab,
+    /// `h`/`j`/`k`/`l` move between cards.
+    Cards,
+    /// `j`/`k` pick a queue or a person of the selected card.
+    Rows,
+    /// `j`/`k` walk the item list.
+    List,
+}
+
+/// A move between cards on the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardStep {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 /// What `Enter` on the Dashboard leads to outside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardAction {
     Stay,
-    OpenTab(Tab),
     OpenIssue { project: String, iid: u64 },
     OpenMr { project: String, iid: u64 },
+    OpenPipeline(u64),
+    OpenMilestone(u64),
+    OpenRelease(String),
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct DashboardState {
     pub person: DashboardPerson,
-    /// `None` until the first move, which leaves the first row selected.
-    row: Option<DashboardRow>,
-    /// Whether the keys move through the item list below the cards.
-    pub is_list_focused: bool,
+    pub focus: DashboardFocus,
+    /// `None` until the first move, which leaves the first card selected.
+    card: Option<DashboardCard>,
+    /// The row last picked on each card.
+    rows_by_card: HashMap<DashboardCard, DashboardRow>,
     pub list_cursor: usize,
+    /// Cards per grid line in the last draw, the stride of `j`/`k` between
+    /// cards. Only the draw knows the width that decides it.
+    pub grid_columns: Cell<usize>,
     pub contributions: ContributionFeed,
     pub contributors_view: ContributorsView,
     pub contributors_sort: Option<ContributorSort>,
 }
 
+/// The cards `rows` belong to, in order.
+fn cards_of(rows: &[DashboardRow]) -> Vec<DashboardCard> {
+    let mut cards: Vec<DashboardCard> = Vec::new();
+    for row in rows {
+        if cards.last() != Some(&row.card()) {
+            cards.push(row.card());
+        }
+    }
+    cards
+}
+
 impl DashboardState {
-    /// The selected row among `rows`, the first one when the selection left
-    /// them (a contributor with nothing open any more).
-    pub fn selected_row<'a>(&'a self, rows: &'a [DashboardRow]) -> Option<&'a DashboardRow> {
-        self.row
-            .as_ref()
-            .filter(|row| rows.contains(row))
-            .or(rows.first())
+    /// The selected card among the ones `rows` belong to, the first one when
+    /// the selection left them.
+    pub fn selected_card(&self, rows: &[DashboardRow]) -> Option<DashboardCard> {
+        self.card
+            .filter(|card| rows.iter().any(|row| row.card() == *card))
+            .or_else(|| rows.first().map(DashboardRow::card))
     }
 
-    /// Move one row forward or back, wrapping.
+    /// The selected card's picked row, its first one when the pick left the
+    /// rows (a contributor with nothing open any more).
+    pub fn selected_row<'a>(&'a self, rows: &'a [DashboardRow]) -> Option<&'a DashboardRow> {
+        let card = self.selected_card(rows)?;
+        self.rows_by_card
+            .get(&card)
+            .filter(|row| rows.contains(row))
+            .or_else(|| rows.iter().find(|row| row.card() == card))
+    }
+
+    /// Move one row forward or back within the selected card, wrapping.
     pub fn step_row(&mut self, rows: &[DashboardRow], forward: bool) {
-        if rows.is_empty() {
+        let Some(card) = self.selected_card(rows) else {
             return;
-        }
+        };
+        let in_card: Vec<&DashboardRow> = rows.iter().filter(|row| row.card() == card).collect();
         let current = self
             .selected_row(rows)
-            .and_then(|row| rows.iter().position(|r| r == row))
+            .and_then(|row| in_card.iter().position(|r| *r == row))
             .unwrap_or(0);
         let next = if forward {
-            (current + 1) % rows.len()
+            (current + 1) % in_card.len()
         } else {
-            (current + rows.len() - 1) % rows.len()
+            (current + in_card.len() - 1) % in_card.len()
         };
-        self.row = Some(rows[next].clone());
+        let row = in_card[next].clone();
+        self.rows_by_card.insert(card, row);
     }
 
+    /// Select `row` and the card it belongs to.
     pub fn select_row(&mut self, row: Option<&DashboardRow>) {
         if let Some(row) = row {
-            self.row = Some(row.clone());
+            self.card = Some(row.card());
+            self.rows_by_card.insert(row.card(), row.clone());
+        }
+    }
+
+    /// Move to the neighbouring card on a grid `grid_columns` wide. A step
+    /// off the grid stays put; down from a line whose card below is missing
+    /// lands on the last card.
+    pub fn step_card(&mut self, rows: &[DashboardRow], step: CardStep) {
+        let cards = cards_of(rows);
+        let Some(last) = cards.len().checked_sub(1) else {
+            return;
+        };
+        let columns = self.grid_columns.get().max(1);
+        let current = self
+            .selected_card(rows)
+            .and_then(|card| cards.iter().position(|c| *c == card))
+            .unwrap_or(0);
+        let next = match step {
+            CardStep::Left => (current % columns != 0).then(|| current - 1),
+            CardStep::Right => {
+                (current % columns + 1 < columns && current < last).then(|| current + 1)
+            }
+            CardStep::Up => current.checked_sub(columns),
+            CardStep::Down if current + columns <= last => Some(current + columns),
+            CardStep::Down => (current / columns < last / columns).then_some(last),
+        };
+        if let Some(next) = next {
+            self.card = Some(cards[next]);
+        }
+    }
+
+    fn select_edge_card(&mut self, rows: &[DashboardRow], is_last: bool) {
+        let cards = cards_of(rows);
+        let card = if is_last { cards.last() } else { cards.first() };
+        if let Some(card) = card {
+            self.card = Some(*card);
         }
     }
 
@@ -230,12 +354,17 @@ impl DashboardState {
     }
 
     pub fn focus_list(&mut self) {
-        self.is_list_focused = true;
+        self.focus = DashboardFocus::List;
         self.list_cursor = 0;
     }
 }
 
 impl App {
+    /// The current moment, with the configured idle thresholds.
+    pub fn dashboard_now(&self) -> Now {
+        Now::current(self.config.dashboard.idle_days())
+    }
+
     /// The Dashboard's cards in the current scope, in order, without the
     /// tabs the config disables. Contributors follows the MR/PR and issue
     /// cards it draws on.
@@ -292,15 +421,19 @@ impl App {
         rows
     }
 
-    /// The issues and MRs/PRs listed below the cards for the selected row.
-    pub fn dashboard_items(&self, now: Now) -> Vec<Activity<'_>> {
+    /// What the list below the cards shows for the selected row.
+    pub fn dashboard_items(&self, now: Now) -> Vec<DashboardItem<'_>> {
         let rows = self.dashboard_rows(now);
         self.dashboard_items_for(self.dashboard.selected_row(&rows), now)
     }
 
-    /// What `row` lists: a queue's items, a contributor's activity, or the
-    /// shown person's activity.
-    pub fn dashboard_items_for(&self, row: Option<&DashboardRow>, now: Now) -> Vec<Activity<'_>> {
+    /// What `row` lists: a queue's items, a contributor's activity, a
+    /// card's pipelines, milestones or releases.
+    pub fn dashboard_items_for(
+        &self,
+        row: Option<&DashboardRow>,
+        now: Now,
+    ) -> Vec<DashboardItem<'_>> {
         let signed_in = self.dashboard_signed_in_user();
         let person = self.dashboard_person();
         let (issues, mrs) = (&self.issues.items, &self.mrs.items);
@@ -310,12 +443,12 @@ impl App {
             Some(DashboardRow::Mr(queue)) => queue
                 .list(mrs, person, signed_in, now)
                 .into_iter()
-                .map(Activity::MergeRequest)
+                .map(|mr| DashboardItem::Activity(Activity::MergeRequest(mr)))
                 .collect(),
             Some(DashboardRow::Issue(queue)) => queue
                 .list(issues, person, now)
                 .into_iter()
-                .map(Activity::Issue)
+                .map(|issue| DashboardItem::Activity(Activity::Issue(issue)))
                 .collect(),
             Some(DashboardRow::Contributor(contributor)) => recent_activity(
                 issues,
@@ -323,9 +456,36 @@ impl App {
                 contributions,
                 contributor.resolve(signed_in),
                 since,
-            ),
+            )
+            .into_iter()
+            .map(DashboardItem::Activity)
+            .collect(),
+            Some(DashboardRow::Card(DashboardCard::Pipelines)) => self
+                .pipelines
+                .items
+                .iter()
+                .map(DashboardItem::Pipeline)
+                .collect(),
+            Some(DashboardRow::Card(DashboardCard::Milestones)) => dashboard::upcoming_milestones(
+                &self.milestones.items,
+                |iid| self.milestone_progress(iid),
+                now.today,
+                usize::MAX,
+            )
+            .into_iter()
+            .map(DashboardItem::Milestone)
+            .collect(),
+            Some(DashboardRow::Card(DashboardCard::Releases)) => self
+                .releases
+                .items()
+                .iter()
+                .map(DashboardItem::Release)
+                .collect(),
             Some(DashboardRow::Card(_)) | None => {
                 recent_activity(issues, mrs, contributions, person, since)
+                    .into_iter()
+                    .map(DashboardItem::Activity)
+                    .collect()
             }
         }
     }
@@ -400,7 +560,8 @@ impl App {
         logins
     }
 
-    /// `w`: count open work, then the last day, week and month of activity.
+    /// `cycle_window`: count open work, then the last day, week and month
+    /// of activity.
     pub fn cycle_contributors_view(&mut self) {
         self.dashboard.contributors_view = self.dashboard.contributors_view.next();
     }
@@ -436,58 +597,152 @@ impl App {
         self.dashboard.selected_row(&rows).cloned()
     }
 
-    /// Move to the next or previous row, or item while the list is focused.
+    fn dashboard_selected_card(&self, now: Now) -> Option<DashboardCard> {
+        let rows = self.dashboard_rows(now);
+        self.dashboard.selected_card(&rows)
+    }
+
+    /// `j`/`k`: the card below or above, the next or previous row of the
+    /// card, or item of the list, depending on the focus.
     pub fn step_dashboard(&mut self, forward: bool) {
-        let now = Now::current();
-        if self.dashboard.is_list_focused {
-            let len = self.dashboard_items(now).len();
-            self.dashboard.step_list(len, forward);
-        } else {
-            let rows = self.dashboard_rows(now);
-            self.dashboard.step_row(&rows, forward);
+        let now = self.dashboard_now();
+        match self.dashboard.focus {
+            DashboardFocus::Tab => {}
+            DashboardFocus::Cards => {
+                let rows = self.dashboard_rows(now);
+                let step = if forward {
+                    CardStep::Down
+                } else {
+                    CardStep::Up
+                };
+                self.dashboard.step_card(&rows, step);
+            }
+            DashboardFocus::Rows => {
+                let rows = self.dashboard_rows(now);
+                self.dashboard.step_row(&rows, forward);
+            }
+            DashboardFocus::List => {
+                let len = self.dashboard_items(now).len();
+                self.dashboard.step_list(len, forward);
+            }
+        }
+    }
+
+    /// `h`/`l` while the cards have the keys. Returns whether the Dashboard
+    /// took the key: everywhere below the tab level, so a drill-down is not
+    /// left for another tab by accident.
+    pub fn step_dashboard_sideways(&mut self, step: CardStep) -> bool {
+        match self.dashboard.focus {
+            DashboardFocus::Tab => false,
+            DashboardFocus::Cards => {
+                let rows = self.dashboard_rows(self.dashboard_now());
+                self.dashboard.step_card(&rows, step);
+                true
+            }
+            DashboardFocus::Rows | DashboardFocus::List => true,
         }
     }
 
     pub fn select_first_on_dashboard(&mut self) {
-        if self.dashboard.is_list_focused {
-            self.dashboard.list_cursor = 0;
-        } else {
-            let rows = self.dashboard_rows(Now::current());
-            self.dashboard.select_row(rows.first());
-        }
+        self.select_edge_on_dashboard(false);
     }
 
     pub fn select_last_on_dashboard(&mut self) {
-        let now = Now::current();
-        if self.dashboard.is_list_focused {
-            self.dashboard.list_cursor = self.dashboard_items(now).len().saturating_sub(1);
-        } else {
-            let rows = self.dashboard_rows(now);
-            self.dashboard.select_row(rows.last());
+        self.select_edge_on_dashboard(true);
+    }
+
+    fn select_edge_on_dashboard(&mut self, is_last: bool) {
+        let now = self.dashboard_now();
+        match self.dashboard.focus {
+            DashboardFocus::Tab => {}
+            DashboardFocus::Cards => {
+                let rows = self.dashboard_rows(now);
+                self.dashboard.select_edge_card(&rows, is_last);
+            }
+            DashboardFocus::Rows => {
+                let rows = self.dashboard_rows(now);
+                let Some(card) = self.dashboard.selected_card(&rows) else {
+                    return;
+                };
+                let mut in_card = rows.iter().filter(|row| row.card() == card);
+                let row = if is_last {
+                    in_card.next_back()
+                } else {
+                    in_card.next()
+                };
+                self.dashboard.select_row(row);
+            }
+            DashboardFocus::List => {
+                self.dashboard.list_cursor = if is_last {
+                    self.dashboard_items(now).len().saturating_sub(1)
+                } else {
+                    0
+                };
+            }
         }
     }
 
-    /// `Enter` on the Dashboard. A queue or contributor opens its list (a
-    /// contributor also becomes the person shown), a card its tab, a listed
-    /// item its issue or MR/PR.
+    /// `Enter` on the Dashboard: from the tab into the cards, from a card
+    /// into its queues or people (or straight to its list when it has none),
+    /// from a queue or person into its list, and from a listed item out to
+    /// it in its tab. A person also becomes the one the cards count for.
     pub fn enter_dashboard(&mut self) -> DashboardAction {
-        let now = Now::current();
-        if self.dashboard.is_list_focused {
-            let items = self.dashboard_items(now);
-            let cursor = self
-                .dashboard
-                .list_cursor
-                .min(items.len().saturating_sub(1));
-            let action = match items.get(cursor) {
-                Some(Activity::Issue(issue)) => DashboardAction::OpenIssue {
-                    project: self.scope.project_of(&issue.project_path).to_string(),
-                    iid: issue.iid,
-                },
-                Some(Activity::MergeRequest(mr)) => DashboardAction::OpenMr {
-                    project: self.scope.project_of(&mr.project_path).to_string(),
-                    iid: mr.iid,
-                },
-                Some(Activity::Contribution(contribution)) => match &contribution.target {
+        let now = self.dashboard_now();
+        match self.dashboard.focus {
+            DashboardFocus::Tab => {
+                self.dashboard.focus = DashboardFocus::Cards;
+                DashboardAction::Stay
+            }
+            DashboardFocus::Cards => {
+                if self
+                    .dashboard_selected_card(now)
+                    .is_some_and(DashboardCard::has_rows)
+                {
+                    self.dashboard.focus = DashboardFocus::Rows;
+                } else {
+                    self.open_dashboard_list(now);
+                }
+                DashboardAction::Stay
+            }
+            DashboardFocus::Rows => {
+                if let Some(row) = self.dashboard_selected_row(now)
+                    && let DashboardRow::Contributor(person) = &row
+                {
+                    self.dashboard.person = person.clone();
+                    self.dashboard.select_row(Some(&row));
+                }
+                self.open_dashboard_list(now);
+                DashboardAction::Stay
+            }
+            DashboardFocus::List => self.open_dashboard_item(now),
+        }
+    }
+
+    fn open_dashboard_list(&mut self, now: Now) {
+        if self.dashboard_items(now).is_empty() {
+            self.show_notice("Nothing to list here".to_string());
+        } else {
+            self.dashboard.focus_list();
+        }
+    }
+
+    fn open_dashboard_item(&mut self, now: Now) -> DashboardAction {
+        let items = self.dashboard_items(now);
+        let cursor = self
+            .dashboard
+            .list_cursor
+            .min(items.len().saturating_sub(1));
+        let action = match items.get(cursor) {
+            Some(DashboardItem::Activity(Activity::Issue(issue))) => DashboardAction::OpenIssue {
+                project: self.scope.project_of(&issue.project_path).to_string(),
+                iid: issue.iid,
+            },
+            Some(DashboardItem::Activity(Activity::MergeRequest(mr))) => DashboardAction::OpenMr {
+                project: self.scope.project_of(&mr.project_path).to_string(),
+                iid: mr.iid,
+            },
+            Some(DashboardItem::Activity(Activity::Contribution(contribution))) => {
+                match &contribution.target {
                     Some(target) => {
                         let project = self.scope.as_str().to_string();
                         let iid = target.iid;
@@ -497,39 +752,48 @@ impl App {
                         }
                     }
                     None => DashboardAction::Stay,
-                },
-                None => DashboardAction::Stay,
-            };
-            let is_commit = matches!(
-                items.get(cursor),
-                Some(Activity::Contribution(contribution)) if contribution.target.is_none()
-            );
-            if is_commit {
-                self.show_notice("A commit has no issue or MR/PR to open".to_string());
+                }
             }
-            return action;
-        }
-        let Some(row) = self.dashboard_selected_row(now) else {
-            return DashboardAction::Stay;
+            Some(DashboardItem::Pipeline(pipeline)) => DashboardAction::OpenPipeline(pipeline.id),
+            Some(DashboardItem::Milestone(progress)) => {
+                DashboardAction::OpenMilestone(progress.milestone.iid)
+            }
+            Some(DashboardItem::Release(release)) => {
+                DashboardAction::OpenRelease(release.tag_name.clone())
+            }
+            None => DashboardAction::Stay,
         };
-        match &row {
-            DashboardRow::Card(card) => {
-                return card
-                    .tab()
-                    .map_or(DashboardAction::Stay, DashboardAction::OpenTab);
-            }
-            DashboardRow::Contributor(person) => {
-                self.dashboard.person = person.clone();
-                self.dashboard.select_row(Some(&row));
-            }
-            DashboardRow::Mr(_) | DashboardRow::Issue(_) => {}
+        let is_commit = matches!(
+            items.get(cursor),
+            Some(DashboardItem::Activity(Activity::Contribution(contribution)))
+                if contribution.target.is_none()
+        );
+        if is_commit {
+            self.show_notice("A commit has no issue or MR/PR to open".to_string());
         }
-        if self.dashboard_items(now).is_empty() {
-            self.show_notice("Nothing to list here".to_string());
-        } else {
-            self.dashboard.focus_list();
-        }
-        DashboardAction::Stay
+        action
+    }
+
+    /// `Esc` on the Dashboard: one level up. Returns false at the tab level,
+    /// where `Esc` keeps its other meanings.
+    pub fn leave_dashboard_level(&mut self) -> bool {
+        self.dashboard.focus = match self.dashboard.focus {
+            DashboardFocus::Tab => return false,
+            DashboardFocus::Cards => DashboardFocus::Tab,
+            DashboardFocus::Rows => DashboardFocus::Cards,
+            DashboardFocus::List => {
+                let now = self.dashboard_now();
+                if self
+                    .dashboard_selected_card(now)
+                    .is_some_and(DashboardCard::has_rows)
+                {
+                    DashboardFocus::Rows
+                } else {
+                    DashboardFocus::Cards
+                }
+            }
+        };
+        true
     }
 }
 
@@ -537,36 +801,152 @@ impl App {
 mod tests {
     use super::*;
 
+    /// Five cards on a grid two wide: MRs and Contributors with rows, then
+    /// Pipelines, Milestones and Releases.
     fn rows() -> Vec<DashboardRow> {
         vec![
             DashboardRow::Mr(MrQueue::Open),
+            DashboardRow::Mr(MrQueue::Drafts),
+            DashboardRow::Contributor(DashboardPerson::Everyone),
             DashboardRow::Contributor(DashboardPerson::User("ada".to_string())),
+            DashboardRow::Card(DashboardCard::Pipelines),
+            DashboardRow::Card(DashboardCard::Milestones),
             DashboardRow::Card(DashboardCard::Releases),
         ]
     }
 
+    fn grid_state() -> DashboardState {
+        let state = DashboardState::default();
+        state.grid_columns.set(2);
+        state
+    }
+
     #[test]
-    fn stepping_wraps_around_both_ends_and_starts_from_the_first_row() {
+    fn row_steps_stay_inside_the_selected_card_and_wrap() {
         let rows = rows();
-        let mut state = DashboardState::default();
+        let mut state = grid_state();
         assert_eq!(state.selected_row(&rows), Some(&rows[0]));
 
         state.step_row(&rows, false);
-        assert_eq!(state.selected_row(&rows), Some(&rows[2]));
+        assert_eq!(state.selected_row(&rows), Some(&rows[1]));
         state.step_row(&rows, true);
         assert_eq!(state.selected_row(&rows), Some(&rows[0]));
     }
 
     #[test]
-    fn a_selected_contributor_who_left_the_rows_falls_back_to_the_first_row() {
-        let mut rows = rows();
-        let mut state = DashboardState::default();
-        state.step_row(&rows, true);
-        rows.remove(1);
+    fn card_steps_follow_the_grid_and_stop_at_its_edges() {
+        let rows = rows();
+        let mut state = grid_state();
+        let card = |state: &DashboardState| state.selected_card(&rows);
 
-        assert_eq!(state.selected_row(&rows), Some(&rows[0]));
+        state.step_card(&rows, CardStep::Left);
+        state.step_card(&rows, CardStep::Up);
+        assert_eq!(card(&state), Some(DashboardCard::MergeRequests));
+        state.step_card(&rows, CardStep::Right);
+        assert_eq!(card(&state), Some(DashboardCard::Contributors));
+        state.step_card(&rows, CardStep::Right);
+        assert_eq!(card(&state), Some(DashboardCard::Contributors));
+        state.step_card(&rows, CardStep::Down);
+        assert_eq!(card(&state), Some(DashboardCard::Milestones));
+        state.step_card(&rows, CardStep::Down);
+        assert_eq!(
+            card(&state),
+            Some(DashboardCard::Releases),
+            "down from a line with no card below lands on the last card"
+        );
+        state.step_card(&rows, CardStep::Up);
+        assert_eq!(card(&state), Some(DashboardCard::Pipelines));
+    }
+
+    #[test]
+    fn each_card_remembers_its_row_across_card_moves() {
+        let rows = rows();
+        let mut state = grid_state();
         state.step_row(&rows, true);
+        state.step_card(&rows, CardStep::Right);
+        assert_eq!(state.selected_row(&rows), Some(&rows[2]));
+        state.step_card(&rows, CardStep::Left);
         assert_eq!(state.selected_row(&rows), Some(&rows[1]));
+    }
+
+    #[test]
+    fn a_picked_contributor_who_left_the_rows_falls_back_to_the_cards_first_row() {
+        let mut rows = rows();
+        let mut state = grid_state();
+        state.select_row(Some(&rows[3].clone()));
+        rows.remove(3);
+
+        assert_eq!(state.selected_row(&rows), Some(&rows[2]));
+    }
+
+    #[test]
+    fn enter_drills_down_level_by_level_and_esc_climbs_back() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.dashboard.grid_columns.set(3);
+        assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
+        assert!(!app.leave_dashboard_level());
+
+        app.enter_dashboard();
+        assert_eq!(app.dashboard.focus, DashboardFocus::Cards);
+        app.enter_dashboard();
+        assert_eq!(app.dashboard.focus, DashboardFocus::Rows);
+
+        assert!(app.leave_dashboard_level());
+        assert_eq!(app.dashboard.focus, DashboardFocus::Cards);
+        assert!(app.leave_dashboard_level());
+        assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
+    }
+
+    #[test]
+    fn a_card_without_rows_lists_its_own_items() {
+        use crate::domain::pipelines::Pipeline;
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.pipelines.items = vec![
+            serde_json::from_value::<Pipeline>(serde_json::json!({
+                "id": 41, "status": "failed", "ref": "main", "updated_at": "2026-10-28T00:00:00Z"
+            }))
+            .expect("valid pipeline"),
+        ];
+        let now = app.dashboard_now();
+        let pipelines = DashboardRow::Card(DashboardCard::Pipelines);
+        app.dashboard.select_row(Some(&pipelines));
+        app.dashboard.focus = DashboardFocus::Cards;
+
+        app.enter_dashboard();
+        assert_eq!(app.dashboard.focus, DashboardFocus::List);
+        assert!(matches!(
+            app.dashboard_items(now).as_slice(),
+            [DashboardItem::Pipeline(pipeline)] if pipeline.id == 41
+        ));
+        assert_eq!(app.enter_dashboard(), DashboardAction::OpenPipeline(41));
+        app.dashboard.focus = DashboardFocus::List;
+        assert!(app.leave_dashboard_level());
+        assert_eq!(app.dashboard.focus, DashboardFocus::Cards);
+    }
+
+    #[test]
+    fn the_configured_person_accepts_me_everyone_and_a_login() {
+        assert_eq!(DashboardPerson::from_config("me"), DashboardPerson::Me);
+        assert_eq!(
+            DashboardPerson::from_config("Everyone"),
+            DashboardPerson::Everyone
+        );
+        assert_eq!(
+            DashboardPerson::from_config("@ada"),
+            DashboardPerson::User("ada".to_string())
+        );
+    }
+
+    #[test]
+    fn the_dashboard_tab_is_listed_only_once_enabled() {
+        let mut app = App::default();
+        assert!(!app.available_tabs().contains(&Tab::Dashboard));
+        app.config.dashboard.enabled = true;
+        assert!(app.available_tabs().contains(&Tab::Dashboard));
+        app.config.disabled_tabs = Some(vec!["dashboard".to_string()]);
+        assert!(!app.available_tabs().contains(&Tab::Dashboard));
     }
 
     #[test]
@@ -589,6 +969,7 @@ mod tests {
                 .expect("valid time")
                 .with_timezone(&Utc),
             today: chrono::NaiveDate::from_ymd_opt(2026, 10, 29).expect("valid date"),
+            idle: dashboard::IdleDays::default(),
         };
         let commit = |author: &str| Contribution {
             author: author.to_string(),

@@ -2789,8 +2789,19 @@ pub async fn handle_active_tab_key(
             handled = crate::handlers::terminal::handle_tab_key(app, key_event);
         }
         crate::app::Tab::Dashboard => {
+            use crate::dashboard::CardStep;
             if keybinding_matches(&app.config.keybindings.dashboard.cycle_window, key_event) {
                 app.cycle_contributors_view();
+            } else if key_event.code == KeyCode::Left
+                || key_event.code == KeyCode::Char('h')
+                || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)
+            {
+                handled = app.step_dashboard_sideways(CardStep::Left);
+            } else if key_event.code == KeyCode::Right
+                || key_event.code == KeyCode::Char('l')
+                || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)
+            {
+                handled = app.step_dashboard_sideways(CardStep::Right);
             } else {
                 handled = false;
             }
@@ -2893,9 +2904,8 @@ pub async fn handle_active_tab_key(
                         app.selected_jobs.clear();
                     }
                 } else if app.active_tab == crate::app::Tab::Dashboard
-                    && app.dashboard.is_list_focused
+                    && app.leave_dashboard_level()
                 {
-                    app.dashboard.is_list_focused = false;
                 } else if !app.search_query.is_empty() {
                     // Last-resort Esc action: drop the active filter. The
                     // previous Esc press already exited the search input
@@ -3313,14 +3323,26 @@ pub async fn handle_active_tab_key(
     handled
 }
 
-/// `Enter` on the Dashboard: drill into a list, or leave for the tab, issue
-/// or MR/PR it points at, with the item's preview open.
+/// `Enter` on the Dashboard: one level down, or out to the issue, MR/PR,
+/// pipeline, milestone or release under the cursor, in its tab with the
+/// preview open.
 fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>) {
     use crate::dashboard::DashboardAction;
     match app.enter_dashboard() {
         DashboardAction::Stay => {}
-        DashboardAction::OpenTab(tab) => {
-            app.activate_tab(tab);
+        DashboardAction::OpenPipeline(id) => {
+            app.focus_pipeline(id);
+            app.detail_visible = true;
+            fetch_for_entered_tab(app, tx);
+        }
+        DashboardAction::OpenMilestone(iid) => {
+            app.focus_milestone(iid);
+            app.detail_visible = true;
+            fetch_for_entered_tab(app, tx);
+        }
+        DashboardAction::OpenRelease(tag) => {
+            app.focus_release(&tag);
+            app.detail_visible = true;
             fetch_for_entered_tab(app, tx);
         }
         DashboardAction::OpenIssue { project, iid } => {

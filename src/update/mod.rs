@@ -110,6 +110,9 @@ mod tests {
 
     #[test]
     fn a_tick_does_not_fetch_the_highlighted_pipelines_jobs_but_a_new_list_does() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
         let mut app = app_with_client();
         app.active_tab = Tab::Pipelines;
         app.pipelines.items = vec![

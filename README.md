@@ -903,7 +903,9 @@ All API calls are made by shelling out to `gh api` or `glab api` (depending on t
 
 ```
 src/
-├── main.rs          # Entry point, event loop, all key-binding handlers
+├── main.rs          # Entry point: terminal setup and the effect-executing event loop
+├── update/          # update(app, event) -> Vec<Effect>: applies every event to App
+├── effect.rs        # Effect: what update asks the loop to do (spawn, suspend, quit)
 ├── app.rs           # App state, Tab enum, DiffView, DatePicker, filtering logic
 ├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
@@ -932,10 +934,12 @@ src/
 │   ├── notifications.rs # Todo/notification type + list
 │   ├── branches.rs  # Branch type + list/create/delete
 │   └── deployments.rs # Environment + Deployment types
-├── handlers/        # Keypress handlers
+├── handlers/        # Keypress handlers, called from update
 │   ├── mod.rs
 │   ├── tabs.rs      # Per-tab keybinding handlers
-│   └── overlays.rs  # Overlay keybinding handlers
+│   ├── overlays/    # One module per overlay (submit dialog, selector, edit menu, ...)
+│   ├── diff_view.rs # Diff view keys and review comment posting
+│   └── mouse.rs     # Mouse handling
 ├── ui/              # Ratatui render functions
 │   ├── mod.rs       # Re-exports
 │   ├── inspector.rs # Unified entity inspector (preview/edit single-column layout)

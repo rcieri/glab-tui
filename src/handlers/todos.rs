@@ -3,40 +3,41 @@
 use crate::app::{App, ConfirmAction, SubmitDialog, Tab};
 use crate::domain::client::GitlabClient;
 use crate::domain::notifications::{self, Notification, NotificationTarget, TodoChange};
-use crate::event::Event;
+use crate::effect::Effects;
+use crate::event::{CommandOutcome, Event};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub fn activate_todo(app: &mut App, tx: &UnboundedSender<Event>) {
+pub fn activate_todo(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     if app.selected_todos.is_empty() {
-        open_selected(app, tx);
+        open_selected(app, tx, fx);
     } else {
-        mark_selected_read(app, tx);
+        mark_selected_read(app, tx, fx);
     }
 }
 
 /// Opens the highlighted todo's issue or MR/PR and marks the todo read. A
 /// todo with nothing to open here stays unread.
-fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
+fn open_selected(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Some(todo) = app.selected_todo().cloned() else {
         return;
     };
     let Some(client) = backend_client(app) else {
         return;
     };
-    if !jump_to_target(app, &client, &todo, tx) || !todo.is_unread() {
+    if !jump_to_target(app, &client, &todo, tx, fx) || !todo.is_unread() {
         return;
     }
-    spawn_marks(tx, client, vec![todo.id], Mark::Read);
+    spawn_marks(tx, client, vec![todo.id], Mark::Read, fx);
 }
 
-fn mark_selected_read(app: &mut App, tx: &UnboundedSender<Event>) {
-    mark_selection(app, tx, Mark::Read);
+fn mark_selected_read(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    mark_selection(app, tx, Mark::Read, fx);
 }
 
 /// Marks every selected todo done, or the highlighted one without a
 /// selection.
-pub fn mark_selected_done(app: &mut App, tx: &UnboundedSender<Event>) {
-    mark_selection(app, tx, Mark::Done);
+pub fn mark_selected_done(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    mark_selection(app, tx, Mark::Done, fx);
 }
 
 pub fn copy_selected_url(app: &mut App) {
@@ -73,7 +74,7 @@ impl Mark {
     }
 }
 
-fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark) {
+fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark, fx: &mut Effects) {
     let ids = match mark {
         Mark::Read => app.unread_todo_ids_to_act_on(),
         Mark::Done => app.todo_ids_to_act_on(),
@@ -90,14 +91,20 @@ fn mark_selection(app: &mut App, tx: &UnboundedSender<Event>, mark: Mark) {
         return;
     };
     app.clear_selections();
-    spawn_marks(tx, client, ids, mark);
+    spawn_marks(tx, client, ids, mark, fx);
 }
 
 /// Reports the accepted and the failed ids as one `TodoChange` each, so a
 /// batch raises at most one toast.
-fn spawn_marks(tx: &UnboundedSender<Event>, client: GitlabClient, ids: Vec<String>, mark: Mark) {
+fn spawn_marks(
+    tx: &UnboundedSender<Event>,
+    client: GitlabClient,
+    ids: Vec<String>,
+    mark: Mark,
+    fx: &mut Effects,
+) {
     let tx = tx.clone();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let mut marked = Vec::new();
         let mut failed = Vec::new();
         let mut errors: Vec<String> = Vec::new();
@@ -128,19 +135,22 @@ fn spawn_marks(tx: &UnboundedSender<Event>, client: GitlabClient, ids: Vec<Strin
     });
 }
 
-pub fn unsubscribe_selected(app: &mut App, tx: &UnboundedSender<Event>) {
+pub fn unsubscribe_selected(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Some(todo) = app.selected_todo().cloned() else {
         return;
     };
     let Some(client) = backend_client(app) else {
         return;
     };
-    spawn_todo_change(tx, TodoChange::Unsubscribed(todo.id.clone()), async move {
-        notifications::unsubscribe_from_notification(&client, &todo).await
-    });
+    spawn_todo_change(
+        tx,
+        TodoChange::Unsubscribed(todo.id.clone()),
+        async move { notifications::unsubscribe_from_notification(&client, &todo).await },
+        fx,
+    );
 }
 
-pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>) {
+pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Some(todo) = app.selected_todo() else {
         return;
     };
@@ -159,13 +169,13 @@ pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>) {
         return;
     };
     let tx = tx.clone();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = client
             .open_in_browser(&project_path, entity, &target_iid)
             .await;
         let _ = tx.send(Event::CommandCompleted(
             Tab::Todos,
-            result.map_err(|e| e.to_string()),
+            CommandOutcome::read_only(result),
         ));
     });
 }
@@ -176,23 +186,27 @@ pub fn confirm_mark_all_read(app: &mut App) {
     app.submit_dialog = Some(SubmitDialog::build(ConfirmAction::MarkAllTodosRead, app));
 }
 
-pub fn mark_all_read(app: &mut App, tx: &UnboundedSender<Event>) {
+pub fn mark_all_read(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Some(client) = backend_client(app) else {
         return;
     };
-    spawn_todo_change(tx, TodoChange::MarkedAllRead, async move {
-        notifications::mark_all_notifications_as_read(&client).await
-    });
+    spawn_todo_change(
+        tx,
+        TodoChange::MarkedAllRead,
+        async move { notifications::mark_all_notifications_as_read(&client).await },
+        fx,
+    );
 }
 
 /// Switches the tab between unread-only and everything, and refetches it.
-pub fn toggle_show_read(app: &mut App, tx: &UnboundedSender<Event>) {
+pub fn toggle_show_read(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     app.toggle_show_read_todos();
     let Some(client) = app.gitlab_client.clone() else {
         return;
     };
     app.start_loading_tab(Tab::Todos);
     crate::fetch::spawn_refresh_active_tab(
+        fx,
         &client,
         &app.scope,
         app.requested_state_queries(),
@@ -215,9 +229,10 @@ fn spawn_todo_change(
     tx: &UnboundedSender<Event>,
     change: TodoChange,
     task: impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    fx: &mut Effects,
 ) {
     let tx = tx.clone();
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = task.await.map_err(|e| format!("{e:#}"));
         let _ = tx.send(Event::TodoChanged(change, result));
     });
@@ -231,6 +246,7 @@ fn jump_to_target(
     client: &GitlabClient,
     todo: &Notification,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let Some(target) = todo.target() else {
         app.show_error(format!(
@@ -260,10 +276,16 @@ fn jump_to_target(
     }
     match target {
         NotificationTarget::Issue => {
-            crate::fetch::spawn_fetch_issue(client, project, iid, app.scoped_sender(tx.clone()));
+            crate::fetch::spawn_fetch_issue(
+                fx,
+                client,
+                project,
+                iid,
+                app.scoped_sender(tx.clone()),
+            );
         }
         NotificationTarget::MergeRequest => {
-            crate::fetch::spawn_fetch_mr(client, project, iid, app.scoped_sender(tx.clone()));
+            crate::fetch::spawn_fetch_mr(fx, client, project, iid, app.scoped_sender(tx.clone()));
         }
     }
     true

@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **Theme picker keeps color overrides**: Picking a theme in the Configure View now applies the per-color `[theme]` overrides from `config.toml` on top of the preset, as a restart does, instead of dropping them until the next launch. A theme change or repo switch no longer re-reads the config file to resolve the theme and icons (#589).
+- **No refetch after read-only commands**: Opening an issue, MR/PR, pipeline, job, runner, release, milestone, branch, environment or todo in the browser, or downloading a job artifact, no longer refetches the active tab and the open diff. Only commands that change something on the forge do (#595).
+- **Idle preview prefetch**: The jobs of the highlighted pipeline or MR and the issues of the highlighted milestone are looked up when the highlight, the list or the cache changes, instead of on every tick, so an idle Pipelines, MRs or Milestones tab no longer filters its list four times a second (#595).
+- **Diff comment actions in group scope**: Posting, replying to, resolving, editing and deleting a comment in an MR/PR diff now act on the diff's own project instead of the first listed MR with the same number or the group path (#595).
 
 ## [0.9.4] - 2026-10-29
 

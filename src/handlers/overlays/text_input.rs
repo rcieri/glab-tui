@@ -265,7 +265,7 @@ pub fn handle_key(
                 } => {
                     if !value.trim().is_empty() {
                         if let Some(client) = app.gitlab_client.clone() {
-                            let project = app.project_path_for_mr(mr_iid);
+                            let project = app.project_path_for_open_mr(mr_iid);
                             let thread_id = discussion_id.clone();
                             let body = value.clone();
                             let tx = tx.clone();

@@ -838,7 +838,7 @@ pub fn handle_key(
                                 "Resolve Thread" | "Unresolve Thread" => {
                                     let is_resolve = action_str == "Resolve Thread";
                                     if let Some(client) = app.gitlab_client.clone() {
-                                        let project = app.project_path_for_mr(mr_iid);
+                                        let project = app.project_path_for_open_mr(mr_iid);
                                         let thread_id =
                                             comment.discussion_id.clone().unwrap_or_default();
                                         let status_desc = if is_resolve {

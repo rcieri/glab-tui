@@ -352,8 +352,7 @@ pub fn handle_key(
                                 app.project_cache = cache.clone();
                                 app.restore_cached_issues(cache.issues, cache.issues_state_query);
                                 app.restore_cached_mrs(cache.mrs, cache.mrs_state_query);
-                                // workflow is #[serde(skip)] — see the
-                                // comment at the startup cache load.
+                                // Cached rows arrive with `workflow` unset: it is #[serde(skip)].
                                 crate::fetch::derive_workflow(&mut app.mrs.items);
                                 app.pipelines.items = cache.pipelines;
                                 app.runners.set_items(cache.runners);

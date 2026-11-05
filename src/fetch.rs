@@ -864,8 +864,8 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
 ///
 /// Each tab fetches through `refresh_tab` so it shares the existing
 /// per-tab error handling. The queue paces itself through
-/// `ApiRateLimiter::pace_bulk_operation` between tabs to stay under the
-/// GitLab/GitHub rate limit on cold start.
+/// `backend::rate_limit::pace_bulk_operation` before each tab to stay under
+/// the GitLab/GitHub rate limit on cold start.
 pub fn spawn_refresh_all_tabs(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,

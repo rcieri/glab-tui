@@ -85,7 +85,7 @@ pub enum Event {
     CommandCompleted(crate::app::Tab, Result<CommandOutcome, String>),
     /// Non-error feedback from a background task, shown in the header bar.
     Notice(String),
-    /// A background custom command finished all its runs.
+    /// A custom command, run in the background or the foreground, finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
     /// The editor opened for `purpose` closed. `text` is what it saved,
     /// trimmed, or `None` when it failed or saved nothing.

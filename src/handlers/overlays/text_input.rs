@@ -130,7 +130,6 @@ pub fn handle_key(
                     }
                 }
                 crate::app::TextInputAction::AddReviewComment {
-                    mr_iid,
                     file_path,
                     line_num,
                     old_line_num,
@@ -146,20 +145,13 @@ pub fn handle_key(
                             end_old_line_num,
                             body: value,
                         };
-                        if app.in_review_mode {
-                            app.draft_comments.push(comment);
-                            if let Some(project) =
-                                app.diff_view.as_ref().map(|diff| diff.project_path.clone())
-                            {
-                                app.persist_draft_comments(&project, mr_iid);
-                            }
-                            app.show_notice(format!(
-                                "Added draft comment. ({} pending)",
-                                app.draft_comments.len()
-                            ));
-                        } else {
-                            handlers::diff_view::post_review_comment(app, mr_iid, comment, tx, fx);
-                        }
+                        handlers::diff_view::add_diff_comment(
+                            app,
+                            comment,
+                            "draft comment",
+                            tx,
+                            fx,
+                        );
                     }
                 }
                 crate::app::TextInputAction::EnterPipelineId => {

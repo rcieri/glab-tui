@@ -2734,7 +2734,6 @@ pub enum TextInputAction {
     },
     CreateIssue,
     AddReviewComment {
-        mr_iid: u64,
         file_path: String,
         line_num: Option<u32>,
         old_line_num: Option<u32>,

@@ -533,7 +533,6 @@ pub fn handle_key(
                     format!(" Add Comment to {} ", range.file_path),
                     String::new(),
                     crate::app::TextInputAction::AddReviewComment {
-                        mr_iid: diff_view.mr_iid,
                         file_path: range.file_path,
                         line_num: range.line_num,
                         old_line_num: range.old_line_num,

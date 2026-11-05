@@ -38,7 +38,7 @@ pub(crate) fn post_review_comment(
     let Some(client) = app.gitlab_client.clone() else {
         return;
     };
-    let project = app.project_path_for_mr(mr_iid);
+    let project = app.project_path_for_open_mr(mr_iid);
     spawn_mr_review_task(fx, tx, async move {
         client
             .submit_review(

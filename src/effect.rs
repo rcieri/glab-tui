@@ -1,7 +1,7 @@
 //! What `update::update` asks the event loop to do once it has applied an
 //! event: start background work, hand the terminal to a child process or
-//! stop. `update` never awaits or spawns anything itself, so every side
-//! effect it causes is in the list it returns.
+//! stop. `update` never awaits or spawns anything itself, so every task,
+//! thread and terminal handoff it starts is in the list it returns.
 
 use crate::AppTerminal;
 use crate::app::App;

@@ -1,4 +1,4 @@
-use crate::domain::mr::{DiscussionNote, NotePosition};
+use crate::domain::mr::{DiscussionNote, NoteKind, NotePosition, ReviewState};
 use std::collections::HashMap;
 
 /// Where a review thread points to, relative to the diff currently loaded.
@@ -46,6 +46,9 @@ impl ThreadAnchor {
 /// One discussion: the root note followed by its replies, oldest first.
 #[derive(Debug, Clone)]
 pub struct ReviewThread {
+    /// The id `reply_to_thread` and `set_thread_resolved` take: the root's
+    /// discussion id, else its own id.
+    pub id: String,
     /// Never empty; the first note is the one that opened the thread.
     pub notes: Vec<DiscussionNote>,
     pub anchor: ThreadAnchor,
@@ -58,6 +61,20 @@ impl ReviewThread {
 
     pub fn reply_count(&self) -> usize {
         self.notes.len() - 1
+    }
+
+    /// The verdict of the review whose summary this thread is.
+    pub fn review_state(&self) -> Option<ReviewState> {
+        match self.root().kind {
+            NoteKind::ReviewSummary(state) => Some(state),
+            NoteKind::Discussion | NoteKind::Conversation => None,
+        }
+    }
+
+    /// GitHub conversation comments and review summaries are not threads on
+    /// the forge: nothing can be posted in reply to them.
+    pub fn accepts_replies(&self) -> bool {
+        self.root().kind == NoteKind::Discussion
     }
 
     pub fn is_resolvable(&self) -> bool {
@@ -80,26 +97,28 @@ pub fn group_threads(
     is_in_diff: impl Fn(&NotePosition) -> bool,
 ) -> Vec<ReviewThread> {
     let mut thread_index: HashMap<String, usize> = HashMap::new();
-    let mut grouped: Vec<Vec<DiscussionNote>> = Vec::new();
+    let mut grouped: Vec<(String, Vec<DiscussionNote>)> = Vec::new();
 
-    for note in notes.iter().filter(|n| !n.system) {
+    for (position, note) in notes.iter().enumerate().filter(|(_, n)| !n.system) {
         let key = note
             .discussion_id
             .clone()
-            .unwrap_or_else(|| note.id.to_string());
-        let idx = *thread_index.entry(key).or_insert_with(|| {
-            grouped.push(Vec::new());
+            .or_else(|| note.id.map(|id| id.to_string()))
+            .unwrap_or_else(|| format!("note-{position}"));
+        let idx = *thread_index.entry(key.clone()).or_insert_with(|| {
+            grouped.push((key, Vec::new()));
             grouped.len() - 1
         });
-        grouped[idx].push(note.clone());
+        grouped[idx].1.push(note.clone());
     }
 
     let mut threads: Vec<ReviewThread> = grouped
         .into_iter()
-        .map(|mut thread_notes| {
+        .map(|(id, mut thread_notes)| {
             thread_notes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
             let anchor = ThreadAnchor::classify(thread_notes[0].position.as_ref(), &is_in_diff);
             ReviewThread {
+                id,
                 notes: thread_notes,
                 anchor,
             }
@@ -116,7 +135,7 @@ mod tests {
 
     fn note(id: u64, discussion: &str, created_at: &str) -> DiscussionNote {
         DiscussionNote {
-            id,
+            id: Some(id),
             body: format!("note {id}"),
             author: Author {
                 username: "alice".to_string(),
@@ -127,6 +146,7 @@ mod tests {
             discussion_id: Some(discussion.to_string()),
             resolved: None,
             resolvable: None,
+            kind: NoteKind::Discussion,
         }
     }
 
@@ -158,9 +178,49 @@ mod tests {
         let threads = group_threads(&notes, |_| true);
 
         assert_eq!(threads.len(), 2);
-        assert_eq!(threads[0].root().id, 1);
+        assert_eq!(threads[0].root().id, Some(1));
+        assert_eq!(threads[0].id, "a");
         assert_eq!(threads[0].reply_count(), 1);
-        assert_eq!(threads[1].root().id, 3);
+        assert_eq!(threads[1].root().id, Some(3));
+    }
+
+    #[test]
+    fn notes_without_any_id_each_form_their_own_thread() {
+        let mut first = note(1, "", "2026-01-01T00:00:00Z");
+        first.id = None;
+        first.discussion_id = None;
+        let second = first.clone();
+
+        let threads = group_threads(&[first, second], |_| true);
+
+        assert_eq!(
+            threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            ["note-0", "note-1"]
+        );
+    }
+
+    #[test]
+    fn only_discussion_threads_accept_replies_and_only_summaries_carry_a_review_state() {
+        let mut conversation = note(1, "IC_1", "2026-01-01T00:00:00Z");
+        conversation.kind = NoteKind::Conversation;
+        let mut summary = note(2, "PRR_2", "2026-01-02T00:00:00Z");
+        summary.id = None;
+        summary.kind = NoteKind::ReviewSummary(ReviewState::ChangesRequested);
+        let discussion = note(3, "disc", "2026-01-03T00:00:00Z");
+
+        let threads = group_threads(&[conversation, summary, discussion], |_| true);
+
+        assert_eq!(
+            threads
+                .iter()
+                .map(|t| (t.id.as_str(), t.accepts_replies(), t.review_state()))
+                .collect::<Vec<_>>(),
+            [
+                ("IC_1", false, None),
+                ("PRR_2", false, Some(ReviewState::ChangesRequested)),
+                ("disc", true, None),
+            ]
+        );
     }
 
     #[test]

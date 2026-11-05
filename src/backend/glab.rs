@@ -1101,7 +1101,7 @@ fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
                 .notes
                 .into_iter()
                 .map(move |note| DiscussionNote {
-                    id: note.id,
+                    id: Some(note.id),
                     body: note.body,
                     author: crate::domain::mr::Author {
                         username: note.author.username,
@@ -1119,6 +1119,7 @@ fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
                     discussion_id: Some(discussion_id.clone()),
                     resolved: note.resolved,
                     resolvable: note.resolvable,
+                    kind: crate::domain::mr::NoteKind::Discussion,
                 })
         })
         .collect())
@@ -4676,9 +4677,23 @@ mod tests {
         assert_eq!(
             summary,
             vec![
-                (1, Some("6a9c1750"), "alice", false, Some(12), Some(true)),
-                (2, Some("6a9c1750"), "bob", false, Some(12), Some(true)),
-                (3, Some("f00dfeed"), "bob", true, None, Some(false)),
+                (
+                    Some(1),
+                    Some("6a9c1750"),
+                    "alice",
+                    false,
+                    Some(12),
+                    Some(true)
+                ),
+                (
+                    Some(2),
+                    Some("6a9c1750"),
+                    "bob",
+                    false,
+                    Some(12),
+                    Some(true)
+                ),
+                (Some(3), Some("f00dfeed"), "bob", true, None, Some(false)),
             ]
         );
     }

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- **GitHub conversation comments and review summaries in review threads**: On a GitHub PR, the review threads overlay (`T` in the diff view) and `glab-tui review threads` now list the PR's conversation comments and the body of every submitted review as `general` threads, ordered by creation time with the inline threads. They are read with `gh pr view --json comments,reviews` beside the existing calls. A review summary shows its verdict (`APPROVED`, `CHANGES REQUESTED`, `COMMENTED`, `DISMISSED`) as a badge in the overlay and as `review_state` in the JSON, and a review approved without a body is left out. Overlay rows now also show each thread's age. Neither kind can be replied to or resolved: the overlay offers no reply on them (a conversation comment can still be edited or deleted), and `review reply` / `review resolve` given one of their ids exit non-zero naming the limitation (#696).
+
 ### Bug Fixes
 - **Theme picker keeps color overrides**: Picking a theme in the Configure View now applies the per-color `[theme]` overrides from `config.toml` on top of the preset, as a restart does, instead of dropping them until the next launch. A theme change or repo switch no longer re-reads the config file to resolve the theme and icons (#589).
 

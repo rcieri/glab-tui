@@ -71,12 +71,6 @@ impl ReviewThread {
         }
     }
 
-    /// GitHub conversation comments and review summaries are not threads on
-    /// the forge: nothing can be posted in reply to them.
-    pub fn accepts_replies(&self) -> bool {
-        self.root().kind == NoteKind::Discussion
-    }
-
     pub fn is_resolvable(&self) -> bool {
         self.notes.iter().any(|n| n.resolvable.unwrap_or(false))
     }
@@ -213,7 +207,13 @@ mod tests {
         assert_eq!(
             threads
                 .iter()
-                .map(|t| (t.id.as_str(), t.accepts_replies(), t.review_state()))
+                .map(|t| {
+                    (
+                        t.id.as_str(),
+                        t.root().kind.accepts_replies(),
+                        t.review_state(),
+                    )
+                })
                 .collect::<Vec<_>>(),
             [
                 ("IC_1", false, None),

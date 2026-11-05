@@ -264,6 +264,14 @@ pub enum NoteKind {
     ReviewSummary(ReviewState),
 }
 
+impl NoteKind {
+    /// GitHub conversation comments and review summaries are not threads on
+    /// the forge: nothing can be posted in reply to them.
+    pub fn accepts_replies(self) -> bool {
+        self == Self::Discussion
+    }
+}
+
 /// The verdict of a submitted GitHub review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

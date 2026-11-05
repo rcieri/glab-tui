@@ -694,7 +694,7 @@ impl Selector {
     pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
         let comment_id = comment.id?;
         let mut actions = Vec::new();
-        if comment.kind == crate::domain::mr::NoteKind::Discussion {
+        if comment.kind.accepts_replies() {
             actions.push("Reply to Thread".to_string());
             if !is_github {
                 actions.push(if comment.resolved.unwrap_or(false) {

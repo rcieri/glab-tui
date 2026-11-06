@@ -141,6 +141,19 @@ impl IconSet {
     }
 }
 
+/// The `theme_preset` value that follows the terminal's appearance.
+pub const AUTO_THEME_PRESET: &str = "auto";
+const DEFAULT_DARK_THEME: &str = "default";
+const DEFAULT_LIGHT_THEME: &str = "catppuccin-latte";
+
+/// Whether the terminal draws light text on a dark background or the reverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    Dark,
+    Light,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
     pub tab_issue: String,
@@ -511,7 +524,10 @@ pub enum SaveMenu {
     Cancel,
 }
 
-pub fn hex_to_color(s: &str) -> Option<Color> {
+/// Reads a theme color: `#rrggbb` (the `#` is optional), an ANSI color name
+/// (`red`, `light-blue`, `dark-gray`, `reset`, ...) or a palette index
+/// (`0`-`255`). Names and indexes 0-15 draw with the terminal's own palette.
+pub fn parse_color(s: &str) -> Option<Color> {
     let s = s.trim();
     // An empty color string maps to Color::Reset, which lets the terminal's
     // own (possibly transparent) background show through instead of painting
@@ -519,15 +535,14 @@ pub fn hex_to_color(s: &str) -> Option<Color> {
     if s.is_empty() {
         return Some(Color::Reset);
     }
-    let s = s.trim_start_matches('#');
-    if s.len() == 6 {
-        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-        Some(Color::Rgb(r, g, b))
-    } else {
-        None
+    let hex = s.trim_start_matches('#');
+    if hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        return Some(Color::Rgb(r, g, b));
     }
+    s.parse().ok()
 }
 
 fn color_to_hex(c: Color) -> String {
@@ -621,29 +636,29 @@ struct ThemeToml {
 
 impl ThemeToml {
     fn to_theme(&self) -> Option<Theme> {
-        let bg = hex_to_color(&self.bg)?;
-        let border = hex_to_color(&self.border)?;
-        let border_focused = hex_to_color(&self.border_focused)?;
-        let header_fg = hex_to_color(&self.header_fg)?;
-        let highlight_bg = hex_to_color(&self.highlight_bg)?;
-        let inactive_bg = hex_to_color(&self.inactive_bg)?;
-        let text_normal = hex_to_color(&self.text_normal)?;
-        let text_muted = hex_to_color(&self.text_muted)?;
-        let checked_bg = hex_to_color(&self.checked_bg)?;
-        let green = hex_to_color(&self.green)?;
-        let green_bg = hex_to_color(&self.green_bg)?;
-        let red = hex_to_color(&self.red)?;
-        let red_bg = hex_to_color(&self.red_bg)?;
-        let blue = hex_to_color(&self.blue)?;
-        let blue_bg = hex_to_color(&self.blue_bg)?;
-        let yellow = hex_to_color(&self.yellow)?;
-        let yellow_bg = hex_to_color(&self.yellow_bg)?;
-        let purple = hex_to_color(&self.purple)?;
-        let purple_bg = hex_to_color(&self.purple_bg)?;
+        let bg = parse_color(&self.bg)?;
+        let border = parse_color(&self.border)?;
+        let border_focused = parse_color(&self.border_focused)?;
+        let header_fg = parse_color(&self.header_fg)?;
+        let highlight_bg = parse_color(&self.highlight_bg)?;
+        let inactive_bg = parse_color(&self.inactive_bg)?;
+        let text_normal = parse_color(&self.text_normal)?;
+        let text_muted = parse_color(&self.text_muted)?;
+        let checked_bg = parse_color(&self.checked_bg)?;
+        let green = parse_color(&self.green)?;
+        let green_bg = parse_color(&self.green_bg)?;
+        let red = parse_color(&self.red)?;
+        let red_bg = parse_color(&self.red_bg)?;
+        let blue = parse_color(&self.blue)?;
+        let blue_bg = parse_color(&self.blue_bg)?;
+        let yellow = parse_color(&self.yellow)?;
+        let yellow_bg = parse_color(&self.yellow_bg)?;
+        let purple = parse_color(&self.purple)?;
+        let purple_bg = parse_color(&self.purple_bg)?;
 
         let hex_or = |opt: &Option<String>, fallback: Color| -> Color {
             opt.as_ref()
-                .and_then(|s| hex_to_color(s))
+                .and_then(|s| parse_color(s))
                 .unwrap_or(fallback)
         };
 
@@ -762,6 +777,7 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("pop-dark", include_str!("themes/pop-dark.toml")),
     ("adwaita-dark", include_str!("themes/adwaita-dark.toml")),
     ("adwaita-light", include_str!("themes/adwaita-light.toml")),
+    ("terminal", include_str!("themes/terminal.toml")),
 ];
 
 pub(crate) fn home_dir() -> PathBuf {
@@ -901,7 +917,7 @@ impl Theme {
 
 fn apply_color(field: &mut Color, override_val: &Option<String>) {
     if let Some(s) = override_val {
-        if let Some(c) = hex_to_color(s) {
+        if let Some(c) = parse_color(s) {
             *field = c;
         }
     }
@@ -1845,7 +1861,14 @@ impl Default for UiConfig {
 #[serde(default)]
 pub struct Config {
     pub backend: Option<crate::backend::BackendKind>,
+    /// A preset name, or `auto` to pick `theme_dark` or `theme_light` from
+    /// the terminal's appearance.
     pub theme_preset: Option<String>,
+    /// Forces the appearance `auto` resolves to. Unset, the terminal is asked
+    /// for its background color at startup.
+    pub appearance: Option<Appearance>,
+    pub theme_dark: String,
+    pub theme_light: String,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
     pub keybindings: KeybindingConfig,
@@ -1894,6 +1917,9 @@ impl Default for Config {
         Self {
             backend: None,
             theme_preset: Some("default".to_string()),
+            appearance: None,
+            theme_dark: DEFAULT_DARK_THEME.to_string(),
+            theme_light: DEFAULT_LIGHT_THEME.to_string(),
             active_tab: None,
             theme: ThemeOverrides::default(),
             keybindings: KeybindingConfig::default(),
@@ -1960,8 +1986,16 @@ impl Config {
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
 # "oled", "github-dark-hc",
 # "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
-# "rose-pine", "rose-pine-moon", "rose-pine-dawn"
+# "rose-pine", "rose-pine-moon", "rose-pine-dawn",
+# "terminal" (follows the terminal's own ANSI palette),
+# "auto" (theme_dark or theme_light, by the terminal's background)
 theme_preset = "default"
+
+# Presets "auto" picks. The terminal is asked for its background color at
+# startup. Set appearance to "dark" or "light" to skip asking.
+# theme_dark = "default"
+# theme_light = "catppuccin-latte"
+# appearance = "dark"
 
 # Tab to open on launch. Valid values: issues, mrs, pr, pipelines, runners, releases,
 # todos, milestones, branches, environments, terminal. Case-insensitive.
@@ -2282,14 +2316,40 @@ cycle_status_filter = "s"
         }
     }
 
-    pub fn resolve_theme(&self) -> Theme {
-        let mut theme = if let Some(ref preset) = self.theme_preset {
-            Theme::preset(preset).unwrap_or_else(Theme::default)
-        } else {
-            Theme::default()
-        };
+    /// The theme `theme_preset` and the `[theme]` overrides resolve to.
+    /// `terminal` is the appearance the terminal reported, when it was asked.
+    pub fn resolve_theme(&self, terminal: Option<Appearance>) -> Theme {
+        self.resolve_theme_with_preset(self.theme_preset.as_deref(), terminal)
+    }
+
+    /// `resolve_theme` as if `theme_preset` were `preset`.
+    pub fn resolve_theme_with_preset(
+        &self,
+        preset: Option<&str>,
+        terminal: Option<Appearance>,
+    ) -> Theme {
+        let mut theme = preset
+            .and_then(|preset| Theme::preset(self.concrete_preset(preset, terminal)))
+            .unwrap_or_default();
         apply_overrides(&mut theme, &self.theme);
         theme
+    }
+
+    /// `preset`, or for `auto` the preset of the configured `appearance`,
+    /// else of the one the terminal reported, else the dark one.
+    fn concrete_preset<'a>(&'a self, preset: &'a str, terminal: Option<Appearance>) -> &'a str {
+        if preset != AUTO_THEME_PRESET {
+            return preset;
+        }
+        match self.appearance.or(terminal) {
+            Some(Appearance::Light) => &self.theme_light,
+            Some(Appearance::Dark) | None => &self.theme_dark,
+        }
+    }
+
+    /// Whether the theme depends on the appearance the terminal reports.
+    pub fn follows_terminal_appearance(&self) -> bool {
+        self.appearance.is_none() && self.theme_preset.as_deref() == Some(AUTO_THEME_PRESET)
     }
 }
 
@@ -2302,9 +2362,9 @@ pub fn command_timeout() -> Duration {
 }
 
 pub fn all_theme_presets() -> Vec<String> {
-    let mut presets: Vec<String> = BUNDLED_THEMES
-        .iter()
-        .map(|(name, _)| name.to_string())
+    let mut presets: Vec<String> = std::iter::once(AUTO_THEME_PRESET)
+        .chain(BUNDLED_THEMES.iter().map(|(name, _)| *name))
+        .map(str::to_string)
         .collect();
 
     // Scan user themes directory for additional .toml files
@@ -2531,9 +2591,9 @@ mod tests {
 
     #[test]
     fn empty_color_string_maps_to_reset() {
-        assert_eq!(hex_to_color(""), Some(Color::Reset));
-        assert_eq!(hex_to_color("   "), Some(Color::Reset));
-        assert_eq!(hex_to_color("\t\n"), Some(Color::Reset));
+        assert_eq!(parse_color(""), Some(Color::Reset));
+        assert_eq!(parse_color("   "), Some(Color::Reset));
+        assert_eq!(parse_color("\t\n"), Some(Color::Reset));
     }
 
     #[test]
@@ -2543,10 +2603,10 @@ mod tests {
 
     #[test]
     fn empty_color_round_trips_through_hex() {
-        let parsed = hex_to_color("").expect("empty string must parse");
+        let parsed = parse_color("").expect("empty string must parse");
         assert_eq!(parsed, Color::Reset);
         assert_eq!(color_to_hex(parsed), "");
-        assert_eq!(hex_to_color(&color_to_hex(parsed)), Some(Color::Reset));
+        assert_eq!(parse_color(&color_to_hex(parsed)), Some(Color::Reset));
     }
 
     #[test]
@@ -3010,7 +3070,7 @@ label_palette_9 = "#2d2d2d"
 "##;
         let config: Config =
             toml::from_str(toml_str).expect("deserialize config with full theme overrides");
-        let theme = config.resolve_theme();
+        let theme = config.resolve_theme(None);
 
         assert_eq!(theme.bg, Color::Rgb(1, 1, 1));
         assert_eq!(theme.border, Color::Rgb(2, 2, 2));
@@ -3057,5 +3117,75 @@ label_palette_9 = "#2d2d2d"
         assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
         assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
         assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
+    }
+
+    #[test]
+    fn color_names_and_palette_indexes_parse_to_terminal_colors() {
+        assert_eq!(parse_color("red"), Some(Color::Red));
+        assert_eq!(parse_color("light-blue"), Some(Color::LightBlue));
+        assert_eq!(parse_color("dark-gray"), Some(Color::DarkGray));
+        assert_eq!(parse_color("8"), Some(Color::Indexed(8)));
+        assert_eq!(parse_color("31bf67"), Some(Color::Rgb(0x31, 0xbf, 0x67)));
+        assert_eq!(parse_color("#31bf67"), Some(Color::Rgb(0x31, 0xbf, 0x67)));
+        assert_eq!(parse_color("not-a-color"), None);
+    }
+
+    #[test]
+    fn terminal_preset_draws_only_with_the_terminal_palette() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+
+        let theme = Theme::preset("terminal").expect("terminal preset parses");
+
+        assert!(!format!("{theme:?}").contains("Rgb"), "{theme:?}");
+        assert_eq!(theme.bg, Color::Reset);
+        assert_eq!(theme.text_normal, Color::Reset);
+        assert_eq!(theme.text_muted, Color::DarkGray);
+        assert_eq!(theme.highlight_bg, Color::Blue);
+    }
+
+    #[test]
+    fn auto_preset_follows_the_terminal_appearance() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let config: Config = toml::from_str(
+            "theme_preset = \"auto\"\ntheme_dark = \"nord\"\ntheme_light = \"nord-light\"\n",
+        )
+        .unwrap();
+
+        assert!(config.follows_terminal_appearance());
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Light)),
+            Theme::preset("nord-light").unwrap()
+        );
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Dark)),
+            Theme::preset("nord").unwrap()
+        );
+        assert_eq!(config.resolve_theme(None), Theme::preset("nord").unwrap());
+    }
+
+    #[test]
+    fn configured_appearance_wins_over_the_terminal() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let config: Config =
+            toml::from_str("theme_preset = \"auto\"\nappearance = \"light\"\n").unwrap();
+
+        assert!(!config.follows_terminal_appearance());
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Dark)),
+            Theme::preset(DEFAULT_LIGHT_THEME).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_named_preset_ignores_the_terminal_appearance() {
+        let config: Config = toml::from_str("theme_preset = \"nord\"\n").unwrap();
+
+        assert!(!config.follows_terminal_appearance());
     }
 }

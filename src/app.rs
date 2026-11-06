@@ -687,6 +687,33 @@ impl Selector {
         }
     }
 
+    pub fn theme_picker(presets: Vec<String>, current: &str) -> Self {
+        let cursor = presets
+            .iter()
+            .position(|preset| preset == current)
+            .unwrap_or(0);
+        let mut picker = Self::single_choice(
+            " Select Theme ".to_string(),
+            presets,
+            0,
+            THEME_PICKER.to_string(),
+            THEME_PICKER,
+        );
+        picker.cursor_idx = cursor;
+        picker.state.select(Some(cursor));
+        picker
+    }
+
+    /// The preset under a theme picker's cursor. `None` for any other
+    /// selector and on the `+ Create` row a search appends.
+    pub fn highlighted_theme(&self) -> Option<String> {
+        if self.field_type != THEME_PICKER {
+            return None;
+        }
+        let item = self.get_filtered_items().into_iter().nth(self.cursor_idx)?;
+        self.all_items.contains(&item).then_some(item)
+    }
+
     /// Actions on one pushed review comment. The `comment_action_select`
     /// handler reads the comment id from `entity_iid` and parses the MR iid
     /// back out of `entity_type`.
@@ -751,6 +778,9 @@ impl Selector {
         )
     }
 }
+
+/// `Selector::field_type` of the theme picker.
+pub const THEME_PICKER: &str = "theme_selector";
 
 const COMMENT_EXCERPT_CHARS: usize = 40;
 
@@ -3792,9 +3822,15 @@ impl EnvironmentDeployments {
 
 pub struct App {
     pub config: Config,
-    /// Resolved from `config.theme_preset` and `config.theme`. Only
-    /// `apply_config` refreshes it.
+    /// Resolved from `config.theme_preset`, `config.theme` and
+    /// `terminal_appearance`. Only `apply_config`, `set_terminal_appearance`
+    /// and the theme picker's preview (`sync_theme_preview`) refresh it.
     pub theme: Theme,
+    /// What the terminal reported about its background at startup. Only
+    /// asked when the startup config follows it.
+    pub terminal_appearance: Option<crate::config::Appearance>,
+    /// The preset the open theme picker paints `theme` with.
+    pub theme_preview: Option<String>,
     /// Built from `config.icons`. Only `apply_config` refreshes it.
     pub icons: Arc<Icons>,
     /// Keys typed towards a key sequence. The event loop feeds every
@@ -4034,7 +4070,9 @@ impl Default for App {
         let config = Config::load();
         let key_buffer = crate::keybinding::KeyBuffer::new(key_sequences(&config.keybindings));
         Self {
-            theme: config.resolve_theme(),
+            theme: config.resolve_theme(None),
+            terminal_appearance: None,
+            theme_preview: None,
             icons: Arc::new(config.icons.icons()),
             config: config.clone(),
             key_buffer,
@@ -6011,7 +6049,7 @@ impl App {
     pub fn apply_config(&mut self) {
         self.key_buffer
             .set_sequences(key_sequences(&self.config.keybindings));
-        self.theme = self.config.resolve_theme();
+        self.theme = self.config.resolve_theme(self.terminal_appearance);
         self.icons = Arc::new(self.config.icons.icons());
 
         for tab in Tab::ALL {
@@ -6043,6 +6081,37 @@ impl App {
                 entry.insert(col.clone(), vals.iter().cloned().collect());
             }
         }
+    }
+
+    pub fn set_terminal_appearance(&mut self, appearance: Option<crate::config::Appearance>) {
+        self.terminal_appearance = appearance;
+        self.theme = self.config.resolve_theme(appearance);
+    }
+
+    /// Opens the theme picker on the configured preset.
+    pub fn open_theme_picker(&mut self) {
+        let current = self.config.theme_preset.as_deref().unwrap_or("default");
+        self.selector = Some(Selector::theme_picker(
+            crate::config::all_theme_presets(),
+            current,
+        ));
+    }
+
+    /// Paints `theme` with the preset highlighted in the open theme picker,
+    /// and with the configured one again once the picker closes, whichever
+    /// key or click closed it. Runs before each draw.
+    pub fn sync_theme_preview(&mut self) {
+        let highlighted = self.selector.as_ref().and_then(Selector::highlighted_theme);
+        if highlighted == self.theme_preview {
+            return;
+        }
+        self.theme = match highlighted.as_deref() {
+            Some(preset) => self
+                .config
+                .resolve_theme_with_preset(Some(preset), self.terminal_appearance),
+            None => self.config.resolve_theme(self.terminal_appearance),
+        };
+        self.theme_preview = highlighted;
     }
 
     pub fn tick(&mut self) {}
@@ -13702,6 +13771,79 @@ index 123456..789012 100644
         assert_eq!(app.theme.bg, ratatui::style::Color::Rgb(0x12, 0x34, 0x56));
         assert_eq!(app.theme.border, nord.border);
         assert_ne!(nord.bg, app.theme.bg);
+    }
+
+    fn app_with_theme_picker_open_on(preset: &str) -> App {
+        let mut app = App::default();
+        app.config.theme_preset = Some(preset.to_string());
+        app.apply_config();
+        app.open_theme_picker();
+        app
+    }
+
+    fn highlight_theme(app: &mut App, preset: &str) {
+        let selector = app.selector.as_mut().expect("theme picker is open");
+        selector.cursor_idx = selector
+            .get_filtered_items()
+            .iter()
+            .position(|item| item == preset)
+            .expect("preset is listed");
+    }
+
+    #[test]
+    fn theme_picker_previews_the_highlighted_preset_until_it_closes() {
+        let _lock = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = crate::config::EnvGuard::isolate_home(temp_dir.path());
+        let mut app = app_with_theme_picker_open_on("nord");
+        let nord = Theme::preset("nord").unwrap();
+
+        assert_eq!(
+            app.selector.as_ref().and_then(Selector::highlighted_theme),
+            Some("nord".to_string())
+        );
+
+        highlight_theme(&mut app, "dracula");
+        app.sync_theme_preview();
+        assert_eq!(app.theme, Theme::preset("dracula").unwrap());
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+
+        app.selector = None;
+        app.sync_theme_preview();
+        assert_eq!(app.theme, nord);
+        assert_eq!(app.theme_preview, None);
+    }
+
+    #[test]
+    fn theme_picker_previews_auto_with_the_reported_appearance() {
+        let _lock = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = crate::config::EnvGuard::isolate_home(temp_dir.path());
+        let mut app = app_with_theme_picker_open_on("nord");
+        app.config.theme_light = "solarized-light".to_string();
+        app.terminal_appearance = Some(crate::config::Appearance::Light);
+
+        highlight_theme(&mut app, crate::config::AUTO_THEME_PRESET);
+        app.sync_theme_preview();
+
+        assert_eq!(app.theme, Theme::preset("solarized-light").unwrap());
+    }
+
+    #[test]
+    fn theme_picker_search_row_keeps_the_configured_theme() {
+        let _lock = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = crate::config::EnvGuard::isolate_home(temp_dir.path());
+        let mut app = app_with_theme_picker_open_on("nord");
+        highlight_theme(&mut app, "dracula");
+        app.sync_theme_preview();
+
+        let selector = app.selector.as_mut().unwrap();
+        selector.search_query = "no-such-theme".to_string();
+        selector.cursor_idx = 0;
+        app.sync_theme_preview();
+
+        assert_eq!(app.theme, Theme::preset("nord").unwrap());
     }
 
     #[test]

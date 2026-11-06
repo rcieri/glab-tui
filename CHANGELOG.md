@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- **`terminal` theme**: A new bundled preset draws every color from the terminal's own ANSI palette, so glab-tui follows the terminal or OS theme. Theme files and `[theme]` overrides now also accept ANSI color names (`"light-blue"`) and palette indexes (`"8"`) besides hex values (#598).
+- **`theme_preset = "auto"`**: Picks `theme_dark` (default `default`) or `theme_light` (default `catppuccin-latte`) from the terminal's background, read from `COLORFGBG` or asked of the terminal at startup. `appearance = "dark"` or `"light"` forces one (#598).
+- **Theme picker live preview**: Moving through the Configure View's theme picker repaints the screen with the highlighted preset. `Enter` keeps it, `Esc` restores the previous one. The picker now opens on the current preset (#598).
+
 ### Bug Fixes
 - **Theme picker keeps color overrides**: Picking a theme in the Configure View now applies the per-color `[theme]` overrides from `config.toml` on top of the preset, as a restart does, instead of dropping them until the next launch. A theme change or repo switch no longer re-reads the config file to resolve the theme and icons (#589).
 

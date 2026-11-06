@@ -886,6 +886,9 @@ async fn main() -> Result<()> {
 
     // Create app and event handler
     let mut app = App::new();
+    if app.config.follows_terminal_appearance() {
+        app.set_terminal_appearance(crate::terminal_appearance::detect());
+    }
     if let Some(ref tab_str) = cli.tab {
         match crate::app::Tab::from_str(tab_str) {
             Some(tab) => app.active_tab = tab,
@@ -943,7 +946,7 @@ async fn main() -> Result<()> {
         app.label_colors = cache
             .label_colors
             .iter()
-            .filter_map(|(name, hex)| crate::config::hex_to_color(hex).map(|c| (name.clone(), c)))
+            .filter_map(|(name, hex)| crate::config::parse_color(hex).map(|c| (name.clone(), c)))
             .collect();
     }
     app.cached_members = cache.members;
@@ -1232,6 +1235,7 @@ async fn main() -> Result<()> {
         }
 
         app.sync_list_views();
+        app.sync_theme_preview();
         app.discard_stale_deployments();
         terminal.draw(|f| ui::render(f, &mut app))?;
 
@@ -2003,7 +2007,7 @@ async fn main() -> Result<()> {
                             app.label_colors = colors
                                 .iter()
                                 .filter_map(|(name, hex)| {
-                                    crate::config::hex_to_color(hex).map(|c| (name.clone(), c))
+                                    crate::config::parse_color(hex).map(|c| (name.clone(), c))
                                 })
                                 .collect();
                         }
@@ -3241,16 +3245,15 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
 
-                                    if field_type == "theme_selector" {
-                                        let filtered_items = selector.get_filtered_items();
-                                        let mut selected_val =
-                                            selector.selected_items.iter().next().cloned();
-                                        if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val =
-                                                Some(filtered_items[selector.cursor_idx].clone());
-                                        }
+                                    if field_type == crate::app::THEME_PICKER {
+                                        let picked = selector
+                                            .selected_items
+                                            .iter()
+                                            .next()
+                                            .cloned()
+                                            .or_else(|| selector.highlighted_theme());
                                         app.selector = None;
-                                        if let Some(name) = selected_val {
+                                        if let Some(name) = picked {
                                             app.config.theme_preset = Some(name);
                                             app.apply_config();
                                         }
@@ -7683,27 +7686,7 @@ async fn main() -> Result<()> {
                                 } else if idx == prefetch_idx {
                                     app.config.prefetch_tabs = !app.config.prefetch_tabs;
                                 } else if idx == theme_idx {
-                                    let theme_list = crate::config::all_theme_presets();
-                                    if !theme_list.is_empty() {
-                                        app.selector = Some(crate::app::Selector {
-                                            title: " Select Theme ".to_string(),
-                                            all_items: theme_list,
-                                            selected_items: std::collections::HashSet::new(),
-                                            cursor_idx: 0,
-                                            search_query: String::new(),
-                                            is_filtering: false,
-                                            is_loading: false,
-                                            entity_iid: 0,
-                                            entity_type: "theme_selector".to_string(),
-                                            field_type: "theme_selector".to_string(),
-                                            multi_select: false,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                        });
-                                    }
+                                    app.open_theme_picker();
                                 }
                                 if let Some(client) = app.gitlab_client.clone() {
                                     app.start_loading_tab(app.active_tab);
@@ -7796,27 +7779,7 @@ async fn main() -> Result<()> {
                                 } else if idx == prefetch_idx {
                                     app.config.prefetch_tabs = !app.config.prefetch_tabs;
                                 } else if idx == theme_idx {
-                                    let theme_list = crate::config::all_theme_presets();
-                                    if !theme_list.is_empty() {
-                                        app.selector = Some(crate::app::Selector {
-                                            title: " Select Theme ".to_string(),
-                                            all_items: theme_list,
-                                            selected_items: std::collections::HashSet::new(),
-                                            cursor_idx: 0,
-                                            search_query: String::new(),
-                                            is_filtering: false,
-                                            is_loading: false,
-                                            entity_iid: 0,
-                                            entity_type: "theme_selector".to_string(),
-                                            field_type: "theme_selector".to_string(),
-                                            multi_select: false,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                        });
-                                    }
+                                    app.open_theme_picker();
                                 } else if idx == save_idx {
                                     app.save_menu_open = true;
                                     app.save_menu_selection = Some(SaveMenu::Local);

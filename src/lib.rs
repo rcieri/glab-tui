@@ -17,6 +17,7 @@ pub mod keybinding;
 pub mod scope;
 pub mod syntax;
 pub mod templates;
+pub mod terminal_appearance;
 pub mod ui;
 pub mod utils;
 

@@ -8,6 +8,7 @@ pub mod config;
 pub mod custom_commands;
 pub mod domain;
 pub mod editor;
+pub mod effect;
 pub mod entity_editor;
 pub mod event;
 pub mod fetch;
@@ -20,6 +21,7 @@ pub mod scope;
 pub mod syntax;
 pub mod templates;
 pub mod ui;
+pub mod update;
 pub mod utils;
 
 pub type AppTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;

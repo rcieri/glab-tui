@@ -1,10 +1,11 @@
 //! Keys, clicks and the background submission of the submit-review overlay.
 
-use crate::AppTerminal;
 use crate::app::{App, REVIEW_SUBMIT_LOG_PREFIX};
+use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::Event;
+use crate::keybinding::KeyPress;
 use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, ReviewVerdict, SubmissionState};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -17,9 +18,9 @@ pub fn open(app: &mut App, mr_iid: u64, project_path: String) {
 /// drafts are gone. `Ctrl+E` hands the summary to `$EDITOR`.
 pub fn handle_key(
     app: &mut App,
-    key_event: &KeyEvent,
-    terminal: &mut AppTerminal,
-    tx: UnboundedSender<Event>,
+    key_event: &KeyPress,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let Some(mut overlay) = app.review_submit.take() else {
         return false;
@@ -30,25 +31,34 @@ pub fn handle_key(
     }
     match key_event.code {
         KeyCode::Char('e') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(summary) = crate::editor::edit_in_editor(overlay.summary.value(), terminal)
-            {
-                overlay.summary.set_value(summary);
-                overlay.clear_outcome();
-            }
+            fx.suspend(ForegroundJob::Edit {
+                text: overlay.summary.value().to_string(),
+                file_suffix: ".md".to_string(),
+                purpose: EditPurpose::ReviewSummary,
+            });
             overlay.focus = ReviewSubmitFocus::Summary;
+            app.review_submit = Some(overlay);
         }
         KeyCode::Esc => return true,
-        KeyCode::Tab => overlay.focus = overlay.focus.stepped(1),
-        KeyCode::BackTab => overlay.focus = overlay.focus.stepped(-1),
+        KeyCode::Tab => {
+            overlay.focus = overlay.focus.stepped(1);
+            app.review_submit = Some(overlay);
+        }
+        KeyCode::BackTab => {
+            overlay.focus = overlay.focus.stepped(-1);
+            app.review_submit = Some(overlay);
+        }
         KeyCode::Enter if overlay.focus == ReviewSubmitFocus::CancelButton => return true,
         KeyCode::Enter => {
             app.review_submit = Some(overlay);
-            submit(app, tx);
+            submit(app, tx, fx);
             return true;
         }
-        code => move_or_edit(&mut overlay, code, key_event.modifiers),
+        code => {
+            move_or_edit(&mut overlay, code, key_event.modifiers);
+            app.review_submit = Some(overlay);
+        }
     }
-    app.review_submit = Some(overlay);
     true
 }
 
@@ -102,7 +112,7 @@ fn select_verdict(overlay: &mut ReviewSubmit, verdict: ReviewVerdict) {
 
 /// A click on the overlay: a verdict row selects it, the summary takes the
 /// focus and a button acts like `Enter` on it.
-pub fn click(app: &mut App, row: u16, col: u16) {
+pub fn click(app: &mut App, row: u16, col: u16, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Some(overlay) = app.review_submit.as_mut() else {
         return;
     };
@@ -125,16 +135,14 @@ pub fn click(app: &mut App, row: u16, col: u16) {
         app.review_submit = None;
     } else if contains(layout.submit_button) {
         overlay.focus = ReviewSubmitFocus::SubmitButton;
-        if let Some(tx) = app.tx.clone() {
-            submit(app, tx);
-        }
+        submit(app, tx, fx);
     }
 }
 
 /// Posts the review the overlay describes, or keeps the drafts. The overlay
 /// stays open while the review is posted and shows why it was refused or
 /// failed.
-fn submit(app: &mut App, tx: UnboundedSender<Event>) {
+fn submit(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let draft_count = app.draft_comments.len();
     let Some(overlay) = app.review_submit.as_mut() else {
         return;
@@ -167,7 +175,8 @@ fn submit(app: &mut App, tx: UnboundedSender<Event>) {
             drafts: comments.clone(),
         };
     }
-    tokio::spawn(async move {
+    let tx = tx.clone();
+    fx.spawn(async move {
         let result = client
             .submit_review(&project, mr_iid, event, &body, &comments)
             .await
@@ -220,14 +229,10 @@ mod tests {
     }
 
     fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool {
-        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let options = ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, 80, 24)),
-        };
-        let mut terminal =
-            ratatui::Terminal::with_options(backend, options).expect("terminal construction");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_key(app, &KeyEvent::new(code, modifiers), &mut terminal, tx)
+        let mut fx = Effects::default();
+        let key = KeyPress::Key(crossterm::event::KeyEvent::new(code, modifiers));
+        handle_key(app, &key, &tx, &mut fx)
     }
 
     fn draft(body: &str) -> DraftComment {

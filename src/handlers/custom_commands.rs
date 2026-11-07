@@ -710,8 +710,7 @@ fn branch_target(
 fn diff_values(app: &App, checkouts: &mut CheckoutCache) -> Result<TemplateValues, String> {
     let mut values = TemplateValues::default();
     let diff_view = app
-        .diff_view
-        .as_ref()
+        .diff_view()
         .ok_or_else(|| "the diff view is not open".to_string())?;
     let (file_path, line_number) = diff_view
         .cursor_file_position()
@@ -1102,7 +1101,7 @@ mod tests {
             .iter()
             .position(|l| l.content == "+five")
             .unwrap();
-        app.diff_view = Some(view);
+        app.open_diff_view(view);
 
         let values = single_values(&app, CommandPane::Diff).unwrap();
         assert_eq!(

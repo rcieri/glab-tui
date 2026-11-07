@@ -3,7 +3,7 @@ use crate::keybinding::{KeyPress, keybinding_matches};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
-    if app.show_help {
+    if app.show_help() {
         return false;
     }
 
@@ -20,7 +20,7 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
         return false;
     }
 
-    app.show_help = true;
+    app.open_help();
     app.help_search_query.clear();
     reset_help_selection(app);
     true
@@ -44,10 +44,10 @@ pub fn move_help_selection(app: &mut App, down: bool, rows: usize) {
 }
 
 pub fn handle_help_overlay(app: &mut App, key_event: &KeyPress) -> bool {
-    if app.show_help {
+    if app.show_help() {
         match key_event.code {
             KeyCode::Esc | KeyCode::Enter => {
-                app.show_help = false;
+                app.close_help();
                 app.help_search_query.clear();
             }
             KeyCode::Down => move_help_selection(app, true, 1),

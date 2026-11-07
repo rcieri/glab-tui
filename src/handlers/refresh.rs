@@ -24,15 +24,7 @@ pub fn handle_refresh(
                 .contains(crossterm::event::KeyModifiers::CONTROL))
         || keybinding_matches(&app.config.keybindings.global.refresh, key_event);
 
-    if is_refresh
-        && app.text_input.is_none()
-        && app.date_picker.is_none()
-        && app.edit_menu.is_none()
-        && app.selector.is_none()
-        && !app.is_typing_search
-        && !app.job_trace_searching
-        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
-    {
+    if is_refresh && !app.has_modal() && !app.is_typing_search && !app.job_trace_searching {
         app.last_list_refresh = Instant::now();
         app.last_attr_refresh = Instant::now();
         if let Some(client) = app.gitlab_client.clone() {

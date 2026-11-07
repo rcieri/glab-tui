@@ -1232,7 +1232,7 @@ pub(crate) fn render_tab_merge_requests(
                 let is_github = ctx.kind.is_github();
                 let unresolved_threads = if is_github {
                     None
-                } else if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid) {
+                } else if app.diff_view().map(|d| d.mr_iid) == Some(mr.iid) {
                     Some(
                         app.current_comments
                             .iter()
@@ -3126,7 +3126,7 @@ pub(crate) fn render_tab_terminal(
     let area = content_area;
     let base_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app.focus_column_checklist {
+        .border_style(Style::default().fg(if app.focus_column_checklist() {
             theme.border
         } else {
             theme.border_focused

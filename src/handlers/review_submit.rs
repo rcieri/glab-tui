@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn open(app: &mut App, mr_iid: u64, project_path: String) {
-    app.review_submit = Some(ReviewSubmit::new(mr_iid, project_path));
+    app.open_review_submit(ReviewSubmit::new(mr_iid, project_path));
 }
 
 /// Keys of the open overlay, which takes every key until it closes. While a
@@ -22,11 +22,11 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
-    let Some(mut overlay) = app.review_submit.take() else {
+    let Some(mut overlay) = app.pop_review_submit() else {
         return false;
     };
     if overlay.is_submitting() {
-        app.review_submit = Some(overlay);
+        app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
         return true;
     }
     match key_event.code {
@@ -37,26 +37,32 @@ pub fn handle_key(
                 purpose: EditPurpose::ReviewSummary,
             });
             overlay.focus = ReviewSubmitFocus::Summary;
-            app.review_submit = Some(overlay);
+            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
         }
-        KeyCode::Esc => return true,
+        KeyCode::Esc => {
+            app.close_review_submit();
+            return true;
+        }
         KeyCode::Tab => {
             overlay.focus = overlay.focus.stepped(1);
-            app.review_submit = Some(overlay);
+            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
         }
         KeyCode::BackTab => {
             overlay.focus = overlay.focus.stepped(-1);
-            app.review_submit = Some(overlay);
+            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
         }
-        KeyCode::Enter if overlay.focus == ReviewSubmitFocus::CancelButton => return true,
+        KeyCode::Enter if overlay.focus == ReviewSubmitFocus::CancelButton => {
+            app.close_review_submit();
+            return true;
+        }
         KeyCode::Enter => {
-            app.review_submit = Some(overlay);
+            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
             submit(app, tx, fx);
             return true;
         }
         code => {
             move_or_edit(&mut overlay, code, key_event.modifiers);
-            app.review_submit = Some(overlay);
+            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
         }
     }
     true
@@ -113,7 +119,7 @@ fn select_verdict(overlay: &mut ReviewSubmit, verdict: ReviewVerdict) {
 /// A click on the overlay: a verdict row selects it, the summary takes the
 /// focus and a button acts like `Enter` on it.
 pub fn click(app: &mut App, row: u16, col: u16, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    let Some(overlay) = app.review_submit.as_mut() else {
+    let Some(overlay) = app.review_submit_mut() else {
         return;
     };
     let Some(layout) = overlay.layout else {
@@ -132,7 +138,7 @@ pub fn click(app: &mut App, row: u16, col: u16, tx: &UnboundedSender<Event>, fx:
     } else if contains(layout.summary) {
         overlay.focus = ReviewSubmitFocus::Summary;
     } else if contains(layout.cancel_button) {
-        app.review_submit = None;
+        app.close_review_submit();
     } else if contains(layout.submit_button) {
         overlay.focus = ReviewSubmitFocus::SubmitButton;
         submit(app, tx, fx);
@@ -144,32 +150,43 @@ pub fn click(app: &mut App, row: u16, col: u16, tx: &UnboundedSender<Event>, fx:
 /// failed.
 fn submit(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let draft_count = app.draft_comments.len();
-    let Some(overlay) = app.review_submit.as_mut() else {
-        return;
+    let event = match app.review_submit() {
+        Some(overlay) => overlay.event_to_post(draft_count),
+        None => return,
     };
-    let event = match overlay.event_to_post(draft_count) {
+    let event = match event {
         Ok(Some(event)) => event,
         Ok(None) => {
-            app.review_submit = None;
+            app.close_review_submit();
             app.show_notice(app.kept_drafts_notice());
             return;
         }
         Err(reason) => {
-            overlay.state = SubmissionState::Refused(reason);
+            if let Some(overlay) = app.review_submit_mut() {
+                overlay.state = SubmissionState::Refused(reason);
+            }
             return;
         }
     };
     let Some(client) = app.gitlab_client.clone() else {
-        overlay.state = SubmissionState::Refused("No active backend to submit the review.".into());
+        if let Some(overlay) = app.review_submit_mut() {
+            overlay.state =
+                SubmissionState::Refused("No active backend to submit the review.".into());
+        }
         return;
     };
-    let mr_iid = overlay.mr_iid;
-    let project = overlay.project_path.clone();
-    let body = overlay.summary.value().to_string();
+    let (mr_iid, project, body) = match app.review_submit() {
+        Some(overlay) => (
+            overlay.mr_iid,
+            overlay.project_path.clone(),
+            overlay.summary.value().to_string(),
+        ),
+        None => return,
+    };
     let comments = app.draft_comments.clone();
     let mr_short = app.kind().term("mr_short");
     let log_row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}{mr_short} #{mr_iid}"));
-    if let Some(overlay) = app.review_submit.as_mut() {
+    if let Some(overlay) = app.review_submit_mut() {
         overlay.state = SubmissionState::Submitting {
             log_row,
             drafts: comments.clone(),
@@ -189,10 +206,13 @@ fn submit(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
 /// carried and closes the overlay. A failed one keeps both and shows the
 /// error in the overlay. Returns whether a review was posted.
 pub fn finish(app: &mut App, mr_iid: u64, result: Result<(), String>) -> bool {
-    let Some(mut overlay) = app
-        .review_submit
-        .take_if(|overlay| overlay.mr_iid == mr_iid && overlay.is_submitting())
-    else {
+    let matches = app
+        .review_submit()
+        .is_some_and(|overlay| overlay.mr_iid == mr_iid && overlay.is_submitting());
+    if !matches {
+        return false;
+    }
+    let Some(mut overlay) = app.pop_review_submit() else {
         return false;
     };
     let SubmissionState::Submitting { log_row, drafts } = std::mem::take(&mut overlay.state) else {
@@ -210,7 +230,7 @@ pub fn finish(app: &mut App, mr_iid: u64, result: Result<(), String>) -> bool {
         }
         Err(error) => {
             overlay.state = SubmissionState::Failed(error);
-            app.review_submit = Some(overlay);
+            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
             false
         }
     }
@@ -248,16 +268,14 @@ mod tests {
 
     fn submitting_app() -> App {
         let mut app = App::default();
-        app.draft_comments = vec![draft("nit")];
+        let drafts = vec![draft("nit")];
+        app.draft_comments = drafts.clone();
         app.in_review_mode = true;
         open(&mut app, 7, PROJECT.to_string());
         let log_row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.summary.set_value("Looks good".to_string());
-            overlay.state = SubmissionState::Submitting {
-                log_row,
-                drafts: app.draft_comments.clone(),
-            };
+            overlay.state = SubmissionState::Submitting { log_row, drafts };
         }
         app
     }
@@ -269,7 +287,7 @@ mod tests {
         for code in [KeyCode::Tab, KeyCode::Char('j'), KeyCode::Char('q')] {
             assert!(press(&mut app, code));
         }
-        let overlay = app.review_submit.as_ref().expect("still open");
+        let overlay = app.review_submit().expect("still open");
         assert_eq!(overlay.summary.value(), "jq");
         assert_eq!(overlay.verdict, ReviewVerdict::Comment);
     }
@@ -289,12 +307,12 @@ mod tests {
         ] {
             assert!(press(&mut app, code));
         }
-        let overlay = app.review_submit.as_ref().expect("still open");
+        let overlay = app.review_submit().expect("still open");
         assert_eq!(overlay.summary.value(), "ok");
         assert_eq!(overlay.verdict, ReviewVerdict::KeepAsDraft);
 
         press(&mut app, KeyCode::Up);
-        let overlay = app.review_submit.as_ref().expect("still open");
+        let overlay = app.review_submit().expect("still open");
         assert_eq!(overlay.focus, ReviewSubmitFocus::Verdicts);
         assert_eq!(overlay.verdict, ReviewVerdict::KeepAsDraft);
     }
@@ -316,7 +334,7 @@ mod tests {
             assert!(press_with(&mut app, KeyCode::Char(c), modifiers));
         }
 
-        let overlay = app.review_submit.as_ref().expect("still open");
+        let overlay = app.review_submit().expect("still open");
         assert_eq!(overlay.summary.value(), "@€");
     }
 
@@ -328,7 +346,7 @@ mod tests {
 
         assert!(press(&mut app, KeyCode::Esc));
 
-        assert!(app.review_submit.is_none());
+        assert!(app.review_submit().is_none());
         assert_eq!(app.draft_comments.len(), 1);
     }
 
@@ -339,7 +357,7 @@ mod tests {
 
         assert!(press(&mut app, KeyCode::Enter));
 
-        let overlay = app.review_submit.as_ref().expect("stays open");
+        let overlay = app.review_submit().expect("stays open");
         assert_eq!(
             overlay.state,
             SubmissionState::Refused("A comment review needs a summary or draft comments.".into())
@@ -361,7 +379,7 @@ mod tests {
             press(&mut app, code);
         }
 
-        assert!(app.review_submit.is_none());
+        assert!(app.review_submit().is_none());
         assert_eq!(app.draft_comments.len(), 1);
         assert!(app.in_review_mode);
     }
@@ -402,7 +420,7 @@ mod tests {
             KeyModifiers::CONTROL
         ));
 
-        let overlay = app.review_submit.as_ref().expect("stays open");
+        let overlay = app.review_submit().expect("stays open");
         assert!(overlay.is_submitting());
         assert_eq!(overlay.summary.value(), "Looks good");
         assert_eq!(
@@ -422,7 +440,7 @@ mod tests {
         assert_eq!(app.draft_comments.len(), 1);
         assert!(app.in_review_mode);
         assert_eq!(app.toast_notice(), None, "the error is not only a toast");
-        let overlay = app.review_submit.as_ref().expect("stays open");
+        let overlay = app.review_submit().expect("stays open");
         assert_eq!(
             overlay.state,
             SubmissionState::Failed("HTTP 422: body required".into())
@@ -445,7 +463,7 @@ mod tests {
 
         press(&mut app, KeyCode::Char('j'));
 
-        let overlay = app.review_submit.as_ref().expect("stays open");
+        let overlay = app.review_submit().expect("stays open");
         assert_eq!(overlay.verdict, ReviewVerdict::Approve);
         assert_eq!(overlay.state, SubmissionState::Editing);
     }
@@ -454,20 +472,18 @@ mod tests {
     fn editing_the_summary_after_a_failure_returns_to_editing_but_moving_the_cursor_does_not() {
         let mut app = submitting_app();
         finish(&mut app, 7, Err("HTTP 422: body required".to_string()));
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.focus = ReviewSubmitFocus::Summary;
         }
 
         press(&mut app, KeyCode::Left);
         assert_eq!(
-            app.review_submit
-                .as_ref()
-                .map(|overlay| overlay.state.clone()),
+            app.review_submit().map(|overlay| overlay.state.clone()),
             Some(SubmissionState::Failed("HTTP 422: body required".into()))
         );
 
         press(&mut app, KeyCode::Backspace);
-        let overlay = app.review_submit.as_ref().expect("stays open");
+        let overlay = app.review_submit().expect("stays open");
         assert_eq!(overlay.summary.value(), "Looks god");
         assert_eq!(overlay.state, SubmissionState::Editing);
     }
@@ -481,7 +497,7 @@ mod tests {
         let posted = finish(&mut app, 7, Ok(()));
 
         assert!(posted);
-        assert!(app.review_submit.is_none());
+        assert!(app.review_submit().is_none());
         assert!(app.draft_comments.is_empty());
         assert!(!app.in_review_mode);
         assert_eq!(
@@ -539,11 +555,7 @@ mod tests {
 
         assert!(!finish(&mut app, 8, Ok(())));
 
-        assert!(
-            app.review_submit
-                .as_ref()
-                .is_some_and(|o| o.is_submitting())
-        );
+        assert!(app.review_submit().is_some_and(|o| o.is_submitting()));
         assert_eq!(app.draft_comments.len(), 1);
     }
 }

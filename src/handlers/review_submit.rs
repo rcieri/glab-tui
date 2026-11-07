@@ -377,9 +377,7 @@ mod tests {
         }
 
         assert_eq!(
-            app.status_message
-                .as_ref()
-                .map(crate::app::StatusMessage::text),
+            app.header_notice().map(crate::notice::Notice::text),
             Some("Kept 3 draft comments for later")
         );
         assert_eq!(app.draft_comments.len(), 2);
@@ -418,7 +416,7 @@ mod tests {
         assert!(!posted);
         assert_eq!(app.draft_comments.len(), 1);
         assert!(app.in_review_mode);
-        assert_eq!(app.error_message, None, "the error is not only a toast");
+        assert_eq!(app.toast_notice(), None, "the error is not only a toast");
         let overlay = app.review_submit.as_ref().expect("stays open");
         assert_eq!(
             overlay.state,

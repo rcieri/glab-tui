@@ -111,6 +111,8 @@ pub enum ForegroundJob {
 pub enum EditPurpose {
     /// The value of the open text input.
     TextInput,
+    /// The summary of the submit-review overlay.
+    ReviewSummary,
     /// The Description or Release Notes field of the open edit menu.
     MenuDescription,
     /// The body of the draft comment at this index.

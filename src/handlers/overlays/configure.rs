@@ -202,6 +202,7 @@ pub fn handle_key(
                             s.select(Some(0));
                             s
                         },
+                        request: None,
                     });
                 }
             }
@@ -247,6 +248,7 @@ pub fn handle_key(
                             s.select(Some(0));
                             s
                         },
+                        request: None,
                     });
                 }
             } else if idx < group_end {
@@ -312,6 +314,7 @@ pub fn handle_key(
                             s.select(Some(0));
                             s
                         },
+                        request: None,
                     });
                 }
             } else if idx == save_idx {

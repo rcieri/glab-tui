@@ -13,6 +13,7 @@ const ATTRIBUTE_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 /// preview fetches, the followed job log and the periodic list refresh.
 pub(super) fn tick(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     app.expire_typed_keys();
+    app.tick();
     dispatch_debounced_fetches(app, tx, fx);
     poll_followed_job_trace(app, tx, fx);
     refresh_periodically(app, tx, fx);

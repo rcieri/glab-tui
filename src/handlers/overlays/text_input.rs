@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::domain::review::{DraftComment, ReviewEvent};
+use crate::domain::review::DraftComment;
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::{CommandOutcome, Event};
@@ -25,7 +25,7 @@ pub fn handle_key(
         && key_event.code == KeyCode::Char('e')
     {
         fx.suspend(ForegroundJob::Edit {
-            text: text_input.value().to_string(),
+            text: text_input.buffer.value().to_string(),
             file_suffix: ".md".to_string(),
             purpose: EditPurpose::TextInput,
         });
@@ -37,27 +37,27 @@ pub fn handle_key(
             // Cancel
         }
         KeyCode::Backspace => {
-            text_input.delete_char_before_cursor();
+            text_input.buffer.delete_char_before_cursor();
             app.text_input = Some(text_input);
         }
         KeyCode::Delete => {
-            text_input.delete_char_at_cursor();
+            text_input.buffer.delete_char_at_cursor();
             app.text_input = Some(text_input);
         }
         KeyCode::Left => {
-            text_input.move_cursor_left();
+            text_input.buffer.move_cursor_left();
             app.text_input = Some(text_input);
         }
         KeyCode::Right => {
-            text_input.move_cursor_right();
+            text_input.buffer.move_cursor_right();
             app.text_input = Some(text_input);
         }
         KeyCode::Char(c) => {
-            text_input.insert_char(c);
+            text_input.buffer.insert_char(c);
             app.text_input = Some(text_input);
         }
         KeyCode::Enter => {
-            let value = text_input.value().to_string();
+            let value = text_input.buffer.value().to_string();
             match text_input.action {
                 crate::app::TextInputAction::EditPageSize => {
                     if let Ok(new_size) = value.trim().parse::<usize>() {
@@ -184,7 +184,7 @@ pub fn handle_key(
                             });
                         }
                     } else {
-                        app.error_message = Some("Invalid pipeline ID".to_string());
+                        app.show_error("Invalid pipeline ID".to_string());
                     }
                 }
                 crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
@@ -270,25 +270,6 @@ pub fn handle_key(
                                     .await
                             });
                         }
-                    }
-                }
-                crate::app::TextInputAction::SubmitReviewFinal { mr_iid, status } => {
-                    let comments = std::mem::take(&mut app.draft_comments);
-                    let project = app.project_path_for_open_mr(mr_iid);
-                    app.persist_draft_comments(&project, mr_iid);
-                    app.in_review_mode = false;
-                    if let Some(client) = app.gitlab_client.clone() {
-                        let event = ReviewEvent::from_label(&status);
-                        let body = value.clone();
-                        let tx = tx.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Submitting review on MR #{mr_iid}"
-                        )));
-                        handlers::diff_view::spawn_mr_review_task(fx, &tx, async move {
-                            client
-                                .submit_review(&project, mr_iid, event, &body, &comments)
-                                .await
-                        });
                     }
                 }
                 crate::app::TextInputAction::EditNewField { field_idx } => {

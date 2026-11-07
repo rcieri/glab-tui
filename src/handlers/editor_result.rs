@@ -20,7 +20,14 @@ pub fn apply(
     match purpose {
         EditPurpose::TextInput => {
             if let Some(text_input) = &mut app.text_input {
-                text_input.set_value(text);
+                text_input.buffer.set_value(text);
+            }
+        }
+        EditPurpose::ReviewSummary => {
+            if let Some(overlay) = &mut app.review_submit {
+                overlay.summary.set_value(text);
+                overlay.clear_outcome();
+                overlay.focus = crate::review_submit::ReviewSubmitFocus::Summary;
             }
         }
         EditPurpose::MenuDescription => {
@@ -78,7 +85,9 @@ fn spawn_comment_edit(
     };
     let is_github = client.is_github;
     let project_context = app.project_path_for_open_mr(mr_iid);
-    let comment_id = comment.id;
+    let Some(comment_id) = comment.id else {
+        return;
+    };
     let _ = tx.send(Event::CommandStarted(format!(
         "Editing comment MR #{mr_iid}"
     )));

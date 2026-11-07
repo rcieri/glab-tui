@@ -6,7 +6,6 @@ use crate::keybinding::KeyPress;
 use crate::keybinding::keybinding_matches;
 use crate::{app, handlers};
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Runs a review mutation in the background and reports its outcome on the
@@ -487,11 +486,17 @@ pub fn handle_key(
                         app.show_error("No comments on this line to interact with.".to_string());
                     } else if matching_current.len() + matching_drafts.len() == 1 {
                         if let Some(comment) = matching_current.first() {
-                            app.selector = Some(crate::app::Selector::comment_actions(
+                            let selector = crate::app::Selector::comment_actions(
                                 comment,
                                 diff_view.mr_iid,
                                 app.is_github(),
-                            ));
+                            );
+                            match selector {
+                                Some(selector) => app.selector = Some(selector),
+                                None => app.show_error(
+                                    "Review summaries cannot be replied to, edited or deleted from glab-tui.".to_string(),
+                                ),
+                            }
                         } else if let Some(&idx) = matching_drafts.first() {
                             // Drafts only support edit and
                             // delete — the upstream API
@@ -503,7 +508,7 @@ pub fn handle_key(
                     } else {
                         let mut items: Vec<String> = matching_current
                             .iter()
-                            .map(crate::app::Selector::comment_choice_item)
+                            .filter_map(crate::app::Selector::comment_choice_item)
                             .collect();
                         items.extend(matching_drafts.iter().map(|&idx| {
                             crate::app::Selector::draft_choice_item(
@@ -563,32 +568,11 @@ pub fn handle_key(
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('r') => {
-            let is_github = app.is_github();
-            app.selector = Some(crate::app::Selector {
-                title: format!(
-                    " Submit {} Review ",
-                    if is_github {
-                        "Pull Request"
-                    } else {
-                        "Merge Request"
-                    }
-                ),
-                all_items: vec![
-                    "Approve".to_string(),
-                    "Request Changes".to_string(),
-                    "Comment".to_string(),
-                ],
-                selected_items: std::collections::HashSet::new(),
-                cursor_idx: 0,
-                search_query: String::new(),
-                is_filtering: false,
-                is_loading: false,
-                entity_iid: diff_view.mr_iid,
-                entity_type: "mr".to_string(),
-                field_type: "review_submit_status".to_string(),
-                multi_select: false,
-                state: ListState::default(),
-            });
+            crate::handlers::review_submit::open(
+                app,
+                diff_view.mr_iid,
+                diff_view.project_path.clone(),
+            );
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('e') => {

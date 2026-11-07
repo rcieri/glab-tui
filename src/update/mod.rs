@@ -161,7 +161,10 @@ mod tests {
             },
         );
 
-        assert_eq!(app.text_input.as_ref().map(TextInput::value), Some("50"));
+        assert_eq!(
+            app.text_input.as_ref().map(|ti| ti.buffer.value()),
+            Some("50")
+        );
     }
 
     #[test]

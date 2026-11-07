@@ -99,7 +99,6 @@ pub fn handle_key(
             }
             KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
                 let has_filter = selector.field_type != "comment_action_select"
-                    && selector.field_type != "review_submit_status"
                     && selector.field_type != "related_mrs"
                     && selector.field_type != "linked_issues";
                 if has_filter {
@@ -333,7 +332,6 @@ pub fn handle_key(
                                 app.loaded_tabs.clear();
                                 app.loading_tabs.clear();
                                 app.refreshed_tabs.clear();
-                                app.status_message = None;
                                 app.issues.items.clear();
                                 app.milestone_progress_cache.clear();
                                 app.mrs.items.clear();
@@ -512,26 +510,6 @@ pub fn handle_key(
                         app.config.theme_preset = Some(name);
                         app.apply_config();
                     }
-                    return;
-                }
-
-                if field_type == "review_submit_status" {
-                    let filtered_items = selector.get_filtered_items();
-                    let mut selected_val = selector.selected_items.iter().next().cloned();
-                    if selected_val.is_none() && !filtered_items.is_empty() {
-                        selected_val = Some(filtered_items[selector.cursor_idx].clone());
-                    }
-
-                    let status = selected_val.unwrap_or_else(|| "Comment".to_string());
-                    app.selector = None;
-                    app.text_input = Some(crate::app::TextInput::new(
-                        format!(" Submit Review ({status}) - Summary/Description "),
-                        String::new(),
-                        crate::app::TextInputAction::SubmitReviewFinal {
-                            mr_iid: selector.entity_iid,
-                            status,
-                        },
-                    ));
                     return;
                 }
 
@@ -742,14 +720,14 @@ pub fn handle_key(
                                 if let Some(comment) = app
                                     .current_comments
                                     .iter()
-                                    .find(|c| c.id == comment_id)
+                                    .find(|c| c.id == Some(comment_id))
                                     .cloned()
                                 {
-                                    app.selector = Some(crate::app::Selector::comment_actions(
+                                    app.selector = crate::app::Selector::comment_actions(
                                         &comment,
                                         selector.entity_iid,
                                         app.is_github(),
-                                    ));
+                                    );
                                     return;
                                 }
                                 // Edit entity: close menu, writes happen on field-level handlers
@@ -814,7 +792,7 @@ pub fn handle_key(
                         let comment = app
                             .current_comments
                             .iter()
-                            .find(|c| c.id == comment_id)
+                            .find(|c| c.id == Some(comment_id))
                             .cloned();
 
                         if let Some(comment) = comment {
@@ -823,7 +801,7 @@ pub fn handle_key(
                                     let discussion_id = comment
                                         .discussion_id
                                         .clone()
-                                        .unwrap_or_else(|| comment.id.to_string());
+                                        .unwrap_or_else(|| comment_id.to_string());
                                     app.text_input = Some(crate::app::TextInput::new(
                                         format!(" Reply to @{} ", comment.author.username),
                                         String::new(),

@@ -19,6 +19,16 @@ pub(super) fn handle_key(
     fx: &mut Effects,
 ) {
     if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+        if app
+            .review_submit
+            .as_ref()
+            .is_some_and(|o| o.is_submitting())
+        {
+            app.show_notice(
+                "A review is being posted: press Ctrl+C again once it finishes".to_string(),
+            );
+            return;
+        }
         fx.quit();
         return;
     }
@@ -29,6 +39,7 @@ pub(super) fn handle_key(
         && app.selector.is_none()
         && !app.show_help
         && app.review_threads.is_none()
+        && app.review_submit.is_none()
         && app.terminal_inspector.is_none()
         && !app.focus_column_checklist
         && !app.is_typing_search
@@ -36,6 +47,11 @@ pub(super) fn handle_key(
         && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
     {
         fx.quit();
+        return;
+    }
+
+    if app.review_submit.is_some() {
+        handlers::review_submit::handle_key(app, key_event, tx, fx);
         return;
     }
 
@@ -139,6 +155,7 @@ pub(super) fn handle_key(
                 s.select(Some(0));
                 s
             },
+            request: None,
         });
         return;
     }

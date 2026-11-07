@@ -106,16 +106,22 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
     let Some(mr_iid) = app.diff_view.as_ref().map(|d| d.mr_iid) else {
         return;
     };
-    app.selector = Some(if thread.notes.len() == 1 {
+    let selector = if thread.notes.len() == 1 {
         crate::app::Selector::comment_actions(thread.root(), mr_iid, app.is_github())
     } else {
-        crate::app::Selector::comment_choice(
+        Some(crate::app::Selector::comment_choice(
             thread
                 .notes
                 .iter()
-                .map(crate::app::Selector::comment_choice_item)
+                .filter_map(crate::app::Selector::comment_choice_item)
                 .collect(),
             mr_iid,
-        )
-    });
+        ))
+    };
+    match selector {
+        Some(selector) => app.selector = Some(selector),
+        None => app.show_error(
+            "Review summaries cannot be replied to, edited or deleted from glab-tui.".to_string(),
+        ),
+    }
 }

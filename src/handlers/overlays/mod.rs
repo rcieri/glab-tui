@@ -22,10 +22,10 @@ mod tests {
         handle_help_keybinding, handle_help_overlay, handle_review_threads, handle_submit_dialog,
     };
     use crate::app::{
-        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, StatusMessage,
-        SubmitDialog,
+        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, SubmitDialog,
     };
     use crate::keybinding::KeyPress;
+    use crate::notice::Notice;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -199,6 +199,7 @@ mod tests {
             field_type: "labels".to_string(),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
+            request: None,
         });
         assert!(handle_help_keybinding(
             &mut app,
@@ -260,7 +261,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         position: Option<crate::domain::mr::NotePosition>,
     ) -> crate::domain::mr::DiscussionNote {
         crate::domain::mr::DiscussionNote {
-            id,
+            id: Some(id),
             body: format!("note {id}"),
             author: crate::domain::mr::Author {
                 username: "alice".to_string(),
@@ -271,6 +272,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             discussion_id: Some(discussion.to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: crate::domain::mr::NoteKind::Discussion,
         }
     }
 
@@ -292,7 +294,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.review_threads
             .as_ref()
             .and_then(|o| o.selected_thread())
-            .map(|t| t.root().id)
+            .and_then(|t| t.root().id)
     }
 
     #[test]
@@ -405,7 +407,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(press(&mut app, KeyCode::Enter));
 
         assert!(app.review_threads.is_some());
-        assert!(app.error_message.is_some());
+        assert!(app.toast_notice().is_some());
     }
 
     #[test]
@@ -536,6 +538,26 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
+    fn submit_on_the_submit_review_dialog_opens_the_review_overlay_with_drafts_intact() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        let overlay = app
+            .review_submit
+            .as_ref()
+            .expect("Submit opens the overlay");
+        assert_eq!(overlay.mr_iid, 7);
+        assert_eq!(overlay.project_path, PROJECT);
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
     fn keep_drafts_closes_the_diff_and_reopening_or_restarting_restores_them() {
         let _cache = isolate_cache();
         let mut app = app_leaving_the_diff_with_drafts();
@@ -545,7 +567,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.diff_view.is_none());
         assert_eq!(
-            app.status_message.as_ref().map(StatusMessage::text),
+            app.header_notice().map(Notice::text),
             Some("Kept 2 draft comments for later")
         );
         assert_eq!(
@@ -568,7 +590,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_ref().map(StatusMessage::text),
+            app.header_notice().map(Notice::text),
             Some("Discarded 2 draft comments")
         );
     }
@@ -627,7 +649,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.stale_draft_comments.is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_ref().map(StatusMessage::text),
+            app.header_notice().map(Notice::text),
             Some("Discarded 4 draft comments")
         );
     }

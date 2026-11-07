@@ -110,6 +110,7 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
                 s.select(Some(0));
                 s
             },
+            request: None,
         });
         return true;
     }

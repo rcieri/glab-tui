@@ -58,7 +58,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         }
         Event::JobsTabFetched(pipeline_id, jobs) => {
             app.complete_loading_tab(app::Tab::Jobs, "Success");
-            app.status_message = None;
             app.loaded_tabs.insert(app::Tab::Jobs);
             app.jobs.items = jobs;
             app.active_pipeline_id = Some(pipeline_id);
@@ -92,8 +91,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                         }
                     }
                     Err(e) => {
-                        app.show_error(e);
-                        app.error_has_cli_detail = true;
+                        app.show_cli_error(e);
                     }
                 }
             }
@@ -114,8 +112,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                         }
                     }
                     Err(e) => {
-                        app.show_error(e);
-                        app.error_has_cli_detail = true;
+                        app.show_cli_error(e);
                     }
                 }
             }
@@ -222,7 +219,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 .take_if(|(pending, _)| *pending == pr)
                 .map(|(_, action)| action);
             if awaited.is_some() {
-                app.status_message = None;
+                app.clear_info_notices();
             }
             match result {
                 Ok(stack) => {
@@ -299,9 +296,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodoChanged(change, Err(err)) => {
-            app.show_error(change.failure_message(app.kind(), &err));
-            // CLI failure: full stderr is in the terminal log.
-            app.error_has_cli_detail = true;
+            app.show_cli_error(change.failure_message(app.kind(), &err));
         }
         Event::TodoDetailFetched {
             id,
@@ -417,13 +412,11 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
-            app.status_message = None;
             app.project_cache.milestones = app.milestones.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestoneDeleted => {
             app.complete_loading_tab(app::Tab::Milestones, "Success");
-            app.status_message = None;
             if let Some((project_path, iid)) = app.pending_delete_milestone.take() {
                 if let Some(pos) = app.milestone_index(&project_path, iid) {
                     app.milestones.items.remove(pos);
@@ -440,13 +433,11 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleaseUpdated => {
-            app.status_message = None;
             app.project_cache.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleaseDeleted => {
             app.complete_loading_tab(app::Tab::Releases, "Success");
-            app.status_message = None;
             if let Some((project, tag)) = app.pending_delete_release.take() {
                 app.releases
                     .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
@@ -456,7 +447,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         }
         Event::IssueDeleted => {
             app.complete_loading_tab(app::Tab::Issues, "Success");
-            app.status_message = None;
             app.issues.items.clear();
             app.milestone_progress_cache.clear();
             if let Some(client) = app.gitlab_client.clone() {
@@ -475,7 +465,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         }
         Event::MrDeleted => {
             app.complete_loading_tab(app::Tab::MergeRequests, "Success");
-            app.status_message = None;
             app.mrs.items.clear();
             if let Some(client) = app.gitlab_client.clone() {
                 if !app.loading_tabs.contains(&app::Tab::MergeRequests) {
@@ -511,112 +500,9 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.project_cache.environments = app.environments.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
-        Event::SelectorItemsFetched(items) => {
-            let mut applied_from_cache = false;
-            if items.is_empty() {
-                // Determine which typed cache to fall back on
-                if let Some(ref selector) = app.selector {
-                    let fallback = match selector.field_type.as_str() {
-                        "labels" => {
-                            if !app.cached_labels.is_empty() {
-                                Some(app.cached_labels.clone())
-                            } else {
-                                None
-                            }
-                        }
-                        "assignees" | "reviewers" => {
-                            if !app.cached_members.is_empty() {
-                                Some(app.cached_members.clone())
-                            } else {
-                                None
-                            }
-                        }
-                        "milestone" => Some(
-                            app.milestones
-                                .items
-                                .iter()
-                                .map(|m| m.title.clone())
-                                .collect(),
-                        ),
-                        "source_branch" | "target_branch" | "pipeline_branch" | "create_from" => {
-                            Some(
-                                app.branches
-                                    .items()
-                                    .iter()
-                                    .map(|b| b.name.clone())
-                                    .collect(),
-                            )
-                        }
-                        "project" => {
-                            let mut known = Vec::new();
-                            for i in &app.issues.items {
-                                if !i.project_path.is_empty() {
-                                    known.push(i.project_path.clone());
-                                }
-                            }
-                            for m in &app.mrs.items {
-                                if !m.project_path.is_empty() {
-                                    known.push(m.project_path.clone());
-                                }
-                            }
-                            for p in &app.pipelines.items {
-                                if !p.project_path.is_empty() {
-                                    known.push(p.project_path.clone());
-                                }
-                            }
-                            for ms in &app.milestones.items {
-                                if !ms.project_path.is_empty() {
-                                    known.push(ms.project_path.clone());
-                                }
-                            }
-                            known.sort();
-                            known.dedup();
-                            if !known.is_empty() { Some(known) } else { None }
-                        }
-                        _ => None,
-                    };
-                    if let Some(cached) = fallback {
-                        if !cached.is_empty() {
-                            app.show_notice("Offline fallback: cached selector items.");
-                            if let Some(mut selector) = app.selector.take() {
-                                selector.all_items = cached;
-                                selector.is_loading = false;
-                                app.selector = Some(selector);
-                            }
-                            applied_from_cache = true;
-                        }
-                    }
-                }
-            }
-            if !applied_from_cache {
-                // Update typed cache based on field type
-                if let Some(ref selector) = app.selector {
-                    match selector.field_type.as_str() {
-                        "labels" => {
-                            app.cached_labels = items.clone();
-                            app.project_cache.labels = items.clone();
-                        }
-                        "assignees" | "reviewers" => {
-                            app.cached_members = items.clone();
-                            app.project_cache.members = items.clone();
-                        }
-                        _ => {}
-                    }
-                }
+        Event::SelectorItemsFetched { request, items } => {
+            if app.apply_selector_items(request, items) {
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
-                if let Some(mut selector) = app.selector.take() {
-                    if selector.field_type == "project" {
-                        let mut combined = selector.all_items;
-                        combined.extend(items);
-                        combined.sort();
-                        combined.dedup();
-                        selector.all_items = combined;
-                    } else {
-                        selector.all_items = items;
-                    }
-                    selector.is_loading = false;
-                    app.selector = Some(selector);
-                }
             }
         }
         Event::RepoAttributesFetched { labels, members } => {
@@ -738,7 +624,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             environment,
             deployments,
         } => {
-            app.status_message = None;
             if deployments.is_empty() {
                 app.show_notice(format!("No deployments for {environment}"));
             }
@@ -751,8 +636,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         } if app.take_pending_deployment_log(deployment_id) => match result {
             Ok(log) => fx.suspend(ForegroundJob::ViewDeploymentLog { deployment_id, log }),
             Err(error) => {
-                app.show_error(format!("Failed to fetch deployment log: {error}"));
-                app.error_has_cli_detail = true;
+                app.show_cli_error(format!("Failed to fetch deployment log: {error}"));
             }
         },
         Event::DeploymentLogFetched { .. } => {}
@@ -799,8 +683,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if app.has_rows(tab) {
                 app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
             } else {
-                app.show_error(err_msg);
-                app.error_has_cli_detail = true;
+                app.show_cli_error(err_msg);
             }
         }
         Event::DiffFetched {
@@ -823,14 +706,12 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                         "{held_back} draft comments no longer match the diff and were set aside"
                     )
                 });
-                app.error_has_cli_detail = false;
             }
             match comments {
                 Ok(comments) => app.current_comments = comments,
                 Err(err) => {
                     app.current_comments.clear();
-                    app.raise_error_toast(format!("Failed to load review comments: {err}"));
-                    app.error_has_cli_detail = true;
+                    app.show_cli_error(format!("Failed to load review comments: {err}"));
                 }
             }
             if let (Some(overview), Some(diff_view)) =
@@ -852,8 +733,12 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         }
         Event::DiffFetchFailed(err_msg) => {
             app.diff_loading = false;
-            app.show_error(err_msg);
-            app.error_has_cli_detail = true;
+            app.show_cli_error(err_msg);
+        }
+        Event::ReviewSubmitted { mr_iid, result } => {
+            if crate::handlers::review_submit::finish(app, mr_iid, result) {
+                refetch_after_mutation(app, app::Tab::MergeRequests, tx, fx);
+            }
         }
         Event::EditorClosed { purpose, text } => {
             crate::handlers::editor_result::apply(app, purpose, text, tx, fx);
@@ -882,9 +767,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
         }
         Event::CommandCompleted(_, Err(err)) => {
-            app.show_error(err);
-            // CLI failure: full stderr is in the terminal log.
-            app.error_has_cli_detail = true;
+            app.show_cli_error(err);
         }
         Event::Notice(msg) => {
             app.show_notice(msg);

@@ -2049,6 +2049,8 @@ pub fn handle_key(
                         .unwrap_or(0)
                 };
 
+                let request =
+                    (is_loading && app.gitlab_client.is_some()).then(|| app.next_request_tag());
                 app.selector = Some(crate::app::Selector {
                     title: format!("Select {field_name}"),
                     all_items,
@@ -2070,43 +2072,41 @@ pub fn handle_key(
                         s.select(Some(0));
                         s
                     },
+                    request,
                 });
 
                 app.edit_menu = Some(menu);
 
-                if is_loading {
-                    if let Some(client) = &app.gitlab_client {
-                        let client = client.clone();
-                        let scope = if field_type != "project"
-                            && !target_project.is_empty()
-                            && target_project.contains('/')
-                        {
-                            crate::scope::Scope::Repository(target_project)
-                        } else {
-                            app.scope.clone()
+                if let (Some(request), Some(client)) = (request, &app.gitlab_client) {
+                    let client = client.clone();
+                    let scope = if field_type != "project"
+                        && !target_project.is_empty()
+                        && target_project.contains('/')
+                    {
+                        crate::scope::Scope::Repository(target_project)
+                    } else {
+                        app.scope.clone()
+                    };
+                    let field_type = field_type.to_string();
+                    let tx = app.scoped_sender(tx.clone());
+                    fx.spawn(async move {
+                        let res = match field_type.as_str() {
+                            "labels" => client
+                                .fetch_labels(&scope)
+                                .await
+                                .map(|labels| labels.into_iter().map(|l| l.name).collect()),
+                            "assignees" | "reviewers" => client.fetch_members(&scope).await,
+                            "milestone" => client.fetch_milestones(&scope).await,
+                            "source_branch" | "target_branch" | "pipeline_branch"
+                            | "create_from" => client.fetch_branches(&scope).await,
+                            "project" => client.fetch_projects(&scope).await,
+                            _ => Ok(Vec::new()),
                         };
-                        let field_type = field_type.to_string();
-                        let tx = app.scoped_sender(tx.clone());
-                        fx.spawn(async move {
-                            let res = match field_type.as_str() {
-                                "labels" => client
-                                    .fetch_labels(&scope)
-                                    .await
-                                    .map(|labels| labels.into_iter().map(|l| l.name).collect()),
-                                "assignees" | "reviewers" => client.fetch_members(&scope).await,
-                                "milestone" => client.fetch_milestones(&scope).await,
-                                "source_branch" | "target_branch" | "pipeline_branch"
-                                | "create_from" => client.fetch_branches(&scope).await,
-                                "project" => client.fetch_projects(&scope).await,
-                                _ => Ok(Vec::new()),
-                            };
-                            if let Ok(items) = res {
-                                let _ = tx.send(Event::SelectorItemsFetched(items));
-                            } else {
-                                let _ = tx.send(Event::SelectorItemsFetched(Vec::new()));
-                            }
+                        let _ = tx.send(Event::SelectorItemsFetched {
+                            request,
+                            items: res.map_err(|e| e.to_string()),
                         });
-                    }
+                    });
                 }
                 return;
             }
@@ -2160,6 +2160,7 @@ pub fn handle_key(
                                     s.select(Some(0));
                                     s
                                 },
+                                request: None,
                             });
                             app.edit_menu = Some(menu);
                             return;

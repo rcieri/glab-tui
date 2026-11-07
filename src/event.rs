@@ -43,7 +43,12 @@ pub enum Event {
     PipelinesFetched(Vec<crate::domain::pipelines::Pipeline>),
     RunnersFetched(Vec<crate::domain::runners::Runner>),
     ReleasesFetched(Vec<crate::domain::releases::Release>),
-    SelectorItemsFetched(Vec<String>),
+    /// The options a selector asked for, tagged with the request it started
+    /// so a reply for a selector that has since closed is dropped.
+    SelectorItemsFetched {
+        request: crate::notice::RequestTag,
+        items: Result<Vec<String>, String>,
+    },
     RepoAttributesFetched {
         labels: Vec<crate::domain::labels::Label>,
         members: Vec<String>,
@@ -103,6 +108,12 @@ pub enum Event {
         row: crate::command_log::LogRow,
         status: String,
         execution: Box<crate::command_log::Execution>,
+    },
+    /// The review the submit-review overlay posted on MR/PR `mr_iid`
+    /// finished.
+    ReviewSubmitted {
+        mr_iid: u64,
+        result: Result<(), String>,
     },
     MilestonesFetched(Vec<crate::domain::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::domain::issues::Issue>),

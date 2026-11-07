@@ -649,6 +649,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
             s.select(Some(0));
             s
         },
+        request: None,
     };
     app.selector = Some(selector);
 }
@@ -979,6 +980,7 @@ pub fn handle_active_tab_key(
                                     s.select(Some(0));
                                     s
                                 },
+                                request: None,
                             });
                         }
                     }
@@ -1313,9 +1315,9 @@ pub fn handle_active_tab_key(
                                 .map(|c| c.is_github)
                                 .unwrap_or(false);
                             if is_github {
-                                app.error_message =
-                                    Some("Revoking approval isn't supported on GitHub".to_string());
-                                app.error_message_at = Some(std::time::Instant::now());
+                                app.show_error(
+                                    "Revoking approval isn't supported on GitHub".to_string(),
+                                );
                             } else {
                                 app.submit_dialog =
                                     Some(crate::app::SubmitDialog::build_with_project(
@@ -1598,6 +1600,7 @@ pub fn handle_active_tab_key(
                                                 s.select(Some(0));
                                                 s
                                             },
+                                            request: None,
                                         });
                                     }
                                 }
@@ -1794,8 +1797,9 @@ pub fn handle_active_tab_key(
                                 .map(|pipeline| pipeline.name().to_string())
                                 .filter(|name| !name.is_empty());
                             let Some(workflow) = workflow else {
-                                app.error_message =
-                                    Some("Selected pipeline has no workflow name".to_string());
+                                app.show_error(
+                                    "Selected pipeline has no workflow name".to_string(),
+                                );
                                 return false;
                             };
                             let Some(client) = app.gitlab_client.clone() else {
@@ -1913,6 +1917,7 @@ pub fn handle_active_tab_key(
                         s.select(Some(start_idx));
                         s
                     },
+                    request: None,
                 });
             } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, key_event) {
                 app.toggle_select_mode();
@@ -1946,7 +1951,7 @@ pub fn handle_active_tab_key(
                                 let job_ids: Vec<u64> = if app.selected_jobs.is_empty() {
                                     vec![job_id]
                                 } else {
-                                    app.status_message = None;
+                                    app.clear_info_notices();
                                     app.selected_jobs.drain().collect()
                                 };
                                 let rows = flip_job_statuses(app, &job_ids, "running");
@@ -2834,7 +2839,7 @@ pub fn handle_active_tab_key(
                 app.show_help = true;
             }
             KeyCode::Char('u') if key_event.modifiers.is_empty() => {
-                app.error_message = Some("Checking for updates...".to_string());
+                app.show_notice("Checking for updates...");
                 let tx = tx.clone();
                 fx.spawn(async move {
                     match crate::utils::update::perform_self_update().await {
@@ -2866,7 +2871,7 @@ pub fn handle_active_tab_key(
             }
             KeyCode::Esc | KeyCode::Backspace => {
                 if app.clear_selections() {
-                    app.status_message = None;
+                    app.clear_info_notices();
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                     app.pending_job_trace_editor = None;
@@ -3554,6 +3559,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::event::ScopeGeneration;
+    use crate::notice::Notice;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::collections::{HashMap, HashSet};
 
@@ -4029,21 +4035,15 @@ mod tests {
     #[tokio::test]
     async fn ctrl_u_does_not_trigger_a_self_update() {
         let mut app = App::default();
-        app.error_message = None;
-
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
         );
 
-        assert!(
-            app.error_message.is_none()
-                || !app
-                    .error_message
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("Checking for updates"),
-            "Ctrl+u must not raise the 'Checking for updates' message",
+        assert_eq!(
+            app.header_notice(),
+            None,
+            "Ctrl+u must not raise the 'Checking for updates' notice",
         );
     }
 
@@ -4386,7 +4386,7 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
         );
-        assert_eq!(app.error_message, None);
+        assert_eq!(app.header_notice(), None);
     }
 
     fn app_with_branches(count: usize) -> App {
@@ -4923,7 +4923,10 @@ mod tests {
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
         assert!(app.submit_dialog.is_none());
-        assert_eq!(app.error_message.as_deref(), Some(NO_DEPLOYMENT_SELECTED));
+        assert_eq!(
+            app.toast_notice().map(Notice::text),
+            Some(NO_DEPLOYMENT_SELECTED)
+        );
     }
 
     #[tokio::test]
@@ -4935,7 +4938,7 @@ mod tests {
 
         assert!(app.submit_dialog.is_none());
         assert_eq!(
-            app.error_message.as_deref(),
+            app.toast_notice().map(Notice::text),
             Some("Deployment #1 has no deploy job to re-run")
         );
     }

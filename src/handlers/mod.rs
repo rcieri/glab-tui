@@ -4,6 +4,7 @@ pub mod editor_result;
 pub mod mouse;
 pub mod overlays;
 pub mod refresh;
+pub mod review_submit;
 pub mod scope;
 pub mod search;
 pub mod tabs;

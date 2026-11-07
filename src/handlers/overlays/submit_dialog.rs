@@ -6,7 +6,6 @@ use crate::handlers::tabs::{
     spawn_cancel_jobs,
 };
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn handle_submit_dialog(
@@ -111,22 +110,22 @@ fn run_dialog_choice(
     let ConfirmAction::SubmitReview(mr_iid) = *action else {
         return;
     };
-    let count = app.draft_comments.len() + app.stale_draft_comments.len();
-    let noun = if count == 1 { "comment" } else { "comments" };
     match choice {
         DialogChoice::KeepDrafts => {
+            let notice = app.kept_drafts_notice();
             // The project cache already holds them, and opening this diff
             // again restores them from there.
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
-            app.show_notice(format!("Kept {count} draft {noun} for later"));
+            app.show_notice(notice);
         }
         DialogChoice::DiscardDrafts => {
+            let drafts = app.all_drafts_phrase();
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
-            app.show_notice(format!("Discarded {count} draft {noun}"));
+            app.show_notice(format!("Discarded {drafts}"));
         }
     }
     app.diff_view = None;
@@ -650,24 +649,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::SubmitReview(mr_iid) => {
-            app.selector = Some(crate::app::Selector {
-                title: " Submit Pull Request Review ".to_string(),
-                all_items: vec![
-                    "Approve".to_string(),
-                    "Request Changes".to_string(),
-                    "Comment".to_string(),
-                ],
-                selected_items: std::collections::HashSet::new(),
-                cursor_idx: 0,
-                search_query: String::new(),
-                is_filtering: false,
-                is_loading: false,
-                entity_iid: mr_iid,
-                entity_type: "mr".to_string(),
-                field_type: "review_submit_status".to_string(),
-                multi_select: false,
-                state: ListState::default(),
-            });
+            crate::handlers::review_submit::open(app, mr_iid, project_path);
         }
         crate::app::ConfirmAction::MarkAllTodosRead => {
             crate::handlers::todos::mark_all_read(app, &tx, fx);
@@ -706,7 +688,7 @@ fn run_submit_action(
             };
             let rows = flip_job_statuses(app, &job_ids, "canceled");
             app.selected_jobs.clear();
-            app.status_message = None;
+            app.clear_info_notices();
             spawn_cancel_jobs(
                 client,
                 app.scoped_sender(tx.clone()),

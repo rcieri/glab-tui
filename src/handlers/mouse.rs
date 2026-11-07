@@ -191,12 +191,19 @@ pub fn handle_mouse_event(
                     }
                     OverlayKind::Selector => {
                         let has_search = app.selector.as_ref().is_some_and(|s| {
-                            s.field_type != "comment_action_select"
-                                && s.field_type != "review_submit_status"
-                                && s.field_type != "related_mrs"
+                            s.field_type != "comment_action_select" && s.field_type != "related_mrs"
                         });
                         let sr = if has_search { 3 } else { 0 };
-                        handle_selector_mouse(app, inner, row, sr, 1);
+                        let notice_rows = if app.modal_notice().is_some() {
+                            crate::ui::MODAL_NOTICE_ROWS
+                        } else {
+                            0
+                        };
+                        handle_selector_mouse(app, inner, row, sr, 1 + notice_rows);
+                        return;
+                    }
+                    OverlayKind::ReviewSubmit => {
+                        crate::handlers::review_submit::click(app, row, col, tx, fx);
                         return;
                     }
                     OverlayKind::EditMenu => {

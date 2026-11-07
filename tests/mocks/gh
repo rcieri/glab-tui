@@ -103,6 +103,13 @@ if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"baseRefOid,headRefOid"* ]]; th
     exit 0
 fi
 
+# The PR's conversation: two comments, a review summary and a review approved
+# without a body.
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"comments,reviews"* ]]; then
+    cat "$FIXTURES_DIR/gh_pr_conversation.json"
+    exit 0
+fi
+
 if [[ "$*" == *"api"* ]]; then
     # Review threads and comments span two pages. Only `--paginate` gets the
     # second one, printed right after the first as its own JSON document.

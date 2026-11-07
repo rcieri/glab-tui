@@ -3455,16 +3455,15 @@ async fn main() -> Result<()> {
                                                     if let Some(comment) = app
                                                         .current_comments
                                                         .iter()
-                                                        .find(|c| c.id == comment_id)
+                                                        .find(|c| c.id == Some(comment_id))
                                                         .cloned()
                                                     {
-                                                        app.selector = Some(
+                                                        app.selector =
                                                             crate::app::Selector::comment_actions(
                                                                 &comment,
                                                                 selector.entity_iid,
                                                                 app.is_github(),
-                                                            ),
-                                                        );
+                                                            );
                                                         continue;
                                                     }
                                                     // Edit entity: close menu, writes happen on field-level handlers
@@ -3547,7 +3546,7 @@ async fn main() -> Result<()> {
                                             let comment = app
                                                 .current_comments
                                                 .iter()
-                                                .find(|c| c.id == comment_id)
+                                                .find(|c| c.id == Some(comment_id))
                                                 .cloned();
 
                                             if let Some(comment) = comment {
@@ -3557,7 +3556,7 @@ async fn main() -> Result<()> {
                                                             .discussion_id
                                                             .clone()
                                                             .unwrap_or_else(|| {
-                                                                comment.id.to_string()
+                                                                comment_id.to_string()
                                                             });
                                                         app.text_input = Some(crate::app::TextInput::new(
                                                             format!(" Reply to @{} ", comment.author.username),
@@ -7254,11 +7253,11 @@ async fn main() -> Result<()> {
                                         {
                                             if let Some(comment) = matching_current.first() {
                                                 app.selector =
-                                                    Some(crate::app::Selector::comment_actions(
+                                                    crate::app::Selector::comment_actions(
                                                         comment,
                                                         diff_view.mr_iid,
                                                         app.is_github(),
-                                                    ));
+                                                    );
                                             } else if let Some(&idx) = matching_drafts.first() {
                                                 // Drafts only support edit and
                                                 // delete — the upstream API
@@ -7271,7 +7270,9 @@ async fn main() -> Result<()> {
                                         } else {
                                             let mut items: Vec<String> = matching_current
                                                 .iter()
-                                                .map(crate::app::Selector::comment_choice_item)
+                                                .filter_map(
+                                                    crate::app::Selector::comment_choice_item,
+                                                )
                                                 .collect();
                                             items.extend(matching_drafts.iter().map(|&idx| {
                                                 crate::app::Selector::draft_choice_item(

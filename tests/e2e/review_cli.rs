@@ -2,7 +2,8 @@
 //!
 //! Both mocks serve `mr_diff.txt` as the diff. `glab` serves `mr_notes.json`
 //! as the MR notes and `mr_view.json` (which carries the diff refs) as the MR;
-//! `gh` serves `gh_pr_comments.json` and `gh_review_threads.json`. Request
+//! `gh` serves `gh_pr_comments.json`, `gh_review_threads.json` and
+//! `gh_pr_conversation.json` (conversation comments and reviews). Request
 //! bodies piped to `glab api`/`gh api` are appended to `<log>.stdin`.
 
 use crate::{Sandbox, find_glab_tui_binary};
@@ -110,6 +111,10 @@ fn test_review_threads_on_gitlab_groups_and_classifies_notes() {
     let general = thread(&threads, "disc-general");
     assert_eq!(general["classification"], "general");
     assert!(general["anchor"].is_null());
+    assert!(
+        general.get("review_state").is_none(),
+        "GitLab notes carry no review state"
+    );
 
     assert_eq!(
         thread(&threads, "disc-outdated")["classification"],
@@ -124,8 +129,8 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
 
     assert_eq!(
         threads.as_array().map(Vec::len),
-        Some(5),
-        "replies join their thread"
+        Some(8),
+        "replies join their thread; a review without a body is not listed"
     );
 
     let anchored = thread(&threads, "201");
@@ -133,6 +138,10 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
     assert_eq!(anchored["notes"].as_array().map(Vec::len), Some(2));
     assert_eq!(anchored["resolvable"], true);
     assert_eq!(anchored["resolved"], false);
+    assert!(
+        anchored.get("review_state").is_none(),
+        "inline threads carry no review state"
+    );
 
     let removed_line = thread(&threads, "203");
     assert_eq!(removed_line["classification"], "in-diff");
@@ -141,6 +150,107 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
     assert_eq!(removed_line["resolved"], true);
 
     assert_eq!(thread(&threads, "204")["classification"], "outdated");
+}
+
+#[test]
+fn test_review_threads_on_github_lists_conversation_comments_and_review_summaries() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let threads = stdout_json(&run_review(&sandbox, &["threads", "2"], "", &[]));
+
+    assert_eq!(
+        *thread(&threads, "IC_conversation_first"),
+        serde_json::json!({
+            "id": "IC_conversation_first",
+            "classification": "general",
+            "anchor": null,
+            "resolvable": false,
+            "resolved": false,
+            "notes": [{
+                "id": 901,
+                "author": "reviewer-user",
+                "body": "Could you add a changelog entry?",
+                "created_at": "2026-07-06T08:00:00Z"
+            }]
+        })
+    );
+    assert_eq!(
+        *thread(&threads, "PRR_changes_requested"),
+        serde_json::json!({
+            "id": "PRR_changes_requested",
+            "classification": "general",
+            "anchor": null,
+            "resolvable": false,
+            "resolved": false,
+            "review_state": "CHANGES_REQUESTED",
+            "notes": [{
+                "id": null,
+                "author": "reviewer-user",
+                "body": "Please split the fetch helper before merging.",
+                "created_at": "2026-07-06T09:05:00Z"
+            }]
+        })
+    );
+    let ids: Vec<&str> = threads
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "IC_conversation_first",
+            "201",
+            "PRR_changes_requested",
+            "203",
+            "204",
+            "101",
+            "205",
+            "IC_conversation_reply",
+        ],
+        "threads are ordered by creation time; the bare approval is left out"
+    );
+    assert!(
+        cli_calls(&sandbox)
+            .contains(&"gh pr view 2 -R test-owner/test-repo --json comments,reviews".to_string()),
+        "the conversation is read with the native `gh pr view`"
+    );
+}
+
+#[test]
+fn test_review_reply_on_github_refuses_a_conversation_comment() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let output = run_review(
+        &sandbox,
+        &["reply", "2", "--thread", "IC_conversation_first", "Done."],
+        "",
+        &[],
+    );
+
+    assert_failed_quietly(
+        &output,
+        "cannot reply to thread 'IC_conversation_first': GitHub takes replies only in review comment threads, not to a conversation comment or a review summary",
+    );
+    assert!(
+        !cli_calls(&sandbox).iter().any(|call| call.contains("POST")),
+        "nothing is posted"
+    );
+}
+
+#[test]
+fn test_review_resolve_on_github_refuses_a_review_summary() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let output = run_review(
+        &sandbox,
+        &["resolve", "2", "--thread", "PRR_changes_requested"],
+        "",
+        &[],
+    );
+
+    assert_failed_quietly(
+        &output,
+        "cannot resolve thread 'PRR_changes_requested': a conversation comment or review summary has no resolved state on GitHub",
+    );
 }
 
 #[test]

@@ -4,7 +4,9 @@
 //! `mr_diff.txt` for `mr diff` and `mr_notes.json` for `mr note list`. The
 //! notes hold one anchored thread with a reply, one general comment, one
 //! comment whose line is gone from the diff, and a system note that must never
-//! be listed.
+//! be listed. On GitHub, the mock `gh` adds `gh_pr_conversation.json`: two
+//! conversation comments, a "Request changes" review summary and an approval
+//! without a body, which must not be listed.
 
 use crate::TestSession;
 use std::time::{Duration, Instant};
@@ -140,6 +142,91 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
         !session.emulator.get_text().contains("Review Threads"),
         "a successful jump closes the overlay"
     );
+}
+
+#[test]
+fn test_review_threads_on_github_list_conversation_comments_and_review_summaries() {
+    let mut session = TestSession::new(true, 40, 140);
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("Stack top", 15000)
+        .expect("PRs tab should list the fixture PR");
+    session.send_input(b"D");
+    session
+        .wait_for_screen_contains("Pull Request Diff #11", 15000)
+        .expect("D should open the PR diff");
+
+    session.send_input(b"T");
+    session
+        .wait_for_screen_contains("Review Threads — 3 unresolved / 8 total", 5000)
+        .expect("conversation comments and the review summary join the inline threads");
+    let comment = wait_for_row(
+        &mut session,
+        |row| row.contains("Could you add a changelog entry?"),
+        2000,
+    )
+    .expect("the conversation comment should be listed");
+    for expected in ["GENERAL", "@reviewer-user", "days ago"] {
+        assert!(
+            comment.contains(expected),
+            "{expected:?} missing: {comment}"
+        );
+    }
+    let summary = wait_for_row(
+        &mut session,
+        |row| row.contains("Please split the fetch helper"),
+        2000,
+    )
+    .expect("the review summary should be listed");
+    for expected in ["GENERAL", "CHANGES REQUESTED", "@reviewer-user"] {
+        assert!(
+            summary.contains(expected),
+            "{expected:?} missing: {summary}"
+        );
+    }
+
+    // Oldest first: the conversation comment, inline thread 201, the summary.
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains(
+            "General comments are not attached to a line in the diff.",
+            5000,
+        )
+        .expect("Enter on a conversation comment has no line to jump to");
+
+    press_keys(&session, b"jja");
+    session
+        .wait_for_screen_contains(
+            "Review summaries cannot be replied to, edited or deleted from glab-tui.",
+            5000,
+        )
+        .expect("a review summary offers no actions");
+
+    press_keys(&session, b"k\r");
+    wait_for_row(
+        &mut session,
+        |row| row.contains(CURSOR_MARKER) && row.contains(ANCHORED_CODE),
+        5000,
+    )
+    .expect("Enter on an inline thread still lands on its line");
+
+    press_keys(&session, b"Ta");
+    session
+        .wait_for_screen_contains("Actions for Comment 901", 5000)
+        .expect("a conversation comment can still be edited or deleted");
+    session
+        .wait_for_screen_contains("Delete Comment", 2000)
+        .expect("the actions list should be drawn");
+    let screen = session.emulator.get_text();
+    for absent in ["Reply to Thread", "Resolve Thread"] {
+        assert!(
+            !screen.contains(absent),
+            "{absent:?} is not offered on a conversation comment:\n{screen}"
+        );
+    }
 }
 
 #[test]

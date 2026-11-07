@@ -689,25 +689,30 @@ impl Selector {
 
     /// Actions on one pushed review comment. The `comment_action_select`
     /// handler reads the comment id from `entity_iid` and parses the MR iid
-    /// back out of `entity_type`.
-    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Self {
-        let mut actions = vec!["Reply to Thread".to_string()];
-        if !is_github {
-            actions.push(if comment.resolved.unwrap_or(false) {
-                "Unresolve Thread".to_string()
-            } else {
-                "Resolve Thread".to_string()
-            });
+    /// back out of `entity_type`. `None` for a note without a REST id (a
+    /// GitHub review summary): nothing can be done with it.
+    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
+        let comment_id = comment.id?;
+        let mut actions = Vec::new();
+        if comment.kind.accepts_replies() {
+            actions.push("Reply to Thread".to_string());
+            if !is_github {
+                actions.push(if comment.resolved.unwrap_or(false) {
+                    "Unresolve Thread".to_string()
+                } else {
+                    "Resolve Thread".to_string()
+                });
+            }
         }
         actions.push("Edit Comment".to_string());
         actions.push("Delete Comment".to_string());
-        Self::single_choice(
-            format!(" Actions for Comment {} ", comment.id),
+        Some(Self::single_choice(
+            format!(" Actions for Comment {comment_id} "),
             actions,
-            comment.id,
+            comment_id,
             mr_iid.to_string(),
             "comment_action_select",
-        )
+        ))
     }
 
     /// Actions on a local draft; `entity_iid` is the 0-based draft index.
@@ -734,13 +739,15 @@ impl Selector {
         )
     }
 
-    pub fn comment_choice_item(comment: &DiscussionNote) -> String {
-        format!(
+    /// `None` for a note without a REST id, which the `comment_select`
+    /// handler could not find again.
+    pub fn comment_choice_item(comment: &DiscussionNote) -> Option<String> {
+        Some(format!(
             "ID: {} | @{}: {}",
-            comment.id,
+            comment.id?,
             comment.author.username,
             crate::utils::format::truncate(&comment.body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
-        )
+        ))
     }
 
     pub fn draft_choice_item(draft_idx: usize, body: &str) -> String {
@@ -800,9 +807,9 @@ impl ReviewThreadsOverview {
     /// Rebuilds the threads, keeping the cursor on the same thread when it
     /// still exists.
     pub fn refresh(&mut self, comments: &[DiscussionNote], diff_view: &DiffView) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.threads = group_threads(comments, |position| diff_view.contains_anchor(position));
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
     pub fn visible_threads(&self) -> impl Iterator<Item = &ReviewThread> {
@@ -858,15 +865,14 @@ impl ReviewThreadsOverview {
     }
 
     pub fn toggle_unresolved_only(&mut self) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.unresolved_only = !self.unresolved_only;
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
-    fn select_root_or_clamp(&mut self, root_id: Option<u64>) {
+    fn select_thread_or_clamp(&mut self, thread_id: Option<String>) {
         let count = self.visible_threads().count();
-        let position =
-            root_id.and_then(|id| self.visible_threads().position(|t| t.root().id == id));
+        let position = thread_id.and_then(|id| self.visible_threads().position(|t| t.id == id));
         match position {
             Some(idx) => {
                 self.cursor_idx = idx;
@@ -11239,7 +11245,7 @@ diff --git a/foo.txt b/foo.txt
 
         // 1. Thread 1: unresolved
         let note1 = DiscussionNote {
-            id: 1,
+            id: Some(1),
             body: "note 1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11255,11 +11261,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_1".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 2. Thread 2: resolved
         let note2 = DiscussionNote {
-            id: 2,
+            id: Some(2),
             body: "note 2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11275,11 +11282,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_2".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 3. Thread 3: unresolved because one reply is unresolved
         let note3_1 = DiscussionNote {
-            id: 3,
+            id: Some(3),
             body: "note 3.1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11295,9 +11303,10 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
         let note3_2 = DiscussionNote {
-            id: 4,
+            id: Some(4),
             body: "note 3.2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11313,11 +11322,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // System comment (should be ignored)
         let note_system = DiscussionNote {
-            id: 5,
+            id: Some(5),
             body: "system note".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11326,6 +11336,7 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_system".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         app.current_comments = vec![note1, note2, note3_1, note3_2, note_system];

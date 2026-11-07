@@ -1185,18 +1185,24 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
     let Some(mr_iid) = app.diff_view.as_ref().map(|d| d.mr_iid) else {
         return;
     };
-    app.selector = Some(if thread.notes.len() == 1 {
+    let selector = if thread.notes.len() == 1 {
         crate::app::Selector::comment_actions(thread.root(), mr_iid, app.is_github())
     } else {
-        crate::app::Selector::comment_choice(
+        Some(crate::app::Selector::comment_choice(
             thread
                 .notes
                 .iter()
-                .map(crate::app::Selector::comment_choice_item)
+                .filter_map(crate::app::Selector::comment_choice_item)
                 .collect(),
             mr_iid,
-        )
-    });
+        ))
+    };
+    match selector {
+        Some(selector) => app.selector = Some(selector),
+        None => app.show_error(
+            "Review summaries cannot be replied to, edited or deleted from glab-tui.".to_string(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1446,7 +1452,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         position: Option<crate::domain::mr::NotePosition>,
     ) -> crate::domain::mr::DiscussionNote {
         crate::domain::mr::DiscussionNote {
-            id,
+            id: Some(id),
             body: format!("note {id}"),
             author: crate::domain::mr::Author {
                 username: "alice".to_string(),
@@ -1457,6 +1463,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             discussion_id: Some(discussion.to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: crate::domain::mr::NoteKind::Discussion,
         }
     }
 
@@ -1478,7 +1485,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.review_threads
             .as_ref()
             .and_then(|o| o.selected_thread())
-            .map(|t| t.root().id)
+            .and_then(|t| t.root().id)
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::MODAL_NOTICE_ROWS;
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
-use super::modal::{clear_area, modal_area};
+use super::modal::{button_style, clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::notice::{Notice, NoticeLevel};
@@ -98,7 +98,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
             let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "review_submit_status"
                 && selector.field_type != "related_mrs";
 
             let mut constraints = Vec::with_capacity(3);
@@ -325,7 +324,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             )
             .split(area);
 
-        let value_p = Paragraph::new(text_input.value_with_cursor('▋'))
+        let value_p = Paragraph::new(text_input.buffer.value_with_cursor('▋'))
             .style(Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
@@ -1160,20 +1159,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         } else {
             theme.green
         };
-        let button_style = |selected: bool, accent: Option<Color>| {
-            let (fg, bg) = match (selected, accent) {
-                (true, Some(accent)) => (theme.bg, accent),
-                (false, Some(accent)) => (accent, theme.bg),
-                (true, None) => (theme.bg, theme.border_focused),
-                (false, None) => (theme.text_normal, theme.bg),
-            };
-            let modifier = if selected {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            };
-            Style::default().fg(fg).bg(bg).add_modifier(modifier)
-        };
         let buttons_row: Vec<(usize, String, Option<Color>)> = dialog
             .button_cursors()
             .map(|cursor| {
@@ -1211,12 +1196,13 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             f.render_widget(
                 Paragraph::new(label)
                     .alignment(Alignment::Center)
-                    .style(button_style(dialog.cursor_idx == cursor, accent)),
+                    .style(button_style(theme, dialog.cursor_idx == cursor, accent)),
                 cells[i * 2],
             );
         }
     }
 
+    super::review_submit::render_review_submit(f, ctx, app, size);
     render_help(f, ctx, app, size);
 }
 
@@ -2135,7 +2121,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Diff View",
             key: s("r"),
-            action: "Submit Review (approve/changes/comment)",
+            action: "Submit Review (comment/approve/request changes/keep as draft)",
         },
         Shortcut {
             category: "Diff View",

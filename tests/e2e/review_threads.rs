@@ -4,7 +4,9 @@
 //! `mr_diff.txt` for `mr diff` and `mr_notes.json` for `mr note list`. The
 //! notes hold one anchored thread with a reply, one general comment, one
 //! comment whose line is gone from the diff, and a system note that must never
-//! be listed.
+//! be listed. On GitHub, the mock `gh` adds `gh_pr_conversation.json`: two
+//! conversation comments, a "Request changes" review summary and an approval
+//! without a body, which must not be listed.
 
 use crate::TestSession;
 use std::time::{Duration, Instant};
@@ -143,36 +145,99 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
 }
 
 #[test]
-fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
-    let mut session = session_in_diff_view();
+fn test_review_threads_on_github_list_conversation_comments_and_review_summaries() {
+    let mut session = TestSession::new(true, 40, 140);
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("Stack top", 15000)
+        .expect("PRs tab should list the fixture PR");
+    session.send_input(b"D");
+    session
+        .wait_for_screen_contains("Pull Request Diff #11", 15000)
+        .expect("D should open the PR diff");
 
-    session.press_keys(b"\t");
-    let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
-    for _ in 0..8 {
-        if wait_for_row(&mut session, on_code_line, 300).is_ok() {
-            break;
-        }
-        session.press_keys(b"j");
+    session.send_input(b"T");
+    session
+        .wait_for_screen_contains("Review Threads — 3 unresolved / 8 total", 5000)
+        .expect("conversation comments and the review summary join the inline threads");
+    let comment = wait_for_row(
+        &mut session,
+        |row| row.contains("Could you add a changelog entry?"),
+        2000,
+    )
+    .expect("the conversation comment should be listed");
+    for expected in ["GENERAL", "@reviewer-user", "days ago"] {
+        assert!(
+            comment.contains(expected),
+            "{expected:?} missing: {comment}"
+        );
     }
-    wait_for_row(&mut session, on_code_line, 2000)
-        .expect("the cursor should reach the unchanged `# Pagination` line (old 1, new 1)");
+    let summary = wait_for_row(
+        &mut session,
+        |row| row.contains("Please split the fetch helper"),
+        2000,
+    )
+    .expect("the review summary should be listed");
+    for expected in ["GENERAL", "CHANGES REQUESTED", "@reviewer-user"] {
+        assert!(
+            summary.contains(expected),
+            "{expected:?} missing: {summary}"
+        );
+    }
 
-    session.send_input(b"c");
-    session.press_keys(b"nit");
+    // Oldest first: the conversation comment, inline thread 201, the summary.
     session.send_input(b"\r");
     session
-        .wait_for_screen_contains("1 pending", 5000)
-        .expect("the comment should be kept as a draft");
+        .wait_for_screen_contains(
+            "General comments are not attached to a line in the diff.",
+            5000,
+        )
+        .expect("Enter on a conversation comment has no line to jump to");
+
+    press_keys(&session, b"jja");
+    session
+        .wait_for_screen_contains(
+            "Review summaries cannot be replied to, edited or deleted from glab-tui.",
+            5000,
+        )
+        .expect("a review summary offers no actions");
+
+    press_keys(&session, b"k\r");
+    wait_for_row(
+        &mut session,
+        |row| row.contains(CURSOR_MARKER) && row.contains(ANCHORED_CODE),
+        5000,
+    )
+    .expect("Enter on an inline thread still lands on its line");
+
+    press_keys(&session, b"Ta");
+    session
+        .wait_for_screen_contains("Actions for Comment 901", 5000)
+        .expect("a conversation comment can still be edited or deleted");
+    session
+        .wait_for_screen_contains("Delete Comment", 2000)
+        .expect("the actions list should be drawn");
+    let screen = session.emulator.get_text();
+    for absent in ["Reply to Thread", "Resolve Thread"] {
+        assert!(
+            !screen.contains(absent),
+            "{absent:?} is not offered on a conversation comment:\n{screen}"
+        );
+    }
+}
+
+#[test]
+fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
+    let mut session = session_with_one_draft(TestSession::new(false, 40, 140));
 
     session.send_input(b"r");
     session
-        .wait_for_screen_contains("Approve", 5000)
-        .expect("r should offer the review verdicts");
-    session.send_input(b"\r");
-    session
-        .wait_for_screen_contains("Summary", 5000)
-        .expect("a verdict should ask for the summary");
-    session.send_input(b"\r");
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"j\r");
 
     let deadline = Instant::now() + Duration::from_secs(10);
     while !session.get_cli_calls().contains("mr approve 2") && Instant::now() < deadline {
@@ -200,6 +265,183 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
     assert_eq!(draft["note"], "nit");
     assert_eq!(draft["position"]["new_path"], "docs/readme.md");
     assert_eq!(draft["position"]["new_line"], 1, "the draft keeps its line");
+    session
+        .wait_for_screen_contains("Review submitted on MR #2", 5000)
+        .expect("a posted review shows a notice");
+    session.settle(300);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Submit Merge Request Review") && !screen.contains("1 pending"),
+        "a posted review closes the overlay and clears the draft:\n{screen}"
+    );
+}
+
+/// Diff view with one draft comment on the unchanged `# Pagination` line.
+fn session_with_one_draft(session: TestSession) -> TestSession {
+    let mut session = open_diff_view(session);
+    session.press_keys(b"\t");
+    let on_code_line = |row: &str| row.contains(CURSOR_MARKER) && row.contains("# Pagination");
+    for _ in 0..8 {
+        if wait_for_row(&mut session, on_code_line, 300).is_ok() {
+            break;
+        }
+        session.press_keys(b"j");
+    }
+    wait_for_row(&mut session, on_code_line, 2000)
+        .expect("the cursor should reach the unchanged `# Pagination` line (old 1, new 1)");
+    session.send_input(b"c");
+    session.press_keys(b"nit");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains("1 pending", 5000)
+        .expect("the comment should be kept as a draft");
+    session
+}
+
+#[test]
+fn test_failed_review_submission_shows_the_error_in_the_overlay_and_keeps_the_drafts() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_FAIL_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\tLGTM\r");
+    session
+        .wait_for_screen_contains("404 Not Found", 10000)
+        .expect("the failure is shown inside the overlay");
+    let screen = session.emulator.get_text();
+    assert!(
+        screen.contains("Submit Merge Request Review") && screen.contains("LGTM"),
+        "the overlay stays open with its summary:\n{screen}"
+    );
+
+    session.press_keys(b"\x1b");
+    session.settle(300);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Submit Merge Request Review") && screen.contains("1 pending"),
+        "Esc closes the overlay and the draft is still pending:\n{screen}"
+    );
+}
+
+#[test]
+fn test_retrying_a_review_that_failed_before_publishing_leaves_no_duplicate_draft_notes() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_FAIL_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\tLGTM\r");
+    session
+        .wait_for_screen_contains("404 Not Found", 10000)
+        .expect("the failure is shown inside the overlay");
+    session.press_keys(b"\r");
+
+    let is_cleanup = |call: &str| {
+        call.contains("-X DELETE") && call.ends_with("/merge_requests/2/draft_notes/1")
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session
+        .get_cli_calls()
+        .lines()
+        .filter(|c| is_cleanup(c))
+        .count()
+        < 2
+        && Instant::now() < deadline
+    {
+        session.settle(100);
+    }
+    let calls = session.get_cli_calls();
+    let posts = calls
+        .lines()
+        .filter(|c| c.ends_with("/merge_requests/2/draft_notes"))
+        .count();
+    let deletes = calls.lines().filter(|c| is_cleanup(c)).count();
+    assert_eq!(
+        (posts, deletes),
+        (2, 2),
+        "each attempt deletes the draft note it created once publishing fails:\n{calls}"
+    );
+}
+
+#[test]
+fn test_review_submission_in_flight_shows_a_loading_state_and_ignores_keys() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_HANG_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("Submitting review…", 10000)
+        .expect("the overlay shows the submission running");
+    session.press_keys(b"\x1b");
+    session.settle(300);
+    assert!(
+        session.emulator.get_text().contains("Submitting review…"),
+        "keys are ignored while the review is posted"
+    );
+}
+
+#[test]
+fn test_ctrl_c_does_not_quit_while_the_review_is_posted() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("TEST_GLAB_HANG_MATCH", "bulk_publish")]);
+    let mut session = session_with_one_draft(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("Submitting review…", 10000)
+        .expect("the overlay shows the submission running");
+    session.send_input(b"\x03");
+    session
+        .wait_for_screen_contains(
+            "A review is being posted: press Ctrl+C again once it finishes",
+            5000,
+        )
+        .expect("Ctrl+C must not quit while the review is posted");
+}
+
+#[test]
+fn test_ctrl_e_writes_the_review_summary_in_the_editor_and_clears_a_refusal() {
+    let session =
+        TestSession::with_envs(false, 40, 140, &[("EDITOR", "printf 'Edited summary' >")]);
+    let mut session = open_diff_view(session);
+
+    session.send_input(b"r");
+    session
+        .wait_for_screen_contains("Submit Merge Request Review", 5000)
+        .expect("r should open the submit-review overlay");
+    session.press_keys(b"\r");
+    let refusal = "A comment review needs a summary or draft comments.";
+    session
+        .wait_for_screen_contains(refusal, 5000)
+        .expect("an empty comment review is refused");
+
+    session.send_input(b"\x05");
+    // The terminal handoff probes keyboard-enhancement support on the way out
+    // and back, and this emulator never answers: each probe waits out
+    // crossterm's 2 s timeout.
+    session
+        .wait_for_screen_contains("Edited summary", 15_000)
+        .expect("the editor's text becomes the summary");
+    assert!(
+        !session.emulator.get_text().contains(refusal),
+        "a new summary clears the refusal"
+    );
 }
 
 #[test]

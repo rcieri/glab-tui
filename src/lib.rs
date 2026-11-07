@@ -15,6 +15,7 @@ pub mod git_helpers;
 pub mod handlers;
 pub mod keybinding;
 pub mod notice;
+pub mod review_submit;
 pub mod scope;
 pub mod syntax;
 pub mod templates;

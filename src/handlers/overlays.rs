@@ -113,22 +113,22 @@ fn run_dialog_choice(
     let ConfirmAction::SubmitReview(mr_iid) = *action else {
         return;
     };
-    let count = app.draft_comments.len() + app.stale_draft_comments.len();
-    let noun = if count == 1 { "comment" } else { "comments" };
     match choice {
         DialogChoice::KeepDrafts => {
+            let notice = app.kept_drafts_notice();
             // The project cache already holds them, and opening this diff
             // again restores them from there.
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
-            app.show_notice(format!("Kept {count} draft {noun} for later"));
+            app.show_notice(notice);
         }
         DialogChoice::DiscardDrafts => {
+            let drafts = app.all_drafts_phrase();
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
-            app.show_notice(format!("Discarded {count} draft {noun}"));
+            app.show_notice(format!("Discarded {drafts}"));
         }
     }
     app.diff_view = None;
@@ -632,25 +632,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::SubmitReview(mr_iid) => {
-            app.selector = Some(crate::app::Selector {
-                title: " Submit Pull Request Review ".to_string(),
-                all_items: vec![
-                    "Approve".to_string(),
-                    "Request Changes".to_string(),
-                    "Comment".to_string(),
-                ],
-                selected_items: std::collections::HashSet::new(),
-                cursor_idx: 0,
-                search_query: String::new(),
-                is_filtering: false,
-                is_loading: false,
-                entity_iid: mr_iid,
-                entity_type: "mr".to_string(),
-                field_type: "review_submit_status".to_string(),
-                multi_select: false,
-                state: ListState::default(),
-                request: None,
-            });
+            crate::handlers::review_submit::open(app, mr_iid, project_path);
         }
         crate::app::ConfirmAction::MarkAllTodosRead => {
             crate::handlers::todos::mark_all_read(app, &tx);
@@ -1204,18 +1186,24 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
     let Some(mr_iid) = app.diff_view.as_ref().map(|d| d.mr_iid) else {
         return;
     };
-    app.selector = Some(if thread.notes.len() == 1 {
+    let selector = if thread.notes.len() == 1 {
         crate::app::Selector::comment_actions(thread.root(), mr_iid, app.is_github())
     } else {
-        crate::app::Selector::comment_choice(
+        Some(crate::app::Selector::comment_choice(
             thread
                 .notes
                 .iter()
-                .map(crate::app::Selector::comment_choice_item)
+                .filter_map(crate::app::Selector::comment_choice_item)
                 .collect(),
             mr_iid,
-        )
-    });
+        ))
+    };
+    match selector {
+        Some(selector) => app.selector = Some(selector),
+        None => app.show_error(
+            "Review summaries cannot be replied to, edited or deleted from glab-tui.".to_string(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1466,7 +1454,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         position: Option<crate::domain::mr::NotePosition>,
     ) -> crate::domain::mr::DiscussionNote {
         crate::domain::mr::DiscussionNote {
-            id,
+            id: Some(id),
             body: format!("note {id}"),
             author: crate::domain::mr::Author {
                 username: "alice".to_string(),
@@ -1477,6 +1465,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             discussion_id: Some(discussion.to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: crate::domain::mr::NoteKind::Discussion,
         }
     }
 
@@ -1498,7 +1487,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.review_threads
             .as_ref()
             .and_then(|o| o.selected_thread())
-            .map(|t| t.root().id)
+            .and_then(|t| t.root().id)
     }
 
     #[test]
@@ -1633,27 +1622,6 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.review_threads.is_some());
     }
 
-    /// Holds the env lock and points the cache dir at a tempdir, because the
-    /// submit-review dialog writes drafts to the project cache.
-    struct IsolatedCache {
-        _env: crate::config::EnvGuard,
-        _home: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    fn isolate_cache() -> IsolatedCache {
-        let lock = crate::config::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let home = tempfile::tempdir().unwrap();
-        let env = crate::config::EnvGuard::isolate_home(home.path());
-        IsolatedCache {
-            _env: env,
-            _home: home,
-            _lock: lock,
-        }
-    }
-
     fn draft(body: &str) -> crate::domain::review::DraftComment {
         crate::domain::review::DraftComment {
             file_path: "src/lib.rs".to_string(),
@@ -1713,7 +1681,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn esc_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Esc]);
@@ -1727,7 +1695,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn cancel_on_the_submit_review_dialog_returns_to_the_diff_with_drafts_intact() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right; 3]);
@@ -1741,8 +1709,28 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
+    fn submit_on_the_submit_review_dialog_opens_the_review_overlay_with_drafts_intact() {
+        let _cache = crate::config::isolate_home();
+        let mut app = app_leaving_the_diff_with_drafts();
+
+        press_in_dialog(&mut app, &[KeyCode::Enter]);
+
+        assert!(app.submit_dialog.is_none());
+        let overlay = app
+            .review_submit
+            .as_ref()
+            .expect("Submit opens the overlay");
+        assert_eq!(overlay.mr_iid, 7);
+        assert_eq!(overlay.project_path, PROJECT);
+        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
+        assert!(app.in_review_mode);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
+    }
+
+    #[test]
     fn keep_drafts_closes_the_diff_and_reopening_or_restarting_restores_them() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Enter]);
@@ -1762,7 +1750,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn discard_drops_the_drafts_and_their_saved_copy_and_closes_the_diff() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
@@ -1780,7 +1768,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
         app.draft_comments = vec![draft("other project")];
         app.persist_draft_comments("acme/gadget", 7);
@@ -1802,7 +1790,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn drafts_whose_lines_left_the_diff_are_held_back_but_kept_until_discarded() {
-        let _cache = isolate_cache();
+        let _cache = crate::config::isolate_home();
         let mut app = app_leaving_the_diff_with_drafts();
         let moved = crate::domain::review::DraftComment {
             line_num: Some(9),

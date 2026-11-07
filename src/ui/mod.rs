@@ -6,6 +6,7 @@ pub mod list_tab;
 pub(crate) mod modal;
 mod overlays;
 pub(crate) mod render_ctx;
+mod review_submit;
 mod review_threads;
 mod tabs;
 mod terminal_inspector;

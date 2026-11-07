@@ -693,25 +693,30 @@ impl Selector {
 
     /// Actions on one pushed review comment. The `comment_action_select`
     /// handler reads the comment id from `entity_iid` and parses the MR iid
-    /// back out of `entity_type`.
-    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Self {
-        let mut actions = vec!["Reply to Thread".to_string()];
-        if !is_github {
-            actions.push(if comment.resolved.unwrap_or(false) {
-                "Unresolve Thread".to_string()
-            } else {
-                "Resolve Thread".to_string()
-            });
+    /// back out of `entity_type`. `None` for a note without a REST id (a
+    /// GitHub review summary): nothing can be done with it.
+    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
+        let comment_id = comment.id?;
+        let mut actions = Vec::new();
+        if comment.kind.accepts_replies() {
+            actions.push("Reply to Thread".to_string());
+            if !is_github {
+                actions.push(if comment.resolved.unwrap_or(false) {
+                    "Unresolve Thread".to_string()
+                } else {
+                    "Resolve Thread".to_string()
+                });
+            }
         }
         actions.push("Edit Comment".to_string());
         actions.push("Delete Comment".to_string());
-        Self::single_choice(
-            format!(" Actions for Comment {} ", comment.id),
+        Some(Self::single_choice(
+            format!(" Actions for Comment {comment_id} "),
             actions,
-            comment.id,
+            comment_id,
             mr_iid.to_string(),
             "comment_action_select",
-        )
+        ))
     }
 
     /// Actions on a local draft; `entity_iid` is the 0-based draft index.
@@ -738,13 +743,15 @@ impl Selector {
         )
     }
 
-    pub fn comment_choice_item(comment: &DiscussionNote) -> String {
-        format!(
+    /// `None` for a note without a REST id, which the `comment_select`
+    /// handler could not find again.
+    pub fn comment_choice_item(comment: &DiscussionNote) -> Option<String> {
+        Some(format!(
             "ID: {} | @{}: {}",
-            comment.id,
+            comment.id?,
             comment.author.username,
             crate::utils::format::truncate(&comment.body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
-        )
+        ))
     }
 
     pub fn draft_choice_item(draft_idx: usize, body: &str) -> String {
@@ -804,9 +811,9 @@ impl ReviewThreadsOverview {
     /// Rebuilds the threads, keeping the cursor on the same thread when it
     /// still exists.
     pub fn refresh(&mut self, comments: &[DiscussionNote], diff_view: &DiffView) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.threads = group_threads(comments, |position| diff_view.contains_anchor(position));
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
     pub fn visible_threads(&self) -> impl Iterator<Item = &ReviewThread> {
@@ -862,15 +869,14 @@ impl ReviewThreadsOverview {
     }
 
     pub fn toggle_unresolved_only(&mut self) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.unresolved_only = !self.unresolved_only;
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
-    fn select_root_or_clamp(&mut self, root_id: Option<u64>) {
+    fn select_thread_or_clamp(&mut self, thread_id: Option<String>) {
         let count = self.visible_threads().count();
-        let position =
-            root_id.and_then(|id| self.visible_threads().position(|t| t.root().id == id));
+        let position = thread_id.and_then(|id| self.visible_threads().position(|t| t.id == id));
         match position {
             Some(idx) => {
                 self.cursor_idx = idx;
@@ -2747,10 +2753,6 @@ pub enum TextInputAction {
     },
     EnterPipelineId,
     CreateMilestone,
-    SubmitReviewFinal {
-        mr_iid: u64,
-        status: String,
-    },
     ReplyToComment {
         mr_iid: u64,
         comment_id: u64,
@@ -2760,23 +2762,21 @@ pub enum TextInputAction {
     EditPageSize,
 }
 
-#[derive(Clone, Debug)]
-pub struct TextInput {
-    pub title: String,
+/// Text being edited, with a cursor counted in characters so
+/// multibyte text edits whole characters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextBuffer {
     value: String,
     cursor_char_idx: usize,
-    pub action: TextInputAction,
 }
 
-impl TextInput {
-    /// Opens the input with the cursor after the last character of `value`.
-    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+impl TextBuffer {
+    /// Starts with the cursor after the last character of `value`.
+    pub fn new(value: String) -> Self {
         let cursor_char_idx = value.chars().count();
         Self {
-            title: title.into(),
             value,
             cursor_char_idx,
-            action,
         }
     }
 
@@ -2786,8 +2786,7 @@ impl TextInput {
 
     /// Replaces the whole value and moves the cursor to its end.
     pub fn set_value(&mut self, value: String) {
-        self.cursor_char_idx = value.chars().count();
-        self.value = value;
+        *self = Self::new(value);
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -2829,11 +2828,45 @@ impl TextInput {
         rendered
     }
 
+    pub fn cursor_byte_offset(&self) -> usize {
+        self.byte_offset(self.cursor_char_idx)
+    }
+
+    pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) {
+        use crossterm::event::KeyCode;
+        match code {
+            KeyCode::Char(c) => self.insert_char(c),
+            KeyCode::Backspace => self.delete_char_before_cursor(),
+            KeyCode::Delete => self.delete_char_at_cursor(),
+            KeyCode::Left => self.move_cursor_left(),
+            KeyCode::Right => self.move_cursor_right(),
+            _ => {}
+        }
+    }
+
     fn byte_offset(&self, char_idx: usize) -> usize {
         self.value
             .char_indices()
             .nth(char_idx)
             .map_or(self.value.len(), |(offset, _)| offset)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TextInput {
+    pub title: String,
+    pub buffer: TextBuffer,
+    pub action: TextInputAction,
+}
+
+impl TextInput {
+    /// Opens the input with the cursor after the last character of `value`.
+    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        Self {
+            title: title.into(),
+            buffer: TextBuffer::new(value),
+            action,
+        }
     }
 }
 
@@ -2980,8 +3013,18 @@ pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 /// tab. Like custom commands, those entries settle their own row.
 pub const RERUN_LOG_PREFIX: &str = "Rerun: ";
 
+/// Prefix of the terminal-log entry written while the submit-review overlay
+/// posts a review. The overlay settles that row itself once the post ends.
+pub const REVIEW_SUBMIT_LOG_PREFIX: &str = "Submit review: ";
+
 fn settles_own_row(cmd: &TerminalCommand) -> bool {
-    cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX) || cmd.command.starts_with(RERUN_LOG_PREFIX)
+    [
+        CUSTOM_COMMAND_LOG_PREFIX,
+        RERUN_LOG_PREFIX,
+        REVIEW_SUBMIT_LOG_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| cmd.command.starts_with(prefix))
 }
 
 fn outcome_status(outcome: &Result<(), String>) -> String {
@@ -3008,6 +3051,7 @@ pub enum OverlayKind {
     ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
+    ReviewSubmit,
     TerminalInspector,
 }
 
@@ -3936,6 +3980,7 @@ pub struct App {
     pub help_table_state: ratatui::widgets::TableState,
     pub diff_view: Option<DiffView>,
     pub review_threads: Option<ReviewThreadsOverview>,
+    pub review_submit: Option<crate::review_submit::ReviewSubmit>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
@@ -4096,6 +4141,7 @@ impl Default for App {
             help_table_state: ratatui::widgets::TableState::default(),
             diff_view: None,
             review_threads: None,
+            review_submit: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             submit_dialog: None,
@@ -5367,21 +5413,23 @@ impl App {
         })
     }
 
-    /// Stamps the outcome, and when the command ran, on a row returned by
-    /// `start_command`.
+    /// Stamps the outcome on a row returned by `start_command`. `execution`
+    /// replaces what the row knew about its run; without one, the row is
+    /// timed from when it started.
     pub fn settle_command(
         &mut self,
         row: LogRow,
         outcome: &Result<(), String>,
-        execution: crate::command_log::Execution,
+        execution: Option<crate::command_log::Execution>,
     ) {
         self.terminal_commands
-            .settle(row, outcome_status(outcome), Some(execution));
+            .settle(row, outcome_status(outcome), execution);
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands and re-runs are skipped: they settle their own row,
-    /// and an unrelated completion must not stamp them finished.
+    /// Custom commands, re-runs and review submissions are skipped: they
+    /// settle their own row, and an unrelated completion must not stamp them
+    /// finished.
     pub fn latest_running_cli_command(&self) -> Option<LogRow> {
         self.terminal_commands
             .find_latest(|cmd| cmd.status == "Running" && !settles_own_row(cmd))
@@ -6174,6 +6222,36 @@ impl App {
                 .insert(mr_iid, saved);
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+    }
+
+    /// Removes the drafts a posted review carried, by value and one occurrence
+    /// each, from the pending and the held-back drafts: a diff refetched while
+    /// the review was posted can have moved them from one list to the other.
+    pub fn drop_sent_drafts(&mut self, sent: &[DraftComment]) {
+        let mut unmatched = sent.to_vec();
+        for drafts in [&mut self.draft_comments, &mut self.stale_draft_comments] {
+            drafts.retain(
+                |draft| match unmatched.iter().position(|sent| sent == draft) {
+                    Some(index) => {
+                        unmatched.swap_remove(index);
+                        false
+                    }
+                    None => true,
+                },
+            );
+        }
+    }
+
+    pub fn all_draft_count(&self) -> usize {
+        self.draft_comments.len() + self.stale_draft_comments.len()
+    }
+
+    pub fn all_drafts_phrase(&self) -> String {
+        crate::domain::review::draft_comments_phrase(self.all_draft_count())
+    }
+
+    pub fn kept_drafts_notice(&self) -> String {
+        format!("Kept {} for later", self.all_drafts_phrase())
     }
 
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
@@ -9377,13 +9455,13 @@ mod tests {
         assert_eq!(parse_jump_input("#123abc"), None);
     }
 
-    fn text_input(value: &str) -> TextInput {
-        TextInput::new(" Test ", value.to_string(), TextInputAction::EditPageSize)
+    fn text_buffer(value: &str) -> TextBuffer {
+        TextBuffer::new(value.to_string())
     }
 
     #[test]
-    fn text_input_typing_multibyte_characters_keeps_the_cursor_after_them() {
-        let mut input = text_input("");
+    fn text_buffer_typing_multibyte_characters_keeps_the_cursor_after_them() {
+        let mut input = text_buffer("");
         for c in ['é', '日', 'a'] {
             input.insert_char(c);
         }
@@ -9392,8 +9470,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_inserts_between_multibyte_characters_after_moving_left() {
-        let mut input = text_input("é日");
+    fn text_buffer_inserts_between_multibyte_characters_after_moving_left() {
+        let mut input = text_buffer("é日");
         input.move_cursor_left();
         input.insert_char('x');
         assert_eq!(input.value(), "éx日");
@@ -9401,8 +9479,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_backspace_and_delete_remove_whole_multibyte_characters() {
-        let mut input = text_input("aé日b");
+    fn text_buffer_backspace_and_delete_remove_whole_multibyte_characters() {
+        let mut input = text_buffer("aé日b");
         input.move_cursor_left();
         input.move_cursor_left();
         assert_eq!(input.value_with_cursor('|'), "aé|日b");
@@ -9413,8 +9491,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_cursor_edits_stop_at_both_ends_of_multibyte_text() {
-        let mut input = text_input("日");
+    fn text_buffer_cursor_edits_stop_at_both_ends_of_multibyte_text() {
+        let mut input = text_buffer("日");
         input.move_cursor_right();
         input.delete_char_at_cursor();
         assert_eq!(input.value_with_cursor('|'), "日|");
@@ -9425,8 +9503,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
-        let mut input = text_input("");
+    fn text_buffer_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
+        let mut input = text_buffer("");
         input.set_value("ñandú".to_string());
         input.delete_char_before_cursor();
         assert_eq!(input.value_with_cursor('|'), "ñand|");
@@ -11414,7 +11492,7 @@ diff --git a/foo.txt b/foo.txt
 
         // 1. Thread 1: unresolved
         let note1 = DiscussionNote {
-            id: 1,
+            id: Some(1),
             body: "note 1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11430,11 +11508,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_1".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 2. Thread 2: resolved
         let note2 = DiscussionNote {
-            id: 2,
+            id: Some(2),
             body: "note 2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11450,11 +11529,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_2".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 3. Thread 3: unresolved because one reply is unresolved
         let note3_1 = DiscussionNote {
-            id: 3,
+            id: Some(3),
             body: "note 3.1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11470,9 +11550,10 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
         let note3_2 = DiscussionNote {
-            id: 4,
+            id: Some(4),
             body: "note 3.2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11488,11 +11569,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // System comment (should be ignored)
         let note_system = DiscussionNote {
-            id: 5,
+            id: Some(5),
             body: "system note".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11501,6 +11583,7 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_system".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         app.current_comments = vec![note1, note2, note3_1, note3_2, note_system];
@@ -13245,6 +13328,27 @@ index 123456..789012 100644
     }
 
     #[test]
+    fn backend_log_never_settles_a_running_review_submission() {
+        let mut app = App::default();
+        let row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
+
+        app.log_cli_command(executed_entry(
+            "FETCHING MR DIFF REFS: glab mr view 7 --output json -R acme/widget",
+            "Success",
+            "{}",
+            "",
+        ));
+
+        assert_eq!(
+            app.terminal_commands
+                .get(row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+        assert_eq!(app.latest_running_cli_command(), None);
+    }
+
+    #[test]
     fn finished_rerun_settles_its_row_and_toasts_a_failure() {
         let mut app = App::default();
         let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
@@ -13275,7 +13379,7 @@ index 123456..789012 100644
         app.terminal_scroll = 3;
 
         app.clear_terminal_log();
-        app.settle_command(row, &Ok(()), crate::command_log::Execution::default());
+        app.settle_command(row, &Ok(()), None);
 
         assert!(app.terminal_commands.is_empty());
         assert_eq!(app.terminal_scroll, 0);

@@ -75,6 +75,48 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
+/// Splits `text` into rows of at most `width` display columns, as byte ranges
+/// of `text`. Unlike `wrap_text` it keeps runs of whitespace, so every byte
+/// offset (a cursor) falls in one row. Each `\n` ends a row and belongs to
+/// none, and a word longer than `width` is split between two characters. A
+/// character wider than `width` takes a row of its own.
+pub fn wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut line_start = 0;
+    for line in text.split('\n') {
+        let mut row_start = line_start;
+        let mut row_columns = 0;
+        let mut follows_whitespace = true;
+        for (offset, c) in line.char_indices() {
+            let at = line_start + offset;
+            let is_whitespace = c.is_whitespace();
+            if !is_whitespace && follows_whitespace && row_columns > 0 {
+                let word_columns = line[offset..]
+                    .split(char::is_whitespace)
+                    .next()
+                    .map_or(0, |word| Span::raw(word).width());
+                if row_columns + word_columns > width {
+                    rows.push(row_start..at);
+                    row_start = at;
+                    row_columns = 0;
+                }
+            }
+            let columns = Span::raw(&line[offset..offset + c.len_utf8()]).width();
+            if row_columns > 0 && row_columns + columns > width {
+                rows.push(row_start..at);
+                row_start = at;
+                row_columns = 0;
+            }
+            row_columns += columns;
+            follows_whitespace = is_whitespace;
+        }
+        rows.push(row_start..line_start + line.len());
+        line_start += line.len() + 1;
+    }
+    rows
+}
+
 pub fn time_ago(date_str: &str) -> String {
     if let Ok(parsed_time) = date_str.parse::<DateTime<Utc>>() {
         let now = Utc::now();
@@ -763,6 +805,42 @@ fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wrapped(text: &str, width: usize) -> Vec<&str> {
+        wrap_ranges(text, width)
+            .into_iter()
+            .map(|row| &text[row])
+            .collect()
+    }
+
+    #[test]
+    fn wrap_ranges_keeps_runs_of_spaces_and_moves_a_word_that_does_not_fit() {
+        assert_eq!(wrapped("a   b", 10), ["a   b"]);
+        assert_eq!(wrapped("one two three", 8), ["one two ", "three"]);
+    }
+
+    #[test]
+    fn wrap_ranges_ends_a_row_at_each_newline_and_keeps_empty_lines() {
+        assert_eq!(wrapped("- a\n\n  - b", 10), ["- a", "", "  - b"]);
+        assert_eq!(wrapped("", 10), [""]);
+        assert_eq!(wrapped("end\n", 10), ["end", ""]);
+    }
+
+    #[test]
+    fn wrap_ranges_splits_a_long_multibyte_word_between_characters() {
+        assert_eq!(wrapped("ééééé", 2), ["éé", "éé", "é"]);
+        assert_eq!(
+            wrapped("x https://example.com/a", 8),
+            ["x ", "https://", "example.", "com/a"]
+        );
+    }
+
+    #[test]
+    fn wrap_ranges_measures_wide_characters_in_display_columns() {
+        assert_eq!(wrapped("日本語", 4), ["日本", "語"]);
+        assert_eq!(wrapped("ok 🎉🎉", 5), ["ok ", "🎉🎉"]);
+        assert_eq!(wrapped("日本", 1), ["日", "本"]);
+    }
 
     #[test]
     fn format_elapsed_switches_units_at_a_second_and_a_minute() {

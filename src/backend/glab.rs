@@ -990,6 +990,61 @@ impl GlabBackend {
             .diff_refs
             .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
     }
+
+    /// Creates one draft note per comment, then publishes them. `created`
+    /// collects the notes this attempt posted, so a failure after some were
+    /// created can delete them again.
+    async fn publish_draft_notes(
+        &self,
+        endpoint: &str,
+        comments: &[DraftComment],
+        diff_refs: &GiDiffRefs,
+        created: &mut Vec<u64>,
+    ) -> Result<()> {
+        #[derive(Deserialize)]
+        struct GiDraftNote {
+            id: u64,
+        }
+        for comment in comments {
+            let payload = gitlab_draft_note_payload(comment, diff_refs).to_string();
+            let id = self
+                .raw_api(endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
+                .await
+                .and_then(|out| Ok(serde_json::from_str::<GiDraftNote>(&out)?.id))
+                .with_context(|| format!("draft note on {} failed", comment.file_path))?;
+            created.push(id);
+        }
+        self.raw_api(
+            &format!("{endpoint}/bulk_publish"),
+            "POST",
+            None,
+            "PUBLISHING DRAFT NOTES",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Deletes the draft notes of a review that failed before they were
+    /// published. `bulk_publish` publishes every pending draft note of the
+    /// user, so a retry would otherwise post these twice. Returns how many
+    /// could not be deleted.
+    async fn delete_draft_notes(&self, endpoint: &str, ids: &[u64]) -> usize {
+        let mut undeleted = 0;
+        for id in ids {
+            let deleted = self
+                .raw_api(
+                    &format!("{endpoint}/{id}"),
+                    "DELETE",
+                    None,
+                    "DISCARDING DRAFT NOTE",
+                )
+                .await;
+            if deleted.is_err() {
+                undeleted += 1;
+            }
+        }
+        undeleted
+    }
 }
 
 /// Serde shape returned by the GitLab `/closed_by` endpoint.
@@ -1101,7 +1156,7 @@ fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
                 .notes
                 .into_iter()
                 .map(move |note| DiscussionNote {
-                    id: note.id,
+                    id: Some(note.id),
                     body: note.body,
                     author: crate::domain::mr::Author {
                         username: note.author.username,
@@ -1119,6 +1174,7 @@ fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
                     discussion_id: Some(discussion_id.clone()),
                     resolved: note.resolved,
                     resolvable: note.resolvable,
+                    kind: crate::domain::mr::NoteKind::Discussion,
                 })
         })
         .collect())
@@ -1988,24 +2044,18 @@ impl Backend for GlabBackend {
                 Self::encode_path(project),
                 iid
             );
-            for (created, comment) in comments.iter().enumerate() {
-                let payload = gitlab_draft_note_payload(comment, &diff_refs).to_string();
-                self.raw_api(&endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "draft note on {} failed; {} earlier draft note(s) of this review stay pending on !{}",
-                            comment.file_path, created, iid
-                        )
-                    })?;
+            let mut created = Vec::with_capacity(comments.len());
+            if let Err(error) = self
+                .publish_draft_notes(&endpoint, comments, &diff_refs, &mut created)
+                .await
+            {
+                return Err(match self.delete_draft_notes(&endpoint, &created).await {
+                    0 => error,
+                    undeleted => error.context(format!(
+                        "{undeleted} draft note(s) of this review could not be deleted from !{iid}"
+                    )),
+                });
             }
-            self.raw_api(
-                &format!("{endpoint}/bulk_publish"),
-                "POST",
-                None,
-                "PUBLISHING DRAFT NOTES",
-            )
-            .await?;
         }
         if event == ReviewEvent::Approve {
             self.approve_mr(project, iid).await?;
@@ -4676,9 +4726,23 @@ mod tests {
         assert_eq!(
             summary,
             vec![
-                (1, Some("6a9c1750"), "alice", false, Some(12), Some(true)),
-                (2, Some("6a9c1750"), "bob", false, Some(12), Some(true)),
-                (3, Some("f00dfeed"), "bob", true, None, Some(false)),
+                (
+                    Some(1),
+                    Some("6a9c1750"),
+                    "alice",
+                    false,
+                    Some(12),
+                    Some(true)
+                ),
+                (
+                    Some(2),
+                    Some("6a9c1750"),
+                    "bob",
+                    false,
+                    Some(12),
+                    Some(true)
+                ),
+                (Some(3), Some("f00dfeed"), "bob", true, None, Some(false)),
             ]
         );
     }

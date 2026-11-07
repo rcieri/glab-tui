@@ -4092,6 +4092,7 @@ pub struct App {
         std::collections::HashMap<String, std::collections::HashSet<String>>,
     >,
     pub column_filter_context: Option<(Tab, String)>,
+    pub layout: Option<crate::ui::layout::LayoutPlan>,
     pub sidebar_rect: Option<Rect>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
@@ -4242,6 +4243,7 @@ impl Default for App {
             group_items: Vec::new(),
             column_filters: std::collections::HashMap::new(),
             column_filter_context: None,
+            layout: None,
             sidebar_rect: None,
             content_rect: None,
             detail_rect: None,
@@ -4361,6 +4363,25 @@ fn milestone_progress_sort_key(
 impl App {
     pub fn captures_text(&self) -> bool {
         self.modal_stack.last().is_some_and(|m| m.captures_text())
+    }
+
+    pub fn layout_state(&self) -> crate::ui::layout::LayoutState {
+        crate::ui::layout::LayoutState {
+            active_tab: self.active_tab,
+            detail_visible: self.detail_visible,
+            details_zoomed: self.details_zoomed,
+            can_zoom: self.active_tab != Tab::Pipelines || !self.jobs.items.is_empty(),
+            edit_zoomed: self.edit_menu().is_some(),
+        }
+    }
+
+    pub fn compute_layout(&self, size: Rect) -> crate::ui::layout::LayoutPlan {
+        let inputs = crate::ui::layout::LayoutInputs::from_config_and_state(
+            size,
+            &self.config.ui,
+            &self.layout_state(),
+        );
+        crate::ui::layout::LayoutPlan::compute(inputs)
     }
 
     pub fn has_modal(&self) -> bool {

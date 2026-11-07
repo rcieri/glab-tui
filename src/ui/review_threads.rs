@@ -20,16 +20,16 @@ const EXCERPT_CHARS: usize = 80;
 const KEY_HINTS: &str = " j/k move · Enter jump to line · a actions · u unresolved only · J/K scroll thread · Esc close";
 
 pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
-    if app.diff_view.is_none() {
+    if app.diff_view().is_none() {
         return;
     }
-    let Some(overview) = app.review_threads.as_mut() else {
+    let Some(title) = app.review_threads().map(modal_title) else {
         return;
     };
     let theme = ctx.theme;
 
     let area = centered_rect_min(85, 85, 70, 16, size);
-    let body = modal_area(f, ctx, &modal_title(overview), area);
+    let body = modal_area(f, ctx, &title, area);
     app.overlay_stack.push((OverlayKind::ReviewThreads, area));
 
     let chunks = Layout::default()
@@ -42,6 +42,9 @@ pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mu
         .split(body);
     let (list_area, preview_area, hints_area) = (chunks[0], chunks[1], chunks[2]);
 
+    let Some(overview) = app.review_threads_mut() else {
+        return;
+    };
     overview.list_rect = Some(list_area);
     render_thread_list(f, overview, list_area, &theme);
     render_thread_preview(f, ctx, overview, preview_area);

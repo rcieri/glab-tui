@@ -5,10 +5,10 @@ use crossterm::event::KeyCode;
 /// Keys for the review threads overlay. Selectors and text inputs opened from
 /// it (comment actions, replies) sit on top and take their keys first.
 pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
-    if app.selector.is_some() || app.text_input.is_some() {
+    if app.selector().is_some() || app.text_input().is_some() {
         return false;
     }
-    let Some(mut overview) = app.review_threads.take() else {
+    let Some(mut overview) = app.pop_review_threads() else {
         return false;
     };
 
@@ -48,7 +48,7 @@ pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
         _ => {}
     }
     if keep_open {
-        app.review_threads = Some(overview);
+        app.push_modal(crate::app::Modal::ReviewThreads(Box::new(overview)));
     }
     true
 }
@@ -79,7 +79,7 @@ fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOver
         }
         (_, Some(position)) => position,
     };
-    let Some(diff_view) = app.diff_view.as_mut() else {
+    let Some(diff_view) = app.diff_view_mut() else {
         return false;
     };
     let was_hiding_reviewed = diff_view.hide_reviewed;
@@ -103,7 +103,7 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
     let Some(thread) = overview.selected_thread() else {
         return;
     };
-    let Some(mr_iid) = app.diff_view.as_ref().map(|d| d.mr_iid) else {
+    let Some(mr_iid) = app.diff_view().map(|d| d.mr_iid) else {
         return;
     };
     let selector = if thread.notes.len() == 1 {
@@ -119,7 +119,7 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
         ))
     };
     match selector {
-        Some(selector) => app.selector = Some(selector),
+        Some(selector) => app.open_selector(selector),
         None => app.show_error(
             "Review summaries cannot be replied to, edited or deleted from glab-tui.".to_string(),
         ),

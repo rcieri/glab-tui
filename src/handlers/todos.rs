@@ -183,7 +183,7 @@ pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>, fx: 
 /// Asks before marking everything read: neither GitLab nor GitHub can undo
 /// it in bulk.
 pub fn confirm_mark_all_read(app: &mut App) {
-    app.submit_dialog = Some(SubmitDialog::build(ConfirmAction::MarkAllTodosRead, app));
+    app.open_submit_dialog(SubmitDialog::build(ConfirmAction::MarkAllTodosRead, app));
 }
 
 pub fn mark_all_read(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {

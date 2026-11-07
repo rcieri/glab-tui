@@ -16,7 +16,7 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(mut text_input) = app.text_input.take() else {
+    let Some(mut text_input) = app.pop_text_input() else {
         return;
     };
     if key_event
@@ -29,7 +29,7 @@ pub fn handle_key(
             file_suffix: ".md".to_string(),
             purpose: EditPurpose::TextInput,
         });
-        app.text_input = Some(text_input);
+        app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         return;
     }
     match key_event.code {
@@ -38,23 +38,23 @@ pub fn handle_key(
         }
         KeyCode::Backspace => {
             text_input.buffer.delete_char_before_cursor();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
         KeyCode::Delete => {
             text_input.buffer.delete_char_at_cursor();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
         KeyCode::Left => {
             text_input.buffer.move_cursor_left();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
         KeyCode::Right => {
             text_input.buffer.move_cursor_right();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
         KeyCode::Char(c) => {
             text_input.buffer.insert_char(c);
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
         KeyCode::Enter => {
             let value = text_input.buffer.value().to_string();
@@ -275,7 +275,7 @@ pub fn handle_key(
                 crate::app::TextInputAction::EditNewField { field_idx } => {
                     // Write the value directly into the edit_menu fields
                     // (no CLI call — iid==0 means this entity is not yet created)
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         if let Some(field) = menu.fields.get_mut(field_idx) {
                             field.value = value.clone();
                         }
@@ -284,7 +284,7 @@ pub fn handle_key(
             }
         }
         _ => {
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
     }
 }

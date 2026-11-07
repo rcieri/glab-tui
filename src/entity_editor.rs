@@ -1654,7 +1654,7 @@ pub fn apply_selector_changes(
             // the form's own optimistic-update. See the matching `eager`
             // note on the `target_branch` arm in `apply_field_text_change`
             // for the inline-edit counterpart.
-            if let Some(menu) = &mut app.edit_menu {
+            if let Some(menu) = app.edit_menu_mut() {
                 for f in menu.fields.iter_mut() {
                     if f.label == "Source Branch" && field_type == "source_branch"
                         || f.label == "Target Branch" && field_type == "target_branch"
@@ -1674,7 +1674,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
     if entity_is_issue(entity_type) {
         if let Some(issue) = app.issues.items.iter().find(|i| i.iid == entity_iid) {
             let issue = issue.clone();
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let selected_idx = app.edit_menu().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
             let mut doc = build_issue_document(
@@ -1710,12 +1710,12 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
     } else if entity_is_mr(entity_type) {
         if let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid) {
             let mr = mr.clone();
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let selected_idx = app.edit_menu().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
             // Recompute the unresolved-threads hint the same way the MRs tab
             // preview does, so the Threads field matches the live state.
-            let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid) {
+            let unresolved = if app.diff_view().map(|d| d.mr_iid) == Some(mr.iid) {
                 Some(app.unresolved_threads_count())
             } else {
                 None
@@ -1753,7 +1753,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
     } else if entity_is_milestone(entity_type) {
         if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
             let milestone = milestone.clone();
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let selected_idx = app.edit_menu().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
             let issues_ref = app.milestone_issues(milestone.iid);
@@ -2452,7 +2452,7 @@ mod tests {
         let selected = app.releases.items()[1].clone();
         open_release_edit_menu(&mut app, &selected);
 
-        let menu = app.edit_menu.as_ref().expect("release edit form opens");
+        let menu = app.edit_menu().expect("release edit form opens");
         let notes = menu
             .fields
             .iter()

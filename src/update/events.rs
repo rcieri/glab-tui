@@ -226,8 +226,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.record_pr_stack(&pr.0, pr.1, stack);
                     app.update_filter_selection();
                     if let Some(action) = awaited {
-                        if app.selector.is_none()
-                            && app.submit_dialog.is_none()
+                        if app.selector().is_none()
+                            && app.submit_dialog().is_none()
                             && app.selected_mr_ref().as_ref() == Some(&pr)
                         {
                             crate::handlers::tabs::run_stack_action(app, &pr.0, pr.1, action);
@@ -592,7 +592,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 crate::utils::cache::save_cache(&project, &proj_cache);
             }
 
-            if let Some(mut sel) = app.selector.take() {
+            if let Some(sel) = app.selector_mut() {
                 let updated = match sel.field_type.as_str() {
                     "labels" if !labels.is_empty() => {
                         sel.all_items = labels.into_iter().map(|l| l.name).collect();
@@ -617,7 +617,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 if updated {
                     sel.is_loading = false;
                 }
-                app.selector = Some(sel);
             }
         }
         Event::DeploymentsFetched {
@@ -697,7 +696,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             // Restore the files marked as reviewed on an earlier pass.
             diff_view
                 .restore_review_state(app.reviewed_files_for_mr(mr_iid), app.hide_reviewed_files);
-            app.diff_view = Some(diff_view);
+            app.open_diff_view(diff_view);
             if held_back > 0 {
                 app.raise_error_toast(if held_back == 1 {
                     "1 draft comment no longer matches the diff and was set aside".to_string()
@@ -714,9 +713,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.show_cli_error(format!("Failed to load review comments: {err}"));
                 }
             }
-            if let (Some(overview), Some(diff_view)) =
-                (app.review_threads.as_mut(), app.diff_view.as_ref())
-            {
+            let mut diff_ref: Option<&crate::app::DiffView> = None;
+            let mut overview_mut: Option<&mut crate::app::ReviewThreadsOverview> = None;
+            for m in &mut app.modal_stack {
+                match m {
+                    crate::app::Modal::Diff(d) => diff_ref = Some(&**d),
+                    crate::app::Modal::ReviewThreads(r) => overview_mut = Some(&mut **r),
+                    _ => {}
+                }
+            }
+            if let (Some(overview), Some(diff_view)) = (overview_mut, diff_ref) {
                 overview.refresh(&app.current_comments, diff_view);
             }
             app.last_fetched_mr_iid = Some(mr_iid);
@@ -826,7 +832,8 @@ fn refetch_after_mutation(
             app.scoped_sender(tx.clone()),
         );
     }
-    let (Some(diff_view), Some(client)) = (&app.diff_view, app.gitlab_client.clone()) else {
+    let (Some(diff_view), Some(client)) = (app.diff_view().cloned(), app.gitlab_client.clone())
+    else {
         return;
     };
     let project_context = diff_view.project_path.clone();

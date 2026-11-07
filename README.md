@@ -469,7 +469,7 @@ glab-tui review resolve 42 --thread <id> [--unresolve]         # GitLab only
   ]
   ```
 
-- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
+- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. If a draft note or `bulk_publish` fails on GitLab, the draft notes already created are deleted again, so retrying does not post them twice. A failure after publishing (the approval or the summary) leaves the comments posted. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
 - **Unchanged lines** carry both line numbers (GitLab requires both); GitHub anchors them on the new side.
 - **`threads`** prints, per thread: `id` (pass it to `reply`/`resolve`), `classification` (`general`, `in-diff`, `outdated` against the current diff), `anchor` (`file`, `line`, `side`), `resolvable`, `resolved` and the `notes` (`id`, `author`, `body`, `created_at`). On GitHub only pull-request review comments are listed, and a thread id is the id of its first comment.
 - **`resolve`** on GitHub exits non-zero: it is not supported there.
@@ -649,7 +649,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `e` | Add code suggestion via `$EDITOR` |
 | `a` | Open comment actions menu (reply, resolve, edit, delete) |
 | `T` | Review threads overview: every thread, including general and outdated ones |
-| `r` | Submit review (Approve / Request Changes / Comment) |
+| `r` | Submit review: pick Comment / Approve / Request changes / Keep as draft with `j`/`k`, move into the summary with `j` past the last verdict or `Tab`, type it (or `Ctrl+E` for `$EDITOR`) and submit. A failed submission shows its error in the dialog and keeps the drafts. On GitLab, a failure after the comments are published (the approval or the summary) leaves them posted: do not resubmit them |
 | `/` / `f` | Search within diff |
 | `Ctrl+N` | Next search match |
 | `Ctrl+Shift+N` | Previous search match |

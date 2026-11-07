@@ -289,7 +289,7 @@ pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_j
                 Some(source) => read_input(&source)?,
                 None => Vec::new(),
             };
-            if inputs.is_empty() && body.trim().is_empty() && event != ReviewEvent::Approve {
+            if event.is_empty_review(&body, inputs.len()) {
                 bail!("nothing to submit: pass --body or comments with --input");
             }
             let comments = if inputs.is_empty() {

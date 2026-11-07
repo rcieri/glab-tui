@@ -207,7 +207,7 @@ pub fn report_runs(app: &mut App, report: RunReport) {
     let mut failures = report.refused;
     for (index, run) in report.runs.into_iter().enumerate() {
         match report.log_rows.get(index) {
-            Some(&row) => app.settle_command(row, &run.outcome, run.execution),
+            Some(&row) => app.settle_command(row, &run.outcome, Some(run.execution)),
             None => app.record_command_outcome(
                 format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", run.rendered),
                 &run.outcome,

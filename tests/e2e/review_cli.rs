@@ -329,6 +329,75 @@ fn test_review_submit_on_gitlab_publishes_every_comment_as_one_review() {
     assert!(bodies[1]["position"]["new_line"].is_null());
 }
 
+fn submit_two_comments_on_gitlab(extra: &[(&str, &str)]) -> (Output, Vec<String>) {
+    let sandbox = Sandbox::new(false).unwrap();
+    let input = sandbox.temp_dir.path().join("comments.json");
+    std::fs::write(&input, TWO_COMMENTS).unwrap();
+    let output = run_review(
+        &sandbox,
+        &[
+            "submit",
+            "2",
+            "--event",
+            "comment",
+            "--input",
+            input.to_str().unwrap(),
+        ],
+        "",
+        extra,
+    );
+    (output, cli_calls(&sandbox))
+}
+
+fn is_draft_note_delete(call: &str) -> bool {
+    call.contains("-X DELETE") && call.ends_with("/merge_requests/2/draft_notes/1")
+}
+
+#[test]
+fn test_review_submit_on_gitlab_deletes_the_draft_note_a_failed_second_post_left_behind() {
+    let (output, calls) = submit_two_comments_on_gitlab(&[
+        ("TEST_GLAB_FAIL_MATCH", "--input -"),
+        ("TEST_GLAB_FAIL_NTH", "2"),
+    ]);
+
+    assert_failed_quietly(&output, "draft note on src/lib.rs failed");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.ends_with("/merge_requests/2/draft_notes"))
+            .count(),
+        2,
+        "the first note is posted and the second fails: {calls:#?}"
+    );
+    assert_eq!(
+        calls.iter().filter(|c| is_draft_note_delete(c)).count(),
+        1,
+        "the note the first POST created is deleted once: {calls:#?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.contains("bulk_publish")),
+        "nothing is published after a failed draft note: {calls:#?}"
+    );
+}
+
+#[test]
+fn test_review_submit_on_gitlab_says_how_many_draft_notes_could_not_be_deleted() {
+    let (output, calls) = submit_two_comments_on_gitlab(&[
+        ("TEST_GLAB_FAIL_MATCH", "bulk_publish"),
+        ("TEST_GLAB_FAIL_MATCH_2", "-X DELETE"),
+    ]);
+
+    assert_failed_quietly(
+        &output,
+        "error: 2 draft note(s) of this review could not be deleted from !2: ",
+    );
+    assert_eq!(
+        calls.iter().filter(|c| is_draft_note_delete(c)).count(),
+        2,
+        "every note the attempt created is deleted: {calls:#?}"
+    );
+}
+
 #[test]
 fn test_review_submit_on_github_posts_one_review_from_stdin() {
     let sandbox = Sandbox::new(true).unwrap();

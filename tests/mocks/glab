@@ -11,8 +11,24 @@ if [[ -n "$TEST_GLAB_FAIL_BRIDGES" && "$*" == *"/bridges"* ]]; then
 fi
 
 # Generic failure injection: fail any call whose arguments contain the value.
+# With TEST_GLAB_FAIL_NTH set, only the Nth such call fails: calls whose
+# arguments are identical (a request body arrives on stdin) cannot be told
+# apart otherwise. The count is kept next to the call log.
 if [[ -n "$TEST_GLAB_FAIL_MATCH" && "$*" == *"$TEST_GLAB_FAIL_MATCH"* ]]; then
-    echo "mock: 404 Not Found" >&2
+    seen=1
+    if [[ -n "$TEST_GLAB_FAIL_NTH" ]]; then
+        seen=$(( $(cat "$LOG_FILE.fail_count" 2>/dev/null || echo 0) + 1 ))
+        echo "$seen" > "$LOG_FILE.fail_count"
+    fi
+    if [[ -z "$TEST_GLAB_FAIL_NTH" || "$seen" -eq "$TEST_GLAB_FAIL_NTH" ]]; then
+        echo "mock: 404 Not Found" >&2
+        exit 1
+    fi
+fi
+
+# A second pattern, for two calls that must both fail in one run.
+if [[ -n "$TEST_GLAB_FAIL_MATCH_2" && "$*" == *"$TEST_GLAB_FAIL_MATCH_2"* ]]; then
+    echo "mock: 500 Internal Server Error" >&2
     exit 1
 fi
 

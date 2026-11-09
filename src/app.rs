@@ -695,6 +695,7 @@ impl Selector {
         let cursor = presets
             .iter()
             .position(|preset| preset == current)
+            .or_else(|| presets.iter().position(|preset| preset == "default"))
             .unwrap_or(0);
         let mut picker = Self::single_choice(
             " Select Theme ".to_string(),

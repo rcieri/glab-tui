@@ -500,12 +500,7 @@ pub fn handle_key(
                 }
 
                 if field_type == crate::app::THEME_PICKER {
-                    let picked = selector
-                        .selected_items
-                        .iter()
-                        .next()
-                        .cloned()
-                        .or_else(|| selector.highlighted_theme());
+                    let picked = selector.highlighted_theme();
                     app.selector = None;
                     if let Some(name) = picked {
                         app.config.theme_preset = Some(name);

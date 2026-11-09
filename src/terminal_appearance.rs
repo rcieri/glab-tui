@@ -103,6 +103,9 @@ fn query_background() -> Option<Vec<u8>> {
         // SAFETY: `pollfd` is one initialized `pollfd` that outlives the call,
         // matching the count of 1.
         let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if ready < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
         if ready <= 0 {
             break;
         }

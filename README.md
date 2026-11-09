@@ -270,8 +270,8 @@ The generated file is fully annotated. Key sections:
 theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | terminal | auto | ...
 
 # "terminal" draws with your terminal's own ANSI palette, so it follows the
-# terminal or OS theme. "auto" picks theme_dark or theme_light by asking the
-# terminal for its background color at startup (or reading COLORFGBG).
+# terminal or OS theme. "auto" picks theme_dark or theme_light from COLORFGBG,
+# else by asking the terminal for its background color at startup.
 # Set appearance to skip asking.
 # theme_dark = "default"
 # theme_light = "catppuccin-latte"

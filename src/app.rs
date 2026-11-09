@@ -701,8 +701,8 @@ impl Selector {
             " Select Theme ".to_string(),
             presets,
             0,
-            THEME_PICKER.to_string(),
-            THEME_PICKER,
+            THEME_PICKER_FIELD_TYPE.to_string(),
+            THEME_PICKER_FIELD_TYPE,
         );
         picker.cursor_idx = cursor;
         picker.state.select(Some(cursor));
@@ -712,7 +712,7 @@ impl Selector {
     /// The preset under a theme picker's cursor. `None` for any other
     /// selector and on the `+ Create` row a search appends.
     pub fn highlighted_theme(&self) -> Option<String> {
-        if self.field_type != THEME_PICKER {
+        if self.field_type != THEME_PICKER_FIELD_TYPE {
             return None;
         }
         let item = self.get_filtered_items().into_iter().nth(self.cursor_idx)?;
@@ -791,8 +791,7 @@ impl Selector {
     }
 }
 
-/// `Selector::field_type` of the theme picker.
-pub const THEME_PICKER: &str = "theme_selector";
+pub const THEME_PICKER_FIELD_TYPE: &str = "theme_selector";
 
 const COMMENT_EXCERPT_CHARS: usize = 40;
 

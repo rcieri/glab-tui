@@ -499,7 +499,7 @@ pub fn handle_key(
                     return;
                 }
 
-                if field_type == crate::app::THEME_PICKER {
+                if field_type == crate::app::THEME_PICKER_FIELD_TYPE {
                     let picked = selector.highlighted_theme();
                     app.selector = None;
                     if let Some(name) = picked {

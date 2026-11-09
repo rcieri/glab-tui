@@ -150,8 +150,7 @@ fn todos_tab_lists_filters_and_marks_the_matching_todo_done() {
         .expect("a merge request todo should open the MRs tab");
 }
 
-/// Listing and filtering without the close action, which is ignored below
-/// until #705 is fixed.
+/// Listing and filtering without the close step, which the next test adds.
 #[test]
 fn milestones_tab_lists_and_filters_milestones() {
     let mut session = session_on_tab(7, "v1.0 Milestone");

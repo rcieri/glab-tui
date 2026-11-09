@@ -3,10 +3,10 @@ LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
 FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "glab $*" >> "$LOG_FILE"
-# One file per call with the exact argument boundaries, checked against
-# docs/cli-reference.md by the e2e harness (tests/e2e/cli_contract.rs). A
-# shared file would interleave concurrent calls. The record is written under a
-# dot name and renamed once complete, so the harness can wait for it.
+# One file per call with the exact argument boundaries, checked against the
+# generated CLI reference by the e2e harness. A shared file would interleave
+# concurrent calls. The record is written under a dot name and renamed once
+# complete, so the harness can wait for it.
 if [[ -n "$TEST_LOG_PATH" ]]; then
     mkdir -p "$TEST_LOG_PATH.argv.d"
     argv_record=$(mktemp "$TEST_LOG_PATH.argv.d/.XXXXXXXX")

@@ -2357,8 +2357,6 @@ cycle_status_filter = "s"
         theme
     }
 
-    /// `preset`, or for `auto` the preset of the configured `appearance`,
-    /// else of the one the terminal reported, else the dark one.
     fn concrete_preset<'a>(
         &'a self,
         preset: &'a str,

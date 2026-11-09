@@ -2340,19 +2340,18 @@ cycle_status_filter = "s"
     }
 
     /// The theme `theme_preset` and the `[theme]` overrides resolve to.
-    /// `terminal` is the appearance the terminal reported, when it was asked.
-    pub fn resolve_theme(&self, terminal: Option<Appearance>) -> Theme {
-        self.resolve_theme_with_preset(self.theme_preset.as_deref(), terminal)
+    pub fn resolve_theme(&self, terminal_appearance: Option<Appearance>) -> Theme {
+        self.resolve_theme_with_preset(self.theme_preset.as_deref(), terminal_appearance)
     }
 
     /// `resolve_theme` as if `theme_preset` were `preset`.
     pub fn resolve_theme_with_preset(
         &self,
         preset: Option<&str>,
-        terminal: Option<Appearance>,
+        terminal_appearance: Option<Appearance>,
     ) -> Theme {
         let mut theme = preset
-            .and_then(|preset| Theme::preset(self.concrete_preset(preset, terminal)))
+            .and_then(|preset| Theme::preset(self.concrete_preset(preset, terminal_appearance)))
             .unwrap_or_default();
         apply_overrides(&mut theme, &self.theme);
         theme
@@ -2360,11 +2359,15 @@ cycle_status_filter = "s"
 
     /// `preset`, or for `auto` the preset of the configured `appearance`,
     /// else of the one the terminal reported, else the dark one.
-    fn concrete_preset<'a>(&'a self, preset: &'a str, terminal: Option<Appearance>) -> &'a str {
+    fn concrete_preset<'a>(
+        &'a self,
+        preset: &'a str,
+        terminal_appearance: Option<Appearance>,
+    ) -> &'a str {
         if preset != AUTO_THEME_PRESET {
             return preset;
         }
-        match self.appearance.or(terminal) {
+        match self.appearance.or(terminal_appearance) {
             Some(Appearance::Light) => &self.theme_light,
             Some(Appearance::Dark) | None => &self.theme_dark,
         }

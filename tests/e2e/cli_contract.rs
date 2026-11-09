@@ -322,34 +322,46 @@ fn a_subcommand_glab_does_not_have_is_refused() {
         ),
         (&["gh", "cs", "bogus"], "`gh cs` has no subcommand `bogus`"),
     ] {
-        let refused = violation(argv);
-        assert!(
-            refused.as_deref().is_some_and(|text| text.contains(reason)),
-            "{argv:?}: {refused:?}"
-        );
+        assert_refused(argv, reason);
     }
 }
 
 #[test]
 fn a_flag_the_command_does_not_have_is_refused() {
-    for (argv, flag) in [
+    for (argv, reason) in [
         (
             &["gh", "run", "rerun", "1", "--everything"][..],
-            "--everything",
+            "`gh run rerun` has no flag `--everything`",
         ),
-        (&["glab", "mr", "list", "--fill"], "--fill"),
-        (&["glab", "alias", "set", "x", "y", "--title"], "--title"),
-        (&["glab", "repo", "clone", "a/b", "--depth", "1"], "--depth"),
-        (&["glab", "mr", "list", "---repo", "o/r"], "---repo"),
+        (
+            &["glab", "mr", "list", "--fill"],
+            "`glab mr list` has no flag `--fill`",
+        ),
+        (
+            &["glab", "alias", "set", "x", "y", "--title"],
+            "`glab alias set` has no flag `--title`",
+        ),
+        (
+            &["glab", "repo", "clone", "a/b", "--depth", "1"],
+            "`glab repo clone` has no flag `--depth`",
+        ),
+        (
+            &["glab", "mr", "list", "---repo", "o/r"],
+            "`glab mr list` has no flag `---repo`",
+        ),
     ] {
-        let refused = violation(argv);
-        assert!(
-            refused
-                .as_deref()
-                .is_some_and(|text| text.contains(&format!("no flag `{flag}`"))),
-            "{argv:?}: {refused:?}"
-        );
+        assert_refused(argv, reason);
     }
+}
+
+fn assert_refused(argv: &[&str], reason: &str) {
+    assert_eq!(
+        violation(argv),
+        Some(format!(
+            "{}: {reason} (docs/cli-reference.md)",
+            argv.join(" ")
+        )),
+    );
 }
 
 #[test]

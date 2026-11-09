@@ -27,8 +27,10 @@ fn appearance_from_colorfgbg(value: &str) -> Option<Appearance> {
     }
 }
 
+const LIGHT_BACKGROUND_MIN_LIGHTNESS: f32 = 0.5;
+
 /// Reads the color out of an OSC 11 reply, `ESC ] 11 ; rgb:R/G/B` with one
-/// to four hex digits per channel, and classifies it by perceived lightness.
+/// to four hex digits per channel.
 fn appearance_from_osc11_reply(reply: &[u8]) -> Option<Appearance> {
     const MARKER: &[u8] = b"\x1b]11;";
     let start = reply
@@ -41,12 +43,17 @@ fn appearance_from_osc11_reply(reply: &[u8]) -> Option<Appearance> {
         .or_else(|| body.strip_prefix(b"rgb:"))?;
     let mut channels = body.split(|&b| b == b'/').map(channel_intensity);
     let (red, green, blue) = (channels.next()??, channels.next()??, channels.next()??);
-    let lightness = 0.299 * red + 0.587 * green + 0.114 * blue;
-    Some(if lightness > 0.5 {
-        Appearance::Light
-    } else {
-        Appearance::Dark
-    })
+    Some(
+        if perceived_lightness(red, green, blue) >= LIGHT_BACKGROUND_MIN_LIGHTNESS {
+            Appearance::Light
+        } else {
+            Appearance::Dark
+        },
+    )
+}
+
+fn perceived_lightness(red: f32, green: f32, blue: f32) -> f32 {
+    0.299 * red + 0.587 * green + 0.114 * blue
 }
 
 /// A channel's leading hex digits scaled to `0.0..=1.0`.

@@ -23,10 +23,16 @@ const ARG_END: char = '\u{1f}';
 const SUBCOMMAND_PLACEHOLDERS: [&str; 4] =
     ["<command>", "[command]", "<subcommand>", "[subcommand]"];
 
+/// Commands with subcommands that also run on their own. Their help reads
+/// like a group's, so they are listed by hand: `gh codespace ports` lists the
+/// ports, `glab orbit` runs the Orbit binary.
+const RUNNABLE_PARENTS: [&str; 2] = ["gh codespace ports", "glab orbit"];
+
 #[derive(Clone, Default)]
 struct Command {
     usage: Option<&'static str>,
     has_subcommands: bool,
+    runs_on_its_own: bool,
     /// The generator could not read its help (it needs a git remote, say),
     /// so nothing is known about its flags.
     help_unavailable: bool,
@@ -46,7 +52,7 @@ impl Command {
                 })
                 .contains('<')
         });
-        self.has_subcommands && !own_argument
+        self.has_subcommands && !self.runs_on_its_own && !own_argument
     }
 }
 
@@ -105,6 +111,11 @@ fn parse_reference(text: &'static str) -> HashMap<String, Command> {
             command.has_subcommands = true;
         }
     }
+    for path in RUNNABLE_PARENTS {
+        if let Some(command) = commands.get_mut(path) {
+            command.runs_on_its_own = true;
+        }
+    }
 
     // gh's help lists only `--help`, but cobra also takes `-h` where no other
     // flag claims it.
@@ -132,16 +143,88 @@ fn parse_reference(text: &'static str) -> HashMap<String, Command> {
 }
 
 /// The flag `arg` names (`--repo` for `--repo=x`, `-R` for `-Rx`), or `None`
-/// when it is a value: `-`, `-1`, `- item`.
+/// when it is a value: `-`, `-1`, `- item`. Every word starting with `--` is
+/// a flag, so `---repo` is checked as one and refused.
 fn flag_name(arg: &str) -> Option<&str> {
-    if let Some(long) = arg.strip_prefix("--") {
-        long.starts_with(|c: char| c.is_ascii_alphabetic())
-            .then(|| arg.split('=').next().unwrap_or(arg))
-    } else {
-        let short = arg.strip_prefix('-')?;
-        short
-            .starts_with(|c: char| c.is_ascii_alphabetic())
-            .then(|| &arg[..2])
+    if arg.starts_with("--") {
+        return arg.split('=').next();
+    }
+    let short = arg.strip_prefix('-')?;
+    short
+        .starts_with(|c: char| c.is_ascii_alphabetic())
+        .then(|| &arg[..2])
+}
+
+/// A call sorted into the command it names, its flags and its first
+/// positional argument.
+struct Invocation<'a> {
+    path: String,
+    flags: Vec<&'a str>,
+    first_positional: Option<&'a str>,
+}
+
+impl<'a> Invocation<'a> {
+    /// Reads `argv` (program name first) up to `--`. Subcommands come before
+    /// the first positional argument. glab's help does not say which flags
+    /// take a value, so a word after a flag is its value unless it names a
+    /// subcommand: `glab mr -R list view` is misread as `glab mr list`.
+    fn read(argv: &[&'a str]) -> Self {
+        let mut invocation = Invocation {
+            path: argv[0].to_string(),
+            flags: Vec::new(),
+            first_positional: None,
+        };
+        let mut after_flag = false;
+        for &word in argv[1..].iter().take_while(|word| **word != "--") {
+            if let Some(flag) = flag_name(word) {
+                invocation.flags.push(flag);
+                after_flag = !word.contains('=');
+                continue;
+            }
+            let is_flag_value = std::mem::replace(&mut after_flag, false);
+            if invocation.first_positional.is_none() && invocation.descend(word) {
+                continue;
+            }
+            if !is_flag_value {
+                invocation.first_positional.get_or_insert(word);
+            }
+        }
+        invocation
+    }
+
+    /// Moves to the subcommand `word` names, if the command has one.
+    fn descend(&mut self, word: &str) -> bool {
+        let child = format!("{} {word}", self.path);
+        let found = REFERENCE.contains_key(&child);
+        if found {
+            self.path = child;
+        }
+        found
+    }
+
+    /// Why the real CLI would refuse this call, or `None`.
+    fn refusal(&self) -> Option<String> {
+        let path = &self.path;
+        let command = &REFERENCE[path];
+        if command.help_unavailable {
+            return None;
+        }
+        if command.requires_subcommand() {
+            if let Some(arg) = self.first_positional {
+                return Some(format!("`{path}` has no subcommand `{arg}`"));
+            }
+            let asks_for_help = self
+                .flags
+                .iter()
+                .any(|flag| matches!(*flag, "-h" | "--help" | "--version"));
+            if !asks_for_help {
+                return Some(format!("`{path}` needs a subcommand"));
+            }
+        }
+        self.flags
+            .iter()
+            .find(|flag| !command.flags.contains(*flag))
+            .map(|flag| format!("`{path}` has no flag `{flag}`"))
     }
 }
 
@@ -150,59 +233,9 @@ pub fn violation(argv: &[&str]) -> Option<String> {
     if !matches!(argv.first(), Some(&("glab" | "gh"))) {
         return None;
     }
-    let refused = |reason: String| {
-        Some(format!(
-            "{}: {reason} (docs/cli-reference.md)",
-            argv.join(" ")
-        ))
-    };
-
-    let mut path = argv[0].to_string();
-    let mut flags = Vec::new();
-    let mut first_positional = None;
-    let mut may_be_flag_value = false;
-    for &arg in &argv[1..] {
-        if arg == "--" {
-            break;
-        }
-        if let Some(flag) = flag_name(arg) {
-            flags.push(flag);
-            may_be_flag_value = !arg.contains('=');
-            continue;
-        }
-        if first_positional.is_none() {
-            let child = format!("{path} {arg}");
-            if REFERENCE.contains_key(&child) {
-                path = child;
-                may_be_flag_value = false;
-                continue;
-            }
-        }
-        if std::mem::take(&mut may_be_flag_value) {
-            continue;
-        }
-        first_positional.get_or_insert(arg);
-    }
-
-    let command = &REFERENCE[&path];
-    if command.help_unavailable {
-        return None;
-    }
-    if command.requires_subcommand() {
-        if let Some(arg) = first_positional {
-            return refused(format!("`{path}` has no subcommand `{arg}`"));
-        }
-        let asks_for_help = flags
-            .iter()
-            .any(|flag| matches!(*flag, "-h" | "--help" | "--version"));
-        if !asks_for_help {
-            return refused(format!("`{path}` needs a subcommand"));
-        }
-    }
-    flags
-        .iter()
-        .find(|flag| !command.flags.contains(*flag))
-        .and_then(|flag| refused(format!("`{path}` has no flag `{flag}`")))
+    Invocation::read(argv)
+        .refusal()
+        .map(|reason| format!("{}: {reason} (docs/cli-reference.md)", argv.join(" ")))
 }
 
 fn argv_dir(log_path: &Path) -> PathBuf {
@@ -222,22 +255,28 @@ fn record_names(log_path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Waits until no mock is still writing its record and none has started one
-/// for a moment, at most `timeout`: a mock glab-tui started before it was
-/// killed keeps running.
+/// Waits until no record has appeared, been renamed or vanished for a
+/// moment, at most `timeout`: a mock glab-tui started before it was killed
+/// keeps running. A record left under its dot name by a killed mock does not
+/// change, so it does not hold the wait up.
 pub fn wait_for_recorded_calls(log_path: &Path, timeout: Duration) {
     const QUIET: Duration = Duration::from_millis(50);
     let deadline = Instant::now() + timeout;
-    let mut seen = record_names(log_path).len();
+    let mut seen = sorted_record_names(log_path);
     while Instant::now() < deadline {
         std::thread::sleep(QUIET);
-        let names = record_names(log_path);
-        let pending = names.iter().any(|name| name.starts_with('.'));
-        if !pending && names.len() == seen {
+        let names = sorted_record_names(log_path);
+        if names == seen {
             return;
         }
-        seen = names.len();
+        seen = names;
     }
+}
+
+fn sorted_record_names(log_path: &Path) -> Vec<String> {
+    let mut names = record_names(log_path);
+    names.sort();
+    names
 }
 
 /// Every call recorded in `<log_path>.argv.d/` the real CLI would refuse.
@@ -246,7 +285,8 @@ pub fn violations_in_log(log_path: &Path) -> Vec<String> {
     let mut refused: Vec<String> = record_names(log_path)
         .into_iter()
         .filter(|name| !name.starts_with('.'))
-        .filter_map(|name| std::fs::read_to_string(dir.join(name)).ok())
+        .filter_map(|name| std::fs::read(dir.join(name)).ok())
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         .filter_map(|record| {
             let argv: Vec<&str> = record
                 .strip_suffix(ARG_END)
@@ -300,6 +340,7 @@ fn a_flag_the_command_does_not_have_is_refused() {
         (&["glab", "mr", "list", "--fill"], "--fill"),
         (&["glab", "alias", "set", "x", "y", "--title"], "--title"),
         (&["glab", "repo", "clone", "a/b", "--depth", "1"], "--depth"),
+        (&["glab", "mr", "list", "---repo", "o/r"], "---repo"),
     ] {
         let refused = violation(argv);
         assert!(
@@ -329,9 +370,66 @@ fn calls_the_cli_accepts_pass() {
         &["gh", "pr", "ls", "--state=all"],
         &["gh", "cs", "list"],
         &["gh", "--version"],
+        &["gh", "codespace", "ports", "-c", "x"],
+        &["glab", "orbit", "--install"],
     ] {
         assert_eq!(violation(argv), None, "{argv:?}");
     }
+}
+
+#[test]
+fn the_reference_format_is_read() {
+    let commands = parse_reference(
+        "### `gh codespace`
+
+**Usage:** `gh codespace [flags]`
+
+**Aliases:** `gh cs`
+
+| `--help` | Show help for command |
+
+#### `gh codespace list`
+
+**Aliases:** `gh codespace ls`, `gh cs ls`
+
+| `-L, --limit int` | Maximum number \\| of codespaces |
+| `--help` | Show help for command |
+
+### `glab dependency-firewall`
+
+**Help unavailable:** `not a git repository`
+",
+    );
+
+    assert!(commands["gh codespace"].requires_subcommand());
+    for path in [
+        "gh codespace list",
+        "gh codespace ls",
+        "gh cs list",
+        "gh cs ls",
+    ] {
+        let flags = &commands[path].flags;
+        assert!(
+            ["-L", "--limit", "--help", "-h"]
+                .iter()
+                .all(|flag| flags.contains(flag)),
+            "{path}: {flags:?}"
+        );
+    }
+    assert!(commands["glab dependency-firewall"].help_unavailable);
+}
+
+#[test]
+fn a_record_a_killed_mock_left_half_written_does_not_hold_up_the_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cli_calls.log");
+    std::fs::create_dir(argv_dir(&log_path)).unwrap();
+    std::fs::write(argv_dir(&log_path).join(".abandoned"), "glab\u{1f}").unwrap();
+
+    let started = Instant::now();
+    wait_for_recorded_calls(&log_path, Duration::from_secs(2));
+
+    assert!(started.elapsed() < Duration::from_secs(1));
 }
 
 #[test]
@@ -356,8 +454,24 @@ fn a_recorded_call_glab_does_not_have_is_reported_by_name() {
 }
 
 #[test]
+fn a_record_that_is_not_utf8_is_still_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cli_calls.log");
+    std::fs::create_dir(argv_dir(&log_path)).unwrap();
+    std::fs::write(
+        argv_dir(&log_path).join("a"),
+        b"glab\x1fjob\x1fview\x1f\xff\x1f",
+    )
+    .unwrap();
+
+    let refused = violations_in_log(&log_path);
+
+    assert_eq!(refused.len(), 1, "{refused:?}");
+}
+
+#[test]
 #[should_panic(expected = "glab job view 1 -w")]
-fn a_test_session_whose_call_log_has_a_refused_call_fails() {
+fn a_sandbox_whose_call_log_has_a_refused_call_fails() {
     let sandbox = crate::Sandbox::new(false).unwrap();
     std::fs::create_dir(argv_dir(&sandbox.log_path)).unwrap();
     std::fs::write(

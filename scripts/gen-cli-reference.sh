@@ -19,7 +19,8 @@ export NO_COLOR=1 CLICOLOR=0 GH_NO_UPDATE_NOTIFIER=1 GH_PROMPT_DISABLED=1 \
 require_version() {
     local cli=$1 pinned=$2 installed
     installed=$("$cli" --version 2>&1 | head -1)
-    if [[ $installed != *" $pinned"* ]]; then
+    # A whole word, so 1.122.0-rc1 does not pass for 1.122.0.
+    if [[ " $installed " != *" $pinned "* ]]; then
         echo "$cli $pinned is pinned, but the installed one says: $installed" >&2
         exit 1
     fi
@@ -116,7 +117,7 @@ escape_cell() {
 
 # Writes the section of one command, then of each of its subcommands.
 document() {
-    local path=$1 depth=$2 tag first rest usage="" help hashes
+    local path=$1 depth=$2 tag first rest usage="" help hashes records
     local -a aliases=() children=() child_lines=() flag_lines=() example_flags=()
     local -a words
     read -ra words <<<"$path"
@@ -132,6 +133,8 @@ document() {
         printf '**Help unavailable:** `%s`\n\n' "$reason"
         return
     fi
+    # Assigned first, so a failing parse_help stops the script.
+    records=$(parse_help "$path" <<<"$help")
     while IFS=$'\t' read -r tag first rest; do
         case $tag in
             U) usage=$first ;;
@@ -143,7 +146,7 @@ document() {
             F) flag_lines+=("| \`$first\` | $(escape_cell "$rest") |") ;;
             X) example_flags+=("$first") ;;
         esac
-    done < <(parse_help "$path" <<<"$help")
+    done <<<"$records"
     if ((${#example_flags[@]})); then
         local flag
         while read -r flag; do
@@ -151,6 +154,12 @@ document() {
         done < <(printf '%s\n' "${example_flags[@]}" | LC_ALL=C sort)
     fi
 
+    # A word a COMMANDS section wraps onto its own line would be read as a
+    # subcommand, and cobra answers its --help with the parent's help.
+    if [[ -n $usage && $usage != "$path" && $usage != "$path "* ]]; then
+        echo "\`$path --help\` shows the usage of another command: $usage" >&2
+        exit 1
+    fi
     [[ -n $usage ]] && printf '**Usage:** `%s`\n\n' "$usage"
     if ((${#aliases[@]})); then
         local joined
@@ -167,6 +176,8 @@ document() {
         printf '%s\n' "${flag_lines[@]}"
         printf '\n'
     fi
+    # Guarded: bash 3.2 (macOS) treats an empty array as unset under set -u.
+    ((${#children[@]})) || return 0
     local child
     for child in "${children[@]}"; do
         document "$path $child" $((depth + 1))

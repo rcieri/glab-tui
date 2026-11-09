@@ -16,14 +16,15 @@ pub fn detect() -> Option<Appearance> {
 }
 
 /// `COLORFGBG` holds `<fg>;<bg>` (or `<fg>;default;<bg>`) palette indexes.
-/// Indexes 0-6 and 8 are the dark colors of the ANSI palette.
+/// Indexes 0-6 and 8 are the dark colors of the ANSI palette, 7 and 9-15 the
+/// light ones. Higher indexes say nothing, so the terminal gets asked.
 fn appearance_from_colorfgbg(value: &str) -> Option<Appearance> {
     let background: u8 = value.rsplit(';').next()?.trim().parse().ok()?;
-    Some(if background <= 6 || background == 8 {
-        Appearance::Dark
-    } else {
-        Appearance::Light
-    })
+    match background {
+        0..=6 | 8 => Some(Appearance::Dark),
+        7 | 9..=15 => Some(Appearance::Light),
+        _ => None,
+    }
 }
 
 /// Reads the color out of an OSC 11 reply, `ESC ] 11 ; rgb:R/G/B` with one
@@ -146,6 +147,12 @@ mod tests {
     fn colorfgbg_without_a_palette_index_says_nothing() {
         assert_eq!(appearance_from_colorfgbg("15;default"), None);
         assert_eq!(appearance_from_colorfgbg(""), None);
+    }
+
+    #[test]
+    fn colorfgbg_beyond_the_16_color_palette_says_nothing() {
+        assert_eq!(appearance_from_colorfgbg("15;16"), None);
+        assert_eq!(appearance_from_colorfgbg("15;232"), None);
     }
 
     #[test]

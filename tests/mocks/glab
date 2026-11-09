@@ -148,7 +148,8 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     else
-        echo "{}"
+        echo "mock: unhandled: $*" >&2
+        exit 2
     fi
 elif [[ "$*" == *"ci list"* && "$*" == *"--ref refs/merge-requests/"* ]]; then
     # Newer than every pipelines.json id, so the Jobs tab must pick it.
@@ -187,6 +188,11 @@ elif [[ "$*" == *"todo list"* ]]; then
     cat "$FIXTURES_DIR/todos.json"
 elif [[ "$*" == *"milestone list"* ]]; then
     cat "$FIXTURES_DIR/milestones.json"
+elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* \
+        || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* ]]; then
+    # Mutations whose output glab-tui does not read.
+    :
 else
-    echo "[]"
+    echo "mock: unhandled: $*" >&2
+    exit 2
 fi

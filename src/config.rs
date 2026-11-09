@@ -3207,8 +3207,15 @@ label_palette_9 = "#2d2d2d"
 
     #[test]
     fn a_named_preset_ignores_the_terminal_appearance() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
         let config: Config = toml::from_str("theme_preset = \"nord\"\n").unwrap();
 
         assert!(!config.follows_terminal_appearance());
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Light)),
+            Theme::preset("nord").unwrap()
+        );
     }
 }

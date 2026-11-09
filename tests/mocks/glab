@@ -4,6 +4,14 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "glab $*" >> "$LOG_FILE"
 
+# A call this mock has no case for. The test harness fails the test when
+# <log>.unhandled is not empty (see `Sandbox::drop`).
+unhandled() {
+    echo "glab $*" >> "$LOG_FILE.unhandled"
+    echo "mock: unhandled: $*" >&2
+    exit 2
+}
+
 # Failure injection for tests that assert on error handling.
 if [[ -n "$TEST_GLAB_FAIL_BRIDGES" && "$*" == *"/bridges"* ]]; then
     echo "mock: bridges unavailable" >&2
@@ -48,12 +56,19 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/runner_details_graphql.json"
         exit 0
     fi
+    if [[ "$2" == "graphql" && "$*" == *"mergeRequests(iids:"* ]]; then
+        # Approval and mergeability stay unknown.
+        echo '{"data": {"currentUser": {"username": "test-user"}, "project": {"mergeRequests": {"nodes": []}}}}'
+        exit 0
+    fi
     if [[ "$2" == runners/* ]]; then
         cat "$FIXTURES_DIR/runner_${2#runners/}.json"
     elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
+    elif [[ "$*" == *"/members/all"* || "$*" == *"groups/"*"/labels"* ]]; then
+        echo "[]"
     elif [[ "$*" == *"groups/test-group/issues"* ]]; then
         # Pages are requested concurrently; only the first carries the fixture.
         if [[ " $* " == *"&page=1 "* ]]; then
@@ -148,8 +163,7 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     else
-        echo "mock: unhandled: $*" >&2
-        exit 2
+        unhandled "$@"
     fi
 elif [[ "$*" == *"ci list"* && "$*" == *"--ref refs/merge-requests/"* ]]; then
     # Newer than every pipelines.json id, so the Jobs tab must pick it.
@@ -188,11 +202,17 @@ elif [[ "$*" == *"todo list"* ]]; then
     cat "$FIXTURES_DIR/todos.json"
 elif [[ "$*" == *"milestone list"* ]]; then
     cat "$FIXTURES_DIR/milestones.json"
+elif [[ "$*" == "label list"* ]]; then
+    echo "[]"
+elif [[ "$*" == "auth status"* ]]; then
+    echo "Logged in to gitlab.com as test-user" >&2
 elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* \
-        || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* ]]; then
+        || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* \
+        || "$*" == "issue close "* || "$*" == "mr close "* \
+        || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
+        || "$*" == "runner update "* ]]; then
     # Mutations whose output glab-tui does not read.
     :
 else
-    echo "mock: unhandled: $*" >&2
-    exit 2
+    unhandled "$@"
 fi

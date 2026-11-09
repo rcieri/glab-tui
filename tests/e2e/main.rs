@@ -24,6 +24,7 @@ mod stacked_prs;
 mod state_filter;
 mod tabs;
 mod todos;
+mod unhandled_calls;
 mod workspace;
 
 // Declarations of libc functions
@@ -488,12 +489,56 @@ impl Sandbox {
             ("SHELL".to_string(), "/bin/sh".to_string()),
         ]
     }
+
+    /// Waits until the call log has stopped growing: mocks glab-tui started
+    /// keep running after the app is killed, and may still log a call.
+    /// The log has to stay unchanged for `QUIET`, long enough for a mock forked
+    /// just before the kill to start up and log its call.
+    fn wait_for_running_mocks(&self, timeout: Duration) {
+        const POLL: Duration = Duration::from_millis(50);
+        const QUIET: Duration = Duration::from_millis(250);
+        let logged = || std::fs::metadata(&self.log_path).map_or(0, |m| m.len());
+        let deadline = Instant::now() + timeout;
+        let mut seen = logged();
+        let mut quiet_since = Instant::now();
+        while Instant::now() < deadline {
+            std::thread::sleep(POLL);
+            let now = logged();
+            if now != seen {
+                seen = now;
+                quiet_since = Instant::now();
+            } else if quiet_since.elapsed() >= QUIET {
+                return;
+            }
+        }
+    }
+}
+
+impl Drop for Sandbox {
+    /// Fails the test when glab-tui made a `glab` / `gh` call the mocks have no
+    /// case for. A test that already failed keeps its own failure: panicking
+    /// again while unwinding would abort the run.
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        self.wait_for_running_mocks(Duration::from_secs(2));
+        let mut unhandled = self.log_path.clone().into_os_string();
+        unhandled.push(".unhandled");
+        let calls = std::fs::read_to_string(unhandled).unwrap_or_default();
+        assert!(
+            calls.is_empty(),
+            "the CLI mocks have no case for these calls (add one to tests/mocks/):\n{calls}"
+        );
+    }
 }
 
 pub struct TestSession {
-    pub sandbox: Sandbox,
+    // Dropped in this order: the app is killed before the sandbox checks the
+    // calls it made.
     pub pty: Pty,
     pub emulator: TerminalEmulator,
+    pub sandbox: Sandbox,
 }
 
 impl TestSession {

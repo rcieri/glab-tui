@@ -3,6 +3,7 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod cli_contract;
 mod config;
 mod custom_keybindings;
 mod environments;
@@ -490,10 +491,31 @@ impl Sandbox {
     }
 }
 
+impl Drop for Sandbox {
+    /// Fails the test when glab-tui called a `glab` / `gh` subcommand or flag
+    /// the real CLI does not have. A test that already failed keeps its own
+    /// failure: panicking again while unwinding would abort the run.
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        cli_contract::wait_for_recorded_calls(&self.log_path, Duration::from_secs(2));
+        let refused = cli_contract::violations_in_log(&self.log_path);
+        assert!(
+            refused.is_empty(),
+            "the real CLI would refuse these calls (if a newer CLI has them, bump \
+             the pins in scripts/gen-cli-reference.sh and rerun it):\n{}",
+            refused.join("\n")
+        );
+    }
+}
+
 pub struct TestSession {
-    pub sandbox: Sandbox,
+    // Dropped in this order: the app is killed before the sandbox checks the
+    // calls it made.
     pub pty: Pty,
     pub emulator: TerminalEmulator,
+    pub sandbox: Sandbox,
 }
 
 impl TestSession {

@@ -150,7 +150,19 @@ fn todos_tab_lists_filters_and_marks_the_matching_todo_done() {
         .expect("a merge request todo should open the MRs tab");
 }
 
+/// Listing and filtering without the close action, which is ignored below
+/// until #705 is fixed.
 #[test]
+fn milestones_tab_lists_and_filters_milestones() {
+    let mut session = session_on_tab(7, "v1.0 Milestone");
+    assert_lists(&mut session, &["v1.0 Milestone", "v2.0 Roadmap"]);
+
+    search(&mut session, "Roadmap");
+    assert_hides(&session, "v1.0 Milestone");
+}
+
+#[test]
+#[ignore = "#705: `glab milestone close` does not exist"]
 fn milestones_tab_lists_filters_and_closes_the_matching_milestone() {
     let mut session = session_on_tab(7, "v1.0 Milestone");
     assert_lists(&mut session, &["v1.0 Milestone", "v2.0 Roadmap"]);

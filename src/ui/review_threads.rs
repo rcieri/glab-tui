@@ -2,6 +2,7 @@ use super::helpers::rendered_line_count;
 use super::modal::modal_area;
 use crate::app::{App, OverlayKind, ReviewThreadsOverview};
 use crate::config::Theme;
+use crate::domain::mr::ReviewState;
 use crate::domain::review_threads::{ReviewThread, ThreadAnchor};
 use crate::ui::diff::centered_rect_min;
 use crate::ui::render_ctx::RenderCtx;
@@ -107,6 +108,7 @@ fn thread_row(thread: &ReviewThread, theme: &Theme) -> Line<'static> {
     let root = thread.root();
     let mut spans = vec![status_badge(thread, theme), Span::raw(" ")];
     spans.extend(anchor_spans(&thread.anchor, theme));
+    spans.extend(review_state_badge(thread, theme));
     spans.push(Span::styled(
         format!("  @{}: ", root.author.username),
         Style::default().fg(theme.blue),
@@ -117,6 +119,10 @@ fn thread_row(thread: &ReviewThread, theme: &Theme) -> Line<'static> {
             EXCERPT_CHARS,
         ),
         Style::default().fg(theme.text_normal),
+    ));
+    spans.push(Span::styled(
+        format!("  {}", time_ago(&root.created_at)),
+        Style::default().fg(theme.text_muted),
     ));
     if thread.reply_count() > 0 {
         spans.push(Span::styled(
@@ -147,6 +153,24 @@ fn status_badge(thread: &ReviewThread, theme: &Theme) -> Span<'static> {
         label,
         Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
     )
+}
+
+fn review_state_badge(thread: &ReviewThread, theme: &Theme) -> Vec<Span<'static>> {
+    let Some(state) = thread.review_state() else {
+        return Vec::new();
+    };
+    let (fg, bg) = match state {
+        ReviewState::Approved => (theme.green, theme.green_bg),
+        ReviewState::ChangesRequested => (theme.red, theme.red_bg),
+        ReviewState::Commented | ReviewState::Dismissed => (theme.blue, theme.blue_bg),
+    };
+    vec![
+        Span::raw(" "),
+        Span::styled(
+            format!(" {} ", state.label()),
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+        ),
+    ]
 }
 
 fn anchor_spans(anchor: &ThreadAnchor, theme: &Theme) -> Vec<Span<'static>> {
@@ -227,6 +251,7 @@ fn thread_preview_lines(
     let comment_icon = &ctx.icons.comment;
     let mut header = vec![status_badge(thread, theme), Span::raw(" ")];
     header.extend(anchor_spans(&thread.anchor, theme));
+    header.extend(review_state_badge(thread, theme));
     let mut lines = vec![Line::from(header), Line::default()];
 
     for note in &thread.notes {

@@ -1,10 +1,12 @@
+use super::MODAL_NOTICE_ROWS;
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
-use super::modal::{clear_area, modal_area};
+use super::modal::{button_style, clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
+use crate::notice::{Notice, NoticeLevel};
 use crate::ui::render_ctx::RenderCtx;
-
+use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -43,6 +45,32 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
     (Text::from(lines), count)
 }
 
+/// One row inside a modal for a notice about the modal's own request.
+fn modal_notice_line(ctx: &RenderCtx<'_>, notice: &Notice) -> Line<'static> {
+    let theme = &ctx.theme;
+    let mut spans = match notice.level() {
+        NoticeLevel::Error => vec![Span::styled(
+            format!(
+                " {} {}",
+                ctx.icons.status_failed,
+                sanitize_untrusted(notice.text())
+            ),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        )],
+        NoticeLevel::Info => vec![Span::styled(
+            format!(" {}", sanitize_untrusted(notice.text())),
+            Style::default().fg(theme.yellow),
+        )],
+    };
+    if let Some(detail) = notice.detail() {
+        spans.push(Span::styled(
+            format!(" {}", sanitize_untrusted(detail)),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    Line::from(spans)
+}
+
 pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ctx.icons;
@@ -61,6 +89,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // Below the re-run confirmation it opens.
     super::terminal_inspector::render_terminal_inspector(f, ctx, app, size);
 
+    let selector_notice = app.modal_notice().cloned();
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
             let selector_area = centered_rect_min(70, 70, 60, 8, size);
@@ -69,19 +98,16 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
             let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "review_submit_status"
                 && selector.field_type != "related_mrs";
 
-            let constraints = if has_filter {
-                vec![
-                    Constraint::Length(3), // Search/Filter
-                    Constraint::Min(0),    // List of items
-                ]
-            } else {
-                vec![
-                    Constraint::Min(0), // List of items
-                ]
-            };
+            let mut constraints = Vec::with_capacity(3);
+            if has_filter {
+                constraints.push(Constraint::Length(3)); // Search/Filter
+            }
+            constraints.push(Constraint::Min(0)); // List of items
+            if selector_notice.is_some() {
+                constraints.push(Constraint::Length(MODAL_NOTICE_ROWS));
+            }
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -93,6 +119,14 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             } else {
                 (None, chunks[0])
             };
+            if let Some(notice) = &selector_notice {
+                let notice_chunk = chunks[chunks.len() - 1];
+                f.render_widget(
+                    Paragraph::new(modal_notice_line(ctx, notice))
+                        .style(Style::default().bg(ctx.theme.bg)),
+                    notice_chunk,
+                );
+            }
 
             let border_color_search = if selector.is_filtering {
                 ctx.theme.border_focused
@@ -290,7 +324,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             )
             .split(area);
 
-        let value_p = Paragraph::new(text_input.value_with_cursor('▋'))
+        let value_p = Paragraph::new(text_input.buffer.value_with_cursor('▋'))
             .style(Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
@@ -1125,20 +1159,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         } else {
             theme.green
         };
-        let button_style = |selected: bool, accent: Option<Color>| {
-            let (fg, bg) = match (selected, accent) {
-                (true, Some(accent)) => (theme.bg, accent),
-                (false, Some(accent)) => (accent, theme.bg),
-                (true, None) => (theme.bg, theme.border_focused),
-                (false, None) => (theme.text_normal, theme.bg),
-            };
-            let modifier = if selected {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            };
-            Style::default().fg(fg).bg(bg).add_modifier(modifier)
-        };
         let buttons_row: Vec<(usize, String, Option<Color>)> = dialog
             .button_cursors()
             .map(|cursor| {
@@ -1176,12 +1196,13 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             f.render_widget(
                 Paragraph::new(label)
                     .alignment(Alignment::Center)
-                    .style(button_style(dialog.cursor_idx == cursor, accent)),
+                    .style(button_style(theme, dialog.cursor_idx == cursor, accent)),
                 cells[i * 2],
             );
         }
     }
 
+    super::review_submit::render_review_submit(f, ctx, app, size);
     render_help(f, ctx, app, size);
 }
 
@@ -2141,7 +2162,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Diff View",
             key: s("r"),
-            action: "Submit Review (approve/changes/comment)",
+            action: "Submit Review (comment/approve/request changes/keep as draft)",
         },
         Shortcut {
             category: "Diff View",

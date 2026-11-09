@@ -1,6 +1,6 @@
-use crate::AppTerminal;
 use crate::app::{App, Tab};
-use crate::event::{Event, ScopedSender};
+use crate::effect::{Effects, ForegroundJob};
+use crate::event::{CommandOutcome, Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::{KeyPress, keybinding_matches};
@@ -16,6 +16,7 @@ fn spawn_open_diff(
     tx: &UnboundedSender<Event>,
     mr_iid: u64,
     project_context: String,
+    fx: &mut Effects,
 ) {
     if app.diff_loading {
         return;
@@ -26,7 +27,7 @@ fn spawn_open_diff(
     };
     app.diff_loading = true;
     let tx = app.scoped_sender(tx.clone());
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let event = match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await {
             Ok((diff_view, comments)) => Event::DiffFetched {
                 diff_view,
@@ -215,6 +216,7 @@ fn spawn_pipeline_retry(
     tx: &UnboundedSender<Event>,
     pipe_id: u64,
     retry: PipelineRetry,
+    fx: &mut Effects,
 ) {
     let Some(client) = app.gitlab_client.clone() else {
         return;
@@ -236,7 +238,7 @@ fn spawn_pipeline_retry(
     for id in &pipe_ids {
         app.pipeline_jobs.remove(id);
     }
-    tokio::spawn(async move {
+    fx.spawn(async move {
         run_optimistic_mutation(
             OptimisticTable::Pipelines,
             retry.action(),
@@ -254,7 +256,7 @@ fn spawn_pipeline_retry(
         )
         .await;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        spawn_refresh_active_tab(&client, &scope, states, active_tab, tx);
+        crate::fetch::refresh_tab(client, scope, states, active_tab, tx).await;
     });
 }
 
@@ -265,8 +267,9 @@ pub(crate) fn spawn_cancel_jobs(
     project_path: String,
     pipeline_id: u64,
     rows: Vec<OptimisticRow>,
+    fx: &mut Effects,
 ) {
-    tokio::spawn(async move {
+    fx.spawn(async move {
         run_optimistic_mutation(OptimisticTable::Jobs, "cancel job", rows, &tx, |id| {
             client.cancel_job(&project_path, id)
         })
@@ -293,6 +296,7 @@ pub(crate) fn spawn_job_trace_fetch(
     app: &mut App,
     tx: &UnboundedSender<Event>,
     job_id: u64,
+    fx: &mut Effects,
 ) -> bool {
     let Some(client) = app.gitlab_client.clone() else {
         return false;
@@ -300,7 +304,7 @@ pub(crate) fn spawn_job_trace_fetch(
     let project_context = app.project_path_for_jobs();
     let tx = app.scoped_sender(tx.clone());
     app.job_trace_loading = true;
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let res = crate::domain::pipelines::get_job_trace(&client, &project_context, job_id).await;
         let _ = tx.send(Event::JobTraceFetched(
             job_id,
@@ -310,19 +314,13 @@ pub(crate) fn spawn_job_trace_fetch(
     true
 }
 
-pub fn open_job_trace_in_editor(app: &mut App, job_id: u64, terminal: &mut AppTerminal) {
-    let Some(view) = &app.job_trace else {
-        return;
-    };
-    let trace = view.trace().text();
-    let prefix = format!("job_{job_id}_trace_");
-    if let Err(error) = crate::editor::view_in_editor(trace, &prefix, terminal) {
-        app.show_error(format!("Failed to open job trace in editor: {error}"));
-    }
-}
-
 /// Lists `environment`'s deployments into the detail pane.
-fn spawn_fetch_deployments(app: &App, tx: &UnboundedSender<Event>, environment: String) {
+fn spawn_fetch_deployments(
+    app: &App,
+    tx: &UnboundedSender<Event>,
+    environment: String,
+    fx: &mut Effects,
+) {
     let Some(client) = app.gitlab_client.clone() else {
         return;
     };
@@ -331,7 +329,7 @@ fn spawn_fetch_deployments(app: &App, tx: &UnboundedSender<Event>, environment: 
     )));
     let scope = app.scope.clone();
     let tx = app.scoped_sender(tx.clone());
-    tokio::spawn(async move {
+    fx.spawn(async move {
         match crate::domain::deployments::list_deployments(&client, &scope, Some(&environment))
             .await
         {
@@ -376,6 +374,7 @@ fn handle_environments_key(
     app: &mut App,
     key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     if handle_focused_deployments_key(app, key_event) {
         return true;
@@ -388,7 +387,7 @@ fn handle_environments_key(
         let project_path = app.scope.as_str().to_string();
         let client = app.gitlab_client.clone();
         let tx = tx.clone();
-        tokio::spawn(async move {
+        fx.spawn(async move {
             let Some(client) = client else {
                 return;
             };
@@ -397,7 +396,7 @@ fn handle_environments_key(
                 .await;
             let _ = tx.send(Event::CommandCompleted(
                 crate::app::Tab::Environments,
-                result.map_err(|e| e.to_string()),
+                CommandOutcome::read_only(result),
             ));
         });
     } else if keybinding_matches(&keys.view_deployments, key_event) {
@@ -405,7 +404,7 @@ fn handle_environments_key(
         if let Some(shown) = app.environment_deployments.as_mut() {
             shown.is_focused = !shown.table.items.is_empty();
         }
-        spawn_fetch_deployments(app, tx, environment.name);
+        spawn_fetch_deployments(app, tx, environment.name, fx);
     } else if app.is_deployments_focus_key(key_event) {
         if let Some(shown) = app.environment_deployments.as_mut() {
             shown.is_focused = !shown.is_focused;
@@ -437,7 +436,7 @@ fn handle_environments_key(
             app.show_error(format!("Failed to copy environment URL: {error}"));
         }
     } else if keybinding_matches(&keys.view_deployment_log, key_event) {
-        spawn_deployment_log_fetch(app, tx);
+        spawn_deployment_log_fetch(app, tx, fx);
     } else {
         return false;
     }
@@ -445,7 +444,7 @@ fn handle_environments_key(
 }
 
 /// Fetches the log of the selected deployment's job for the editor.
-fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
+fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Some(deployment) = app.selected_deployment() else {
         app.show_error(NO_DEPLOYMENT_SELECTED.to_string());
         return;
@@ -464,7 +463,7 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>) {
         return;
     }
     let tx = app.scoped_sender(tx.clone());
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = crate::domain::pipelines::get_job_trace(&client, &project, job_id).await;
         let _ = tx.send(Event::DeploymentLogFetched {
             deployment_id,
@@ -543,6 +542,7 @@ fn with_pr_stack(
     mr: &crate::domain::mr::MergeRequest,
     action: crate::app::StackAction,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) {
     use crate::domain::mr::StackLookup;
     let pr = app.mr_ref(mr);
@@ -555,7 +555,7 @@ fn with_pr_stack(
     let can_be_stacked = app.is_github() && app.scope.is_repository();
     if !is_known && can_be_stacked {
         if let Some(client) = app.gitlab_client.clone() {
-            crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
+            crate::fetch::request_pr_stack(fx, &client, app, pr.clone(), tx);
             app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
             app.pending_stack_action = Some((pr, action));
             return;
@@ -649,6 +649,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
             s.select(Some(0));
             s
         },
+        request: None,
     };
     app.selector = Some(selector);
 }
@@ -767,11 +768,11 @@ fn apply_list_half_page(app: &mut App, key_event: &KeyPress, tx: &UnboundedSende
     true
 }
 
-pub async fn handle_active_tab_key(
+pub fn handle_active_tab_key(
     app: &mut App,
     key_event: &KeyPress,
-    terminal: &mut AppTerminal,
-    tx: UnboundedSender<Event>,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let mut handled = true;
     match app.active_tab {
@@ -937,7 +938,7 @@ pub async fn handle_active_tab_key(
                         let is_github = app.is_github();
                         if items.len() == 1 {
                             let client = app.gitlab_client.clone();
-                            jump_to_mr_tab(app, items[0].iid, client, tx.clone());
+                            jump_to_mr_tab(app, items[0].iid, client, tx.clone(), fx);
                         } else {
                             app.selector = Some(crate::app::Selector {
                                 title: format!(
@@ -979,6 +980,7 @@ pub async fn handle_active_tab_key(
                                     s.select(Some(0));
                                     s
                                 },
+                                request: None,
                             });
                         }
                     }
@@ -1030,13 +1032,13 @@ pub async fn handle_active_tab_key(
                         };
                         let iid_str = issue.iid.to_string();
                         let tx2 = tx.clone();
-                        tokio::spawn(async move {
+                        fx.spawn(async move {
                             let result = client
                                 .open_in_browser(&project_path, "issue", &iid_str)
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Issues,
-                                result.map_err(|e| e.to_string()),
+                                CommandOutcome::read_only(result),
                             ));
                         });
                     }
@@ -1292,11 +1294,11 @@ pub async fn handle_active_tab_key(
                             if let Some(client) = app.gitlab_client.clone() {
                                 let project_path = app.project_path_for_mr(mr_iid);
                                 let tx2 = tx.clone();
-                                tokio::spawn(async move {
+                                fx.spawn(async move {
                                     let result = client.approve_mr(&project_path, mr_iid).await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::MergeRequests,
-                                        result.map_err(|e| e.to_string()),
+                                        CommandOutcome::mutation(result),
                                     ));
                                 });
                             }
@@ -1313,9 +1315,9 @@ pub async fn handle_active_tab_key(
                                 .map(|c| c.is_github)
                                 .unwrap_or(false);
                             if is_github {
-                                app.error_message =
-                                    Some("Revoking approval isn't supported on GitHub".to_string());
-                                app.error_message_at = Some(std::time::Instant::now());
+                                app.show_error(
+                                    "Revoking approval isn't supported on GitHub".to_string(),
+                                );
                             } else {
                                 app.submit_dialog =
                                     Some(crate::app::SubmitDialog::build_with_project(
@@ -1357,7 +1359,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            with_pr_stack(app, &mr, crate::app::StackAction::Merge, &tx);
+                            with_pr_stack(app, &mr, crate::app::StackAction::Merge, tx, fx);
                         }
                         _ if (key_event.code == KeyCode::Char('D')
                             || keybinding_matches(
@@ -1370,7 +1372,7 @@ pub async fn handle_active_tab_key(
                             } else {
                                 app.scope.as_str().to_string()
                             };
-                            spawn_open_diff(app, &tx, mr_iid, project_context);
+                            spawn_open_diff(app, tx, mr_iid, project_context, fx);
                         }
                         _ if (key_event.code == KeyCode::Char('P')
                             || keybinding_matches(
@@ -1389,6 +1391,7 @@ pub async fn handle_active_tab_key(
                             app.pending_pipeline_select = pipe_id;
                             if let Some(client) = &app.gitlab_client {
                                 crate::fetch::spawn_refresh_active_tab(
+                                    fx,
                                     client,
                                     &app.scope,
                                     app.requested_state_queries(),
@@ -1402,7 +1405,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            with_pr_stack(app, &mr, crate::app::StackAction::Browse, &tx);
+                            with_pr_stack(app, &mr, crate::app::StackAction::Browse, tx, fx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,
@@ -1421,13 +1424,13 @@ pub async fn handle_active_tab_key(
                             };
                             let tx2 = tx.clone();
                             let iid_str = mr_iid.to_string();
-                            tokio::spawn(async move {
+                            fx.spawn(async move {
                                 let result = client
                                     .open_in_browser(&project_path, entity, &iid_str)
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::MergeRequests,
-                                    result.map_err(|e| e.to_string()),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -1451,13 +1454,13 @@ pub async fn handle_active_tab_key(
                             if let Some(client) = app.gitlab_client.clone() {
                                 let project_path = app.project_path_for_mr(mr_iid);
                                 let tx2 = tx.clone();
-                                tokio::spawn(async move {
+                                fx.spawn(async move {
                                     let result = client
                                         .toggle_mr_draft(&project_path, mr_iid, !is_draft)
                                         .await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::MergeRequests,
-                                        result.map_err(|e| e.to_string()),
+                                        CommandOutcome::mutation(result),
                                     ));
                                 });
                             }
@@ -1554,7 +1557,13 @@ pub async fn handle_active_tab_key(
                                 Some(RelatedIssuesState::Items(items)) => {
                                     if items.len() == 1 {
                                         let client = app.gitlab_client.clone();
-                                        jump_to_issue_tab(app, items[0].iid, client, tx.clone());
+                                        jump_to_issue_tab(
+                                            app,
+                                            items[0].iid,
+                                            client,
+                                            tx.clone(),
+                                            fx,
+                                        );
                                     } else {
                                         let is_github = app.is_github();
                                         let pr_term = if is_github { "PR" } else { "MR" };
@@ -1591,6 +1600,7 @@ pub async fn handle_active_tab_key(
                                                 s.select(Some(0));
                                                 s
                                             },
+                                            request: None,
                                         });
                                     }
                                 }
@@ -1616,16 +1626,16 @@ pub async fn handle_active_tab_key(
                     let project_context = app.project_path_for_pipeline(pipeline_id);
                     spawn_open_pipeline(
                         app,
-                        &tx,
+                        tx,
                         pipeline_id,
                         project_context,
                         PipelineOpening::OwnJobs,
+                        fx,
                     );
                 }
             } else if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
-                let current_branch = crate::git_helpers::get_current_branch()
-                    .await
-                    .unwrap_or_else(|| "main".to_string());
+                let current_branch =
+                    crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
                 let is_github = app.is_github();
                 let mut fields = vec![];
@@ -1705,16 +1715,19 @@ pub async fn handle_active_tab_key(
                 if let Some(client) = app.gitlab_client.clone() {
                     let project_path = app.scope.as_str().to_string();
                     let tx2 = tx.clone();
-                    tokio::spawn(async move {
-                        let branch = crate::git_helpers::get_current_branch()
-                            .await
-                            .unwrap_or_else(|| "main".to_string());
+                    fx.spawn(async move {
+                        let branch =
+                            tokio::task::spawn_blocking(crate::git_helpers::get_current_branch)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| "main".to_string());
                         let result = client
                             .run_pipeline(&project_path, &branch, false, &[], &[], "")
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Pipelines,
-                            result.map_err(|e| e.to_string()),
+                            CommandOutcome::mutation(result),
                         ));
                     });
                 }
@@ -1740,14 +1753,14 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             )) =>
                         {
-                            spawn_pipeline_retry(app, &tx, pipe_id, PipelineRetry::Pipeline);
+                            spawn_pipeline_retry(app, tx, pipe_id, PipelineRetry::Pipeline, fx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.pipelines.retry_failed,
                             key_event,
                         ) =>
                         {
-                            spawn_pipeline_retry(app, &tx, pipe_id, PipelineRetry::FailedJobs);
+                            spawn_pipeline_retry(app, tx, pipe_id, PipelineRetry::FailedJobs, fx);
                         }
                         _ if ((key_event.code == KeyCode::Char('d')
                             && key_event.modifiers.is_empty())
@@ -1784,8 +1797,9 @@ pub async fn handle_active_tab_key(
                                 .map(|pipeline| pipeline.name().to_string())
                                 .filter(|name| !name.is_empty());
                             let Some(workflow) = workflow else {
-                                app.error_message =
-                                    Some("Selected pipeline has no workflow name".to_string());
+                                app.show_error(
+                                    "Selected pipeline has no workflow name".to_string(),
+                                );
                                 return false;
                             };
                             let Some(client) = app.gitlab_client.clone() else {
@@ -1793,14 +1807,14 @@ pub async fn handle_active_tab_key(
                             };
                             let project_context = app.project_path_for_pipeline(pipe_id);
                             let tx2 = tx.clone();
-                            tokio::spawn(async move {
+                            fx.spawn(async move {
                                 let result = client
                                     .backend
                                     .open_workflow_in_browser(&project_context, &workflow)
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Pipelines,
-                                    result.map_err(|e| e.to_string()),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -1819,13 +1833,13 @@ pub async fn handle_active_tab_key(
                             };
                             let pid_str = pipe_id.to_string();
                             let tx2 = tx.clone();
-                            tokio::spawn(async move {
+                            fx.spawn(async move {
                                 let result = client
                                     .open_pipeline_in_browser(&project_path, &pid_str)
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Pipelines,
-                                    result.map_err(|e| e.to_string()),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -1903,6 +1917,7 @@ pub async fn handle_active_tab_key(
                         s.select(Some(start_idx));
                         s
                     },
+                    request: None,
                 });
             } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, key_event) {
                 app.toggle_select_mode();
@@ -1936,11 +1951,11 @@ pub async fn handle_active_tab_key(
                                 let job_ids: Vec<u64> = if app.selected_jobs.is_empty() {
                                     vec![job_id]
                                 } else {
-                                    app.status_message = None;
+                                    app.clear_info_notices();
                                     app.selected_jobs.drain().collect()
                                 };
                                 let rows = flip_job_statuses(app, &job_ids, "running");
-                                tokio::spawn(async move {
+                                fx.spawn(async move {
                                     run_optimistic_mutation(
                                         OptimisticTable::Jobs,
                                         "retry job",
@@ -1986,7 +2001,7 @@ pub async fn handle_active_tab_key(
                                     .map(|job| {
                                         std::mem::replace(&mut job.status, "running".to_string())
                                     });
-                                tokio::spawn(async move {
+                                fx.spawn(async move {
                                     run_optimistic_mutation(
                                         OptimisticTable::Jobs,
                                         "start job",
@@ -2050,7 +2065,7 @@ pub async fn handle_active_tab_key(
                                 let project_path = app.project_path_for_pipeline(pipe_id);
                                 let tx = app.scoped_sender(tx.clone());
                                 let rows = flip_job_statuses(app, &[job_id], "canceled");
-                                spawn_cancel_jobs(client, tx, project_path, pipe_id, rows);
+                                spawn_cancel_jobs(client, tx, project_path, pipe_id, rows, fx);
                             }
                         }
                         _ if keybinding_matches(
@@ -2082,13 +2097,13 @@ pub async fn handle_active_tab_key(
                                 let project_path = active_pipe_path
                                     .unwrap_or_else(|| app.scope.as_str().to_string());
                                 let tx2 = tx.clone();
-                                tokio::spawn(async move {
+                                fx.spawn(async move {
                                     let result = client
                                         .download_artifact(&project_path, &ref_name, &job_name)
                                         .await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::Jobs,
-                                        result.map_err(|e| e.to_string()),
+                                        CommandOutcome::read_only(result),
                                     ));
                                 });
                             }
@@ -2115,12 +2130,12 @@ pub async fn handle_active_tab_key(
                                 active_pipe_path.unwrap_or_else(|| app.scope.as_str().to_string());
                             let jid_str = job_id.to_string();
                             let tx2 = tx.clone();
-                            tokio::spawn(async move {
+                            fx.spawn(async move {
                                 let result =
                                     client.open_job_in_browser(&project_path, &jid_str).await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Jobs,
-                                    result.map_err(|e| e.to_string()),
+                                    CommandOutcome::read_only(result),
                                 ));
                             });
                         }
@@ -2130,8 +2145,8 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             if app.job_trace.is_some() {
-                                open_job_trace_in_editor(app, job_id, terminal);
-                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
+                                fx.suspend(ForegroundJob::ViewJobTrace { job_id });
+                            } else if spawn_job_trace_fetch(app, tx, job_id, fx) {
                                 app.pending_job_trace_editor = Some(job_id);
                             }
                         }
@@ -2143,7 +2158,7 @@ pub async fn handle_active_tab_key(
                             if app.job_trace.is_some() {
                                 app.details_zoomed = !app.details_zoomed;
                             } else {
-                                spawn_job_trace_fetch(app, &tx, job_id);
+                                spawn_job_trace_fetch(app, tx, job_id, fx);
                             }
                         }
                         _ if keybinding_matches(
@@ -2198,7 +2213,7 @@ pub async fn handle_active_tab_key(
                             if let Some(view) = &app.job_trace {
                                 let after = view.failure_search_start();
                                 app.jump_to_trace_failure(Some(after));
-                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
+                            } else if spawn_job_trace_fetch(app, tx, job_id, fx) {
                                 app.pending_job_trace_failure = Some(job_id);
                             }
                         }
@@ -2239,7 +2254,7 @@ pub async fn handle_active_tab_key(
                             let scope = app.scope.clone();
                             let tx = tx.clone();
                             let scoped_tx = app.scoped_sender(tx.clone());
-                            tokio::spawn(async move {
+                            fx.spawn(async move {
                                 let result = client.pause_runner(&scope, runner_id).await;
                                 if result.is_err() {
                                     let _ = scoped_tx.send(Event::RunnerStateRevert {
@@ -2250,7 +2265,7 @@ pub async fn handle_active_tab_key(
                                 }
                                 let _ = tx.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
-                                    result.map_err(|e| e.to_string()),
+                                    CommandOutcome::mutation(result),
                                 ));
                             });
                         }
@@ -2266,7 +2281,7 @@ pub async fn handle_active_tab_key(
                             let scope = app.scope.clone();
                             let tx = tx.clone();
                             let scoped_tx = app.scoped_sender(tx.clone());
-                            tokio::spawn(async move {
+                            fx.spawn(async move {
                                 let result = client.resume_runner(&scope, runner_id).await;
                                 if result.is_err() {
                                     let _ = scoped_tx.send(Event::RunnerStateRevert {
@@ -2277,7 +2292,7 @@ pub async fn handle_active_tab_key(
                                 }
                                 let _ = tx.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
-                                    result.map_err(|e| e.to_string()),
+                                    CommandOutcome::mutation(result),
                                 ));
                             });
                         }
@@ -2307,7 +2322,7 @@ pub async fn handle_active_tab_key(
                         let client = app.gitlab_client.clone();
                         let scope = app.scope.clone();
                         let tx2 = tx.clone();
-                        tokio::spawn(async move {
+                        fx.spawn(async move {
                             let Some(client) = client else {
                                 return;
                             };
@@ -2315,7 +2330,7 @@ pub async fn handle_active_tab_key(
                                 client.open_runner_in_browser(&scope, runner_id_local).await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Runners,
-                                result.map_err(|e| e.to_string()),
+                                CommandOutcome::read_only(result),
                             ));
                         });
                     }
@@ -2402,13 +2417,13 @@ pub async fn handle_active_tab_key(
                     let tag_name = release.tag_name.clone();
                     let tx2 = tx.clone();
 
-                    tokio::spawn(async move {
+                    fx.spawn(async move {
                         let result = client
                             .open_in_browser(&project_path, "release", tag_name.as_str())
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Releases,
-                            result.map_err(|e| e.to_string()),
+                            CommandOutcome::read_only(result),
                         ));
                     });
                 }
@@ -2417,7 +2432,7 @@ pub async fn handle_active_tab_key(
         },
         crate::app::Tab::Todos => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.todos.toggle_show_read, key_event) => {
-                crate::handlers::todos::toggle_show_read(app, &tx);
+                crate::handlers::todos::toggle_show_read(app, tx, fx);
             }
             _ if keybinding_matches(&app.config.keybindings.todos.mark_all_as_read, key_event) => {
                 crate::handlers::todos::confirm_mark_all_read(app);
@@ -2427,17 +2442,17 @@ pub async fn handle_active_tab_key(
                 app.details_zoomed = false;
             }
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_read, key_event) => {
-                crate::handlers::todos::activate_todo(app, &tx);
+                crate::handlers::todos::activate_todo(app, tx, fx);
             }
             _ if keybinding_matches(&app.config.keybindings.todos.mark_as_done, key_event) => {
-                crate::handlers::todos::mark_selected_done(app, &tx);
+                crate::handlers::todos::mark_selected_done(app, tx, fx);
             }
             _ if app.selected_todo().is_none() => handled = false,
             _ if keybinding_matches(&app.config.keybindings.todos.unsubscribe, key_event) => {
-                crate::handlers::todos::unsubscribe_selected(app, &tx);
+                crate::handlers::todos::unsubscribe_selected(app, tx, fx);
             }
             _ if keybinding_matches(&app.config.keybindings.todos.open_in_browser, key_event) => {
-                crate::handlers::todos::open_selected_in_browser(app, &tx);
+                crate::handlers::todos::open_selected_in_browser(app, tx, fx);
             }
             _ if keybinding_matches(&app.config.keybindings.todos.select_todo, key_event) => {
                 app.toggle_todo_selection();
@@ -2614,13 +2629,13 @@ pub async fn handle_active_tab_key(
                         let mid_str = milestone.iid.to_string();
                         let tx2 = tx.clone();
 
-                        tokio::spawn(async move {
+                        fx.spawn(async move {
                             let result = client
                                 .open_milestone_in_browser(&project_path, &mid_str)
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Milestones,
-                                result.map_err(|e| e.to_string()),
+                                CommandOutcome::read_only(result),
                             ));
                         });
                     }
@@ -2720,7 +2735,7 @@ pub async fn handle_active_tab_key(
                 let branch_name = branch.name.clone();
                 if keybinding_matches(&app.config.keybindings.branches.checkout_branch, key_event) {
                     let tx = tx.clone();
-                    tokio::spawn(async move {
+                    fx.spawn(async move {
                         let result = tokio::task::spawn_blocking(move || {
                             crate::git_helpers::checkout_branch(&branch_name)
                         })
@@ -2756,7 +2771,7 @@ pub async fn handle_active_tab_key(
                     let client = app.gitlab_client.clone();
                     let project_path = app.scope.as_str().to_string();
                     let tx2 = tx.clone();
-                    tokio::spawn(async move {
+                    fx.spawn(async move {
                         let Some(client) = client else {
                             return;
                         };
@@ -2765,7 +2780,7 @@ pub async fn handle_active_tab_key(
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Branches,
-                            result.map_err(|e| e.to_string()),
+                            CommandOutcome::read_only(result),
                         ));
                     });
                 } else if keybinding_matches(
@@ -2783,7 +2798,7 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Environments => {
-            handled = handle_environments_key(app, key_event, &tx);
+            handled = handle_environments_key(app, key_event, tx, fx);
         }
         crate::app::Tab::Terminal => {
             handled = crate::handlers::terminal::handle_tab_key(app, key_event);
@@ -2833,7 +2848,7 @@ pub async fn handle_active_tab_key(
             // `scroll_top` jumps to the first line directly: 0 is a known
             // index, no flag round-trip needed.
             app.detail_scroll = 0;
-        } else if !apply_page_scroll(app, key_event) && !apply_list_half_page(app, key_event, &tx) {
+        } else if !apply_page_scroll(app, key_event) && !apply_list_half_page(app, key_event, tx) {
             detail_scrolled = false;
         }
 
@@ -2842,9 +2857,9 @@ pub async fn handle_active_tab_key(
                 app.show_help = true;
             }
             KeyCode::Char('u') if key_event.modifiers.is_empty() => {
-                app.error_message = Some("Checking for updates...".to_string());
+                app.show_notice("Checking for updates...");
                 let tx = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     match crate::utils::update::perform_self_update().await {
                         Ok(true) => {
                             let _ = tx.send(Event::Notice(
@@ -2869,12 +2884,12 @@ pub async fn handle_active_tab_key(
                 } else if app.detail_visible {
                     app.detail_visible = false;
                 } else {
-                    app.quit();
+                    fx.quit();
                 }
             }
             KeyCode::Esc | KeyCode::Backspace => {
                 if app.clear_selections() {
-                    app.status_message = None;
+                    app.clear_info_notices();
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                     app.pending_job_trace_editor = None;
@@ -2919,8 +2934,8 @@ pub async fn handle_active_tab_key(
                 app.is_typing_search = true;
             }
             KeyCode::Enter => match app.active_tab {
-                crate::app::Tab::Dashboard => open_from_dashboard(app, &tx),
-                crate::app::Tab::Todos => crate::handlers::todos::activate_todo(app, &tx),
+                crate::app::Tab::Dashboard => open_from_dashboard(app, tx, fx),
+                crate::app::Tab::Todos => crate::handlers::todos::activate_todo(app, tx, fx),
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
                         let pipe_info = app.filtered_pipelines().get(idx).map(|p| {
@@ -2931,10 +2946,11 @@ pub async fn handle_active_tab_key(
                         if let Some((pipeline_id, project_context)) = pipe_info {
                             spawn_open_pipeline(
                                 app,
-                                &tx,
+                                tx,
                                 pipeline_id,
                                 project_context,
                                 PipelineOpening::Descend,
+                                fx,
                             );
                         }
                     }
@@ -2945,7 +2961,7 @@ pub async fn handle_active_tab_key(
                     } else if let Some(idx) = app.jobs.state.selected() {
                         let job_id = app.filtered_jobs().get(idx).map(|j| j.id());
                         if let Some(job_id) = job_id {
-                            spawn_job_trace_fetch(app, &tx, job_id);
+                            spawn_job_trace_fetch(app, tx, job_id, fx);
                         }
                     }
                 }
@@ -3097,14 +3113,14 @@ pub async fn handle_active_tab_key(
                 || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
-                fetch_for_entered_tab(app, &tx);
+                fetch_for_entered_tab(app, tx, fx);
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
                 || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
-                fetch_for_entered_tab(app, &tx);
+                fetch_for_entered_tab(app, tx, fx);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if app.details_zoomed {
@@ -3150,10 +3166,10 @@ pub async fn handle_active_tab_key(
                         app.update_visual_selection();
                     }
                     if app.active_tab == crate::app::Tab::Issues {
-                        maybe_fetch_related_mrs(app, &tx);
+                        maybe_fetch_related_mrs(app, tx);
                     }
                     if app.active_tab == crate::app::Tab::MergeRequests {
-                        maybe_fetch_mr_related_issues(app, &tx);
+                        maybe_fetch_mr_related_issues(app, tx);
                     }
                 }
             }
@@ -3201,10 +3217,10 @@ pub async fn handle_active_tab_key(
                         app.update_visual_selection();
                     }
                     if app.active_tab == crate::app::Tab::Issues {
-                        maybe_fetch_related_mrs(app, &tx);
+                        maybe_fetch_related_mrs(app, tx);
                     }
                     if app.active_tab == crate::app::Tab::MergeRequests {
-                        maybe_fetch_mr_related_issues(app, &tx);
+                        maybe_fetch_mr_related_issues(app, tx);
                     }
                 }
             }
@@ -3252,10 +3268,10 @@ pub async fn handle_active_tab_key(
                         app.update_visual_selection();
                     }
                     if app.active_tab == crate::app::Tab::Issues {
-                        maybe_fetch_related_mrs(app, &tx);
+                        maybe_fetch_related_mrs(app, tx);
                     }
                     if app.active_tab == crate::app::Tab::MergeRequests {
-                        maybe_fetch_mr_related_issues(app, &tx);
+                        maybe_fetch_mr_related_issues(app, tx);
                     }
                 }
             }
@@ -3306,15 +3322,15 @@ pub async fn handle_active_tab_key(
                         app.update_visual_selection();
                     }
                     if app.active_tab == crate::app::Tab::Issues {
-                        maybe_fetch_related_mrs(app, &tx);
+                        maybe_fetch_related_mrs(app, tx);
                     }
                     if app.active_tab == crate::app::Tab::MergeRequests {
-                        maybe_fetch_mr_related_issues(app, &tx);
+                        maybe_fetch_mr_related_issues(app, tx);
                     }
                 }
             }
             _ if !detail_scrolled => {
-                handled = super::custom_commands::run_bound_command(app, key_event, terminal, &tx);
+                handled = super::custom_commands::run_bound_command(app, key_event, tx, fx);
             }
             _ => {}
         }
@@ -3326,30 +3342,31 @@ pub async fn handle_active_tab_key(
 /// `Enter` on the Dashboard: one level down, or out to the issue, MR/PR,
 /// pipeline, milestone or release under the cursor, in its tab with the
 /// preview open.
-fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>) {
+fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     use crate::dashboard::DashboardAction;
     match app.enter_dashboard() {
         DashboardAction::Stay => {}
         DashboardAction::OpenPipeline(id) => {
             app.focus_pipeline(id);
             app.detail_visible = true;
-            fetch_for_entered_tab(app, tx);
+            fetch_for_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenMilestone(iid) => {
             app.focus_milestone(iid);
             app.detail_visible = true;
-            fetch_for_entered_tab(app, tx);
+            fetch_for_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenRelease(tag) => {
             app.focus_release(&tag);
             app.detail_visible = true;
-            fetch_for_entered_tab(app, tx);
+            fetch_for_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenIssue { project, iid } => {
             if !app.focus_issue(Some(&project), iid)
                 && let Some(client) = app.gitlab_client.clone()
             {
                 crate::fetch::spawn_fetch_issue(
+                    fx,
                     &client,
                     &project,
                     iid,
@@ -3363,7 +3380,13 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>) {
             if !app.focus_mr(Some(&project), iid)
                 && let Some(client) = app.gitlab_client.clone()
             {
-                crate::fetch::spawn_fetch_mr(&client, &project, iid, app.scoped_sender(tx.clone()));
+                crate::fetch::spawn_fetch_mr(
+                    fx,
+                    &client,
+                    &project,
+                    iid,
+                    app.scoped_sender(tx.clone()),
+                );
             }
             app.detail_visible = true;
             maybe_fetch_mr_related_issues(app, tx);
@@ -3374,7 +3397,7 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>) {
 /// Start what a tab needs once switched to: its list, unless it is loading
 /// or was already refreshed this session, and the linked MRs/issues of the
 /// highlighted issue or MR.
-fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>) {
+fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     if let Some(client) = &app.gitlab_client
         && !app.loading_tabs.contains(&app.active_tab)
         && !app.refreshed_tabs.contains(&app.active_tab)
@@ -3383,6 +3406,7 @@ fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>) {
             app.loading_tabs.insert(app.active_tab);
         }
         spawn_refresh_active_tab(
+            fx,
             client,
             &app.scope,
             app.requested_state_queries(),
@@ -3406,6 +3430,7 @@ pub(crate) fn jump_to_mr_tab(
     mr_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    fx: &mut Effects,
 ) {
     if !app.focus_mr(None, mr_iid) {
         app.pending_mr_select = Some(mr_iid);
@@ -3413,6 +3438,7 @@ pub(crate) fn jump_to_mr_tab(
     app.detail_scroll = 0;
     if let Some(client) = client {
         crate::fetch::spawn_refresh_active_tab(
+            fx,
             &client,
             &app.scope,
             app.requested_state_queries(),
@@ -3430,8 +3456,9 @@ pub fn jump_to_mr_tab_from_selector(
     mr_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
     client: &crate::domain::client::GitlabClient,
+    fx: &mut Effects,
 ) {
-    jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
+    jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx, fx);
 }
 
 /// How a pipeline was opened from the Pipelines tab.
@@ -3460,6 +3487,7 @@ fn spawn_open_pipeline(
     pipeline_id: u64,
     project_context: String,
     opening: PipelineOpening,
+    fx: &mut Effects,
 ) {
     let Some(client) = app.gitlab_client.clone() else {
         app.show_error("Failed to fetch jobs".to_string());
@@ -3467,7 +3495,7 @@ fn spawn_open_pipeline(
     };
     app.loading_tabs.insert(crate::app::Tab::Jobs);
     let tx = app.scoped_sender(tx.clone());
-    tokio::spawn(async move {
+    fx.spawn(async move {
         let result = fetch_pipeline_contents(&client, &project_context, pipeline_id, opening).await;
         let _ = tx.send(Event::PipelineOpened {
             pipeline_id,
@@ -3559,6 +3587,7 @@ pub(crate) fn jump_to_issue_tab(
     issue_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    fx: &mut Effects,
 ) {
     if !app.focus_issue(None, issue_iid) {
         app.pending_issue_select = Some(issue_iid);
@@ -3566,6 +3595,7 @@ pub(crate) fn jump_to_issue_tab(
     app.detail_scroll = 0;
     if let Some(client) = client {
         crate::fetch::spawn_refresh_active_tab(
+            fx,
             &client,
             &app.scope,
             app.requested_state_queries(),
@@ -3583,8 +3613,9 @@ pub fn jump_to_issue_tab_from_selector(
     issue_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
     client: &crate::domain::client::GitlabClient,
+    fx: &mut Effects,
 ) {
-    jump_to_issue_tab(app, issue_iid, Some(client.clone()), tx);
+    jump_to_issue_tab(app, issue_iid, Some(client.clone()), tx, fx);
 }
 
 #[cfg(test)]
@@ -3592,6 +3623,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::event::ScopeGeneration;
+    use crate::notice::Notice;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::collections::{HashMap, HashSet};
 
@@ -3691,24 +3723,15 @@ mod tests {
         assert_eq!(app.pipelines.items[0].status, "running");
     }
 
-    /// Constructs the real `AppTerminal` and dispatches `key_event` through
-    /// `handle_active_tab_key`, discarding any events it sends.
-    ///
-    /// Uses `Viewport::Fixed` so construction never queries the backend's
-    /// terminal size - `cargo test` has no controlling tty in CI.
-    async fn dispatch(app: &mut App, key_event: &KeyEvent) {
-        dispatch_press(app, &KeyPress::from(*key_event)).await;
+    /// Dispatches `key_event` through `handle_active_tab_key`, discarding the
+    /// effects it asks for.
+    fn dispatch(app: &mut App, key_event: &KeyEvent) {
+        dispatch_press(app, &KeyPress::from(*key_event));
     }
 
-    async fn dispatch_press(app: &mut App, press: &KeyPress) {
-        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let options = ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
-        };
-        let mut terminal = ratatui::Terminal::with_options(backend, options)
-            .expect("terminal construction failed");
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_active_tab_key(app, press, &mut terminal, tx).await;
+    fn dispatch_press(app: &mut App, press: &KeyPress) {
+        let tx = app.tx.clone();
+        handle_active_tab_key(app, press, &tx, &mut crate::effect::Effects::default());
     }
 
     #[tokio::test]
@@ -3720,15 +3743,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 6);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -3741,15 +3762,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -3766,15 +3785,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 6);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 7);
     }
 
@@ -3806,12 +3823,12 @@ mod tests {
         app.detail_scroll = 3;
 
         // End key jumps to last element and resets detail_scroll
-        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
         assert_eq!(app.issues.state.selected(), Some(3));
         assert_eq!(app.detail_scroll, 0);
 
         // Home key jumps to first element
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
         assert_eq!(app.issues.state.selected(), Some(0));
         assert_eq!(app.detail_scroll, 0);
     }
@@ -3829,8 +3846,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 25);
     }
 
@@ -3850,11 +3866,11 @@ mod tests {
         app.job_trace = Some(view);
         let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
 
-        dispatch(&mut app, &page_down).await;
+        dispatch(&mut app, &page_down);
         assert_eq!(app.detail_scroll, 20);
 
         app.active_tab = crate::app::Tab::Issues;
-        dispatch(&mut app, &page_down).await;
+        dispatch(&mut app, &page_down);
         assert_eq!(app.detail_scroll, 48);
     }
 
@@ -3869,8 +3885,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -3886,15 +3901,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 0);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 1);
     }
 
@@ -3911,15 +3924,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -3959,8 +3970,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        )
-        .await;
+        );
 
         assert_eq!(app.issues.state.selected(), Some(0));
         assert_eq!(app.detail_scroll, 25);
@@ -3998,8 +4008,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
 
         assert_eq!(
             app.pipelines.items[0].status, "running",
@@ -4035,8 +4044,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
-        )
-        .await;
+        );
 
         let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
         assert!(matches!(
@@ -4070,8 +4078,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
-        )
-        .await;
+        );
 
         let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
         match &dialog.action {
@@ -4092,22 +4099,15 @@ mod tests {
     #[tokio::test]
     async fn ctrl_u_does_not_trigger_a_self_update() {
         let mut app = App::default();
-        app.error_message = None;
-
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
 
-        assert!(
-            app.error_message.is_none()
-                || !app
-                    .error_message
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("Checking for updates"),
-            "Ctrl+u must not raise the 'Checking for updates' message",
+        assert_eq!(
+            app.header_notice(),
+            None,
+            "Ctrl+u must not raise the 'Checking for updates' notice",
         );
     }
 
@@ -4120,8 +4120,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
 
         assert!(
             !app.is_typing_search,
@@ -4146,7 +4145,7 @@ mod tests {
         app.detail_scroll = 5;
         app.config.keybindings.global.scroll_to_end = "End".to_string();
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
 
         assert!(app.detail_scroll_to_bottom);
     }
@@ -4159,7 +4158,7 @@ mod tests {
         app.detail_visible = false;
         app.config.keybindings.global.scroll_to_end = "End".to_string();
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
 
         assert!(!app.detail_scroll_to_bottom);
     }
@@ -4181,8 +4180,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
-        )
-        .await;
+        );
 
         assert!(app.detail_scroll_to_bottom);
         assert_eq!(app.detail_scroll, 5);
@@ -4198,7 +4196,7 @@ mod tests {
         app.detail_scroll = 5;
         app.config.keybindings.global.scroll_top = "Home".to_string();
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
 
         assert_eq!(app.detail_scroll, 0);
     }
@@ -4213,7 +4211,7 @@ mod tests {
         app.detail_visible = true;
         app.detail_scroll = 5;
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
 
         assert_eq!(app.detail_scroll, 0);
         assert!(!app.detail_scroll_to_bottom);
@@ -4228,7 +4226,7 @@ mod tests {
         app.detail_scroll = 5;
         app.config.keybindings.global.scroll_top = "gg".to_string();
 
-        dispatch_press(&mut app, &KeyPress::Sequence("gg".to_string())).await;
+        dispatch_press(&mut app, &KeyPress::Sequence("gg".to_string()));
 
         assert_eq!(app.detail_scroll, 0);
         assert!(!app.detail_scroll_to_bottom);
@@ -4240,7 +4238,7 @@ mod tests {
         app.active_tab = Tab::Issues;
         app.config.keybindings.global.next_tab = "zz".to_string();
 
-        dispatch_press(&mut app, &KeyPress::Sequence("zz".to_string())).await;
+        dispatch_press(&mut app, &KeyPress::Sequence("zz".to_string()));
 
         assert_eq!(app.active_tab, Tab::MergeRequests);
     }
@@ -4253,7 +4251,7 @@ mod tests {
         app.detail_visible = true;
         app.detail_scroll = 5;
 
-        dispatch_press(&mut app, &KeyPress::Sequence("JJ".to_string())).await;
+        dispatch_press(&mut app, &KeyPress::Sequence("JJ".to_string()));
 
         assert_eq!(app.detail_scroll, 5);
     }
@@ -4270,7 +4268,7 @@ mod tests {
         app.detail_visible = false;
         app.config.keybindings.global.scroll_top = "Home".to_string();
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
 
         // detail_scroll was never touched by `scroll_top` (which is
         // gated on detail_visible); the hardcoded Home arm runs but
@@ -4288,7 +4286,7 @@ mod tests {
         app.detail_scroll = 5;
         app.config.keybindings.global.scroll_top = "F1".to_string();
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).await;
+        dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
 
         assert_eq!(app.detail_scroll, 5);
     }
@@ -4317,29 +4315,25 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 25);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 15);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -4356,15 +4350,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -4381,15 +4373,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 0);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.detail_scroll, 0);
     }
 
@@ -4405,8 +4395,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert!(!app.is_typing_search);
     }
 
@@ -4443,8 +4432,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.pipelines.items[0].status, "running");
         assert_eq!(app.detail_scroll, 15);
     }
@@ -4461,9 +4449,8 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        )
-        .await;
-        assert_eq!(app.error_message, None);
+        );
+        assert_eq!(app.header_notice(), None);
     }
 
     fn app_with_branches(count: usize) -> App {
@@ -4496,19 +4483,19 @@ mod tests {
         app.detail_visible = false;
         let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
 
-        dispatch(&mut app, &ctrl('d')).await;
+        dispatch(&mut app, &ctrl('d'));
         assert_eq!(app.selected_branch_name().as_deref(), Some("branch-10"));
-        dispatch(&mut app, &ctrl('d')).await;
-        dispatch(&mut app, &ctrl('d')).await;
+        dispatch(&mut app, &ctrl('d'));
+        dispatch(&mut app, &ctrl('d'));
         assert_eq!(
             app.selected_branch_name().as_deref(),
             Some("branch-24"),
             "stops on the last row"
         );
-        dispatch(&mut app, &ctrl('u')).await;
+        dispatch(&mut app, &ctrl('u'));
         assert_eq!(app.selected_branch_name().as_deref(), Some("branch-14"));
-        dispatch(&mut app, &ctrl('u')).await;
-        dispatch(&mut app, &ctrl('u')).await;
+        dispatch(&mut app, &ctrl('u'));
+        dispatch(&mut app, &ctrl('u'));
         assert_eq!(
             app.selected_branch_name().as_deref(),
             Some("branch-00"),
@@ -4527,8 +4514,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.selected_branch_name().as_deref(), Some("branch-00"));
         assert_eq!(app.detail_scroll, 10);
     }
@@ -4552,8 +4538,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
-        )
-        .await;
+        );
 
         let dialog = app.submit_dialog.expect("close opens a confirm dialog");
         assert!(matches!(
@@ -4600,8 +4585,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
-        )
-        .await;
+        );
 
         let menu = app.edit_menu.expect("create milestone menu");
         assert_eq!(menu.entity_project, "grp/b");
@@ -4624,8 +4608,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-        )
-        .await;
+        );
 
         assert_eq!(app.selected_jobs, HashSet::from([3]));
     }
@@ -4645,7 +4628,13 @@ mod tests {
         );
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
-        jump_to_mr_tab(&mut app, 3, None, tx);
+        jump_to_mr_tab(
+            &mut app,
+            3,
+            None,
+            tx,
+            &mut crate::effect::Effects::default(),
+        );
 
         assert_eq!(app.active_tab, crate::app::Tab::MergeRequests);
         assert_eq!(app.selected_mr_ref(), Some(("me/repo".to_string(), 3)));
@@ -4747,8 +4736,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         let menu = app.edit_menu.as_ref().expect("MR creation form opened");
         let source_field = menu.fields.iter().find(|f| f.label == "Source Branch");
         assert_eq!(source_field.map(|f| f.value.as_str()), Some("branch-00"));
@@ -4760,15 +4748,13 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert!(app.selected_branches.contains("branch-00"));
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert!(!app.selected_branches.contains("branch-00"));
     }
 
@@ -4778,18 +4764,15 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        )
-        .await;
+        );
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         let dialog = app.submit_dialog.as_ref().expect("Delete dialog shown");
         assert_eq!(dialog.title, "Delete Branch 'branch-00'");
         if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
@@ -4805,25 +4788,21 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        )
-        .await;
+        );
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.selected_branches.len(), 2);
 
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         let dialog = app
             .submit_dialog
             .as_ref()
@@ -4845,8 +4824,7 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
-        )
-        .await;
+        );
         assert_eq!(app.selected_branches.len(), 3);
     }
 
@@ -4856,14 +4834,12 @@ mod tests {
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert!(app.select_mode);
         dispatch(
             &mut app,
             &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-        )
-        .await;
+        );
         assert_eq!(app.selected_branches.len(), 2);
     }
 
@@ -4925,7 +4901,7 @@ mod tests {
     async fn j_moves_through_focused_deployments_and_keeps_the_environment() {
         let mut app = app_with_focused_deployments(two_deployments());
 
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('j')));
 
         assert_eq!(app.selected_deployment().map(|d| d.id), Some(10));
         assert_eq!(highlighted_environment(&app), Some("production"));
@@ -4935,8 +4911,8 @@ mod tests {
     async fn esc_hands_navigation_back_to_the_environment_list() {
         let mut app = app_with_focused_deployments(two_deployments());
 
-        dispatch(&mut app, &key(KeyCode::Esc)).await;
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &key(KeyCode::Esc));
+        dispatch(&mut app, &key(KeyCode::Char('j')));
 
         assert_eq!(highlighted_environment(&app), Some("staging"));
     }
@@ -4945,9 +4921,9 @@ mod tests {
     async fn view_key_refocuses_deployments_already_listed() {
         let mut app = app_with_focused_deployments(two_deployments());
 
-        dispatch(&mut app, &key(KeyCode::Esc)).await;
-        dispatch(&mut app, &key(KeyCode::Enter)).await;
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &key(KeyCode::Esc));
+        dispatch(&mut app, &key(KeyCode::Enter));
+        dispatch(&mut app, &key(KeyCode::Char('j')));
 
         assert_eq!(app.selected_deployment().map(|d| d.id), Some(10));
         assert_eq!(highlighted_environment(&app), Some("production"));
@@ -4959,8 +4935,8 @@ mod tests {
         let tab = key(KeyCode::Tab);
         assert!(app.is_deployments_focus_key(&tab.into()));
 
-        dispatch(&mut app, &tab).await;
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &tab);
+        dispatch(&mut app, &key(KeyCode::Char('j')));
         assert_eq!(highlighted_environment(&app), Some("staging"));
     }
 
@@ -4968,8 +4944,8 @@ mod tests {
     async fn hiding_the_detail_pane_hands_navigation_back_to_the_environment_list() {
         let mut app = app_with_focused_deployments(two_deployments());
 
-        dispatch(&mut app, &key(KeyCode::Char('q'))).await;
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('q')));
+        dispatch(&mut app, &key(KeyCode::Char('j')));
 
         assert!(!app.detail_visible);
         assert_eq!(highlighted_environment(&app), Some("staging"));
@@ -4981,7 +4957,7 @@ mod tests {
         app.detail_rect = None;
 
         assert!(!app.is_deployments_focus_key(&key(KeyCode::Tab).into()));
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('j')));
         assert_eq!(highlighted_environment(&app), Some("staging"));
     }
 
@@ -4989,8 +4965,8 @@ mod tests {
     async fn rollback_key_confirms_a_rollback_to_the_selected_deployment() {
         let mut app = app_with_focused_deployments(two_deployments());
 
-        dispatch(&mut app, &key(KeyCode::Char('j'))).await;
-        dispatch(&mut app, &key(KeyCode::Char('R'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('j')));
+        dispatch(&mut app, &key(KeyCode::Char('R')));
 
         let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
         let crate::app::ConfirmAction::RollbackDeployment {
@@ -5008,10 +4984,13 @@ mod tests {
     async fn rollback_key_without_listed_deployments_raises_an_error() {
         let mut app = app_with_focused_deployments(serde_json::json!([]));
 
-        dispatch(&mut app, &key(KeyCode::Char('R'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('R')));
 
         assert!(app.submit_dialog.is_none());
-        assert_eq!(app.error_message.as_deref(), Some(NO_DEPLOYMENT_SELECTED));
+        assert_eq!(
+            app.toast_notice().map(Notice::text),
+            Some(NO_DEPLOYMENT_SELECTED)
+        );
     }
 
     #[tokio::test]
@@ -5019,11 +4998,11 @@ mod tests {
         let mut app =
             app_with_focused_deployments(serde_json::json!([deployment_json(10, 1, None)]));
 
-        dispatch(&mut app, &key(KeyCode::Char('R'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('R')));
 
         assert!(app.submit_dialog.is_none());
         assert_eq!(
-            app.error_message.as_deref(),
+            app.toast_notice().map(Notice::text),
             Some("Deployment #1 has no deploy job to re-run")
         );
     }
@@ -5032,7 +5011,7 @@ mod tests {
     async fn stop_key_confirms_before_stopping_the_highlighted_environment() {
         let mut app = app_with_focused_deployments(two_deployments());
 
-        dispatch(&mut app, &key(KeyCode::Char('d'))).await;
+        dispatch(&mut app, &key(KeyCode::Char('d')));
 
         let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
         assert!(matches!(

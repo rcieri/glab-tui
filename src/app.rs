@@ -623,6 +623,9 @@ pub struct Selector {
     pub field_type: String,  // "labels", "assignees", "reviewers", "milestone"
     pub multi_select: bool,
     pub state: ListState,
+    /// The item fetch this selector started. Its notices are drawn inside
+    /// the selector rather than as a toast.
+    pub request: Option<crate::notice::RequestTag>,
 }
 
 impl Selector {
@@ -719,30 +722,36 @@ impl Selector {
             field_type: field_type.to_string(),
             multi_select: false,
             state: ListState::default(),
+            request: None,
         }
     }
 
     /// Actions on one pushed review comment. The `comment_action_select`
     /// handler reads the comment id from `entity_iid` and parses the MR iid
-    /// back out of `entity_type`.
-    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Self {
-        let mut actions = vec!["Reply to Thread".to_string()];
-        if !is_github {
-            actions.push(if comment.resolved.unwrap_or(false) {
-                "Unresolve Thread".to_string()
-            } else {
-                "Resolve Thread".to_string()
-            });
+    /// back out of `entity_type`. `None` for a note without a REST id (a
+    /// GitHub review summary): nothing can be done with it.
+    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
+        let comment_id = comment.id?;
+        let mut actions = Vec::new();
+        if comment.kind.accepts_replies() {
+            actions.push("Reply to Thread".to_string());
+            if !is_github {
+                actions.push(if comment.resolved.unwrap_or(false) {
+                    "Unresolve Thread".to_string()
+                } else {
+                    "Resolve Thread".to_string()
+                });
+            }
         }
         actions.push("Edit Comment".to_string());
         actions.push("Delete Comment".to_string());
-        Self::single_choice(
-            format!(" Actions for Comment {} ", comment.id),
+        Some(Self::single_choice(
+            format!(" Actions for Comment {comment_id} "),
             actions,
-            comment.id,
+            comment_id,
             mr_iid.to_string(),
             "comment_action_select",
-        )
+        ))
     }
 
     /// Actions on a local draft; `entity_iid` is the 0-based draft index.
@@ -769,13 +778,15 @@ impl Selector {
         )
     }
 
-    pub fn comment_choice_item(comment: &DiscussionNote) -> String {
-        format!(
+    /// `None` for a note without a REST id, which the `comment_select`
+    /// handler could not find again.
+    pub fn comment_choice_item(comment: &DiscussionNote) -> Option<String> {
+        Some(format!(
             "ID: {} | @{}: {}",
-            comment.id,
+            comment.id?,
             comment.author.username,
             crate::utils::format::truncate(&comment.body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
-        )
+        ))
     }
 
     pub fn draft_choice_item(draft_idx: usize, body: &str) -> String {
@@ -835,9 +846,9 @@ impl ReviewThreadsOverview {
     /// Rebuilds the threads, keeping the cursor on the same thread when it
     /// still exists.
     pub fn refresh(&mut self, comments: &[DiscussionNote], diff_view: &DiffView) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.threads = group_threads(comments, |position| diff_view.contains_anchor(position));
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
     pub fn visible_threads(&self) -> impl Iterator<Item = &ReviewThread> {
@@ -893,15 +904,14 @@ impl ReviewThreadsOverview {
     }
 
     pub fn toggle_unresolved_only(&mut self) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.unresolved_only = !self.unresolved_only;
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
-    fn select_root_or_clamp(&mut self, root_id: Option<u64>) {
+    fn select_thread_or_clamp(&mut self, thread_id: Option<String>) {
         let count = self.visible_threads().count();
-        let position =
-            root_id.and_then(|id| self.visible_threads().position(|t| t.root().id == id));
+        let position = thread_id.and_then(|id| self.visible_threads().position(|t| t.id == id));
         match position {
             Some(idx) => {
                 self.cursor_idx = idx;
@@ -2769,7 +2779,6 @@ pub enum TextInputAction {
     },
     CreateIssue,
     AddReviewComment {
-        mr_iid: u64,
         file_path: String,
         line_num: Option<u32>,
         old_line_num: Option<u32>,
@@ -2778,10 +2787,6 @@ pub enum TextInputAction {
     },
     EnterPipelineId,
     CreateMilestone,
-    SubmitReviewFinal {
-        mr_iid: u64,
-        status: String,
-    },
     ReplyToComment {
         mr_iid: u64,
         comment_id: u64,
@@ -2791,23 +2796,21 @@ pub enum TextInputAction {
     EditPageSize,
 }
 
-#[derive(Clone, Debug)]
-pub struct TextInput {
-    pub title: String,
+/// Text being edited, with a cursor counted in characters so
+/// multibyte text edits whole characters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextBuffer {
     value: String,
     cursor_char_idx: usize,
-    pub action: TextInputAction,
 }
 
-impl TextInput {
-    /// Opens the input with the cursor after the last character of `value`.
-    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+impl TextBuffer {
+    /// Starts with the cursor after the last character of `value`.
+    pub fn new(value: String) -> Self {
         let cursor_char_idx = value.chars().count();
         Self {
-            title: title.into(),
             value,
             cursor_char_idx,
-            action,
         }
     }
 
@@ -2817,8 +2820,7 @@ impl TextInput {
 
     /// Replaces the whole value and moves the cursor to its end.
     pub fn set_value(&mut self, value: String) {
-        self.cursor_char_idx = value.chars().count();
-        self.value = value;
+        *self = Self::new(value);
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -2860,11 +2862,45 @@ impl TextInput {
         rendered
     }
 
+    pub fn cursor_byte_offset(&self) -> usize {
+        self.byte_offset(self.cursor_char_idx)
+    }
+
+    pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) {
+        use crossterm::event::KeyCode;
+        match code {
+            KeyCode::Char(c) => self.insert_char(c),
+            KeyCode::Backspace => self.delete_char_before_cursor(),
+            KeyCode::Delete => self.delete_char_at_cursor(),
+            KeyCode::Left => self.move_cursor_left(),
+            KeyCode::Right => self.move_cursor_right(),
+            _ => {}
+        }
+    }
+
     fn byte_offset(&self, char_idx: usize) -> usize {
         self.value
             .char_indices()
             .nth(char_idx)
             .map_or(self.value.len(), |(offset, _)| offset)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TextInput {
+    pub title: String,
+    pub buffer: TextBuffer,
+    pub action: TextInputAction,
+}
+
+impl TextInput {
+    /// Opens the input with the cursor after the last character of `value`.
+    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        Self {
+            title: title.into(),
+            buffer: TextBuffer::new(value),
+            action,
+        }
     }
 }
 
@@ -3011,8 +3047,18 @@ pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 /// tab. Like custom commands, those entries settle their own row.
 pub const RERUN_LOG_PREFIX: &str = "Rerun: ";
 
+/// Prefix of the terminal-log entry written while the submit-review overlay
+/// posts a review. The overlay settles that row itself once the post ends.
+pub const REVIEW_SUBMIT_LOG_PREFIX: &str = "Submit review: ";
+
 fn settles_own_row(cmd: &TerminalCommand) -> bool {
-    cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX) || cmd.command.starts_with(RERUN_LOG_PREFIX)
+    [
+        CUSTOM_COMMAND_LOG_PREFIX,
+        RERUN_LOG_PREFIX,
+        REVIEW_SUBMIT_LOG_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| cmd.command.starts_with(prefix))
 }
 
 fn outcome_status(outcome: &Result<(), String>) -> String {
@@ -3039,6 +3085,7 @@ pub enum OverlayKind {
     ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
+    ReviewSubmit,
     TerminalInspector,
 }
 
@@ -3759,34 +3806,6 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
-/// How long a `StatusMessage` stays in the header bar.
-pub const STATUS_NOTICE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// A confirmation shown in the header bar until `STATUS_NOTICE_LIFETIME`
-/// passes. Errors use the toast instead.
-#[derive(Clone, Debug, PartialEq)]
-pub struct StatusMessage {
-    text: String,
-    shown_at: std::time::Instant,
-}
-
-impl StatusMessage {
-    pub fn notice(text: impl Into<String>) -> Self {
-        StatusMessage {
-            text: text.into(),
-            shown_at: std::time::Instant::now(),
-        }
-    }
-
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.shown_at.elapsed() >= STATUS_NOTICE_LIFETIME
-    }
-}
-
 /// Why a tab shows rows that may be out of date. Kept per tab in
 /// `App::stale_tabs` until that tab's own fetch succeeds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3839,7 +3858,6 @@ pub struct App {
     /// the config is loaded.
     pub custom_commands: crate::custom_commands::CustomCommands,
     pub active_tab: Tab,
-    pub running: bool,
     pub scope: crate::scope::Scope,
     pub prev_scope: Option<crate::scope::Scope>,
     /// Bumped on every repository/group switch; background fetches carry the
@@ -3863,13 +3881,8 @@ pub struct App {
     pub pending_mr_select: Option<u64>,
     pub pending_issue_select: Option<u64>,
     pub job_trace: Option<crate::ui::job_trace::JobTraceView>,
-    pub error_message: Option<String>,
-    pub error_message_at: Option<std::time::Instant>,
-    /// True when the current error toast originated from a real glab/gh CLI
-    /// failure (stderr is captured in the terminal log).  False for guard
-    /// rejections that never ran a CLI command.  Controls the hint line shown
-    /// in the toast.
-    pub error_has_cli_detail: bool,
+    notices: crate::notice::NoticeQueue,
+    last_request_tag: crate::notice::RequestTag,
     pub runners: ListTab<RunnerColumn>,
     pub releases: ListTab<ReleaseColumn>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
@@ -4003,17 +4016,20 @@ pub struct App {
     pub help_table_state: ratatui::widgets::TableState,
     pub diff_view: Option<DiffView>,
     pub review_threads: Option<ReviewThreadsOverview>,
+    pub review_submit: Option<crate::review_submit::ReviewSubmit>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
     pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
-    pub status_message: Option<StatusMessage>,
     pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
-    pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    /// Where background tasks report. `App::default()` holds a sender whose
+    /// receiver is already gone, so whatever is sent before the event loop
+    /// installs its own is dropped.
+    pub tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
     pub enabled_columns: std::collections::HashMap<Tab, std::collections::HashSet<String>>,
     pub focus_column_checklist: bool,
     pub column_checklist_idx: usize,
@@ -4032,7 +4048,7 @@ pub struct App {
     pub milestones: StatefulTable<crate::domain::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::domain::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
-    pub milestone_prefetch: Option<tokio::task::AbortHandle>,
+    pub milestone_prefetch: Option<crate::effect::CancelHandle>,
     pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
     /// `(closed, total)` issue counts per milestone iid, derived from
     /// `issues.items.iter().filter_map(|i| i.milestone.as_ref())`.
@@ -4062,6 +4078,11 @@ pub struct App {
     pub label_colors: std::collections::HashMap<String, ratatui::style::Color>,
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
+    /// When the active tab's list was last refreshed, by the user or by the
+    /// periodic refresh of `refresh_timer_tab`.
+    pub last_list_refresh: std::time::Instant,
+    /// The tab `last_list_refresh` times. Switching tabs restarts the timer.
+    pub refresh_timer_tab: Tab,
     /// (project path, iid) of the milestone whose deletion is in flight.
     pub pending_delete_milestone: Option<(String, u64)>,
     /// (project path, tag) of the release whose deletion is in flight.
@@ -4079,7 +4100,6 @@ impl Default for App {
             key_buffer,
             custom_commands: crate::custom_commands::CustomCommands::default(),
             active_tab: Tab::default(),
-            running: true,
             scope: crate::scope::Scope::default(),
             prev_scope: None,
             scope_generation: crate::event::ScopeGeneration::default(),
@@ -4101,9 +4121,8 @@ impl Default for App {
             pending_mr_select: None,
             pending_issue_select: None,
             job_trace: None,
-            error_message: None,
-            error_message_at: None,
-            error_has_cli_detail: false,
+            notices: crate::notice::NoticeQueue::default(),
+            last_request_tag: crate::notice::RequestTag::default(),
             runners: ListTab::default(),
             releases: ListTab::default(),
             pipeline_jobs: std::collections::HashMap::new(),
@@ -4167,16 +4186,16 @@ impl Default for App {
             help_table_state: ratatui::widgets::TableState::default(),
             diff_view: None,
             review_threads: None,
+            review_submit: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             submit_dialog: None,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
-            status_message: None,
             stale_tabs: std::collections::HashMap::new(),
             clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
-            tx: None,
+            tx: tokio::sync::mpsc::unbounded_channel().0,
             enabled_columns: {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
@@ -4223,6 +4242,8 @@ impl Default for App {
             label_colors: std::collections::HashMap::new(),
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
+            last_list_refresh: std::time::Instant::now(),
+            refresh_timer_tab: Tab::default(),
             pending_delete_milestone: None,
             pending_delete_release: None,
         }
@@ -4380,7 +4401,7 @@ impl App {
         self.text_input = None;
         self.edit_menu = None;
         self.submit_dialog = None;
-        self.status_message = None;
+        self.clear_info_notices();
         self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
@@ -4422,9 +4443,7 @@ impl App {
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
-        if let Some(handle) = self.milestone_prefetch.take() {
-            handle.abort();
-        }
+        self.milestone_prefetch = None;
         self.issues.state.select(Some(0));
         self.mrs.state.select(Some(0));
         self.pipelines.state.select(Some(0));
@@ -4568,6 +4587,16 @@ impl App {
             .map(|m| m.project_path.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    /// The project of MR `iid`, read from the open diff when it shows that
+    /// MR. In group scope the iid alone can match another project's MR.
+    pub fn project_path_for_open_mr(&self, iid: u64) -> String {
+        self.diff_view
+            .as_ref()
+            .filter(|diff| diff.mr_iid == iid)
+            .map(|diff| diff.project_path.clone())
+            .unwrap_or_else(|| self.project_path_for_mr(iid))
     }
 
     /// Position of issue `iid` of `project_path` in `issues.items`. Matching
@@ -5332,12 +5361,27 @@ impl App {
     /// Single entry point for non-error feedback in the header bar. Stale
     /// data has its own badge (`stale_tabs`), so a notice never hides it.
     pub fn show_notice(&mut self, text: impl Into<String>) {
-        self.status_message = Some(StatusMessage::notice(text));
+        self.push_notice(crate::notice::Notice::info(text));
     }
 
-    /// Single entry point for surfacing a runtime error. Sets the transient
-    /// error toast (`error_message`) and marks the failed terminal command so
-    /// both UI surfaces stay in sync.
+    /// Takes down the header-bar notices, e.g. a "Loading…" notice once the
+    /// load it announced has landed. Error toasts stay until they expire, and
+    /// the open modal keeps the notices about its own request.
+    pub fn clear_info_notices(&mut self) {
+        let open_request = self.open_modal_request();
+        self.notices
+            .dismiss(crate::notice::NoticeLevel::Info, open_request);
+    }
+
+    /// Queues a notice as built, for one that names its own request or
+    /// detail. Errors raised this way mark no terminal entry failed.
+    pub fn push_notice(&mut self, notice: crate::notice::Notice) {
+        self.notices.push(notice);
+    }
+
+    /// Single entry point for surfacing a runtime error. Raises the error
+    /// toast and marks the failed terminal command so both UI surfaces stay
+    /// in sync.
     ///
     /// The failed command is matched with the same two-tier preference the
     /// `CommandCompleted` handler used before this helper: a still-running
@@ -5345,8 +5389,21 @@ impl App {
     /// bulk/submit operation takes precedence, falling back to the most
     /// recent running command.
     pub fn show_error(&mut self, msg: String) {
-        let failed_status = format!("Failed: {msg}");
-        self.raise_error_toast(msg);
+        self.report_error(crate::notice::Notice::error(msg));
+    }
+
+    /// `show_error` for a failed glab/gh call whose stderr is in the
+    /// Terminal tab: the toast points there. Guard rejections that never ran
+    /// a CLI command use `show_error`.
+    pub fn show_cli_error(&mut self, msg: String) {
+        self.report_error(
+            crate::notice::Notice::error(msg).with_detail(crate::notice::CLI_LOG_HINT),
+        );
+    }
+
+    fn report_error(&mut self, notice: crate::notice::Notice) {
+        let failed_status = format!("Failed: {}", notice.text());
+        self.push_notice(notice);
         let row = self
             .terminal_commands
             .find_latest(|cmd| {
@@ -5366,8 +5423,42 @@ impl App {
     /// Shows the error toast without marking any terminal entry failed, for
     /// failures already recorded with `record_command_outcome`.
     pub fn raise_error_toast(&mut self, msg: String) {
-        self.error_message_at = Some(std::time::Instant::now());
-        self.error_message = Some(msg);
+        self.push_notice(crate::notice::Notice::error(msg));
+    }
+
+    /// A fresh tag for a request a modal is about to start.
+    pub fn next_request_tag(&mut self) -> crate::notice::RequestTag {
+        self.last_request_tag = self.last_request_tag.next();
+        self.last_request_tag
+    }
+
+    /// The request of the modal on screen, whose notices it draws itself.
+    pub fn open_modal_request(&self) -> Option<crate::notice::RequestTag> {
+        self.selector.as_ref().and_then(|selector| selector.request)
+    }
+
+    /// The newest notice about the open modal's request.
+    pub fn modal_notice(&self) -> Option<&crate::notice::Notice> {
+        self.open_modal_request()
+            .and_then(|request| self.notices.latest_for(request))
+    }
+
+    /// The newest error for the toast: one the open modal does not draw.
+    pub fn toast_notice(&self) -> Option<&crate::notice::Notice> {
+        self.notices.latest_outside(
+            crate::notice::NoticeLevel::Error,
+            self.open_modal_request(),
+            std::time::Instant::now(),
+        )
+    }
+
+    /// The newest non-error notice for the header bar.
+    pub fn header_notice(&self) -> Option<&crate::notice::Notice> {
+        self.notices.latest_outside(
+            crate::notice::NoticeLevel::Info,
+            self.open_modal_request(),
+            std::time::Instant::now(),
+        )
     }
 
     /// Appends a finished command to the terminal log. A failure also raises
@@ -5413,21 +5504,23 @@ impl App {
         })
     }
 
-    /// Stamps the outcome, and when the command ran, on a row returned by
-    /// `start_command`.
+    /// Stamps the outcome on a row returned by `start_command`. `execution`
+    /// replaces what the row knew about its run; without one, the row is
+    /// timed from when it started.
     pub fn settle_command(
         &mut self,
         row: LogRow,
         outcome: &Result<(), String>,
-        execution: crate::command_log::Execution,
+        execution: Option<crate::command_log::Execution>,
     ) {
         self.terminal_commands
-            .settle(row, outcome_status(outcome), Some(execution));
+            .settle(row, outcome_status(outcome), execution);
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands and re-runs are skipped: they settle their own row,
-    /// and an unrelated completion must not stamp them finished.
+    /// Custom commands, re-runs and review submissions are skipped: they
+    /// settle their own row, and an unrelated completion must not stamp them
+    /// finished.
     pub fn latest_running_cli_command(&self) -> Option<LogRow> {
         self.terminal_commands
             .find_latest(|cmd| cmd.status == "Running" && !settles_own_row(cmd))
@@ -6137,8 +6230,10 @@ impl App {
         }
     }
 
-    pub fn tick(&mut self) {}
-
+    pub fn tick(&mut self) {
+        let open_request = self.open_modal_request();
+        self.notices.expire(std::time::Instant::now(), open_request);
+    }
     pub fn unresolved_threads_count(&self) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -6235,6 +6330,36 @@ impl App {
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
+    /// Removes the drafts a posted review carried, by value and one occurrence
+    /// each, from the pending and the held-back drafts: a diff refetched while
+    /// the review was posted can have moved them from one list to the other.
+    pub fn drop_sent_drafts(&mut self, sent: &[DraftComment]) {
+        let mut unmatched = sent.to_vec();
+        for drafts in [&mut self.draft_comments, &mut self.stale_draft_comments] {
+            drafts.retain(
+                |draft| match unmatched.iter().position(|sent| sent == draft) {
+                    Some(index) => {
+                        unmatched.swap_remove(index);
+                        false
+                    }
+                    None => true,
+                },
+            );
+        }
+    }
+
+    pub fn all_draft_count(&self) -> usize {
+        self.draft_comments.len() + self.stale_draft_comments.len()
+    }
+
+    pub fn all_drafts_phrase(&self) -> String {
+        crate::domain::review::draft_comments_phrase(self.all_draft_count())
+    }
+
+    pub fn kept_drafts_notice(&self) -> String {
+        format!("Kept {} for later", self.all_drafts_phrase())
+    }
+
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -6270,10 +6395,6 @@ impl App {
             .values()
             .filter(|&&resolved| !resolved)
             .count()
-    }
-
-    pub fn quit(&mut self) {
-        self.running = false;
     }
 
     pub fn next_tab(&mut self) {
@@ -7452,6 +7573,112 @@ impl App {
                 self.failed_todo_details.insert(id.to_string(), error);
             }
         }
+    }
+
+    /// Fills the open selector with the items its own request fetched, or
+    /// with cached items when the fetch failed or came back empty. A reply
+    /// for a selector that has since closed or been replaced is dropped.
+    /// Returns whether the fetched items were stored, in which case the
+    /// caller saves `project_cache`.
+    pub fn apply_selector_items(
+        &mut self,
+        request: crate::notice::RequestTag,
+        items: Result<Vec<String>, String>,
+    ) -> bool {
+        if self.selector.as_ref().and_then(|s| s.request) != Some(request) {
+            return false;
+        }
+        let (items, failure) = match items {
+            Ok(items) => (items, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        if items.is_empty() {
+            if let Some(cached) = self.cached_selector_items() {
+                let notice =
+                    crate::notice::Notice::info("Offline fallback: cached selector items.")
+                        .from_request(request);
+                self.push_notice(match failure.as_deref() {
+                    Some(error) => notice.with_detail(error),
+                    None => notice,
+                });
+                if let Some(selector) = self.selector.as_mut() {
+                    selector.all_items = cached;
+                    selector.is_loading = false;
+                }
+                return false;
+            }
+        }
+        if let Some(error) = failure {
+            self.push_notice(
+                crate::notice::Notice::error(format!("Failed to load options: {error}"))
+                    .from_request(request),
+            );
+            if let Some(selector) = self.selector.as_mut() {
+                selector.is_loading = false;
+            }
+            return false;
+        }
+        let Some(selector) = self.selector.as_mut() else {
+            return false;
+        };
+        match selector.field_type.as_str() {
+            "labels" => {
+                self.cached_labels = items.clone();
+                self.project_cache.labels = items.clone();
+            }
+            "assignees" | "reviewers" => {
+                self.cached_members = items.clone();
+                self.project_cache.members = items.clone();
+            }
+            _ => {}
+        }
+        if selector.field_type == "project" {
+            selector.all_items.extend(items);
+            selector.all_items.sort();
+            selector.all_items.dedup();
+        } else {
+            selector.all_items = items;
+        }
+        selector.is_loading = false;
+        true
+    }
+
+    /// The open selector's options known without a fetch, if any.
+    fn cached_selector_items(&self) -> Option<Vec<String>> {
+        let cached: Vec<String> = match self.selector.as_ref()?.field_type.as_str() {
+            "labels" => self.cached_labels.clone(),
+            "assignees" | "reviewers" => self.cached_members.clone(),
+            "milestone" => self
+                .milestones
+                .items
+                .iter()
+                .map(|m| m.title.clone())
+                .collect(),
+            "source_branch" | "target_branch" | "pipeline_branch" | "create_from" => self
+                .branches
+                .items()
+                .iter()
+                .map(|b| b.name.clone())
+                .collect(),
+            "project" => {
+                let mut known: Vec<String> = self
+                    .issues
+                    .items
+                    .iter()
+                    .map(|i| &i.project_path)
+                    .chain(self.mrs.items.iter().map(|m| &m.project_path))
+                    .chain(self.pipelines.items.iter().map(|p| &p.project_path))
+                    .chain(self.milestones.items.iter().map(|ms| &ms.project_path))
+                    .filter(|path| !path.is_empty())
+                    .cloned()
+                    .collect();
+                known.sort();
+                known.dedup();
+                known
+            }
+            _ => return None,
+        };
+        (!cached.is_empty()).then_some(cached)
     }
 
     /// Applies a todo mutation the server accepted to the local list. Read
@@ -9243,17 +9470,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_on_scope_change_aborts_running_milestone_prefetch() {
+    async fn reset_on_scope_change_cancels_running_milestone_prefetch() {
         let mut app = App::default();
-        let handle = tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-        });
-        app.milestone_prefetch = Some(handle.abort_handle());
+        let mut fx = crate::effect::Effects::default();
+        app.milestone_prefetch = Some(fx.spawn_cancellable(std::future::pending()));
+        let [crate::effect::Effect::Spawn(prefetch)] =
+            <[_; 1]>::try_from(fx.into_vec()).expect("one effect")
+        else {
+            panic!("the prefetch is a spawned task");
+        };
+        let prefetch = tokio::spawn(prefetch);
 
         app.reset_on_scope_change();
 
         assert!(app.milestone_prefetch.is_none());
-        let _ = handle.await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), prefetch)
+            .await
+            .expect("the prefetch ends once cancelled")
+            .expect("the prefetch task does not panic");
     }
 
     fn issue_with_milestone(iid: u64, state: &str, milestone_iid: u64) -> Issue {
@@ -9349,13 +9583,13 @@ mod tests {
         assert_eq!(parse_jump_input("#123abc"), None);
     }
 
-    fn text_input(value: &str) -> TextInput {
-        TextInput::new(" Test ", value.to_string(), TextInputAction::EditPageSize)
+    fn text_buffer(value: &str) -> TextBuffer {
+        TextBuffer::new(value.to_string())
     }
 
     #[test]
-    fn text_input_typing_multibyte_characters_keeps_the_cursor_after_them() {
-        let mut input = text_input("");
+    fn text_buffer_typing_multibyte_characters_keeps_the_cursor_after_them() {
+        let mut input = text_buffer("");
         for c in ['é', '日', 'a'] {
             input.insert_char(c);
         }
@@ -9364,8 +9598,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_inserts_between_multibyte_characters_after_moving_left() {
-        let mut input = text_input("é日");
+    fn text_buffer_inserts_between_multibyte_characters_after_moving_left() {
+        let mut input = text_buffer("é日");
         input.move_cursor_left();
         input.insert_char('x');
         assert_eq!(input.value(), "éx日");
@@ -9373,8 +9607,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_backspace_and_delete_remove_whole_multibyte_characters() {
-        let mut input = text_input("aé日b");
+    fn text_buffer_backspace_and_delete_remove_whole_multibyte_characters() {
+        let mut input = text_buffer("aé日b");
         input.move_cursor_left();
         input.move_cursor_left();
         assert_eq!(input.value_with_cursor('|'), "aé|日b");
@@ -9385,8 +9619,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_cursor_edits_stop_at_both_ends_of_multibyte_text() {
-        let mut input = text_input("日");
+    fn text_buffer_cursor_edits_stop_at_both_ends_of_multibyte_text() {
+        let mut input = text_buffer("日");
         input.move_cursor_right();
         input.delete_char_at_cursor();
         assert_eq!(input.value_with_cursor('|'), "日|");
@@ -9397,8 +9631,8 @@ mod tests {
     }
 
     #[test]
-    fn text_input_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
-        let mut input = text_input("");
+    fn text_buffer_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
+        let mut input = text_buffer("");
         input.set_value("ñandú".to_string());
         input.delete_char_before_cursor();
         assert_eq!(input.value_with_cursor('|'), "ñand|");
@@ -9461,7 +9695,7 @@ mod tests {
         ];
         app.issues.state.select(Some(0));
         app.show_notice("Selected all 3 items");
-        let status = app.status_message.clone();
+        let status = app.header_notice().cloned();
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -9469,7 +9703,7 @@ mod tests {
             copied.borrow().as_deref(),
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
-        assert_eq!(app.status_message, status);
+        assert_eq!(app.header_notice(), status.as_ref());
     }
 
     #[test]
@@ -9526,7 +9760,7 @@ mod tests {
         ];
         app.mrs.state.select(Some(0));
         app.show_notice("Selected all 3 items");
-        let status = app.status_message.clone();
+        let status = app.header_notice().cloned();
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -9543,7 +9777,7 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message, status);
+        assert_eq!(app.header_notice(), status.as_ref());
     }
 
     #[test]
@@ -10373,6 +10607,27 @@ diff --git a/Makefile b/Makefile
     }
 
     #[test]
+    fn a_comment_action_in_group_scope_targets_the_open_diffs_project() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
+        let mut listed_first = mr_fixture(5, "opened", "a", false, "alpha !5");
+        listed_first.project_path = "acme/alpha".to_string();
+        let mut opened = mr_fixture(5, "opened", "b", false, "beta !5");
+        opened.project_path = "acme/beta".to_string();
+        app.mrs.items = vec![listed_first, opened];
+        app.diff_view = Some(DiffView::without_highlighting(
+            5,
+            "acme/beta".to_string(),
+            String::new(),
+        ));
+
+        assert_eq!(app.project_path_for_open_mr(5), "acme/beta");
+        assert_eq!(app.project_path_for_open_mr(9), "acme");
+    }
+
+    #[test]
     fn pipeline_project_prefers_the_listed_row_over_an_older_jobs_tab_project() {
         let mut app = App {
             scope: crate::scope::Scope::Group("acme".to_string()),
@@ -10415,6 +10670,112 @@ diff --git a/Makefile b/Makefile
         assert!(cancel_jobs.action.is_destructive());
     }
 
+    fn loading_labels_selector(request: crate::notice::RequestTag) -> Selector {
+        Selector {
+            title: "Select Labels".to_string(),
+            all_items: Vec::new(),
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: true,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ListState::default(),
+            request: Some(request),
+        }
+    }
+
+    #[test]
+    fn selector_reply_for_a_replaced_selector_is_dropped() {
+        let mut app = App::default();
+        let stale = app.next_request_tag();
+        let current = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(current));
+
+        let applied = app.apply_selector_items(stale, Ok(vec!["bug".to_string()]));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(selector.is_loading);
+        assert!(selector.all_items.is_empty());
+        assert!(app.cached_labels.is_empty());
+    }
+
+    #[test]
+    fn selector_reply_after_the_selector_closed_is_dropped() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        assert_eq!(app.toast_notice(), None);
+        assert!(app.cached_labels.is_empty());
+    }
+
+    #[test]
+    fn selector_reply_fills_the_selector_and_the_label_cache() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+        let labels = vec!["bug".to_string(), "docs".to_string()];
+
+        let applied = app.apply_selector_items(request, Ok(labels.clone()));
+
+        assert!(applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, labels);
+        assert_eq!(app.cached_labels, labels);
+        assert_eq!(app.project_cache.labels, labels);
+    }
+
+    #[test]
+    fn failed_selector_fetch_falls_back_to_cached_labels() {
+        let mut app = App {
+            cached_labels: vec!["bug".to_string()],
+            ..App::default()
+        };
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, ["bug"]);
+        let notice = app.modal_notice().expect("notice inside the selector");
+        assert_eq!(notice.level(), crate::notice::NoticeLevel::Info);
+        assert_eq!(notice.text(), "Offline fallback: cached selector items.");
+        assert_eq!(notice.detail(), Some("HTTP 502"));
+    }
+
+    #[test]
+    fn failed_selector_fetch_without_a_cache_reports_inside_and_leaves_the_cache() {
+        let mut app = App::default();
+        app.project_cache.labels = vec!["persisted".to_string()];
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert!(selector.all_items.is_empty());
+        assert_eq!(
+            app.modal_notice().map(crate::notice::Notice::text),
+            Some("Failed to load options: HTTP 502")
+        );
+        assert_eq!(app.toast_notice(), None);
+        assert!(app.cached_labels.is_empty());
+        assert_eq!(app.project_cache.labels, ["persisted"]);
+    }
+
     #[test]
     fn selector_move_by_clamps_to_the_filtered_items() {
         let mut selector = Selector {
@@ -10430,6 +10791,7 @@ diff --git a/Makefile b/Makefile
             field_type: "labels".to_string(),
             multi_select: true,
             state: ListState::default(),
+            request: None,
         };
 
         selector.move_by(true, 15);
@@ -10465,6 +10827,7 @@ diff --git a/Makefile b/Makefile
             field_type: "labels".to_string(),
             multi_select: true,
             state: ListState::default(),
+            request: None,
         };
 
         let filtered = selector.get_filtered_items();
@@ -11278,7 +11641,7 @@ diff --git a/foo.txt b/foo.txt
 
         // 1. Thread 1: unresolved
         let note1 = DiscussionNote {
-            id: 1,
+            id: Some(1),
             body: "note 1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11294,11 +11657,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_1".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 2. Thread 2: resolved
         let note2 = DiscussionNote {
-            id: 2,
+            id: Some(2),
             body: "note 2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11314,11 +11678,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_2".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 3. Thread 3: unresolved because one reply is unresolved
         let note3_1 = DiscussionNote {
-            id: 3,
+            id: Some(3),
             body: "note 3.1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11334,9 +11699,10 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
         let note3_2 = DiscussionNote {
-            id: 4,
+            id: Some(4),
             body: "note 3.2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11352,11 +11718,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // System comment (should be ignored)
         let note_system = DiscussionNote {
-            id: 5,
+            id: Some(5),
             body: "system note".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -11365,6 +11732,7 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_system".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         app.current_comments = vec![note1, note2, note3_1, note3_2, note_system];
@@ -12787,8 +13155,10 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.error_message, Some("boom".to_string()));
-        assert!(app.error_message_at.is_some());
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some("boom")
+        );
         assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
@@ -13107,6 +13477,27 @@ index 123456..789012 100644
     }
 
     #[test]
+    fn backend_log_never_settles_a_running_review_submission() {
+        let mut app = App::default();
+        let row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
+
+        app.log_cli_command(executed_entry(
+            "FETCHING MR DIFF REFS: glab mr view 7 --output json -R acme/widget",
+            "Success",
+            "{}",
+            "",
+        ));
+
+        assert_eq!(
+            app.terminal_commands
+                .get(row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+        assert_eq!(app.latest_running_cli_command(), None);
+    }
+
+    #[test]
     fn finished_rerun_settles_its_row_and_toasts_a_failure() {
         let mut app = App::default();
         let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
@@ -13125,7 +13516,7 @@ index 123456..789012 100644
         assert_eq!(entry.status, "Failed: HTTP 401");
         assert_eq!(entry.execution, execution);
         assert_eq!(
-            app.error_message.as_deref(),
+            app.toast_notice().map(crate::notice::Notice::text),
             Some("Re-run failed: HTTP 401")
         );
     }
@@ -13137,7 +13528,7 @@ index 123456..789012 100644
         app.terminal_scroll = 3;
 
         app.clear_terminal_log();
-        app.settle_command(row, &Ok(()), crate::command_log::Execution::default());
+        app.settle_command(row, &Ok(()), None);
 
         assert!(app.terminal_commands.is_empty());
         assert_eq!(app.terminal_scroll, 0);

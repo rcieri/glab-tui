@@ -1,8 +1,12 @@
-// Handler modules for key event processing
-// Populated during Phases 3-4 of the refactor
-
 pub mod custom_commands;
+pub mod diff_view;
+pub mod editor_result;
+pub mod mouse;
 pub mod overlays;
+pub mod refresh;
+pub mod review_submit;
+pub mod scope;
+pub mod search;
 pub mod tabs;
 pub mod terminal;
 pub mod todos;

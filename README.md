@@ -470,10 +470,10 @@ glab-tui review resolve 42 --thread <id> [--unresolve]         # GitLab only
   ]
   ```
 
-- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
+- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. If a draft note or `bulk_publish` fails on GitLab, the draft notes already created are deleted again, so retrying does not post them twice. A failure after publishing (the approval or the summary) leaves the comments posted. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
 - **Unchanged lines** carry both line numbers (GitLab requires both); GitHub anchors them on the new side.
-- **`threads`** prints, per thread: `id` (pass it to `reply`/`resolve`), `classification` (`general`, `in-diff`, `outdated` against the current diff), `anchor` (`file`, `line`, `side`), `resolvable`, `resolved` and the `notes` (`id`, `author`, `body`, `created_at`). On GitHub only pull-request review comments are listed, and a thread id is the id of its first comment.
-- **`resolve`** on GitHub exits non-zero: it is not supported there.
+- **`threads`** prints, per thread: `id` (pass it to `reply`/`resolve`), `classification` (`general`, `in-diff`, `outdated` against the current diff), `anchor` (`file`, `line`, `side`), `resolvable`, `resolved` and the `notes` (`id`, `author`, `body`, `created_at`). On GitHub, a review comment thread's id is the id of its first comment. The PR's conversation comments and the summaries of submitted reviews are listed too, as `general` threads whose id is the comment's or review's node id (`IC_…`, `PRR_…`). A review summary also carries `review_state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` or `DISMISSED`), and its note `id` is `null`. A review submitted without a body is not listed.
+- **`resolve`** on GitHub exits non-zero: it is not supported there. **`reply`** to a GitHub conversation comment or review summary exits non-zero too: GitHub only takes replies in review comment threads.
 
 ---
 
@@ -671,7 +671,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `e` | Add code suggestion via `$EDITOR` |
 | `a` | Open comment actions menu (reply, resolve, edit, delete) |
 | `T` | Review threads overview: every thread, including general and outdated ones |
-| `r` | Submit review (Approve / Request Changes / Comment) |
+| `r` | Submit review: pick Comment / Approve / Request changes / Keep as draft with `j`/`k`, move into the summary with `j` past the last verdict or `Tab`, type it (or `Ctrl+E` for `$EDITOR`) and submit. A failed submission shows its error in the dialog and keeps the drafts. On GitLab, a failure after the comments are published (the approval or the summary) leaves them posted: do not resubmit them |
 | `/` / `f` | Search within diff |
 | `Ctrl+N` | Next search match |
 | `Ctrl+Shift+N` | Previous search match |
@@ -679,7 +679,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 **Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` and restored the next time you open the same diff (files that are no longer part of the diff are dropped). They are local to `glab-tui` — GitLab's own "viewed" checkboxes are not synced.
 
-**Review threads overview.** Inline comments only appear under a line that is still in the diff, so plain MR/PR comments and threads whose line was rebased away are otherwise invisible. Press `T` to list every thread with its status (`UNRESOLVED` / `RESOLVED`), its location (`file:line`, `GENERAL`, or `OUTDATED`), the author, an excerpt and the reply count; the lower pane shows the full thread. `j`/`k` move and wrap around at either end like the other lists, `Ctrl+d`/`Ctrl+u` move half a page, `g`/`G` jump to the first/last thread, `u` narrows the list to unresolved threads, `J`/`K` scroll the thread, `Enter` jumps the diff cursor to the thread's line (or to its file when the line is gone), `a` opens the usual reply / resolve / edit / delete actions, and `Esc` closes it. Jumping to a file you marked as reviewed unfolds its directory, and if `M` was hiding it, reviewed files are shown again. On GitHub the overview lists pull-request review comments only; top-level PR conversation comments are not fetched, and GitHub reports no resolved state through this endpoint, so every thread shows as unresolved.
+**Review threads overview.** Inline comments only appear under a line that is still in the diff, so plain MR/PR comments and threads whose line was rebased away are otherwise invisible. Press `T` to list every thread with its status (`UNRESOLVED` / `RESOLVED`), its location (`file:line`, `GENERAL`, or `OUTDATED`), the author, an excerpt, its age and the reply count; the lower pane shows the full thread. `j`/`k` move and wrap around at either end like the other lists, `Ctrl+d`/`Ctrl+u` move half a page, `g`/`G` jump to the first/last thread, `u` narrows the list to unresolved threads, `J`/`K` scroll the thread, `Enter` jumps the diff cursor to the thread's line (or to its file when the line is gone), `a` opens the usual reply / resolve / edit / delete actions, and `Esc` closes it. Jumping to a file you marked as reviewed unfolds its directory, and if `M` was hiding it, reviewed files are shown again. On GitHub the overview also lists the PR's conversation comments and the summary of every review submitted with a body, as `GENERAL` threads ordered by creation time. A review summary carries its verdict as a badge (`APPROVED`, `CHANGES REQUESTED`, `COMMENTED`, `DISMISSED`). Neither can be replied to or resolved: `a` offers edit and delete for a conversation comment, and nothing for a review summary.
 
 ---
 
@@ -925,7 +925,9 @@ All API calls are made by shelling out to `gh api` or `glab api` (depending on t
 
 ```
 src/
-├── main.rs          # Entry point, event loop, all key-binding handlers
+├── main.rs          # Entry point: terminal setup and the effect-executing event loop
+├── update/          # update(app, event) -> Vec<Effect>: applies every event to App
+├── effect.rs        # Effect: what update asks the loop to do (spawn, suspend, quit)
 ├── app.rs           # App state, Tab enum, DiffView, DatePicker, filtering logic
 ├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
@@ -956,10 +958,12 @@ src/
 │   ├── notifications.rs # Todo/notification type + list
 │   ├── branches.rs  # Branch type + list/create/delete
 │   └── deployments.rs # Environment + Deployment types
-├── handlers/        # Keypress handlers
+├── handlers/        # Keypress handlers, called from update
 │   ├── mod.rs
 │   ├── tabs.rs      # Per-tab keybinding handlers
-│   └── overlays.rs  # Overlay keybinding handlers
+│   ├── overlays/    # One module per overlay (submit dialog, selector, edit menu, ...)
+│   ├── diff_view.rs # Diff view keys and review comment posting
+│   └── mouse.rs     # Mouse handling
 ├── ui/              # Ratatui render functions
 │   ├── mod.rs       # Re-exports
 │   ├── inspector.rs # Unified entity inspector (preview/edit single-column layout)

@@ -23,7 +23,7 @@ purple_bg = ""
 
 # ── Label palette ──
 label_palette_0 = "magenta"
-label_palette_1 = "blue"
+label_palette_1 = "light-yellow"
 label_palette_2 = "green"
 label_palette_3 = "yellow"
 label_palette_4 = "red"

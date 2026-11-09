@@ -11,6 +11,7 @@ mod job_trace;
 mod keybindings;
 mod layout;
 mod list_tab;
+mod modal_notices;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;
@@ -681,6 +682,35 @@ impl TestSession {
         Err(format!(
             "Timeout waiting for a CLI call containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
             self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
+    }
+
+    /// Feeds output to the emulator until the screen no longer contains
+    /// `gone`, for a state change that removes text rather than adds it.
+    ///
+    /// Returns only once the output has then been quiet for `FRAME_QUIET_MS`:
+    /// a frame reaches the PTY in several reads, top rows first, so `gone`
+    /// can leave the screen while rows further down still show the old frame.
+    pub fn wait_for_screen_without(&mut self, gone: &str, timeout_ms: u64) -> Result<(), String> {
+        const FRAME_QUIET_MS: u64 = 200;
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        let mut last_output = Instant::now();
+        while Instant::now() < deadline {
+            let bytes = self.pty.read_output();
+            if !bytes.is_empty() {
+                self.emulator.write_bytes(&bytes);
+                last_output = Instant::now();
+            }
+            if !self.emulator.get_text().contains(gone)
+                && last_output.elapsed() >= Duration::from_millis(FRAME_QUIET_MS)
+            {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err(format!(
+            "Timeout waiting for '{gone}' to leave the screen and the output to settle. Current screen:\n{}",
             self.emulator.get_text()
         ))
     }

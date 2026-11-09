@@ -9,7 +9,8 @@ use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, Trace
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{
-    DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NotePosition, ensure_complete_diff,
+    DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NoteKind, NotePosition, ReviewState,
+    ensure_complete_diff,
 };
 use crate::domain::notifications::{Notification, NotificationDetail};
 use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
@@ -1247,7 +1248,7 @@ fn review_comment_note(
     let thread_id = comment.in_reply_to_id.unwrap_or(comment.id);
     let resolved = resolution.get(&thread_id).copied();
     DiscussionNote {
-        id: comment.id,
+        id: Some(comment.id),
         body: comment.body,
         author: crate::domain::mr::Author {
             username: comment.user.map(|u| u.login).unwrap_or_default(),
@@ -1260,7 +1261,133 @@ fn review_comment_note(
         // A comment GraphQL does not list under any thread has no known
         // state; it is shown as a plain note rather than as open.
         resolvable: Some(resolved.is_some()),
+        kind: NoteKind::Discussion,
     }
+}
+
+/// `gh pr view --json comments,reviews`. Both lists carry GraphQL node ids.
+#[derive(Deserialize)]
+struct GhPrConversation {
+    #[serde(default)]
+    comments: Vec<GhConversationComment>,
+    #[serde(default)]
+    reviews: Vec<GhPrReview>,
+}
+
+#[derive(Deserialize)]
+struct GhConversationComment {
+    id: String,
+    author: Option<GhIssueLogin>,
+    body: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(default)]
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct GhPrReview {
+    id: String,
+    author: Option<GhIssueLogin>,
+    body: String,
+    #[serde(rename = "submittedAt")]
+    submitted_at: Option<String>,
+    state: GhReviewState,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GhReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+}
+
+impl GhReviewState {
+    /// `None` for a pending review: a draft only its author can see.
+    fn submitted(self) -> Option<ReviewState> {
+        match self {
+            Self::Approved => Some(ReviewState::Approved),
+            Self::ChangesRequested => Some(ReviewState::ChangesRequested),
+            Self::Commented => Some(ReviewState::Commented),
+            Self::Dismissed => Some(ReviewState::Dismissed),
+            Self::Pending => None,
+        }
+    }
+}
+
+/// The REST id of a conversation comment, which `gh pr view` only gives as
+/// the `#issuecomment-<id>` fragment of the comment's URL.
+fn issue_comment_id(url: &str) -> Option<u64> {
+    url.rsplit_once("#issuecomment-")?.1.parse().ok()
+}
+
+impl GhConversationComment {
+    fn into_note(self) -> DiscussionNote {
+        DiscussionNote {
+            id: issue_comment_id(&self.url),
+            body: self.body,
+            author: crate::domain::mr::Author {
+                username: self.author.map(|a| a.login).unwrap_or_default(),
+            },
+            created_at: self.created_at,
+            system: false,
+            position: None,
+            discussion_id: Some(self.id),
+            resolved: None,
+            resolvable: Some(false),
+            kind: NoteKind::Conversation,
+        }
+    }
+}
+
+impl GhPrReview {
+    /// `None` for a pending review and for a review submitted without a
+    /// body, which is only a verdict.
+    fn into_summary_note(self) -> Option<DiscussionNote> {
+        let state = self.state.submitted()?;
+        if self.body.trim().is_empty() {
+            return None;
+        }
+        Some(DiscussionNote {
+            id: None,
+            body: self.body,
+            author: crate::domain::mr::Author {
+                username: self.author.map(|a| a.login).unwrap_or_default(),
+            },
+            created_at: self.submitted_at?,
+            system: false,
+            position: None,
+            discussion_id: Some(self.id),
+            resolved: None,
+            resolvable: Some(false),
+            kind: NoteKind::ReviewSummary(state),
+        })
+    }
+}
+
+/// Builds a PR's conversation comments and review summaries as notes with no
+/// position, so they group as general threads keyed by their node id.
+fn parse_pr_conversation(raw: &str) -> Result<Vec<DiscussionNote>> {
+    let conversation: GhPrConversation =
+        serde_json::from_str(raw).context("parsing PR conversation")?;
+    let comments = conversation
+        .comments
+        .into_iter()
+        .map(GhConversationComment::into_note);
+    let summaries = conversation
+        .reviews
+        .into_iter()
+        .filter_map(GhPrReview::into_summary_note);
+    Ok(comments.chain(summaries).collect())
+}
+
+/// Review comment threads are keyed by the numeric id of their first comment,
+/// conversation comments and review summaries by a GraphQL node id.
+fn review_comment_thread_root(thread_id: &str) -> Option<u64> {
+    thread_id.parse().ok()
 }
 
 mod review_threads_types {
@@ -2256,12 +2383,25 @@ impl Backend for GhBackend {
         );
         let comments_args = ["api", "--paginate", endpoint.as_str()];
         let graphql_args = ["api", "graphql", "--paginate", "-f", query_arg.as_str()];
-        let (raw_comments, raw_threads) = tokio::try_join!(
+        let iid = mr_iid.to_string();
+        let conversation_args = [
+            "pr",
+            "view",
+            iid.as_str(),
+            "-R",
+            project,
+            "--json",
+            "comments,reviews",
+        ];
+        let (raw_comments, raw_threads, raw_conversation) = tokio::try_join!(
             self.run_gh(&comments_args, "Fetching MR Notes"),
             self.run_gh(&graphql_args, "Fetching Review Threads"),
+            self.run_gh(&conversation_args, "Fetching PR Conversation"),
         )?;
         let resolution = parse_review_thread_resolution(&raw_threads)?;
-        parse_pr_review_comments(&raw_comments, &resolution)
+        let mut notes = parse_pr_review_comments(&raw_comments, &resolution)?;
+        notes.extend(parse_pr_conversation(&raw_conversation)?);
+        Ok(notes)
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -2506,11 +2646,11 @@ impl Backend for GhBackend {
         thread_id: &str,
         body: &str,
     ) -> Result<()> {
-        let root_comment_id: u64 = thread_id.parse().with_context(|| {
-            format!(
-                "GitHub thread ids are the numeric id of the thread's first comment, got '{thread_id}'"
-            )
-        })?;
+        let Some(root_comment_id) = review_comment_thread_root(thread_id) else {
+            anyhow::bail!(
+                "cannot reply to thread '{thread_id}': GitHub takes replies only in review comment threads, not to a conversation comment or a review summary"
+            );
+        };
         let payload = serde_json::json!({ "body": body, "in_reply_to": root_comment_id });
         self.raw_api(
             &format!("/repos/{project}/pulls/{iid}/comments"),
@@ -2526,9 +2666,14 @@ impl Backend for GhBackend {
         &self,
         _project: &str,
         _iid: u64,
-        _thread_id: &str,
+        thread_id: &str,
         _resolved: bool,
     ) -> Result<()> {
+        if review_comment_thread_root(thread_id).is_none() {
+            anyhow::bail!(
+                "cannot resolve thread '{thread_id}': a conversation comment or review summary has no resolved state on GitHub"
+            );
+        }
         // Only the GraphQL `resolveReviewThread` mutation resolves a thread,
         // and it takes the thread's node id, which the REST comment listing
         // this backend reads does not carry.
@@ -5134,13 +5279,82 @@ mod tests {
         assert_eq!(
             states,
             vec![
-                (11, Some("11"), Some(true), Some(true)),
-                (21, Some("21"), Some(true), Some(false)),
-                (12, Some("11"), Some(true), Some(true)),
-                (31, Some("31"), Some(true), Some(false)),
-                (41, Some("41"), Some(false), None),
+                (Some(11), Some("11"), Some(true), Some(true)),
+                (Some(21), Some("21"), Some(true), Some(false)),
+                (Some(12), Some("11"), Some(true), Some(true)),
+                (Some(31), Some("31"), Some(true), Some(false)),
+                (Some(41), Some("41"), Some(false), None),
             ]
         );
+    }
+
+    #[test]
+    fn pr_conversation_lists_comments_and_review_summaries_as_general_notes() {
+        let raw = r#"{
+            "comments": [
+                {"id": "IC_kwDOA", "author": {"login": "alice"}, "body": "Can this land today?",
+                 "createdAt": "2026-11-03T02:55:00Z",
+                 "url": "https://github.com/acme/api/pull/7#issuecomment-6594253981"}
+            ],
+            "reviews": [
+                {"id": "PRR_kwDOB", "author": {"login": "bob"}, "body": "Rename the flag first.",
+                 "submittedAt": "2026-11-02T08:31:26Z", "state": "CHANGES_REQUESTED"},
+                {"id": "PRR_kwDOC", "author": {"login": "bob"}, "body": "",
+                 "submittedAt": "2026-11-02T08:45:19Z", "state": "APPROVED"},
+                {"id": "PRR_kwDOD", "author": {"login": "carol"}, "body": "Draft thoughts",
+                 "submittedAt": null, "state": "PENDING"}
+            ]
+        }"#;
+        let notes = parse_pr_conversation(raw).unwrap();
+        let summary: Vec<_> = notes
+            .iter()
+            .map(|n| {
+                (
+                    n.id,
+                    n.discussion_id.as_deref(),
+                    n.author.username.as_str(),
+                    n.body.as_str(),
+                    n.created_at.as_str(),
+                    n.position.is_none(),
+                    n.resolvable,
+                    n.kind,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    Some(6594253981),
+                    Some("IC_kwDOA"),
+                    "alice",
+                    "Can this land today?",
+                    "2026-11-03T02:55:00Z",
+                    true,
+                    Some(false),
+                    NoteKind::Conversation,
+                ),
+                (
+                    None,
+                    Some("PRR_kwDOB"),
+                    "bob",
+                    "Rename the flag first.",
+                    "2026-11-02T08:31:26Z",
+                    true,
+                    Some(false),
+                    NoteKind::ReviewSummary(ReviewState::ChangesRequested),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn conversation_comment_without_an_issue_comment_url_has_no_rest_id() {
+        let raw = r#"{"comments": [{"id": "IC_kwDOA", "author": null, "body": "Hi",
+            "createdAt": "2026-11-03T02:55:00Z", "url": ""}], "reviews": []}"#;
+        let notes = parse_pr_conversation(raw).unwrap();
+        assert_eq!(notes[0].id, None);
+        assert_eq!(notes[0].author.username, "");
     }
 
     #[test]

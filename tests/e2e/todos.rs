@@ -49,21 +49,6 @@ fn launch_on_todos(
     session
 }
 
-fn wait_for_screen_without(session: &mut TestSession, gone: &str, timeout_ms: u64) {
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    loop {
-        session.settle(50);
-        let screen = session.emulator.get_text();
-        if !screen.contains(gone) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{gone:?} should have left the screen:\n{screen}"
-        );
-    }
-}
-
 /// Feeds the app's output to the emulator until `call` has been logged; an
 /// undrained PTY blocks the app mid-redraw.
 fn wait_for_cli_call(session: &mut TestSession, call: &str, timeout_ms: u64) {
@@ -94,8 +79,12 @@ fn test_space_selects_todos_and_d_marks_every_selected_one_done() {
 
     wait_for_cli_call(&mut session, "glab todo done 1", 5000);
     wait_for_cli_call(&mut session, "glab todo done 2", 5000);
-    wait_for_screen_without(&mut session, OWN_TODO, 5000);
-    wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
+    session
+        .wait_for_screen_without(OWN_TODO, 5000)
+        .expect("todo 1 should leave the list once marked done");
+    session
+        .wait_for_screen_without(FOREIGN_TODO, 5000)
+        .expect("todo 2 should leave the list once marked done");
     let calls = session.get_cli_calls();
     assert!(!calls.contains("glab todo done 3"), "{calls}");
     assert!(session.emulator.get_text().contains("Review pagination"));
@@ -107,7 +96,9 @@ fn test_d_marks_the_selection_even_when_the_search_hides_every_row() {
 
     press_keys(&mut session, b" j ");
     session.send_input(b"/no such todo\r");
-    wait_for_screen_without(&mut session, OWN_TODO, 5000);
+    session
+        .wait_for_screen_without(OWN_TODO, 5000)
+        .expect("the search should hide every row");
     press_keys(&mut session, b"d");
 
     wait_for_cli_call(&mut session, "glab todo done 1", 5000);
@@ -124,8 +115,12 @@ fn test_visual_select_and_enter_mark_the_range_read_without_leaving_the_tab() {
 
     wait_for_cli_call(&mut session, "glab todo done 1", 5000);
     wait_for_cli_call(&mut session, "glab todo done 2", 5000);
-    wait_for_screen_without(&mut session, OWN_TODO, 5000);
-    wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
+    session
+        .wait_for_screen_without(OWN_TODO, 5000)
+        .expect("todo 1 should leave the list once marked read");
+    session
+        .wait_for_screen_without(FOREIGN_TODO, 5000)
+        .expect("todo 2 should leave the list once marked read");
     let calls = session.get_cli_calls();
     assert!(!calls.contains("glab todo done 3"), "{calls}");
     let screen = session.emulator.get_text();
@@ -201,7 +196,9 @@ fn test_marking_a_todo_done_drops_it_without_a_refetch() {
 
     session.send_input(b"d");
 
-    wait_for_screen_without(&mut session, OWN_TODO, 5000);
+    session
+        .wait_for_screen_without(OWN_TODO, 5000)
+        .expect("the done todo should leave the list");
     assert!(session.emulator.get_text().contains(FOREIGN_TODO));
     let calls = session.get_cli_calls();
     assert!(calls.contains("glab todo done 1"), "{calls}");
@@ -287,8 +284,12 @@ fn test_unsubscribe_and_mark_all_read_run_their_cli_commands() {
     session.send_input(b"\r");
 
     wait_for_cli_call(&mut session, "glab todo done --all", 5000);
-    wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
-    wait_for_screen_without(&mut session, OWN_TODO, 5000);
+    session
+        .wait_for_screen_without(FOREIGN_TODO, 5000)
+        .expect("todo 2 should leave the list once all are marked read");
+    session
+        .wait_for_screen_without(OWN_TODO, 5000)
+        .expect("todo 1 should leave the list once all are marked read");
 }
 
 #[test]
@@ -313,5 +314,7 @@ fn test_github_notification_actions_use_the_threads_api() {
         "gh api -X DELETE notifications/threads/1\n",
         5000,
     );
-    wait_for_screen_without(&mut session, "Todo Item 1", 5000);
+    session
+        .wait_for_screen_without("Todo Item 1", 5000)
+        .expect("the done notification should leave the list");
 }

@@ -43,7 +43,12 @@ pub enum Event {
     PipelinesFetched(Vec<crate::domain::pipelines::Pipeline>),
     RunnersFetched(Vec<crate::domain::runners::Runner>),
     ReleasesFetched(Vec<crate::domain::releases::Release>),
-    SelectorItemsFetched(Vec<String>),
+    /// The options a selector asked for, tagged with the request it started
+    /// so a reply for a selector that has since closed is dropped.
+    SelectorItemsFetched {
+        request: crate::notice::RequestTag,
+        items: Result<Vec<String>, String>,
+    },
     RepoAttributesFetched {
         labels: Vec<crate::domain::labels::Label>,
         members: Vec<String>,
@@ -82,11 +87,19 @@ pub enum Event {
     },
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),
-    CommandCompleted(crate::app::Tab, Result<(), String>),
+    CommandCompleted(crate::app::Tab, Result<CommandOutcome, String>),
     /// Non-error feedback from a background task, shown in the header bar.
     Notice(String),
-    /// A background custom command finished all its runs.
+    /// A custom command, run in the background or the foreground, finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
+    /// The editor opened for `purpose` closed. `text` is what it saved,
+    /// trimmed, or `None` when it failed or saved nothing.
+    EditorClosed {
+        purpose: crate::effect::EditPurpose,
+        text: Option<String>,
+    },
+    /// A read-only editor view could not be opened.
+    ViewerFailed(String),
     /// A `glab`/`gh`/`git` call a backend finished.
     TerminalCommandLogged(Box<crate::command_log::TerminalCommand>),
     /// A command re-run from the Terminal tab finished; `row` is the entry
@@ -95,6 +108,12 @@ pub enum Event {
         row: crate::command_log::LogRow,
         status: String,
         execution: Box<crate::command_log::Execution>,
+    },
+    /// The review the submit-review overlay posted on MR/PR `mr_iid`
+    /// finished.
+    ReviewSubmitted {
+        mr_iid: u64,
+        result: Result<(), String>,
     },
     MilestonesFetched(Vec<crate::domain::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::domain::issues::Issue>),
@@ -170,6 +189,29 @@ pub enum Event {
     /// A background fetch result, tagged with the scope generation that was
     /// current when the fetch started. Built only by `ScopedSender`.
     Scoped(ScopeGeneration, Box<Event>),
+}
+
+/// What a command that succeeded did, which decides whether the lists it
+/// may have changed are fetched again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandOutcome {
+    /// It changed data on the forge that the tab or the open diff shows.
+    Mutated,
+    /// It changed nothing glab-tui lists, such as opening a page in the
+    /// browser.
+    ReadOnly,
+}
+
+impl CommandOutcome {
+    /// The `CommandCompleted` result of a call that changes forge data.
+    pub fn mutation(result: anyhow::Result<()>) -> Result<Self, String> {
+        result.map(|()| Self::Mutated).map_err(|e| e.to_string())
+    }
+
+    /// The `CommandCompleted` result of a call that changes nothing listed.
+    pub fn read_only(result: anyhow::Result<()>) -> Result<Self, String> {
+        result.map(|()| Self::ReadOnly).map_err(|e| e.to_string())
+    }
 }
 
 impl Event {

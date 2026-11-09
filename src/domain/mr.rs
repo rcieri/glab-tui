@@ -232,7 +232,9 @@ impl NotePosition {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DiscussionNote {
-    pub id: u64,
+    /// The note's REST id. `None` for a GitHub review summary, which
+    /// `gh pr view` lists by its GraphQL node id only.
+    pub id: Option<u64>,
     pub body: String,
     pub author: Author,
     pub created_at: String,
@@ -245,6 +247,50 @@ pub struct DiscussionNote {
     pub resolved: Option<bool>,
     #[serde(default)]
     pub resolvable: Option<bool>,
+    #[serde(default)]
+    pub kind: NoteKind,
+}
+
+/// What a note is on the forge, which decides what can be done with it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum NoteKind {
+    /// A note in a discussion that takes replies: every GitLab note and every
+    /// GitHub review comment.
+    #[default]
+    Discussion,
+    /// A comment on a GitHub pull request's Conversation tab.
+    Conversation,
+    /// The body submitted with a GitHub review.
+    ReviewSummary(ReviewState),
+}
+
+impl NoteKind {
+    /// GitHub conversation comments and review summaries are not threads on
+    /// the forge: nothing can be posted in reply to them.
+    pub fn accepts_replies(self) -> bool {
+        self == Self::Discussion
+    }
+}
+
+/// The verdict of a submitted GitHub review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+}
+
+impl ReviewState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Approved => "APPROVED",
+            Self::ChangesRequested => "CHANGES REQUESTED",
+            Self::Commented => "COMMENTED",
+            Self::Dismissed => "DISMISSED",
+        }
+    }
 }
 
 pub async fn list_mrs(

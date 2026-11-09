@@ -2,6 +2,7 @@ use crate::AppTerminal;
 use crate::app::{App, CUSTOM_COMMAND_LOG_PREFIX};
 use crate::command_log::Execution;
 use crate::custom_commands::{CommandPane, CustomCommand, TemplateValues, render, shell_process};
+use crate::effect::{Effects, ForegroundJob};
 use crate::event::Event;
 use crate::keybinding::KeyPress;
 use crate::scope::Scope;
@@ -13,13 +14,13 @@ use tokio::sync::mpsc::UnboundedSender;
 pub fn run_bound_command(
     app: &mut App,
     key_event: &KeyPress,
-    terminal: &mut AppTerminal,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let Some(command) = app.custom_commands.find(app.active_tab, key_event).cloned() else {
         return false;
     };
-    execute(app, &command, terminal, tx);
+    execute(app, &command, tx, fx);
     true
 }
 
@@ -28,13 +29,13 @@ pub fn run_bound_command(
 pub fn run_bound_diff_command(
     app: &mut App,
     key_event: &KeyPress,
-    terminal: &mut AppTerminal,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let Some(command) = app.custom_commands.find_in_diff(key_event).cloned() else {
         return false;
     };
-    execute(app, &command, terminal, tx);
+    execute(app, &command, tx, fx);
     true
 }
 
@@ -76,12 +77,37 @@ enum Handoff {
     Background,
 }
 
-fn execute(
-    app: &mut App,
-    command: &CustomCommand,
-    terminal: &mut AppTerminal,
-    tx: &UnboundedSender<Event>,
-) {
+/// The runs of one keypress that need the terminal, waiting for the event
+/// loop to hand it over.
+#[derive(Debug)]
+pub struct TerminalRuns {
+    command: CustomCommand,
+    runs: Vec<(String, TemplateValues)>,
+    report: RunReport,
+}
+
+impl TerminalRuns {
+    pub fn run(self, terminal: &mut AppTerminal) -> RunReport {
+        let TerminalRuns {
+            command,
+            runs,
+            mut report,
+        } = self;
+        report.runs = match crate::editor::suspend_while(terminal, || {
+            run_all(&command, runs, Handoff::Terminal)
+        }) {
+            Ok(runs) => runs,
+            Err(error) => vec![FinishedRun {
+                rendered: command.command.clone(),
+                outcome: Err(format!("\"{}\" not run: {error}", command.label())),
+                execution: Execution::default(),
+            }],
+        };
+        report
+    }
+}
+
+fn execute(app: &mut App, command: &CustomCommand, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Selection {
         targets,
         missing_rows,
@@ -151,25 +177,18 @@ fn execute(
             .collect();
         let command = command.clone();
         let tx = tx.clone();
-        std::thread::spawn(move || {
+        fx.spawn_thread(move || {
             report.runs = run_all(&command, runs, Handoff::Background);
             let _ = tx.send(Event::CustomCommandFinished(report));
         });
         return;
     }
 
-    let label = command.label().to_string();
-    report.runs = match crate::editor::suspend_while(terminal, || {
-        run_all(command, runs, Handoff::Terminal)
-    }) {
-        Ok(runs) => runs,
-        Err(error) => vec![FinishedRun {
-            rendered: command.command.clone(),
-            outcome: Err(format!("\"{label}\" not run: {error}")),
-            execution: Execution::default(),
-        }],
-    };
-    report_runs(app, report);
+    fx.suspend(ForegroundJob::RunCommands(TerminalRuns {
+        command: command.clone(),
+        runs,
+        report,
+    }));
 }
 
 fn run_all(
@@ -207,7 +226,7 @@ pub fn report_runs(app: &mut App, report: RunReport) {
     let mut failures = report.refused;
     for (index, run) in report.runs.into_iter().enumerate() {
         match report.log_rows.get(index) {
-            Some(&row) => app.settle_command(row, &run.outcome, run.execution),
+            Some(&row) => app.settle_command(row, &run.outcome, Some(run.execution)),
             None => app.record_command_outcome(
                 format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", run.rendered),
                 &run.outcome,

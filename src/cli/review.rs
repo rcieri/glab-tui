@@ -1,6 +1,6 @@
 use crate::app::{DiffLine, DiffView};
 use crate::domain::client::GitlabClient;
-use crate::domain::mr::{get_mr_diff, list_mr_notes};
+use crate::domain::mr::{ReviewState, get_mr_diff, list_mr_notes};
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::review_threads::{ReviewThread, ThreadAnchor, group_threads};
 use anyhow::{Context, Result, bail};
@@ -177,6 +177,8 @@ struct ThreadOutput {
     anchor: Option<AnchorOutput>,
     resolvable: bool,
     resolved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_state: Option<ReviewState>,
     notes: Vec<NoteOutput>,
 }
 
@@ -189,7 +191,7 @@ struct AnchorOutput {
 
 #[derive(Serialize)]
 struct NoteOutput {
-    id: u64,
+    id: Option<u64>,
     author: String,
     body: String,
     created_at: String,
@@ -208,10 +210,7 @@ impl From<&ReviewThread> for ThreadOutput {
             _ => Side::New,
         };
         Self {
-            id: root
-                .discussion_id
-                .clone()
-                .unwrap_or_else(|| root.id.to_string()),
+            id: thread.id.clone(),
             classification,
             anchor: anchor.map(|(file, line)| AnchorOutput {
                 file: file.clone(),
@@ -220,6 +219,7 @@ impl From<&ReviewThread> for ThreadOutput {
             }),
             resolvable: thread.is_resolvable(),
             resolved: thread.is_resolvable() && !thread.is_unresolved(),
+            review_state: thread.review_state(),
             notes: thread
                 .notes
                 .iter()
@@ -238,7 +238,7 @@ impl From<&ReviewThread> for ThreadOutput {
 pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_json::Value> {
     let project = match repo {
         Some(repo) => repo,
-        None => crate::domain::client::get_project_context().await?,
+        None => crate::domain::client::get_project_context()?,
     };
     if project == "unknown/unknown" {
         bail!("cannot tell which repository to use; run inside a checkout or pass --repo");
@@ -289,7 +289,7 @@ pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_j
                 Some(source) => read_input(&source)?,
                 None => Vec::new(),
             };
-            if inputs.is_empty() && body.trim().is_empty() && event != ReviewEvent::Approve {
+            if event.is_empty_review(&body, inputs.len()) {
                 bail!("nothing to submit: pass --body or comments with --input");
             }
             let comments = if inputs.is_empty() {

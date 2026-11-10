@@ -295,50 +295,22 @@ pub fn handle_key(
         }
         KeyCode::Char('d') => {
             if !diff_view.focus_on_files {
-                let old_side_by_side = diff_view.side_by_side;
-                let old_cursor = diff_view.cursor_idx;
-                diff_view.side_by_side = !diff_view.side_by_side;
-                diff_view.update_active_lines();
-
-                if old_side_by_side {
-                    if let Some(sline) = diff_view.side_by_side_lines.get(old_cursor) {
-                        let target_line = sline.right.as_ref().or(sline.left.as_ref());
-                        if let Some(target) = target_line {
-                            if let Some(new_idx) = diff_view.lines.iter().position(|l| {
-                                l.file_path == target.file_path
-                                    && l.old_line_num == target.old_line_num
-                                    && l.new_line_num == target.new_line_num
-                                    && l.line_type == target.line_type
-                            }) {
-                                diff_view.cursor_idx = new_idx;
-                            }
-                        }
-                    }
-                } else if let Some(uline) = diff_view.lines.get(old_cursor) {
-                    if let Some(new_idx) = diff_view.side_by_side_lines.iter().position(|l| {
-                        if uline.line_type == crate::app::DiffLineType::HunkHeader
-                            || uline.line_type == crate::app::DiffLineType::Meta
-                        {
-                            l.line_type == uline.line_type
-                                && l.left.as_ref().is_some_and(|x| x.content == uline.content)
-                        } else {
-                            l.left.as_ref().is_some_and(|x| {
-                                x.old_line_num == uline.old_line_num
-                                    && x.new_line_num == uline.new_line_num
-                                    && x.file_path == uline.file_path
-                            }) || l.right.as_ref().is_some_and(|x| {
-                                x.old_line_num == uline.old_line_num
-                                    && x.new_line_num == uline.new_line_num
-                                    && x.file_path == uline.file_path
-                            })
-                        }
-                    }) {
-                        diff_view.cursor_idx = new_idx;
-                    }
-                }
-
-                diff_view.scroll_offset = diff_view.cursor_idx.saturating_sub(5);
+                let side_by_side = !diff_view.side_by_side;
+                pin_layout(app, &mut diff_view, side_by_side);
             }
+            app.diff_view = Some(diff_view);
+        }
+        KeyCode::Char('1') => {
+            pin_layout(app, &mut diff_view, true);
+            app.diff_view = Some(diff_view);
+        }
+        KeyCode::Char('2') => {
+            pin_layout(app, &mut diff_view, false);
+            app.diff_view = Some(diff_view);
+        }
+        KeyCode::Char('0') => {
+            app.diff_layout = app::DiffLayout::Auto;
+            app.show_notice("Diff layout follows the terminal width");
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('j') | KeyCode::Down => {
@@ -606,6 +578,18 @@ pub fn handle_key(
             handlers::custom_commands::run_bound_diff_command(app, key_event, tx, fx);
         }
     }
+}
+
+/// Pins the diff layout for the rest of the session and applies it to the
+/// open diff, whatever the terminal width.
+fn pin_layout(app: &mut App, diff_view: &mut app::DiffView, side_by_side: bool) {
+    app.diff_layout = app::DiffLayout::pinned(side_by_side);
+    diff_view.set_side_by_side(side_by_side);
+    app.show_notice(if side_by_side {
+        "Diff layout pinned to side-by-side (0 follows the width again)"
+    } else {
+        "Diff layout pinned to unified (0 follows the width again)"
+    });
 }
 
 /// A draft anchored to `range`, its body still to be written.

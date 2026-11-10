@@ -199,6 +199,7 @@ fn diff_view_action(config: &Config, event: &KeyPress) -> Option<String> {
         KeyCode::Char('m' | 'M') => "reviewed marks",
         KeyCode::Char('[' | ']') => "previous / next hunk",
         KeyCode::Char('d') => "toggle side-by-side",
+        KeyCode::Char('1' | '2' | '0') => "diff layout",
         KeyCode::Char('/' | 'f') => "search",
         KeyCode::Char('v' | 'V') => "select lines",
         KeyCode::Char('a' | 'c' | 'C' | 'r' | 'e') => "comments",

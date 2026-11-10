@@ -2126,7 +2126,17 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Diff View",
             key: s("d"),
-            action: "Toggle unified / side-by-side layout",
+            action: "Toggle unified / side-by-side layout (pinned for the session)",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("1 / 2"),
+            action: "Pin side-by-side / unified layout for the session",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("0"),
+            action: "Pick the layout from the width again (unified when narrow)",
         },
         Shortcut {
             category: "Diff View",

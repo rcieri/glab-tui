@@ -1,3 +1,4 @@
+pub mod compaction;
 mod diff;
 mod helpers;
 pub(crate) mod inspector;
@@ -19,6 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
+use self::compaction::PreviewPlacement;
 use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestions};
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
@@ -32,6 +34,87 @@ use std::sync::Arc;
 
 /// Rows a modal gives to a notice about its own request, below its content.
 pub const MODAL_NOTICE_ROWS: u16 = 1;
+
+/// The panes of the main workspace below the header bar.
+struct Workspace {
+    sidebar: Rect,
+    list: Rect,
+    /// The compact terminal log under the list.
+    terminal: Rect,
+    detail: Rect,
+}
+
+impl Workspace {
+    /// Lays out the sidebar, the list with the terminal log under it, and,
+    /// when `show_preview`, the preview beside the list or, once the list
+    /// would be squeezed, below it.
+    fn split(area: Rect, sidebar_width: u16, terminal_height: u16, show_preview: bool) -> Self {
+        let [sidebar, main] =
+            Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)]).areas(area);
+        let preview_columns = preview_columns(area.width);
+        let placement = if show_preview {
+            let column_rows = main.height.saturating_sub(terminal_height);
+            compaction::place_preview(
+                Rect {
+                    height: column_rows,
+                    ..main
+                },
+                preview_columns,
+            )
+        } else {
+            PreviewPlacement::Hidden
+        };
+        let split_terminal = |column: Rect| -> [Rect; 2] {
+            Layout::vertical([Constraint::Min(0), Constraint::Length(terminal_height)])
+                .areas(column)
+        };
+        match placement {
+            PreviewPlacement::Beside => {
+                let [column, detail] =
+                    Layout::horizontal([Constraint::Min(0), Constraint::Length(preview_columns)])
+                        .areas(main);
+                let [list, terminal] = split_terminal(column);
+                Self {
+                    sidebar,
+                    list,
+                    terminal,
+                    detail,
+                }
+            }
+            PreviewPlacement::Below => {
+                let [column, terminal] = split_terminal(main);
+                let [list, detail] =
+                    Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(column);
+                Self {
+                    sidebar,
+                    list,
+                    terminal,
+                    detail,
+                }
+            }
+            PreviewPlacement::Hidden => {
+                let [list, terminal] = split_terminal(main);
+                Self {
+                    sidebar,
+                    list,
+                    terminal,
+                    detail: Rect::default(),
+                }
+            }
+        }
+    }
+}
+
+/// Columns the preview takes beside the list in a terminal `width` wide.
+fn preview_columns(width: u16) -> u16 {
+    if width > 150 {
+        (u32::from(width) * 35 / 100) as u16
+    } else if width > 100 {
+        45
+    } else {
+        30
+    }
+}
 
 /// Render the active edit/create menu as an interactive inspector into the
 /// (full-zoom) detail pane — the same pane the read-only preview uses. Returns
@@ -356,55 +439,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
     let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
-        Constraint::Length(app.config.ui.sidebar_width)
+        app.config.ui.sidebar_width
     } else {
-        Constraint::Length(0)
-    };
-
-    let details_width = if !app.detail_visible || size.width < 90 {
-        Constraint::Max(0)
-    } else if size.width > 150 {
-        Constraint::Percentage(35)
-    } else if size.width > 100 {
-        Constraint::Length(45)
-    } else {
-        Constraint::Length(30)
+        0
     };
 
     // When an edit/create menu is active, force the detail pane to full-zoom
     // (exactly like the preview's zoomed state) so the form fills the workspace.
     let edit_zoomed = app.edit_menu.is_some();
 
-    let middle_chunks_raw = if (app.details_zoomed && can_zoom) || edit_zoomed {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(0),
-                Constraint::Length(0),
-                Constraint::Min(0),
-            ])
-            .split(chunks[1])
-    } else if app.active_tab == Tab::Terminal {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([sidebar_width, Constraint::Min(0), Constraint::Length(0)])
-            .split(chunks[1])
-    } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([sidebar_width, Constraint::Min(0), details_width])
-            .split(chunks[1])
-    };
-    let [sidebar_rect, content_rect, mut detail_rect] = [
-        middle_chunks_raw[0],
-        middle_chunks_raw[1],
-        middle_chunks_raw[2],
-    ];
-    if !app.detail_visible && !app.details_zoomed && !edit_zoomed {
-        detail_rect = Rect::default();
-    }
-
-    // Split middle column vertically: main content area + compact terminal pane
     let term_height = if app.active_tab != Tab::Terminal
         && size.height >= 18
         && app.config.ui.terminal_pane_visible
@@ -413,15 +456,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let (content_area, term_area) = if term_height > 0 {
-        let tc = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(term_height)])
-            .split(content_rect);
-        (tc[0], tc[1])
+
+    let workspace = if (app.details_zoomed && can_zoom) || edit_zoomed {
+        Workspace {
+            sidebar: Rect::default(),
+            list: Rect::default(),
+            terminal: Rect::default(),
+            detail: chunks[1],
+        }
     } else {
-        (content_rect, Rect::default())
+        let show_preview = app.detail_visible && app.active_tab != Tab::Terminal;
+        Workspace::split(chunks[1], sidebar_width, term_height, show_preview)
     };
+    let Workspace {
+        sidebar: sidebar_rect,
+        list: content_area,
+        terminal: term_area,
+        detail: detail_rect,
+    } = workspace;
 
     app.sidebar_rect = Some(sidebar_rect);
     app.content_rect = Some(content_area);
@@ -709,6 +761,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .split(inner_area)
             };
 
+            // Auto picks the layout from the pane width, which only the draw knows.
+            let diff_columns = main_chunks[1].width.saturating_sub(2);
+            diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+
             // 1. Render Files list on the left (only if visible)
             let files_rect = main_chunks[0];
             let files_list_height = (files_rect.height as usize).saturating_sub(2);
@@ -914,8 +970,21 @@ pub fn render(f: &mut Frame, app: &mut App) {
             };
 
             // 2. Render Diff content on the right
+            let layout_name = if diff_view.side_by_side {
+                "side-by-side"
+            } else {
+                "unified"
+            };
+            let layout_choice = if app.diff_layout == crate::app::DiffLayout::Auto {
+                "auto"
+            } else {
+                "pinned"
+            };
             let diff_block = Block::default()
-                .title(format!(" {} ", icons.label_diff))
+                .title(format!(
+                    " {} ({layout_name}, {layout_choice}) ",
+                    icons.label_diff
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(if !diff_view.focus_on_files {
                     ctx.theme.border_focused
@@ -1963,5 +2032,72 @@ mod tests {
             .find(|row| row.contains("Failed to load options: HTTP 502"))
             .expect("toast rendered");
         assert!(toast_row.contains(&format!("{icon} Failed to load options: HTTP 502")));
+    }
+
+    fn workspace_panes_at(width: u16, height: u16) -> (Option<Rect>, Option<Rect>) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut app = App::default();
+        app.detail_visible = true;
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        (app.content_rect, app.detail_rect)
+    }
+
+    #[test]
+    fn preview_sits_beside_the_list_on_a_wide_terminal() {
+        let (Some(list), Some(preview)) = workspace_panes_at(120, 30) else {
+            panic!("list and preview drawn");
+        };
+        assert_eq!((preview.x, preview.y), (list.right(), list.y));
+    }
+
+    #[test]
+    fn preview_moves_below_the_list_on_a_narrow_terminal() {
+        for width in [60, 80] {
+            let (Some(list), Some(preview)) = workspace_panes_at(width, 30) else {
+                panic!("list and preview drawn at {width} columns");
+            };
+            assert_eq!(
+                (preview.x, preview.y, preview.width),
+                (list.x, list.bottom(), list.width),
+                "at {width} columns"
+            );
+        }
+    }
+
+    #[test]
+    fn preview_is_hidden_when_the_terminal_is_too_short_to_stack_it() {
+        let (list, preview) = workspace_panes_at(80, 12);
+        assert!(list.is_some_and(|list| list.height == 10));
+        assert_eq!(preview, None);
+    }
+
+    const ONE_LINE_DIFF: &str =
+        "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-x\n+y\n";
+
+    fn diff_is_side_by_side_at(width: u16, layout: crate::app::DiffLayout) -> bool {
+        let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+        let mut app = App::default();
+        app.diff_layout = layout;
+        app.diff_view = Some(crate::app::DiffView::new(
+            1,
+            "o/r".to_string(),
+            ONE_LINE_DIFF.to_string(),
+        ));
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        app.diff_view.is_some_and(|view| view.side_by_side)
+    }
+
+    #[test]
+    fn auto_diff_layout_is_unified_when_narrow_and_side_by_side_when_wide() {
+        use crate::app::DiffLayout;
+        assert!(!diff_is_side_by_side_at(120, DiffLayout::Auto));
+        assert!(diff_is_side_by_side_at(220, DiffLayout::Auto));
+    }
+
+    #[test]
+    fn a_pinned_diff_layout_ignores_the_terminal_width() {
+        use crate::app::DiffLayout;
+        assert!(!diff_is_side_by_side_at(220, DiffLayout::Unified));
+        assert!(diff_is_side_by_side_at(60, DiffLayout::SideBySide));
     }
 }

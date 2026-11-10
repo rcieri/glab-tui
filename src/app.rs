@@ -1286,6 +1286,36 @@ pub fn note_position_anchors(
     path_matches && (new_line_matches || old_line_matches)
 }
 
+/// How the diff view lays out its rows, chosen once for the whole session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiffLayout {
+    /// Side by side when the diff pane is wide enough, unified otherwise.
+    #[default]
+    Auto,
+    SideBySide,
+    Unified,
+}
+
+impl DiffLayout {
+    /// The layout pinned by choosing side by side (`true`) or unified rows.
+    pub fn pinned(side_by_side: bool) -> Self {
+        if side_by_side {
+            Self::SideBySide
+        } else {
+            Self::Unified
+        }
+    }
+
+    /// Whether a diff pane `columns` wide shows its rows side by side.
+    pub fn is_side_by_side(self, columns: u16) -> bool {
+        match self {
+            Self::Auto => crate::ui::compaction::fits_side_by_side_diff(columns),
+            Self::SideBySide => true,
+            Self::Unified => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct DiffView {
@@ -2008,6 +2038,44 @@ impl DiffView {
         }
     }
 
+    /// Switches between side-by-side and unified rows, keeping the cursor on
+    /// the same diff line. A line selection is dropped, since its row indices
+    /// refer to the layout being left.
+    pub fn set_side_by_side(&mut self, side_by_side: bool) {
+        if self.side_by_side == side_by_side {
+            return;
+        }
+        let old_cursor = self.cursor_idx;
+        self.side_by_side = side_by_side;
+        self.selection_start = None;
+        self.selection_end = None;
+        self.update_active_lines();
+
+        let new_cursor = if side_by_side {
+            self.lines.get(old_cursor).and_then(|unified| {
+                self.side_by_side_lines
+                    .iter()
+                    .position(|row| side_by_side_row_shows(row, unified))
+            })
+        } else {
+            self.side_by_side_lines
+                .get(old_cursor)
+                .and_then(|row| row.right.as_ref().or(row.left.as_ref()))
+                .and_then(|target| {
+                    self.lines.iter().position(|l| {
+                        l.file_path == target.file_path
+                            && l.old_line_num == target.old_line_num
+                            && l.new_line_num == target.new_line_num
+                            && l.line_type == target.line_type
+                    })
+                })
+        };
+        if let Some(new_cursor) = new_cursor {
+            self.cursor_idx = new_cursor;
+        }
+        self.scroll_offset = self.cursor_idx.saturating_sub(5);
+    }
+
     /// Moves the file-tree selection or the diff cursor `rows` down or up,
     /// stopping at the ends.
     pub fn move_by(&mut self, down: bool, rows: usize, extend_selection: bool) {
@@ -2480,6 +2548,29 @@ impl DiffView {
             (right, None) => right.as_ref(),
         }
     }
+}
+
+/// Whether the side-by-side `row` shows the unified line `unified`. Hunk
+/// headers and meta rows carry no line numbers, so they match by content.
+fn side_by_side_row_shows(row: &SideBySideLine, unified: &DiffLine) -> bool {
+    if matches!(
+        unified.line_type,
+        DiffLineType::HunkHeader | DiffLineType::Meta
+    ) {
+        return row.line_type == unified.line_type
+            && row
+                .left
+                .as_ref()
+                .is_some_and(|l| l.content == unified.content);
+    }
+    let same_line = |side: &Option<DiffLine>| {
+        side.as_ref().is_some_and(|l| {
+            l.old_line_num == unified.old_line_num
+                && l.new_line_num == unified.new_line_num
+                && l.file_path == unified.file_path
+        })
+    };
+    same_line(&row.left) || same_line(&row.right)
 }
 
 pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
@@ -3998,6 +4089,8 @@ pub struct App {
     pub in_review_mode: bool,
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
+    /// Session-wide diff layout, `Auto` until a layout key pins one.
+    pub diff_layout: DiffLayout,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4172,6 +4265,7 @@ impl Default for App {
             column_checklist_idx: 0,
             in_review_mode: false,
             hide_reviewed_files: false,
+            diff_layout: DiffLayout::Auto,
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             save_menu_open: false,
@@ -7878,7 +7972,7 @@ impl App {
     }
 
     /// Whether the last frame drew the detail pane. `detail_rect` covers the
-    /// terminal being too narrow for it, `detail_visible` a `q` pressed since.
+    /// terminal being too small for it, `detail_visible` a `q` pressed since.
     fn is_detail_pane_on_screen(&self) -> bool {
         self.detail_visible && self.detail_rect.is_some()
     }
@@ -11320,6 +11414,26 @@ deleted file mode 100644
             view.cursor_file_position(),
             Some(("src/lib.rs".to_string(), Some(11)))
         );
+    }
+
+    #[test]
+    fn switching_the_diff_layout_keeps_the_cursor_on_its_line_and_drops_the_selection() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "+added eleven");
+        view.selection_start = Some(0);
+        view.selection_end = Some(view.cursor_idx);
+
+        view.set_side_by_side(true);
+        let row = &view.side_by_side_lines[view.cursor_idx];
+        assert_eq!(
+            row.right.as_ref().map(|line| line.content.as_str()),
+            Some("+added eleven")
+        );
+        assert_eq!((view.selection_start, view.selection_end), (None, None));
+
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "+added eleven"));
     }
 
     #[test]

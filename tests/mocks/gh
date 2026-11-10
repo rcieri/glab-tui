@@ -67,6 +67,11 @@ if [[ "$*" == "pr list"* ]]; then
     exit 0
 fi
 
+if [[ "$*" == "issue list"* ]]; then
+    cat "$FIXTURES_DIR/gh_issues.json"
+    exit 0
+fi
+
 if [[ "$*" == "api graphql"*"entries(first"* ]]; then
     STACK_ENTRIES='"entries":{"nodes":[
         {"position":1,"pullRequest":{"number":10,"title":"Stack bottom","state":"OPEN","isDraft":false}},
@@ -183,6 +188,8 @@ if [[ "$*" == *"api"* ]]; then
         }]'
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
+    elif [[ "$*" == *"/releases"* ]]; then
+        cat "$FIXTURES_DIR/gh_releases.json"
     elif [[ "$*" == *"/jobs"* ]]; then
         echo '{"jobs": [{"id": 54321, "status": "completed", "conclusion": "success", "name": "rspec"}]}'
     else

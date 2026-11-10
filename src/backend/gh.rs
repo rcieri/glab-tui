@@ -355,27 +355,32 @@ where
     }
 }
 
-/// Splits `latestReviews` into (every review's author, approving authors only).
+/// Splits `latestReviews` into (every review's author, approving authors
+/// only, whether any latest review requested changes).
 ///
-/// Two lists because they answer different questions: `you_reviewed` must be
-/// true for any review including a rejection, while `approved_by` must not
-/// credit someone who only commented.
-fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, Vec<String>) {
+/// Two author lists because they answer different questions: `you_reviewed`
+/// must be true for any review including a rejection, while `approved_by`
+/// must not credit someone who only commented.
+fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, Vec<String>, bool) {
     let all_authors: Vec<String> = latest_reviews
         .iter()
         .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
         .collect();
+    let review_state_is = |r: &&serde_json::Value, state: &str| {
+        r.get("state")
+            .and_then(|s| s.as_str())
+            .map(|s| s.eq_ignore_ascii_case(state))
+            .unwrap_or(false)
+    };
     let approved_authors: Vec<String> = latest_reviews
         .iter()
-        .filter(|r| {
-            r.get("state")
-                .and_then(|s| s.as_str())
-                .map(|s| s.eq_ignore_ascii_case("APPROVED"))
-                .unwrap_or(false)
-        })
+        .filter(|r| review_state_is(r, "APPROVED"))
         .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
         .collect();
-    (all_authors, approved_authors)
+    let has_changes_requested = latest_reviews
+        .iter()
+        .any(|r| review_state_is(&r, "CHANGES_REQUESTED"));
+    (all_authors, approved_authors, has_changes_requested)
 }
 
 /// Map GitHub's PR `state` JSON field onto the host-neutral state string.
@@ -427,14 +432,30 @@ pub fn gh_state_from_fields(
     latest_review_authors: Vec<String>,
     current_user: Option<&str>,
     approved_authors: &[String],
+    has_changes_requested: bool,
 ) -> (
     Option<crate::domain::mr_state::ApprovalState>,
     Option<crate::domain::mr_state::MergeabilityState>,
 ) {
     use crate::domain::mr_state::{ApprovalState, MergeabilityState};
 
-    let decision = review_decision.unwrap_or_default();
-    let approved = decision.eq_ignore_ascii_case("APPROVED");
+    // `reviewDecision` is null when the branch requires no reviews, so
+    // `approved`/`changes_requested` would otherwise always read false on
+    // such branches no matter what `latestReviews` says. Only then do the
+    // reviews themselves decide: approved needs at least one approval and
+    // no rejection, since a later `CHANGES_REQUESTED` review supersedes an
+    // earlier approval.
+    let decision = review_decision.filter(|d| !d.is_empty());
+    let (approved, changes_requested) = match decision {
+        Some(d) => (
+            d.eq_ignore_ascii_case("APPROVED"),
+            d.eq_ignore_ascii_case("CHANGES_REQUESTED"),
+        ),
+        None => (
+            !approved_authors.is_empty() && !has_changes_requested,
+            has_changes_requested,
+        ),
+    };
 
     let you_reviewed = current_user
         .map(|me| latest_review_authors.iter().any(|a| a == me))
@@ -460,7 +481,7 @@ pub fn gh_state_from_fields(
         } else {
             Vec::new()
         },
-        changes_requested: decision.eq_ignore_ascii_case("CHANGES_REQUESTED"),
+        changes_requested,
         you_approved,
         // Needs canApprove, which gh pr list does not provide.
         awaiting_you: false,
@@ -1956,7 +1977,7 @@ impl Backend for GhBackend {
                             .into_iter()
                             .map(|a| crate::domain::mr::Assignee { username: a.login })
                             .collect();
-                        let (latest_review_authors, approved_authors) =
+                        let (latest_review_authors, approved_authors, has_changes_requested) =
                             split_review_authors(&gp.latest_reviews);
                         let (approval, mergeability) = gh_state_from_fields(
                             gp.review_decision.as_deref(),
@@ -1965,6 +1986,7 @@ impl Backend for GhBackend {
                             latest_review_authors,
                             me,
                             &approved_authors,
+                            has_changes_requested,
                         );
                         let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
                             approved_by: approved_authors,
@@ -4841,7 +4863,7 @@ mod tests {
             serde_json::json!({"author": {"login": "commenter"}, "state": "COMMENTED"}),
         ];
 
-        let (all_authors, approved_authors) = split_review_authors(&reviews);
+        let (all_authors, approved_authors, has_changes_requested) = split_review_authors(&reviews);
 
         assert_eq!(
             all_authors,
@@ -4852,6 +4874,7 @@ mod tests {
             ]
         );
         assert_eq!(approved_authors, vec!["approver".to_string()]);
+        assert!(has_changes_requested);
     }
 
     #[tokio::test]
@@ -4931,6 +4954,7 @@ mod tests {
             vec![],
             None,
             &[],
+            false,
         );
         let m = merge.unwrap();
         assert!(!m.conflicts);
@@ -4940,23 +4964,44 @@ mod tests {
 
     #[test]
     fn conflicting_maps_to_conflicts() {
-        let (_, merge) =
-            gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(
+            None,
+            Some("CONFLICTING"),
+            Some("DIRTY"),
+            vec![],
+            None,
+            &[],
+            false,
+        );
         assert!(merge.unwrap().conflicts);
     }
 
     #[test]
     fn behind_maps_to_needs_rebase() {
-        let (_, merge) =
-            gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("BEHIND"),
+            vec![],
+            None,
+            &[],
+            false,
+        );
         assert!(merge.unwrap().needs_rebase);
     }
 
     #[test]
     fn unknown_mergeable_is_computing_not_failure() {
         // GitHub computes mergeability asynchronously.
-        let (_, merge) =
-            gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(
+            None,
+            Some("UNKNOWN"),
+            Some("UNKNOWN"),
+            vec![],
+            None,
+            &[],
+            false,
+        );
         let m = merge.unwrap();
         assert!(m.computing);
         assert!(!m.conflicts);
@@ -4964,7 +5009,7 @@ mod tests {
 
     #[test]
     fn absent_mergeable_is_computing() {
-        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None, &[], false);
         assert!(merge.unwrap().computing);
     }
 
@@ -4977,6 +5022,7 @@ mod tests {
             vec!["octocat".to_string()],
             None,
             &[],
+            false,
         );
         let a = approval.unwrap();
         assert!(a.approved);
@@ -4993,6 +5039,7 @@ mod tests {
             vec![],
             None,
             &[],
+            false,
         );
         assert!(approval.unwrap().changes_requested);
     }
@@ -5007,6 +5054,7 @@ mod tests {
             vec!["octocat".to_string()],
             None,
             &[],
+            false,
         );
         let a = approval.unwrap();
         assert_eq!(a.approvals_required, None);
@@ -5018,8 +5066,15 @@ mod tests {
     fn null_review_decision_is_pending_not_unknown() {
         // A PR with no review yet returns null; that is "pending", and the
         // axis is still known.
-        let (approval, _) =
-            gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![], None, &[]);
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec![],
+            None,
+            &[],
+            false,
+        );
         let a = approval.unwrap();
         assert!(!a.approved);
         assert!(!a.changes_requested);
@@ -5034,6 +5089,7 @@ mod tests {
             vec!["octocat".to_string()],
             Some("octocat"),
             &[],
+            false,
         );
         let a = approval.unwrap();
         assert_eq!(a.current_user.as_deref(), Some("octocat"));
@@ -5048,6 +5104,7 @@ mod tests {
             vec!["octocat".to_string()],
             Some("octocat"),
             &[],
+            false,
         );
         assert!(approval.unwrap().you_reviewed);
     }
@@ -5061,6 +5118,7 @@ mod tests {
             vec!["someone.else".to_string()],
             Some("octocat"),
             &[],
+            false,
         );
         assert!(!approval.unwrap().you_reviewed);
     }
@@ -5074,6 +5132,7 @@ mod tests {
             vec![],
             None,
             &[],
+            false,
         );
         assert_eq!(approval.unwrap().current_user, None);
     }
@@ -5092,6 +5151,7 @@ mod tests {
             vec!["octocat".to_string()],
             Some("octocat"),
             &["octocat".to_string()],
+            false,
         );
         assert!(approval.unwrap().you_approved);
     }
@@ -5105,8 +5165,58 @@ mod tests {
             vec!["someone.else".to_string()],
             Some("octocat"),
             &["someone.else".to_string()],
+            false,
         );
         assert!(!approval.unwrap().you_approved);
+    }
+
+    #[test]
+    fn null_review_decision_falls_back_to_an_approval_in_latest_reviews() {
+        // `reviewDecision` is null when the branch requires no reviews, so
+        // the review list is the only approval signal left.
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            None,
+            &["octocat".to_string()],
+            false,
+        );
+        let a = approval.unwrap();
+        assert!(a.approved);
+        assert!(!a.changes_requested);
+    }
+
+    #[test]
+    fn null_review_decision_falls_back_to_a_changes_requested_review() {
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            None,
+            &[],
+            true,
+        );
+        let a = approval.unwrap();
+        assert!(!a.approved);
+        assert!(a.changes_requested);
+    }
+
+    #[test]
+    fn null_review_decision_with_both_signals_is_not_approved() {
+        // A later `CHANGES_REQUESTED` review supersedes an earlier approval.
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string(), "critic".to_string()],
+            None,
+            &["octocat".to_string()],
+            true,
+        );
+        assert!(!approval.unwrap().approved);
     }
 
     #[test]

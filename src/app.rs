@@ -3427,7 +3427,7 @@ impl SubmitDialog {
         let kind = app.kind();
         let mr = kind.term("mr");
         let mr_short = kind.term("mr_short");
-        let marker = if kind.is_github() { "#" } else { "!" };
+        let marker = kind.mr_reference_prefix();
 
         let action_clone = action.clone();
         let (title, body, submit_label, options, safe) = match &action {
@@ -4420,7 +4420,8 @@ impl App {
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
         self.observed_state_queries = None;
-        self.dashboard.contributions = crate::dashboard::ContributionFeed::NotLoaded;
+        let person = self.configured_dashboard_person();
+        self.dashboard.reset_for_scope(person);
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
         self.fetching_related_mrs.clear();
@@ -6116,6 +6117,14 @@ impl App {
         }
     }
 
+    /// The top-level pipelines, wherever a descent into a child level put
+    /// them.
+    pub fn root_pipelines(&self) -> &[crate::domain::pipelines::Pipeline] {
+        self.pipeline_nav
+            .first()
+            .map_or(&self.pipelines.items, |root| &root.items)
+    }
+
     /// Forgets the cached jobs of every listed pipeline whose status differs in
     /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
     pub fn drop_jobs_of_changed_pipelines(
@@ -6186,8 +6195,25 @@ impl App {
             }
         }
         app.apply_config();
+        app.dashboard.person = app.configured_dashboard_person();
+        app.fall_back_from_hidden_tab();
         app.load_custom_commands();
         app
+    }
+
+    pub fn configured_dashboard_person(&self) -> crate::dashboard::DashboardPerson {
+        crate::dashboard::DashboardPerson::from_config(&self.config.dashboard.person)
+    }
+
+    /// A start tab the config hides (the Dashboard while it is not enabled,
+    /// or one in `disabled_tabs`) gives way to the first tab shown.
+    pub fn fall_back_from_hidden_tab(&mut self) {
+        let tabs = self.available_tabs();
+        if !tabs.contains(&self.active_tab)
+            && let Some(first) = tabs.first()
+        {
+            self.active_tab = *first;
+        }
     }
 
     pub fn apply_config(&mut self) {
@@ -6195,8 +6221,6 @@ impl App {
             .set_sequences(key_sequences(&self.config.keybindings));
         self.theme = self.config.resolve_theme();
         self.icons = Arc::new(self.config.icons.icons());
-        self.dashboard.person =
-            crate::dashboard::DashboardPerson::from_config(&self.config.dashboard.person);
 
         for tab in Tab::ALL {
             let pane = match tab {
@@ -6424,6 +6448,9 @@ impl App {
     /// Switch to `tab` the way the tab keys do, dropping the previous tab's
     /// selections and closing its preview.
     pub fn activate_tab(&mut self, tab: Tab) {
+        if self.active_tab == Tab::Dashboard && tab != Tab::Dashboard {
+            self.dashboard.leave();
+        }
         self.active_tab = tab;
         self.selected_pipelines.clear();
         self.selected_jobs.clear();

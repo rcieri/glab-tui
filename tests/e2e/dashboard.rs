@@ -56,12 +56,12 @@ fn a_queue_lists_its_items_and_enter_opens_one() {
         .wait_for_screen_contains("Open · 1 ", 5000)
         .expect("the first queue, everyone's open MRs, is listed below the cards");
     assert!(
-        screen_line_with(&session, "waiting for review").contains(" 1 "),
+        screen_line_with(&session, "waiting for review").contains("  1 ? waiting for review"),
         "the MR without approval waits for review: {}",
         session.emulator.get_text()
     );
     assert!(
-        screen_line_with(&session, "unassigned").contains(" 2 "),
+        screen_line_with(&session, "unassigned").contains("  2 @ unassigned"),
         "both issues are unassigned: {}",
         session.emulator.get_text()
     );
@@ -183,4 +183,71 @@ fn the_window_key_counts_each_contributors_activity_in_the_last_day_and_week() {
         "and reviewer-user's diff comment and approval: {}",
         session.emulator.get_text()
     );
+}
+
+#[test]
+fn github_repository_dashboard_summarizes_prs_issues_and_activity() {
+    let mut session =
+        TestSession::with_config_and_args(true, 40, 150, Some(CONFIG), &["--tab", "dashboard"]);
+    for call in [
+        "issue list",
+        "pr list",
+        "actions/runs",
+        "/milestones",
+        "/releases",
+    ] {
+        session
+            .wait_for_cli_call(call, 15000)
+            .unwrap_or_else(|e| panic!("the dashboard fetches `{call}`: {e}"));
+    }
+    session
+        .wait_for_cli_call("/events?", 15000)
+        .expect("the dashboard reads the repository's activity feed");
+    session
+        .wait_for_screen_contains("@octocat", 15000)
+        .expect("the contributors card lists the push event's author");
+
+    session.press_keys(b"\rj\r");
+    session
+        .wait_for_screen_contains("Enter open · Esc back", 5000)
+        .expect("Enter on the Pipelines card, which has no rows, goes straight to its list");
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("┌ > Actions ", 5000)
+        .expect("Enter on the listed run opens the Actions tab");
+}
+
+#[test]
+fn a_short_terminal_shows_the_focused_list_instead_of_hiding_it_under_the_cards() {
+    const SHORT_CONFIG: &str =
+        "icons = \"ascii\"\n[dashboard]\nenabled = true\n[ui]\nterminal_pane_visible = false\n";
+    let mut session = TestSession::with_config_and_args(
+        false,
+        23,
+        150,
+        Some(SHORT_CONFIG),
+        &["--tab", "dashboard"],
+    );
+    for call in [
+        "issue list",
+        "mr list",
+        "/pipelines?per_page",
+        "milestone list",
+        "release list",
+    ] {
+        session
+            .wait_for_cli_call(call, 15000)
+            .unwrap_or_else(|e| panic!("the dashboard fetches `{call}`: {e}"));
+    }
+    session
+        .wait_for_screen_contains("MRs ·", 15000)
+        .expect("the card grid renders, exactly as tall as the terminal");
+
+    session.press_keys(b"\r\r\r");
+    session
+        .wait_for_screen_contains("Enter open · Esc back", 5000)
+        .expect("Enter steps down into the list even though it would not fit under the cards");
+    session
+        .wait_for_screen_contains("!2", 5000)
+        .expect("the open MR is visible in the full-area list, not hidden for lack of room");
 }

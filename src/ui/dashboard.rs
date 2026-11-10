@@ -41,6 +41,9 @@ const MILESTONES_SHOWN: usize = CARD_BODY_LINES / 2;
 const PROGRESS_BAR_CHARS: usize = 17;
 /// Width of one number column of the Contributors card.
 const CONTRIBUTOR_COLUMN_CHARS: usize = 5;
+/// Index of `overdue_issues` in the Open Work stats `contributor_stats`
+/// returns: `[open_mrs, reviews, open_issues, overdue_issues]`.
+const OVERDUE_ISSUES_COLUMN: usize = 3;
 const LIST_REF_WIDTH: u16 = 7;
 /// GitHub run ids run to 11 digits and release tags can be long.
 const LIST_REF_MAX_WIDTH: u16 = 14;
@@ -48,6 +51,12 @@ const LIST_AUTHOR_WIDTH: u16 = 16;
 const LIST_PEOPLE_WIDTH: u16 = 20;
 const LIST_NOTE_WIDTH: u16 = 24;
 const LIST_UPDATED_WIDTH: u16 = 14;
+const LIST_ICON_WIDTH: u16 = 2;
+/// Ratatui's default `Table` column gap.
+const LIST_COLUMN_SPACING: u16 = 1;
+/// The title keeps at least this many cells. To protect it, `updated`,
+/// `note`, `people` and `author` are dropped, least useful first.
+const LIST_TITLE_MIN_WIDTH: u16 = 20;
 
 /// Who a label speaks about.
 #[derive(Clone, Copy)]
@@ -70,7 +79,7 @@ impl<'a> Who<'a> {
         match self {
             Who::Everyone => "everyone".to_string(),
             Who::You => "you".to_string(),
-            Who::Someone(login) => format!("@{login}"),
+            Who::Someone(login) => format!("@{}", sanitize_untrusted(login)),
         }
     }
 }
@@ -170,6 +179,11 @@ pub(crate) fn render_tab_dashboard(
         Constraint::Min(0),
     ])
     .areas(inner);
+
+    if ctx.focus == DashboardFocus::List && list_area.height < LIST_MIN_HEIGHT {
+        render_item_list(f, &ctx, inner);
+        return;
+    }
 
     let row_areas = Layout::vertical(vec![
         Constraint::Length(CARD_HEIGHT);
@@ -281,7 +295,8 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
             theme.border
         }))
         .title(card_title(ctx, card));
-    let body_width = usize::from(block.inner(area).width);
+    let body_area = block.inner(area);
+    let (body_width, body_height) = (usize::from(body_area.width), usize::from(body_area.height));
 
     let availability = match card {
         DashboardCard::Contributors => ListAvailability::Ready,
@@ -290,7 +305,7 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
         }),
     };
     let paragraph = match availability {
-        ListAvailability::Ready => Paragraph::new(card_body(ctx, card, body_width)),
+        ListAvailability::Ready => Paragraph::new(card_body(ctx, card, body_width, body_height)),
         ListAvailability::Loading => Paragraph::new(Line::styled(
             format!("{} Loading...", ctx.icons.label_loading),
             Style::default().fg(theme.text_muted),
@@ -316,12 +331,17 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
     f.render_widget(paragraph.block(block), area);
 }
 
-fn card_body(ctx: &Context, card: DashboardCard, width: usize) -> Vec<Line<'static>> {
+fn card_body(
+    ctx: &Context,
+    card: DashboardCard,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
     match card {
         DashboardCard::MergeRequests => merge_requests_body(ctx),
         DashboardCard::Issues => issues_body(ctx),
-        DashboardCard::Contributors => contributors_body(ctx, width),
-        DashboardCard::Pipelines => pipelines_body(ctx),
+        DashboardCard::Contributors => contributors_body(ctx, width, height),
+        DashboardCard::Pipelines => pipelines_body(ctx, width),
         DashboardCard::Milestones => milestones_body(ctx),
         DashboardCard::Releases => releases_body(ctx),
     }
@@ -355,13 +375,19 @@ fn mr_queue_label(queue: MrQueue, who: Who, idle: IdleDays) -> String {
     match (queue, who) {
         (MrQueue::Open, Who::Everyone) => "open".to_string(),
         (MrQueue::Open, Who::You) => "open, involving you".to_string(),
-        (MrQueue::Open, Who::Someone(login)) => format!("open, involving @{login}"),
+        (MrQueue::Open, Who::Someone(login)) => {
+            format!("open, involving @{}", sanitize_untrusted(login))
+        }
         (MrQueue::AwaitingReview, Who::Everyone) => "waiting for review".to_string(),
         (MrQueue::AwaitingReview, Who::You) => "waiting for your review".to_string(),
-        (MrQueue::AwaitingReview, Who::Someone(login)) => format!("waiting for @{login}'s review"),
+        (MrQueue::AwaitingReview, Who::Someone(login)) => {
+            format!("waiting for @{}'s review", sanitize_untrusted(login))
+        }
         (MrQueue::ChangesRequested, Who::Everyone) => "changes requested".to_string(),
         (MrQueue::ChangesRequested, Who::You) => "returned to you".to_string(),
-        (MrQueue::ChangesRequested, Who::Someone(login)) => format!("returned to @{login}"),
+        (MrQueue::ChangesRequested, Who::Someone(login)) => {
+            format!("returned to @{}", sanitize_untrusted(login))
+        }
         (MrQueue::ReadyToMerge, _) => "ready to merge".to_string(),
         (MrQueue::Blocked, _) => "conflict or rebase needed".to_string(),
         (MrQueue::Idle, _) => format!("idle {}+ days", idle.mrs),
@@ -404,14 +430,16 @@ fn issue_queue_label(queue: IssueQueue, who: Who, idle: IdleDays) -> String {
     match (queue, who) {
         (IssueQueue::Open, Who::Everyone) => "open".to_string(),
         (IssueQueue::Open, Who::You) => "assigned to you".to_string(),
-        (IssueQueue::Open, Who::Someone(login)) => format!("assigned to @{login}"),
+        (IssueQueue::Open, Who::Someone(login)) => {
+            format!("assigned to @{}", sanitize_untrusted(login))
+        }
         (IssueQueue::Overdue, _) => "overdue".to_string(),
         (IssueQueue::DueSoon, _) => format!("due within {} days", dashboard::DUE_SOON_DAYS),
         (IssueQueue::Idle, _) => format!("idle {}+ days", idle.issues),
         (IssueQueue::Unassigned, Who::Everyone) => "unassigned".to_string(),
         (IssueQueue::Unassigned, Who::You) => "opened by you, unassigned".to_string(),
         (IssueQueue::Unassigned, Who::Someone(login)) => {
-            format!("opened by @{login}, unassigned")
+            format!("opened by @{}, unassigned", sanitize_untrusted(login))
         }
     }
 }
@@ -446,7 +474,7 @@ fn issues_body(ctx: &Context) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
+fn contributors_body(ctx: &Context, width: usize, height: usize) -> Vec<Line<'static>> {
     let (theme, app) = (ctx.theme, ctx.app);
     let view = app.dashboard.contributors_view;
     let sort = app.dashboard.contributors_sort;
@@ -470,7 +498,7 @@ fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
         .iter()
         .filter(|row| matches!(row, DashboardRow::Contributor(_)))
         .collect();
-    let visible = CARD_BODY_LINES - lines.len();
+    let visible = height.saturating_sub(lines.len());
     let selected_index = people
         .iter()
         .position(|row| ctx.is_selected(row))
@@ -491,7 +519,7 @@ fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
         let name = match person {
             DashboardPerson::Everyone => "everyone".to_string(),
             DashboardPerson::Me => match ctx.signed_in {
-                Some(login) => format!("you (@{login})"),
+                Some(login) => format!("you (@{})", sanitize_untrusted(login)),
                 None => "you (login unknown)".to_string(),
             },
             DashboardPerson::User(login) => format!("@{}", sanitize_untrusted(login)),
@@ -501,7 +529,8 @@ fn contributors_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
             Some(stats) => stats.iter().map(|value| format!("{value:>w$}")).collect(),
             None => format!("{:>w$}", "-").repeat(ContributorsView::COLUMN_COUNT),
         };
-        let is_late = view == ContributorsView::OpenWork && stats.is_some_and(|s| s[3] > 0);
+        let is_late = view == ContributorsView::OpenWork
+            && stats.is_some_and(|s| s[OVERDUE_ISSUES_COLUMN] > 0);
         let late_color = if is_late {
             theme.red
         } else {
@@ -547,9 +576,9 @@ fn feed_cut_off_note(ctx: &Context) -> Option<String> {
     Some(format!("(feed ends {})", time_ago(cut_off_at)))
 }
 
-fn pipelines_body(ctx: &Context) -> Vec<Line<'static>> {
+fn pipelines_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
     let (theme, icons) = (ctx.theme, ctx.icons);
-    let health = dashboard::assess_pipelines(&ctx.app.pipelines.items);
+    let health = dashboard::assess_pipelines(ctx.app.root_pipelines());
     if health.recent.is_empty() {
         return vec![Line::styled(
             "No pipelines yet",
@@ -578,19 +607,7 @@ fn pipelines_body(ctx: &Context) -> Vec<Line<'static>> {
                 Style::default().fg(theme.text_muted),
             ),
         ]),
-        Line::from(
-            health
-                .recent
-                .iter()
-                .rev()
-                .map(|pipeline| {
-                    Span::styled(
-                        status_dot(&pipeline.status, icons).to_string(),
-                        Style::default().fg(outcome_color(&pipeline.status, theme)),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        ),
+        Line::from(fitted_pipeline_dots(health.recent, icons, theme, width)),
         Line::from(vec![
             Span::styled(
                 format!("{} running", health.in_progress),
@@ -629,6 +646,34 @@ fn pipelines_body(ctx: &Context) -> Vec<Line<'static>> {
     lines
 }
 
+/// The newest runs that fit in `max_width` cells, oldest to newest left to
+/// right: `recent` is newest first, and a dot's display width varies with the
+/// icon set (the nerd font's dots are double-width emoji, ascii's are single
+/// cells), so a fixed dot count can overflow or waste space.
+fn fitted_pipeline_dots(
+    recent: &[Pipeline],
+    icons: &Icons,
+    theme: &Theme,
+    max_width: usize,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for pipeline in recent {
+        let dot = status_dot(&pipeline.status, icons);
+        let dot_width = Span::raw(dot).width();
+        if used + dot_width > max_width {
+            break;
+        }
+        used += dot_width;
+        spans.push(Span::styled(
+            dot.to_string(),
+            Style::default().fg(outcome_color(&pipeline.status, theme)),
+        ));
+    }
+    spans.reverse();
+    spans
+}
+
 fn outcome_color(status: &str, theme: &Theme) -> Color {
     match PipelineOutcome::of(status) {
         PipelineOutcome::Succeeded => theme.pipeline_success,
@@ -655,13 +700,17 @@ fn milestones_body(ctx: &Context) -> Vec<Line<'static>> {
     }
     upcoming
         .iter()
-        .flat_map(|progress| milestone_lines(progress, theme))
+        .flat_map(|progress| milestone_lines(progress, theme, ctx.icons))
         .collect()
 }
 
-fn milestone_lines(progress: &MilestoneProgress, theme: &Theme) -> [Line<'static>; 2] {
+fn milestone_lines(
+    progress: &MilestoneProgress,
+    theme: &Theme,
+    icons: &Icons,
+) -> [Line<'static>; 2] {
     let (bar, bar_color) = match progress.issues {
-        Some((closed, total)) => progress_bar(closed, total, theme),
+        Some((closed, total)) => progress_bar(closed, total, theme, icons),
         None => ("no issues".to_string(), theme.text_muted),
     };
     let (due, due_color) = match progress.due_in_days {
@@ -743,7 +792,9 @@ fn item_list_title(ctx: &Context) -> String {
     let activity_of = |who: Who| match who {
         Who::Everyone => format!("Everyone's activity, {window}"),
         Who::You => format!("Your activity, {window}"),
-        Who::Someone(login) => format!("Activity of @{login}, {window}"),
+        Who::Someone(login) => {
+            format!("Activity of @{}, {window}", sanitize_untrusted(login))
+        }
     };
     let mut label = match &ctx.selected {
         Some(DashboardRow::Mr(queue)) => {
@@ -818,23 +869,14 @@ fn render_item_list(f: &mut Frame, ctx: &Context, area: Rect) {
         return;
     }
 
-    let rows = items.iter().map(|item| item_row(ctx, item));
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(2),
-            Constraint::Length(reference_width(&items)),
-            Constraint::Fill(1),
-            Constraint::Length(LIST_AUTHOR_WIDTH),
-            Constraint::Length(LIST_PEOPLE_WIDTH),
-            Constraint::Length(LIST_NOTE_WIDTH),
-            Constraint::Length(LIST_UPDATED_WIDTH),
-        ],
-    )
-    .block(block)
-    .row_highlight_style(Style::default().bg(theme.highlight_bg))
-    .highlight_symbol(format!("{} ", ctx.icons.highlight_arrow))
-    .highlight_spacing(HighlightSpacing::Always);
+    let content_width = block.inner(area).width;
+    let columns = ListColumns::fit(content_width, reference_width(&items));
+    let rows = items.iter().map(|item| item_row(ctx, item, &columns));
+    let table = Table::new(rows, columns.constraints())
+        .block(block)
+        .row_highlight_style(Style::default().bg(theme.highlight_bg))
+        .highlight_symbol(format!("{} ", ctx.icons.highlight_arrow))
+        .highlight_spacing(HighlightSpacing::Always);
     let mut state = TableState::default()
         .with_selected(is_focused.then(|| app.dashboard.list_cursor.min(items.len() - 1)));
     f.render_stateful_widget(table, area, &mut state);
@@ -857,12 +899,96 @@ fn reference_width(items: &[DashboardItem]) -> u16 {
         .clamp(LIST_REF_WIDTH, LIST_REF_MAX_WIDTH)
 }
 
-fn item_row(ctx: &Context, item: &DashboardItem) -> Row<'static> {
+/// Which optional item-list columns fit alongside the icon, reference and
+/// title: `author`, `people`, `note` and `updated` are dropped, least useful
+/// first, until the title keeps at least `LIST_TITLE_MIN_WIDTH` cells.
+struct ListColumns {
+    reference_width: u16,
+    show_author: bool,
+    show_people: bool,
+    show_note: bool,
+    show_updated: bool,
+}
+
+impl ListColumns {
+    fn fit(available: u16, reference_width: u16) -> Self {
+        let mut columns = Self {
+            reference_width,
+            show_author: true,
+            show_people: true,
+            show_note: true,
+            show_updated: true,
+        };
+        while columns.title_width(available) < LIST_TITLE_MIN_WIDTH && columns.drop_one() {}
+        columns
+    }
+
+    fn drop_one(&mut self) -> bool {
+        if self.show_updated {
+            self.show_updated = false;
+        } else if self.show_note {
+            self.show_note = false;
+        } else if self.show_people {
+            self.show_people = false;
+        } else if self.show_author {
+            self.show_author = false;
+        } else {
+            return false;
+        }
+        true
+    }
+
+    fn title_width(&self, available: u16) -> u16 {
+        let mut used = LIST_ICON_WIDTH + self.reference_width;
+        let mut count: u16 = 3;
+        if self.show_author {
+            used += LIST_AUTHOR_WIDTH;
+            count += 1;
+        }
+        if self.show_people {
+            used += LIST_PEOPLE_WIDTH;
+            count += 1;
+        }
+        if self.show_note {
+            used += LIST_NOTE_WIDTH;
+            count += 1;
+        }
+        if self.show_updated {
+            used += LIST_UPDATED_WIDTH;
+            count += 1;
+        }
+        used += LIST_COLUMN_SPACING * (count - 1);
+        available.saturating_sub(used)
+    }
+
+    fn constraints(&self) -> Vec<Constraint> {
+        let mut constraints = vec![
+            Constraint::Length(LIST_ICON_WIDTH),
+            Constraint::Length(self.reference_width),
+            Constraint::Fill(1),
+        ];
+        if self.show_author {
+            constraints.push(Constraint::Length(LIST_AUTHOR_WIDTH));
+        }
+        if self.show_people {
+            constraints.push(Constraint::Length(LIST_PEOPLE_WIDTH));
+        }
+        if self.show_note {
+            constraints.push(Constraint::Length(LIST_NOTE_WIDTH));
+        }
+        if self.show_updated {
+            constraints.push(Constraint::Length(LIST_UPDATED_WIDTH));
+        }
+        constraints
+    }
+}
+
+fn item_row(ctx: &Context, item: &DashboardItem, columns: &ListColumns) -> Row<'static> {
     match item {
-        DashboardItem::Activity(activity) => activity_row(ctx, activity),
-        DashboardItem::Pipeline(pipeline) => pipeline_row(ctx, pipeline),
-        DashboardItem::Milestone(progress) => milestone_row(ctx, progress),
-        DashboardItem::Release(release) => release_row(ctx, release),
+        DashboardItem::Activity(activity) => activity_row(ctx, activity, columns),
+        DashboardItem::Pipeline(pipeline) => pipeline_row(ctx, pipeline, columns),
+        DashboardItem::Milestone(progress) => milestone_row(ctx, progress, columns),
+        DashboardItem::Release(release) => release_row(ctx, release, columns),
     }
 }
 
@@ -878,26 +1004,35 @@ struct ListRow<'a> {
     when: String,
 }
 
-fn list_row(ctx: &Context, row: ListRow) -> Row<'static> {
+fn list_row(ctx: &Context, row: ListRow, columns: &ListColumns) -> Row<'static> {
     let theme = ctx.theme;
-    let author = if row.author.is_empty() {
-        String::new()
-    } else {
-        format!("@{}", sanitize_untrusted(row.author))
-    };
-    Row::new(vec![
+    let mut cells = vec![
         Cell::from(row.icon).style(Style::default().fg(row.color)),
         Cell::from(row.reference).style(Style::default().fg(row.color)),
         Cell::from(row.title).style(Style::default().fg(theme.text_normal)),
-        Cell::from(author).style(Style::default().fg(theme.text_muted)),
-        Cell::from(row.people).style(Style::default().fg(theme.text_muted)),
-        Cell::from(Line::from(row.note)),
-        Cell::from(row.when).style(Style::default().fg(theme.text_muted)),
-    ])
+    ];
+    if columns.show_author {
+        let author = if row.author.is_empty() {
+            String::new()
+        } else {
+            format!("@{}", sanitize_untrusted(row.author))
+        };
+        cells.push(Cell::from(author).style(Style::default().fg(theme.text_muted)));
+    }
+    if columns.show_people {
+        cells.push(Cell::from(row.people).style(Style::default().fg(theme.text_muted)));
+    }
+    if columns.show_note {
+        cells.push(Cell::from(Line::from(row.note)));
+    }
+    if columns.show_updated {
+        cells.push(Cell::from(row.when).style(Style::default().fg(theme.text_muted)));
+    }
+    Row::new(cells)
 }
 
 /// A run: its ref and commit, who triggered it, status and duration.
-fn pipeline_row(ctx: &Context, pipeline: &Pipeline) -> Row<'static> {
+fn pipeline_row(ctx: &Context, pipeline: &Pipeline, columns: &ListColumns) -> Row<'static> {
     let (theme, icons) = (ctx.theme, ctx.icons);
     let color = outcome_color(&pipeline.status, theme);
     let commit = pipeline
@@ -936,13 +1071,18 @@ fn pipeline_row(ctx: &Context, pipeline: &Pipeline) -> Row<'static> {
             note: vec![note_span(duration, theme.text_muted)],
             when: time_ago(pipeline.created_at().unwrap_or(pipeline.updated_at())),
         },
+        columns,
     )
 }
 
 /// A milestone: its issue progress and due date.
-fn milestone_row(ctx: &Context, progress: &MilestoneProgress) -> Row<'static> {
+fn milestone_row(
+    ctx: &Context,
+    progress: &MilestoneProgress,
+    columns: &ListColumns,
+) -> Row<'static> {
     let theme = ctx.theme;
-    let [_, progress_line] = milestone_lines(progress, theme);
+    let [_, progress_line] = milestone_lines(progress, theme, ctx.icons);
     let milestone = progress.milestone;
     let issues = match progress.issues {
         Some((closed, total)) => format!("{closed}/{total} issues closed"),
@@ -960,11 +1100,12 @@ fn milestone_row(ctx: &Context, progress: &MilestoneProgress) -> Row<'static> {
             note: progress_line.spans,
             when: milestone.due_date.clone().unwrap_or_default(),
         },
+        columns,
     )
 }
 
 /// A release: its tag, name and the first line of its notes.
-fn release_row(ctx: &Context, release: &Release) -> Row<'static> {
+fn release_row(ctx: &Context, release: &Release, columns: &ListColumns) -> Row<'static> {
     let theme = ctx.theme;
     let notes = release
         .description
@@ -992,12 +1133,13 @@ fn release_row(ctx: &Context, release: &Release) -> Row<'static> {
             note: Vec::new(),
             when: time_ago(&release.released_at),
         },
+        columns,
     )
 }
 
-fn activity_row(ctx: &Context, item: &Activity) -> Row<'static> {
+fn activity_row(ctx: &Context, item: &Activity, columns: &ListColumns) -> Row<'static> {
     let (theme, icons) = (ctx.theme, ctx.icons);
-    let mr_marker = if ctx.kind.is_github() { '#' } else { '!' };
+    let mr_marker = ctx.kind.mr_reference_prefix();
     let (icon, color, reference, title, author, people, note) = match item {
         Activity::Issue(issue) => (
             &icons.tab_issue,
@@ -1074,6 +1216,7 @@ fn activity_row(ctx: &Context, item: &Activity) -> Row<'static> {
             note,
             when: time_ago(item.updated_at()),
         },
+        columns,
     )
 }
 

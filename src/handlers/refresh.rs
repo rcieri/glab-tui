@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
+use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_shown_tab};
 use crate::keybinding::{KeyPress, keybinding_matches};
 use crossterm::event::KeyCode;
 use std::time::Instant;
@@ -42,12 +42,11 @@ pub fn handle_refresh(
                     app.milestone_prefetch = None;
                 }
                 app.start_loading_tab(app.active_tab);
-                spawn_refresh_active_tab(
+                spawn_refresh_shown_tab(
                     fx,
                     &client,
-                    &app.scope,
-                    app.requested_state_queries(),
-                    app.active_tab,
+                    app,
+                    crate::dashboard::DashboardRefresh::Full,
                     tx.clone(),
                 );
             }

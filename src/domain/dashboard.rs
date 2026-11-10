@@ -6,7 +6,7 @@ use crate::domain::contributions::Contribution;
 use crate::domain::issues::Issue;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::MergeRequest;
-use crate::domain::mr_state::WorkflowStatus;
+use crate::domain::mr_state::{self, WorkflowStatus};
 use crate::domain::pipelines::Pipeline;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use std::collections::BTreeSet;
@@ -118,7 +118,9 @@ pub fn issue_involves(issue: &Issue, login: &str) -> bool {
 }
 
 fn is_approved(mr: &MergeRequest) -> bool {
-    mr.approval.as_ref().is_some_and(|a| a.approved)
+    mr.approval
+        .as_ref()
+        .is_some_and(mr_state::is_attributably_approved)
 }
 
 fn has_changes_requested(mr: &MergeRequest) -> bool {
@@ -157,6 +159,9 @@ fn is_returned_to(mr: &MergeRequest, login: &str, signed_in: Option<&str>) -> bo
 }
 
 fn awaits_review_from(mr: &MergeRequest, login: &str, signed_in: Option<&str>) -> bool {
+    if mr.draft {
+        return false;
+    }
     if let Some(workflow) = signed_in_workflow(mr, login, signed_in) {
         return workflow == WorkflowStatus::ReviewRequested;
     }
@@ -172,8 +177,9 @@ fn awaits_review_from(mr: &MergeRequest, login: &str, signed_in: Option<&str>) -
 pub enum MrQueue {
     /// Every open one, or the ones a person authored, is assigned or reviews.
     Open,
-    /// Not yet reviewed: everyone's are the non-draft ones neither approved
-    /// nor sent back, a person's are the ones they review and have not.
+    /// Not yet reviewed and not a draft: everyone's are the ones neither
+    /// approved nor sent back, a person's are the ones they review and
+    /// have not.
     AwaitingReview,
     /// Changes requested, a person's only on the ones they authored.
     ChangesRequested,
@@ -346,8 +352,26 @@ impl IssueQueue {
 /// Sort by an RFC 3339 update timestamp, newest first unless
 /// `is_oldest_first`. Rows whose timestamp does not parse sort last.
 fn sort_by_update<T>(rows: &mut [T], updated_at: impl Fn(&T) -> &str, is_oldest_first: bool) {
+    sort_by_timestamp(
+        rows,
+        |row| {
+            DateTime::parse_from_rfc3339(updated_at(row))
+                .ok()
+                .map(|t| t.with_timezone(&Utc))
+        },
+        is_oldest_first,
+    );
+}
+
+/// Sort by a timestamp already parsed, newest first unless
+/// `is_oldest_first`. Rows with no timestamp sort last.
+fn sort_by_timestamp<T>(
+    rows: &mut [T],
+    timestamp_of: impl Fn(&T) -> Option<DateTime<Utc>>,
+    is_oldest_first: bool,
+) {
     rows.sort_by_cached_key(|row| {
-        let timestamp = DateTime::parse_from_rfc3339(updated_at(row)).ok();
+        let timestamp = timestamp_of(row);
         let missing = timestamp.is_none();
         let seconds = timestamp.map_or(0, |t| t.timestamp());
         (missing, if is_oldest_first { seconds } else { -seconds })
@@ -419,11 +443,9 @@ pub struct ActivityCounts {
     pub reviews: usize,
 }
 
-/// Whether a contribution was made after `since`. One whose time does not
-/// parse is kept rather than silently dropped.
+/// Whether a contribution was made after `since`.
 pub fn is_made_after(contribution: &Contribution, since: DateTime<Utc>) -> bool {
-    DateTime::parse_from_rfc3339(&contribution.created_at)
-        .map_or(true, |at| at.with_timezone(&Utc) > since)
+    contribution.made_at > since
 }
 
 pub fn activity_counts(
@@ -523,9 +545,7 @@ pub fn assess_pipelines(pipelines: &[Pipeline]) -> PipelineHealth<'_> {
         .filter(|o| *o == PipelineOutcome::InProgress)
         .count();
     let finished = succeeded + failed;
-    let success_rate_percent = (finished > 0).then(|| {
-        u8::try_from(succeeded * 100 / finished).expect("a share of a whole is at most 100")
-    });
+    let success_rate_percent = (finished > 0).then(|| (succeeded * 100 / finished).min(100) as u8);
 
     let mut latest_per_ref: Vec<&Pipeline> = Vec::with_capacity(LATEST_REFS_SHOWN);
     for pipeline in pipelines {
@@ -598,6 +618,20 @@ impl Activity<'_> {
         }
     }
 
+    /// `updated_at` already parsed, so sorting a contribution never
+    /// reparses the timestamp `Contribution::made_at` already carries.
+    fn made_at(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Activity::Issue(issue) => DateTime::parse_from_rfc3339(&issue.updated_at)
+                .ok()
+                .map(|t| t.with_timezone(&Utc)),
+            Activity::MergeRequest(mr) => DateTime::parse_from_rfc3339(&mr.updated_at)
+                .ok()
+                .map(|t| t.with_timezone(&Utc)),
+            Activity::Contribution(contribution) => Some(contribution.made_at),
+        }
+    }
+
     fn involves(&self, person: Person) -> bool {
         match (self, person) {
             (_, Person::Everyone) => true,
@@ -632,7 +666,7 @@ pub fn recent_activity<'a>(
         )
         .filter(|item| item.involves(person))
         .collect();
-    sort_by_update(&mut activity, Activity::updated_at, false);
+    sort_by_timestamp(&mut activity, Activity::made_at, false);
     activity
 }
 
@@ -769,7 +803,10 @@ mod tests {
         let mrs = [
             mr(
                 1,
-                json!({ "author": { "username": "ada" }, "approval": { "approved": true } }),
+                json!({
+                    "author": { "username": "ada" },
+                    "approval": { "approved": true, "approved_by": ["cy"] },
+                }),
             ),
             mr(
                 2,
@@ -783,7 +820,7 @@ mod tests {
                 3,
                 json!({
                     "reviewers": [{ "username": "ada" }],
-                    "approval": { "approved": true },
+                    "approval": { "approved": true, "approved_by": ["cy"] },
                 }),
             ),
             mr(
@@ -805,6 +842,48 @@ mod tests {
             mr_queue(MrQueue::ReadyToMerge, &mrs, Person::Everyone),
             vec![1, 3]
         );
+    }
+
+    #[test]
+    fn a_bare_approved_flag_with_no_approvers_does_not_count_as_approved() {
+        // GitLab sets `approved: true` whenever a project has no approval
+        // rules, even though nobody approved anything.
+        let mrs = [mr(
+            1,
+            json!({ "author": { "username": "ada" }, "approval": { "approved": true } }),
+        )];
+
+        assert_eq!(
+            mr_queue(MrQueue::ReadyToMerge, &mrs, ADA),
+            Vec::<u64>::new()
+        );
+    }
+
+    #[test]
+    fn a_draft_is_excluded_from_everyones_and_a_persons_awaiting_review_queue() {
+        let mrs = [mr(
+            1,
+            json!({ "draft": true, "reviewers": [{ "username": "ada" }] }),
+        )];
+
+        assert_eq!(
+            mr_queue(MrQueue::AwaitingReview, &mrs, ADA),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            mr_queue(MrQueue::AwaitingReview, &mrs, Person::Everyone),
+            Vec::<u64>::new()
+        );
+    }
+
+    #[test]
+    fn a_drafts_review_requested_workflow_does_not_count_as_awaiting_review() {
+        let mut draft = mr(1, json!({ "draft": true }));
+        draft.workflow = Some(WorkflowStatus::ReviewRequested);
+        let mrs = [draft];
+
+        let list = |queue: MrQueue| iids(&queue.list(&mrs, ADA, Some("ada"), now()), |mr| mr.iid);
+        assert_eq!(list(MrQueue::AwaitingReview), Vec::<u64>::new());
     }
 
     #[test]
@@ -982,9 +1061,13 @@ mod tests {
 
     fn contribution(author: &str, created_at: &str) -> Contribution {
         Contribution {
+            id: format!("{author}-{created_at}"),
             author: author.to_string(),
             kind: crate::domain::contributions::ContributionKind::Commit,
             created_at: created_at.to_string(),
+            made_at: DateTime::parse_from_rfc3339(created_at)
+                .expect("valid time")
+                .with_timezone(&Utc),
             summary: format!("commit by {author}"),
             target: None,
             location: None,

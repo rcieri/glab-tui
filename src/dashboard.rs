@@ -12,6 +12,32 @@ use crate::domain::releases::Release;
 use chrono::{DateTime, Utc};
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+/// How often the periodic refresh reads the activity feed and the lists that
+/// rarely change (milestones, releases) again. The busy lists are read every
+/// time.
+pub const SLOW_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// How much a Dashboard refresh reads again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardRefresh {
+    /// Every list and the activity feed: startup, a scope switch, the
+    /// refresh key.
+    Full,
+    /// Only what was not read yet: switching to the tab.
+    Missing,
+    /// The timer: the busy lists, plus the rest once `SLOW_REFRESH_INTERVAL`
+    /// has passed since they were last read.
+    Periodic,
+}
+
+/// What one Dashboard refresh fetches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardFetchPlan {
+    pub sources: Vec<Tab>,
+    pub reads_activity: bool,
+}
 
 /// The repository's activity feed as the Dashboard last fetched it.
 #[derive(Debug, Default, Clone)]
@@ -250,6 +276,8 @@ pub struct DashboardState {
     pub contributions: ContributionFeed,
     pub contributors_view: ContributorsView,
     pub contributors_sort: Option<ContributorSort>,
+    /// When the activity feed and the slow lists were last requested.
+    pub slow_refreshed_at: Option<Instant>,
 }
 
 /// The cards `rows` belong to, in order.
@@ -264,6 +292,23 @@ fn cards_of(rows: &[DashboardRow]) -> Vec<DashboardCard> {
 }
 
 impl DashboardState {
+    /// Leaving the tab hands `h`/`l` back to tab switching on return. The
+    /// selected card and rows stay.
+    pub fn leave(&mut self) {
+        self.focus = DashboardFocus::Tab;
+    }
+
+    /// A new repository or group: nothing selected, the configured person,
+    /// the same view and sort.
+    pub fn reset_for_scope(&mut self, person: DashboardPerson) {
+        *self = DashboardState {
+            person,
+            contributors_view: self.contributors_view,
+            contributors_sort: self.contributors_sort,
+            ..DashboardState::default()
+        };
+    }
+
     /// The selected card among the ones `rows` belong to, the first one when
     /// the selection left them.
     pub fn selected_card(&self, rows: &[DashboardRow]) -> Option<DashboardCard> {
@@ -369,11 +414,9 @@ impl App {
     /// tabs the config disables. Contributors follows the MR/PR and issue
     /// cards it draws on.
     pub fn dashboard_cards(&self) -> Vec<DashboardCard> {
-        let available = self.available_tabs();
-        let mut cards: Vec<DashboardCard> = Tab::dashboard_sources(&self.scope, self.kind())
-            .iter()
-            .filter(|tab| available.contains(tab))
-            .filter_map(|tab| DashboardCard::for_tab(*tab))
+        let mut cards: Vec<DashboardCard> = self
+            .shown_dashboard_sources()
+            .filter_map(DashboardCard::for_tab)
             .collect();
         if let Some(last_source) = cards
             .iter()
@@ -382,6 +425,46 @@ impl App {
             cards.insert(last_source + 1, DashboardCard::Contributors);
         }
         cards
+    }
+
+    /// The tabs the Dashboard summarizes in this scope that the config does
+    /// not hide.
+    fn shown_dashboard_sources(&self) -> impl Iterator<Item = Tab> + '_ {
+        let available = self.available_tabs();
+        Tab::dashboard_sources(&self.scope, self.kind())
+            .iter()
+            .copied()
+            .filter(move |tab| available.contains(tab))
+    }
+
+    /// The lists, and whether the activity feed, a `refresh` reads. Lists
+    /// already loading are left to the fetch in flight.
+    pub fn dashboard_fetch_plan(&self, refresh: DashboardRefresh) -> DashboardFetchPlan {
+        let is_slow_refresh_due = self
+            .dashboard
+            .slow_refreshed_at
+            .is_none_or(|at| at.elapsed() >= SLOW_REFRESH_INTERVAL);
+        let sources = self
+            .shown_dashboard_sources()
+            .filter(|tab| tab.is_fetchable_in(&self.scope) && !self.loading_tabs.contains(tab))
+            .filter(|tab| match refresh {
+                DashboardRefresh::Full => true,
+                DashboardRefresh::Missing => !self.refreshed_tabs.contains(tab),
+                DashboardRefresh::Periodic => tab.is_high_churn() || is_slow_refresh_due,
+            })
+            .collect();
+        let reads_activity = self.scope.is_repository()
+            && match refresh {
+                DashboardRefresh::Full => true,
+                DashboardRefresh::Missing => {
+                    matches!(self.dashboard.contributions, ContributionFeed::NotLoaded)
+                }
+                DashboardRefresh::Periodic => is_slow_refresh_due,
+            };
+        DashboardFetchPlan {
+            sources,
+            reads_activity,
+        }
     }
 
     pub fn dashboard_signed_in_user(&self) -> Option<&str> {
@@ -461,8 +544,7 @@ impl App {
             .map(DashboardItem::Activity)
             .collect(),
             Some(DashboardRow::Card(DashboardCard::Pipelines)) => self
-                .pipelines
-                .items
+                .root_pipelines()
                 .iter()
                 .map(DashboardItem::Pipeline)
                 .collect(),
@@ -558,6 +640,23 @@ impl App {
             (key, login.to_string())
         });
         logins
+    }
+
+    /// A fetched activity feed replaces the shown one. A failed refresh over
+    /// a feed already shown keeps it and marks the Dashboard stale, the way
+    /// a list tab keeps its rows.
+    pub fn apply_contributions(&mut self, result: Result<ContributionHistory, String>) {
+        match result {
+            Ok(history) => {
+                self.dashboard.contributions = ContributionFeed::Loaded(history);
+                self.stale_tabs.remove(&Tab::Dashboard);
+            }
+            Err(_) if matches!(self.dashboard.contributions, ContributionFeed::Loaded(_)) => {
+                self.stale_tabs
+                    .insert(Tab::Dashboard, crate::app::StaleData::RefreshFailed);
+            }
+            Err(reason) => self.dashboard.contributions = ContributionFeed::Failed(reason),
+        }
     }
 
     /// `cycle_window`: count open work, then the last day, week and month
@@ -972,9 +1071,13 @@ mod tests {
             idle: dashboard::IdleDays::default(),
         };
         let commit = |author: &str| Contribution {
+            id: format!("{author}-commit"),
             author: author.to_string(),
             kind: ContributionKind::Commit,
             created_at: "2026-10-28T00:00:00Z".to_string(),
+            made_at: DateTime::parse_from_rfc3339("2026-10-28T00:00:00Z")
+                .expect("valid time")
+                .with_timezone(&Utc),
             summary: String::new(),
             target: None,
             location: None,
@@ -1034,5 +1137,167 @@ mod tests {
             DashboardPerson::Me.resolve(Some("ada")),
             Person::User("ada")
         );
+    }
+
+    fn repository_app() -> App {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app
+    }
+
+    #[test]
+    fn the_periodic_refresh_reads_the_slow_lists_and_activity_only_once_due() {
+        let mut app = repository_app();
+        app.dashboard.slow_refreshed_at = Some(Instant::now());
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Periodic),
+            DashboardFetchPlan {
+                sources: vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines],
+                reads_activity: false,
+            }
+        );
+
+        app.dashboard.slow_refreshed_at = Instant::now().checked_sub(SLOW_REFRESH_INTERVAL);
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Periodic),
+            DashboardFetchPlan {
+                sources: vec![
+                    Tab::MergeRequests,
+                    Tab::Issues,
+                    Tab::Pipelines,
+                    Tab::Milestones,
+                    Tab::Releases,
+                ],
+                reads_activity: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_refresh_skips_hidden_tabs_and_lists_already_loading() {
+        let mut app = repository_app();
+        app.config.disabled_tabs = Some(vec!["Releases".to_string()]);
+        app.loading_tabs.insert(Tab::Issues);
+
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Full).sources,
+            vec![Tab::MergeRequests, Tab::Pipelines, Tab::Milestones]
+        );
+    }
+
+    #[test]
+    fn entering_the_tab_reads_only_what_was_not_read_yet() {
+        let mut app = repository_app();
+        app.refreshed_tabs
+            .extend([Tab::MergeRequests, Tab::Issues, Tab::Pipelines]);
+        app.dashboard.contributions = ContributionFeed::Loaded(ContributionHistory::default());
+
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Missing),
+            DashboardFetchPlan {
+                sources: vec![Tab::Milestones, Tab::Releases],
+                reads_activity: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_activity_refresh_keeps_the_shown_feed_and_marks_it_stale() {
+        let mut app = repository_app();
+        app.apply_contributions(Err("boom".to_string()));
+        assert!(matches!(
+            &app.dashboard.contributions,
+            ContributionFeed::Failed(reason) if reason == "boom"
+        ));
+
+        app.apply_contributions(Ok(ContributionHistory::default()));
+        app.apply_contributions(Err("boom".to_string()));
+        assert!(matches!(
+            app.dashboard.contributions,
+            ContributionFeed::Loaded(_)
+        ));
+        assert_eq!(
+            app.stale_tabs.get(&Tab::Dashboard),
+            Some(&crate::app::StaleData::RefreshFailed)
+        );
+
+        app.apply_contributions(Ok(ContributionHistory::default()));
+        assert_eq!(app.stale_tabs.get(&Tab::Dashboard), None);
+    }
+
+    #[test]
+    fn changing_the_theme_keeps_the_picked_contributor() {
+        let mut app = repository_app();
+        app.dashboard.person = DashboardPerson::User("ada".to_string());
+        app.config.theme_preset = Some("nord".to_string());
+        app.apply_config();
+
+        assert_eq!(
+            app.dashboard.person,
+            DashboardPerson::User("ada".to_string())
+        );
+    }
+
+    #[test]
+    fn leaving_the_tab_hands_h_and_l_back_to_tab_switching() {
+        let mut app = repository_app();
+        app.active_tab = Tab::Dashboard;
+        app.dashboard.focus = DashboardFocus::List;
+        app.activate_tab(Tab::Issues);
+        app.activate_tab(Tab::Dashboard);
+
+        assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
+    }
+
+    #[test]
+    fn a_scope_switch_drops_the_selection_and_restores_the_configured_person() {
+        let mut app = repository_app();
+        app.config.dashboard.person = "everyone".to_string();
+        app.dashboard.person = DashboardPerson::User("ada".to_string());
+        app.dashboard.focus = DashboardFocus::List;
+        app.dashboard.list_cursor = 4;
+        app.dashboard.contributors_view = ContributorsView::Activity(ActivityWindow::Week);
+        app.reset_on_scope_change();
+
+        assert_eq!(app.dashboard.person, DashboardPerson::Everyone);
+        assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
+        assert_eq!(app.dashboard.list_cursor, 0);
+        assert_eq!(
+            app.dashboard.contributors_view,
+            ContributorsView::Activity(ActivityWindow::Week)
+        );
+    }
+
+    #[test]
+    fn the_pipelines_card_lists_the_top_level_runs_during_a_descent() {
+        let mut app = repository_app();
+        let pipeline = |id: u64| {
+            serde_json::from_value::<Pipeline>(serde_json::json!({
+                "id": id, "status": "success", "ref": "main", "updated_at": "2026-10-28T00:00:00Z"
+            }))
+            .expect("a valid pipeline")
+        };
+        app.pipelines.items = vec![pipeline(41)];
+        app.descend_into(
+            41,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![pipeline(7)],
+                ..Default::default()
+            },
+        );
+        let ids: Vec<u64> = app
+            .dashboard_items_for(
+                Some(&DashboardRow::Card(DashboardCard::Pipelines)),
+                app.dashboard_now(),
+            )
+            .iter()
+            .filter_map(|item| match item {
+                DashboardItem::Pipeline(pipeline) => Some(pipeline.id),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(ids, vec![41]);
     }
 }

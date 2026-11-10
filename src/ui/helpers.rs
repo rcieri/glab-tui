@@ -344,7 +344,9 @@ pub(crate) fn get_stages_dots(jobs: &[crate::domain::pipelines::Job], icons: &Ic
         .collect()
 }
 
-/// The one-cell dot drawn for a pipeline, stage or job status.
+/// The dot drawn for a pipeline, stage or job status. Its display width
+/// depends on the icon set: the nerd font's dots are double-width emoji,
+/// ascii's are single cells.
 pub(crate) fn status_dot<'a>(status: &str, icons: &'a Icons) -> &'a str {
     match status {
         "success" => &icons.dot_success,
@@ -360,7 +362,12 @@ const PROGRESS_BAR_SEGMENTS: usize = 10;
 
 /// `[████░░░░░░] 40%` for `closed` of `total` (non-zero) items, colored red up
 /// to a third done, yellow up to two thirds, green above.
-pub(crate) fn progress_bar(closed: usize, total: usize, theme: &Theme) -> (String, Color) {
+pub(crate) fn progress_bar(
+    closed: usize,
+    total: usize,
+    theme: &Theme,
+    icons: &Icons,
+) -> (String, Color) {
     let pct = (closed as f32 / total as f32) * 100.0;
     let color = if pct <= 33.0 {
         theme.red
@@ -374,8 +381,8 @@ pub(crate) fn progress_bar(closed: usize, total: usize, theme: &Theme) -> (Strin
     (
         format!(
             "[{}{}] {:.0}%",
-            "█".repeat(filled_len),
-            "░".repeat(empty_len),
+            icons.progress_filled.repeat(filled_len),
+            icons.progress_empty.repeat(empty_len),
             pct,
         ),
         color,

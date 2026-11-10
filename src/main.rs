@@ -125,7 +125,10 @@ async fn main() -> Result<()> {
     let mut app = App::new();
     if let Some(ref tab_str) = cli.tab {
         match crate::app::Tab::from_str(tab_str) {
-            Some(tab) => app.active_tab = tab,
+            Some(tab) => {
+                app.active_tab = tab;
+                app.fall_back_from_hidden_tab();
+            }
             None => {
                 eprintln!(
                     "Error: --tab '{tab_str}' is not a recognised tab.\nValid values: dashboard, issues, mrs, pr, pipelines, jobs, runners, releases, todos, milestones, branches, environments, terminal."
@@ -234,18 +237,17 @@ async fn main() -> Result<()> {
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(
+        crate::fetch::spawn_refresh_shown_tab(
             &mut fx,
             &client,
-            &app.scope,
-            app.requested_state_queries(),
-            app.active_tab,
+            &mut app,
+            crate::dashboard::DashboardRefresh::Full,
             tx.clone(),
         );
         // If configured, queue background fetches for remaining enabled tabs
         // so a quick tab-switch lands on already-populated data.
         if app.config.prefetch_tabs {
-            spawn_refresh_all_tabs(&mut fx, &client, &app, tx.clone());
+            spawn_refresh_all_tabs(&mut fx, &client, &mut app, tx.clone());
         }
         spawn_fetch_repo_attributes(&mut fx, &client.muted(), &app.scope, tx);
     } else {

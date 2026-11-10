@@ -433,8 +433,8 @@ pub fn dispatch_state_query_refetch(
 }
 
 /// Fetch `tab`'s list in the background. The Dashboard has no list of its
-/// own: refreshing it fetches every list it summarizes, then reports
-/// `Event::DashboardRefreshed`.
+/// own and refreshes through `spawn_refresh_dashboard`, which reads the app
+/// to decide what to fetch.
 pub fn spawn_refresh_active_tab(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
@@ -463,35 +463,85 @@ pub async fn refresh_tab(
     }
     client.tx = None; // suppress terminal log for background fetches
     if tab == app::Tab::Dashboard {
-        refresh_dashboard(client, scope, states, tx).await;
+        let _ = tx.send(Event::DashboardRefreshed);
     } else {
         refresh_list(client, scope, states, tab, tx).await;
     }
 }
 
-/// Fetches every list the Dashboard summarizes, each reporting through its
-/// own tab's events, then reports `Event::DashboardRefreshed`.
-async fn refresh_dashboard(
-    client: domain::client::GitlabClient,
-    scope: crate::scope::Scope,
-    states: StateQueries,
+/// Refresh the tab on screen: its list, or on the Dashboard what `refresh`
+/// calls for.
+pub fn spawn_refresh_shown_tab(
+    fx: &mut Effects,
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    refresh: crate::dashboard::DashboardRefresh,
     tx: ScopedSender,
 ) {
-    let sources = app::Tab::dashboard_sources(&scope, client.backend.kind());
-    let mut fetches: Vec<_> = sources
-        .iter()
-        .filter(|source| source.is_fetchable_in(&scope))
+    if app.active_tab == app::Tab::Dashboard {
+        spawn_refresh_dashboard(fx, client, app, refresh, tx);
+    } else {
+        spawn_refresh_active_tab(
+            fx,
+            client,
+            &app.scope,
+            app.requested_state_queries(),
+            app.active_tab,
+            tx,
+        );
+    }
+}
+
+/// Refresh the Dashboard: fetch the lists and the activity feed `refresh`
+/// calls for, each list reporting through its own tab's events, then report
+/// `Event::DashboardRefreshed`. The lists it fetches are marked loading so
+/// switching to their tab meanwhile does not fetch them a second time.
+pub fn spawn_refresh_dashboard(
+    fx: &mut Effects,
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    refresh: crate::dashboard::DashboardRefresh,
+    tx: ScopedSender,
+) {
+    let plan = app.dashboard_fetch_plan(refresh);
+    app.start_loading_tab(app::Tab::Dashboard);
+    for tab in &plan.sources {
+        app.start_loading_tab(*tab);
+    }
+    if plan.reads_activity {
+        app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
+    }
+    fx.spawn(refresh_dashboard(
+        client.clone(),
+        app.scope.clone(),
+        app.requested_state_queries(),
+        plan,
+        tx,
+    ));
+}
+
+async fn refresh_dashboard(
+    mut client: domain::client::GitlabClient,
+    scope: crate::scope::Scope,
+    states: StateQueries,
+    plan: crate::dashboard::DashboardFetchPlan,
+    tx: ScopedSender,
+) {
+    client.tx = None;
+    let mut fetches: Vec<_> = plan
+        .sources
+        .into_iter()
         .map(|source| {
             tokio::spawn(refresh_list(
                 client.clone(),
                 scope.clone(),
                 states,
-                *source,
+                source,
                 tx.clone(),
             ))
         })
         .collect();
-    if scope.is_repository() {
+    if plan.reads_activity {
         fetches.push(spawn_contributions_fetch(&client, &scope, tx.clone()));
     }
     for fetch in fetches {
@@ -924,8 +974,9 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
 /// Kick off background fetches for `app`'s enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
 /// synchronous fetch), `Tab::Terminal` and `Tab::Dashboard`, which have
-/// no list of their own, the lists an active Dashboard has already
-/// fetched, and any tab whose data is already loaded.
+/// no list of their own, and any tab already loading or loaded. The tabs
+/// it queues are marked loading, so switching to one meanwhile, or the
+/// Dashboard reading what is missing, does not fetch it again.
 ///
 /// Each tab fetches through `refresh_tab` so it shares the existing
 /// per-tab error handling. The queue paces itself through
@@ -934,27 +985,26 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
 pub fn spawn_refresh_all_tabs(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
-    app: &app::App,
+    app: &mut app::App,
     tx: ScopedSender,
 ) {
     let client = client.clone();
     let scope = app.scope.clone();
     let states = app.requested_state_queries();
-    let fetched_by_active_tab: &[app::Tab] = if app.active_tab == app::Tab::Dashboard {
-        app::Tab::dashboard_sources(&scope, app.kind())
-    } else {
-        &[]
-    };
     let tabs: Vec<app::Tab> = app
         .available_tabs()
         .into_iter()
         .filter(|tab| {
             *tab != app.active_tab
                 && !matches!(tab, app::Tab::Terminal | app::Tab::Dashboard)
-                && !fetched_by_active_tab.contains(tab)
+                && tab.is_fetchable_in(&app.scope)
+                && !app.loading_tabs.contains(tab)
                 && !app.loaded_tabs.contains(tab)
         })
         .collect();
+    for tab in &tabs {
+        app.start_loading_tab(*tab);
+    }
     fx.spawn(async move {
         for tab in tabs {
             crate::backend::rate_limit::pace_bulk_operation().await;

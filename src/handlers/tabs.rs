@@ -1,7 +1,6 @@
 use crate::app::{App, Tab};
 use crate::effect::{Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event, ScopedSender};
-use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::{KeyPress, keybinding_matches};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -3344,7 +3343,11 @@ pub fn handle_active_tab_key(
 /// preview open.
 fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     use crate::dashboard::DashboardAction;
-    match app.enter_dashboard() {
+    let action = app.enter_dashboard();
+    if action != DashboardAction::Stay {
+        app.dashboard.leave();
+    }
+    match action {
         DashboardAction::Stay => {}
         DashboardAction::OpenPipeline(id) => {
             app.focus_pipeline(id);
@@ -3362,56 +3365,84 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effe
             fetch_for_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenIssue { project, iid } => {
-            if !app.focus_issue(Some(&project), iid)
-                && let Some(client) = app.gitlab_client.clone()
-            {
-                crate::fetch::spawn_fetch_issue(
-                    fx,
-                    &client,
-                    &project,
-                    iid,
-                    app.scoped_sender(tx.clone()),
-                );
+            let is_listed = match app.gitlab_client.clone() {
+                Some(client) => focus_or_fetch_issue(app, &client, &project, iid, tx, fx),
+                None => app.focus_issue(Some(&project), iid),
+            };
+            if is_listed {
+                maybe_fetch_related_mrs(app, tx);
+            } else {
+                app.issues.state.select(None);
             }
             app.detail_visible = true;
-            maybe_fetch_related_mrs(app, tx);
         }
         DashboardAction::OpenMr { project, iid } => {
-            if !app.focus_mr(Some(&project), iid)
-                && let Some(client) = app.gitlab_client.clone()
-            {
-                crate::fetch::spawn_fetch_mr(
-                    fx,
-                    &client,
-                    &project,
-                    iid,
-                    app.scoped_sender(tx.clone()),
-                );
+            let is_listed = match app.gitlab_client.clone() {
+                Some(client) => focus_or_fetch_mr(app, &client, &project, iid, tx, fx),
+                None => app.focus_mr(Some(&project), iid),
+            };
+            if is_listed {
+                maybe_fetch_mr_related_issues(app, tx);
+            } else {
+                app.mrs.state.select(None);
             }
             app.detail_visible = true;
-            maybe_fetch_mr_related_issues(app, tx);
         }
     }
+}
+
+/// Selects issue `iid` of `project` on the Issues tab, fetching it when the
+/// list does not hold it. Returns whether it was listed. Until a fetched
+/// issue arrives the selection is left where it was.
+pub(crate) fn focus_or_fetch_issue(
+    app: &mut App,
+    client: &crate::domain::client::GitlabClient,
+    project: &str,
+    iid: u64,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) -> bool {
+    if app.focus_issue(Some(project), iid) {
+        return true;
+    }
+    crate::fetch::spawn_fetch_issue(fx, client, project, iid, app.scoped_sender(tx.clone()));
+    false
+}
+
+/// `focus_or_fetch_issue` for an MR/PR on the MRs/PRs tab.
+pub(crate) fn focus_or_fetch_mr(
+    app: &mut App,
+    client: &crate::domain::client::GitlabClient,
+    project: &str,
+    iid: u64,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) -> bool {
+    if app.focus_mr(Some(project), iid) {
+        return true;
+    }
+    crate::fetch::spawn_fetch_mr(fx, client, project, iid, app.scoped_sender(tx.clone()));
+    false
 }
 
 /// Start what a tab needs once switched to: its list, unless it is loading
 /// or was already refreshed this session, and the linked MRs/issues of the
 /// highlighted issue or MR.
 fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if let Some(client) = &app.gitlab_client
+    if let Some(client) = app.gitlab_client.clone()
         && !app.loading_tabs.contains(&app.active_tab)
         && !app.refreshed_tabs.contains(&app.active_tab)
     {
         if !app.loaded_tabs.contains(&app.active_tab) {
             app.loading_tabs.insert(app.active_tab);
         }
-        spawn_refresh_active_tab(
+        let tx = app.scoped_sender(tx.clone());
+        crate::fetch::spawn_refresh_shown_tab(
             fx,
-            client,
-            &app.scope,
-            app.requested_state_queries(),
-            app.active_tab,
-            app.scoped_sender(tx.clone()),
+            &client,
+            app,
+            crate::dashboard::DashboardRefresh::Missing,
+            tx,
         );
     }
     match app.active_tab {

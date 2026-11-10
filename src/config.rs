@@ -283,6 +283,8 @@ pub struct Icons {
     pub pointer: String,
     pub todo_unread: String,
     pub todo_read: String,
+    pub progress_filled: String,
+    pub progress_empty: String,
 }
 
 impl Icons {
@@ -405,6 +407,8 @@ impl Icons {
             pointer: "❯".to_string(),
             todo_unread: "\u{f0e0}".to_string(),
             todo_read: "\u{f2b6}".to_string(),
+            progress_filled: "█".to_string(),
+            progress_empty: "░".to_string(),
         }
     }
 
@@ -529,6 +533,8 @@ impl Icons {
             pointer: ">".to_string(),
             todo_unread: "*".to_string(),
             todo_read: ".".to_string(),
+            progress_filled: "#".to_string(),
+            progress_empty: "-".to_string(),
         }
     }
 }

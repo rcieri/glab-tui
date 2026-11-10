@@ -41,6 +41,10 @@ impl BackendKind {
         matches!(self, BackendKind::GitLab)
     }
 
+    pub fn mr_reference_prefix(self) -> &'static str {
+        if self.is_github() { "#" } else { "!" }
+    }
+
     /// Pausing, resuming and renaming runners. GitHub's runner API has no
     /// pause, resume or description endpoint, so only GitLab can do it.
     pub fn supports_runner_management(self) -> bool {

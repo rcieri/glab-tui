@@ -2695,7 +2695,7 @@ pub(crate) fn render_tab_milestones(
                             // data, render a dash.
                             let (bar_text, color) =
                                 if let Some((closed, total)) = app.milestone_progress(m.iid) {
-                                    super::helpers::progress_bar(closed, total, theme)
+                                    super::helpers::progress_bar(closed, total, theme, ctx.icons)
                                 } else if app.selected_milestone_iid == Some(m.iid)
                                     && !app.milestone_issues_cache.contains_key(&m.iid)
                                 {

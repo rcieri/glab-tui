@@ -503,12 +503,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::DashboardRefreshed => {
             app.complete_loading_tab(app::Tab::Dashboard, "Success");
         }
-        Event::ContributionsFetched(result) => {
-            app.dashboard.contributions = match result {
-                Ok(history) => crate::dashboard::ContributionFeed::Loaded(history),
-                Err(reason) => crate::dashboard::ContributionFeed::Failed(reason),
-            };
-        }
+        Event::ContributionsFetched(result) => app.apply_contributions(result),
         Event::SelectorItemsFetched { request, items } => {
             if app.apply_selector_items(request, items) {
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);

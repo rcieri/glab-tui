@@ -1,12 +1,16 @@
 //! Commits, comments, review threads and reviews people made in a project,
 //! read from its activity feed (GitLab project events, GitHub repository
-//! events). Opening, merging and closing issues and MRs/PRs are left out:
-//! the issue and MR/PR lists already carry them.
+//! events). Opening and closing issues and MRs/PRs are left out: the issue
+//! and MR/PR lists already carry them. Merging one through the web UI shows
+//! up as an ordinary push by whoever clicked merge: the feed gives no way to
+//! tell a merge commit's push apart from any other, so it counts as a
+//! commit like any other push.
 
 use crate::domain::client::GitlabClient;
 use crate::scope::Scope;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use std::collections::HashSet;
 
 /// Feed events per page.
 pub const EVENTS_PER_PAGE: usize = 100;
@@ -39,8 +43,12 @@ pub struct ContributionHistory {
 
 impl ContributionHistory {
     /// Adds a page read newest first and keeps its contributions made after
-    /// `since`. Returns whether reading can stop: the page reached back to
-    /// `since`, or the feed has nothing older.
+    /// `since` and not already held. Offset paging can hand back an event a
+    /// previous page already carried when a new one arrives mid-read and
+    /// shifts every later page by one, so a page's events are also checked
+    /// against the ids already in `contributions`. Returns whether reading
+    /// can stop: the page reached back to `since`, or the feed has nothing
+    /// older.
     pub fn add_page(&mut self, page: FeedPage, since: DateTime<Utc>) -> bool {
         let reaches_since = page
             .oldest_at
@@ -48,12 +56,18 @@ impl ContributionHistory {
             .and_then(parse_time)
             .is_some_and(|oldest| oldest <= since);
         let is_last = page.event_count < EVENTS_PER_PAGE;
-        self.contributions.extend(
-            page.contributions
-                .into_iter()
-                .filter(|c| parse_time(&c.created_at).is_none_or(|at| at > since)),
-        );
-        self.cut_off_at = if reaches_since { None } else { page.oldest_at };
+        let known_ids: HashSet<&str> = self.contributions.iter().map(|c| c.id.as_str()).collect();
+        let kept: Vec<Contribution> = page
+            .contributions
+            .into_iter()
+            .filter(|c| c.made_at > since && !known_ids.contains(c.id.as_str()))
+            .collect();
+        self.contributions.extend(kept);
+        self.cut_off_at = if reaches_since || is_last {
+            None
+        } else {
+            page.oldest_at
+        };
         reaches_since || is_last
     }
 }
@@ -97,6 +111,10 @@ pub enum ContributionKind {
     Comment,
     /// A comment in a discussion thread or on a diff line.
     ThreadComment,
+    /// A verdict on an MR/PR: a GitLab approval, or a GitHub review whose
+    /// state is approved or changes requested. A GitHub review with no
+    /// verdict (state `commented`) is not a `Review`, since its inline
+    /// comments already arrive as `ThreadComment` events.
     Review,
 }
 
@@ -116,10 +134,16 @@ pub struct ContributionTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Contribution {
+    /// The feed event's id, carried through so `ContributionHistory` can
+    /// tell an event offset paging served twice from a genuinely new one.
+    pub id: String,
     pub author: String,
     pub kind: ContributionKind,
-    /// RFC 3339.
+    /// RFC 3339, for display.
     pub created_at: String,
+    /// `created_at` parsed once, so comparisons against a window's start
+    /// never reparse the same string on every frame.
+    pub made_at: DateTime<Utc>,
     /// The commit title, the comment's first line, or the review verdict.
     pub summary: String,
     pub target: Option<ContributionTarget>,
@@ -145,6 +169,8 @@ fn branch_name(r#ref: &str) -> &str {
 
 #[derive(Deserialize)]
 struct GlEvent {
+    #[serde(default)]
+    id: u64,
     action_name: String,
     #[serde(default)]
     author_username: String,
@@ -167,6 +193,8 @@ struct GlPushData {
     commit_count: u64,
     #[serde(default)]
     r#ref: Option<String>,
+    #[serde(default)]
+    ref_type: Option<String>,
     #[serde(default)]
     commit_to: Option<String>,
     #[serde(default)]
@@ -200,16 +228,20 @@ fn gitlab_target_kind(noteable_type: &str) -> Option<TargetKind> {
 }
 
 fn gitlab_contribution(event: GlEvent) -> Option<Contribution> {
+    let made_at = parse_time(&event.created_at)?;
+    let id = event.id.to_string();
     let base = |kind, summary, target, location| Contribution {
+        id: id.clone(),
         author: event.author_username.clone(),
         kind,
         created_at: event.created_at.clone(),
+        made_at,
         summary,
         target,
         location,
     };
     if let Some(push) = &event.push_data {
-        if push.commit_count == 0 {
+        if push.commit_count == 0 || push.ref_type.as_deref() == Some("tag") {
             return None;
         }
         let branch = push.r#ref.as_deref().unwrap_or_default();
@@ -271,6 +303,8 @@ pub fn parse_gitlab_events(raw: &str) -> anyhow::Result<FeedPage> {
 
 #[derive(Deserialize)]
 struct GhEvent {
+    #[serde(default)]
+    id: String,
     r#type: String,
     actor: GhActor,
     created_at: String,
@@ -289,6 +323,14 @@ struct GhPushPayload {
     r#ref: String,
     #[serde(default)]
     head: String,
+    /// Total commits in the push, including any the payload truncates out of
+    /// `commits`.
+    #[serde(default)]
+    size: Option<u64>,
+    /// Like `size` but excluding commits already known from a force-push,
+    /// GitHub's more accurate count when both are present.
+    #[serde(default)]
+    distinct_size: Option<u64>,
     #[serde(default)]
     commits: Vec<GhPushCommit>,
 }
@@ -342,6 +384,8 @@ struct GhReviewCommentPayload {
 
 #[derive(Deserialize)]
 struct GhReviewPayload {
+    #[serde(default)]
+    action: String,
     review: GhReview,
     pull_request: GhPullRequest,
 }
@@ -360,15 +404,23 @@ fn pull_request_target(pr: GhPullRequest) -> ContributionTarget {
     }
 }
 
-/// One feed event as contributions: a push yields one per commit it lists,
-/// or one for the push itself when the feed leaves the commits out.
+/// One feed event as contributions: a push yields one `Commit`, summarised
+/// like the GitLab parser (the newest commit's title plus a `(+N more)`
+/// suffix when more were pushed), or `"pushed to <branch>"` when the feed
+/// leaves the commits out.
 fn github_contributions(event: GhEvent) -> Vec<Contribution> {
+    let Some(made_at) = parse_time(&event.created_at) else {
+        return Vec::new();
+    };
+    let id = event.id;
     let author = event.actor.login;
     let created_at = event.created_at;
     let base = |kind, summary, target, location| Contribution {
+        id: id.clone(),
         author: author.clone(),
         kind,
         created_at: created_at.clone(),
+        made_at,
         summary,
         target,
         location,
@@ -378,8 +430,11 @@ fn github_contributions(event: GhEvent) -> Vec<Contribution> {
             let Ok(push) = serde_json::from_value::<GhPushPayload>(event.payload) else {
                 return Vec::new();
             };
+            if push.r#ref.starts_with("refs/tags/") {
+                return Vec::new();
+            }
             let branch = branch_name(&push.r#ref);
-            if push.commits.is_empty() {
+            let Some(newest) = push.commits.last() else {
                 return vec![base(
                     ContributionKind::Commit,
                     format!("pushed to {branch}"),
@@ -390,19 +445,22 @@ fn github_contributions(event: GhEvent) -> Vec<Contribution> {
                             .to_string(),
                     ),
                 )];
+            };
+            let commit_count = push
+                .distinct_size
+                .or(push.size)
+                .map_or(push.commits.len(), |n| n as usize)
+                .max(push.commits.len());
+            let mut summary = first_line(&newest.message);
+            if commit_count > 1 {
+                summary = format!("{summary} (+{} more)", commit_count - 1);
             }
-            push.commits
-                .iter()
-                .rev()
-                .map(|commit| {
-                    base(
-                        ContributionKind::Commit,
-                        first_line(&commit.message),
-                        None,
-                        Some(format!("{branch} {}", short_sha(&commit.sha))),
-                    )
-                })
-                .collect()
+            vec![base(
+                ContributionKind::Commit,
+                summary,
+                None,
+                Some(format!("{branch} {}", short_sha(&newest.sha))),
+            )]
         }
         "IssueCommentEvent" => {
             let Ok(payload) = serde_json::from_value::<GhIssueCommentPayload>(event.payload) else {
@@ -443,10 +501,13 @@ fn github_contributions(event: GhEvent) -> Vec<Contribution> {
             let Ok(payload) = serde_json::from_value::<GhReviewPayload>(event.payload) else {
                 return Vec::new();
             };
+            if payload.action != "created" {
+                return Vec::new();
+            }
             let verdict = match payload.review.state.to_lowercase().as_str() {
                 "approved" => "approved",
                 "changes_requested" => "requested changes",
-                _ => "reviewed",
+                _ => return Vec::new(),
             };
             vec![base(
                 ContributionKind::Review,
@@ -478,10 +539,13 @@ mod tests {
         FeedPage {
             contributions: times
                 .iter()
-                .map(|at| Contribution {
+                .enumerate()
+                .map(|(i, at)| Contribution {
+                    id: i.to_string(),
                     author: "ada".to_string(),
                     kind: ContributionKind::Commit,
                     created_at: at.to_string(),
+                    made_at: parse_time(at).expect("valid time"),
                     summary: String::new(),
                     target: None,
                     location: None,
@@ -524,10 +588,66 @@ mod tests {
     }
 
     #[test]
-    fn a_short_page_ends_the_feed_even_before_since() {
+    fn a_short_page_ends_the_feed_even_before_since_with_no_cut_off() {
         let mut history = ContributionHistory::default();
 
-        assert!(history.add_page(page(&["2026-10-05T00:00:00Z"], 1), since()));
+        let is_done = history.add_page(page(&["2026-10-05T00:00:00Z"], 1), since());
+
+        assert!(is_done);
+        assert_eq!(history.cut_off_at, None);
+    }
+
+    #[test]
+    fn a_duplicate_event_id_across_pages_is_counted_once() {
+        let mut history = ContributionHistory::default();
+        let commit = |id: &str, at: &str| Contribution {
+            id: id.to_string(),
+            author: "ada".to_string(),
+            kind: ContributionKind::Commit,
+            created_at: at.to_string(),
+            made_at: parse_time(at).expect("valid time"),
+            summary: String::new(),
+            target: None,
+            location: None,
+        };
+
+        history.add_page(
+            FeedPage {
+                contributions: vec![commit("2", "2026-10-05T00:00:00Z")],
+                event_count: EVENTS_PER_PAGE,
+                oldest_at: Some("2026-10-05T00:00:00Z".to_string()),
+            },
+            since(),
+        );
+        history.add_page(
+            FeedPage {
+                contributions: vec![
+                    commit("2", "2026-10-05T00:00:00Z"),
+                    commit("3", "2026-10-04T00:00:00Z"),
+                ],
+                event_count: EVENTS_PER_PAGE,
+                oldest_at: Some("2026-10-04T00:00:00Z".to_string()),
+            },
+            since(),
+        );
+
+        assert_eq!(history.contributions.len(), 2);
+    }
+
+    #[test]
+    fn a_gitlab_tag_push_produces_no_contribution() {
+        let raw = r#"[
+            {"id": 1, "action_name": "pushed to", "author_username": "ada", "created_at": "2026-10-05T00:00:00Z",
+             "push_data": {"commit_count": 1, "ref": "refs/tags/v1.0.0", "ref_type": "tag",
+                           "commit_to": "abc", "commit_title": "v1.0.0"}}
+        ]"#;
+
+        assert!(
+            parse_gitlab_events(raw)
+                .expect("valid events")
+                .contributions
+                .is_empty()
+        );
     }
 
     #[test]
@@ -562,37 +682,46 @@ mod tests {
                 title: title.to_string(),
             })
         };
+        let made_at = |at: &str| parse_time(at).expect("valid time");
         assert_eq!(
             contributions,
             vec![
                 Contribution {
+                    id: "0".to_string(),
                     author: "ada".to_string(),
                     kind: ContributionKind::Commit,
                     created_at: "2026-10-05T00:00:00Z".to_string(),
+                    made_at: made_at("2026-10-05T00:00:00Z"),
                     summary: "Fix parser (+2 more)".to_string(),
                     target: None,
                     location: Some("fix/parser 01234567".to_string()),
                 },
                 Contribution {
+                    id: "0".to_string(),
                     author: "bob".to_string(),
                     kind: ContributionKind::ThreadComment,
                     created_at: "2026-10-04T00:00:00Z".to_string(),
+                    made_at: made_at("2026-10-04T00:00:00Z"),
                     summary: "Why not a match?".to_string(),
                     target: target(TargetKind::MergeRequest, 7, "Fix parser"),
                     location: Some("src/parser.rs".to_string()),
                 },
                 Contribution {
+                    id: "0".to_string(),
                     author: "bob".to_string(),
                     kind: ContributionKind::Comment,
                     created_at: "2026-10-03T00:00:00Z".to_string(),
+                    made_at: made_at("2026-10-03T00:00:00Z"),
                     summary: "Reproduced".to_string(),
                     target: target(TargetKind::Issue, 3, "Crash"),
                     location: None,
                 },
                 Contribution {
+                    id: "0".to_string(),
                     author: "cy".to_string(),
                     kind: ContributionKind::Review,
                     created_at: "2026-10-02T00:00:00Z".to_string(),
+                    made_at: made_at("2026-10-02T00:00:00Z"),
                     summary: "approved".to_string(),
                     target: target(TargetKind::MergeRequest, 7, "Fix parser"),
                     location: None,
@@ -602,7 +731,54 @@ mod tests {
     }
 
     #[test]
-    fn github_events_become_contributions_and_a_push_without_commits_stays_one() {
+    fn a_github_tag_push_produces_no_contribution() {
+        let raw = r#"[
+            {"type": "PushEvent", "actor": {"login": "ada"}, "created_at": "2026-10-05T00:00:00Z",
+             "payload": {"ref": "refs/tags/v2.0.0", "head": "aaaaaaaaaa"}}
+        ]"#;
+
+        assert!(
+            parse_github_events(raw)
+                .expect("valid events")
+                .contributions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_dismissed_github_review_produces_no_contribution() {
+        let raw = r#"[
+            {"type": "PullRequestReviewEvent", "actor": {"login": "cy"}, "created_at": "2026-10-03T00:00:00Z",
+             "payload": {"action": "dismissed", "review": {"state": "approved"},
+                         "pull_request": {"number": 9, "title": "Add cache"}}}
+        ]"#;
+
+        assert!(
+            parse_github_events(raw)
+                .expect("valid events")
+                .contributions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_github_review_with_no_verdict_produces_no_contribution() {
+        let raw = r#"[
+            {"type": "PullRequestReviewEvent", "actor": {"login": "cy"}, "created_at": "2026-10-03T00:00:00Z",
+             "payload": {"action": "created", "review": {"state": "commented"},
+                         "pull_request": {"number": 9, "title": "Add cache"}}}
+        ]"#;
+
+        assert!(
+            parse_github_events(raw)
+                .expect("valid events")
+                .contributions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn github_events_become_contributions_and_each_push_is_one_commit_contribution() {
         let raw = r#"[
             {"type": "PushEvent", "actor": {"login": "ada"}, "created_at": "2026-10-06T00:00:00Z",
              "payload": {"ref": "refs/heads/main", "head": "fedcba9876543210",
@@ -621,7 +797,7 @@ mod tests {
              "payload": {"comment": {"body": "nit", "path": "src/cache.rs"},
                          "pull_request": {"number": 9, "title": "Add cache"}}},
             {"type": "PullRequestReviewEvent", "actor": {"login": "cy"}, "created_at": "2026-10-03T00:00:00Z",
-             "payload": {"review": {"state": "changes_requested"},
+             "payload": {"action": "created", "review": {"state": "changes_requested"},
                          "pull_request": {"number": 9, "title": "Add cache"}}},
             {"type": "WatchEvent", "actor": {"login": "dee"}, "created_at": "2026-10-01T00:00:00Z",
              "payload": {}}
@@ -646,8 +822,7 @@ mod tests {
         assert_eq!(
             shown,
             vec![
-                "ada Commit Second | main 22222222 | ",
-                "ada Commit First | main 11111111 | ",
+                "ada Commit Second (+1 more) | main 22222222 | ",
                 "ada Commit pushed to dev | dev abcdef01 | ",
                 "bob Comment LGTM |  | #9",
                 "cy ThreadComment nit | src/cache.rs | #9",

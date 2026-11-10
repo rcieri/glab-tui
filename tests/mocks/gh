@@ -186,8 +186,10 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/jobs"* ]]; then
         echo '{"jobs": [{"id": 54321, "status": "completed", "conclusion": "success", "name": "rspec"}]}'
     else
-        echo "{}"
+        echo "mock: unhandled: $*" >&2
+        exit 2
     fi
 else
-    echo "[]"
+    echo "mock: unhandled: $*" >&2
+    exit 2
 fi

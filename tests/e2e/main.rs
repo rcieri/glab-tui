@@ -686,6 +686,28 @@ impl TestSession {
         ))
     }
 
+    /// Feeds output to the emulator until the CLI mocks have logged `count`
+    /// calls containing `expected`. For calls the app makes more than once.
+    pub fn wait_for_cli_call_count(
+        &mut self,
+        expected: &str,
+        count: usize,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if self.get_cli_calls().matches(expected).count() >= count {
+                return Ok(());
+            }
+            self.settle(10);
+        }
+        Err(format!(
+            "Timeout waiting for {count} CLI calls containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
+            self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
+    }
+
     /// Feeds output to the emulator until the screen no longer contains
     /// `gone`, for a state change that removes text rather than adds it.
     ///

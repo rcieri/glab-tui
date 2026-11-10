@@ -3,8 +3,10 @@
 pub mod app;
 pub mod backend;
 pub mod cli;
+pub mod column_order;
 pub mod command_log;
 pub mod config;
+pub mod configure_view;
 pub mod custom_commands;
 pub mod domain;
 pub mod editor;

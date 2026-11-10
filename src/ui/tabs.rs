@@ -165,6 +165,7 @@ pub(crate) fn render_tab_issues(
             App::issue_filter_values,
         );
 
+        let permutation = app.column_permutation(Tab::Issues);
         let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
             let is_selected = app.issues.state.selected() == Some(idx);
             let is_checked = app
@@ -383,6 +384,7 @@ pub(crate) fn render_tab_issues(
                     Style::default()
                 },
             ));
+            let mut cells = crate::column_order::permute(cells, &permutation);
             cells.insert(0, bar_cell);
             Row::new(cells).style(row_style).height(1)
         });
@@ -445,9 +447,8 @@ pub(crate) fn render_tab_issues(
             widths.push(col_w(content_area.width, 18));
         }
 
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
-        }
+        let header_cells = crate::column_order::permute_after(header_cells, 1, &permutation);
+        let widths = crate::column_order::permute_after(widths, 1, &permutation);
 
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
@@ -556,6 +557,7 @@ pub(crate) fn render_tab_merge_requests(
             App::mr_filter_values,
         );
 
+        let permutation = app.column_permutation(Tab::MergeRequests);
         let rows = filtered_mrs.iter().enumerate().map(|(idx, m)| {
             let is_selected = app.mrs.state.selected() == Some(idx);
             let is_checked = app.selected_mrs.contains(&(m.project_path.clone(), m.iid));
@@ -1107,6 +1109,7 @@ pub(crate) fn render_tab_merge_requests(
                     Style::default()
                 },
             ));
+            let mut cells = crate::column_order::permute(cells, &permutation);
             cells.insert(0, bar_cell);
             Row::new(cells).style(row_style).height(1)
         });
@@ -1206,9 +1209,8 @@ pub(crate) fn render_tab_merge_requests(
             widths.push(col_w(content_area.width, 18));
         }
 
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
-        }
+        let header_cells = crate::column_order::permute_after(header_cells, 1, &permutation);
+        let widths = crate::column_order::permute_after(widths, 1, &permutation);
 
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
@@ -1366,6 +1368,7 @@ pub(crate) fn render_tab_pipelines(
             .collect();
         filtered_pipelines.extend(pending_rows.iter());
 
+        let permutation = app.column_permutation(Tab::Pipelines);
         let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {
             let is_row_highlighted = app.pipelines.state.selected() == Some(idx);
             let (status_text, status_color, bg_color) = match p.status() {
@@ -1571,6 +1574,7 @@ pub(crate) fn render_tab_pipelines(
                     Style::default()
                 },
             ));
+            let mut row_cells = crate::column_order::permute(row_cells, &permutation);
             row_cells.insert(0, bar_cell);
             Row::new(row_cells).style(row_style).height(1)
         });
@@ -1637,9 +1641,8 @@ pub(crate) fn render_tab_pipelines(
             widths.push(Constraint::Fill(1));
         }
 
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
-        }
+        let header_cells = crate::column_order::permute_after(header_cells, 1, &permutation);
+        let widths = crate::column_order::permute_after(widths, 1, &permutation);
 
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
@@ -1732,6 +1735,7 @@ pub(crate) fn render_tab_jobs(
             App::job_filter_values,
         );
 
+        let permutation = app.column_permutation(Tab::Jobs);
         let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
             let (matrix_display, status_text_display, status_color_display, status_bg_display) = {
                 let (status_text, status_color, bg_color) = match j.status() {
@@ -1905,6 +1909,7 @@ pub(crate) fn render_tab_jobs(
                     Style::default()
                 },
             ));
+            let mut row_cells = crate::column_order::permute(row_cells, &permutation);
             row_cells.insert(0, bar_cell);
             Row::new(row_cells).style(row_style).height(1)
         });
@@ -1954,9 +1959,8 @@ pub(crate) fn render_tab_jobs(
             widths.push(Constraint::Length(14));
         }
 
-        if widths.is_empty() {
-            widths.push(Constraint::Min(0));
-        }
+        let header_cells = crate::column_order::permute_after(header_cells, 1, &permutation);
+        let widths = crate::column_order::permute_after(widths, 1, &permutation);
 
         let kind = ctx.kind;
         let jobs_title = Tab::Jobs.title(kind, ctx.icons);
@@ -2345,6 +2349,7 @@ pub(crate) fn render_tab_todos(
             Tab::Todos,
             |n, col| App::todo_filter_values(n, col, kind),
         );
+        let permutation = app.column_permutation(Tab::Todos);
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
             let is_checked = app.selected_todos.contains(&n.id);
@@ -2441,6 +2446,7 @@ pub(crate) fn render_tab_todos(
             } else {
                 Style::default()
             };
+            let row_cells = crate::column_order::permute_after(row_cells, 1, &permutation);
             Row::new(row_cells).style(row_style).height(1)
         });
 
@@ -2477,6 +2483,8 @@ pub(crate) fn render_tab_todos(
             header_cells.push(header("Updated"));
             widths.push(Constraint::Length(16));
         }
+        let header_cells = crate::column_order::permute_after(header_cells, 1, &permutation);
+        let widths = crate::column_order::permute_after(widths, 1, &permutation);
 
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
@@ -2585,7 +2593,7 @@ pub(crate) fn render_tab_milestones(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
-        let cols = Tab::Milestones.columns(ctx.kind, app.scope.is_group());
+        let cols = app.ordered_columns(Tab::Milestones);
         let sort = app.sort_for(Tab::Milestones);
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
@@ -4006,6 +4014,74 @@ mod tests {
             "{env_header}"
         );
     }
+
+    #[test]
+    fn table_headers_follow_the_saved_column_order() {
+        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        let mut terminal = Terminal::new(TestBackend::new(400, 12)).unwrap();
+        let renderers: [(Tab, TabRenderer); 6] = [
+            (Tab::Issues, render_tab_issues),
+            (Tab::MergeRequests, render_tab_merge_requests),
+            (Tab::Pipelines, render_tab_pipelines),
+            (Tab::Jobs, render_tab_jobs),
+            (Tab::Todos, render_tab_todos),
+            (Tab::Milestones, render_tab_milestones),
+        ];
+        for (tab, render) in renderers {
+            let mut app = App::default();
+            app.active_tab = tab;
+            let columns = tab.columns(ctx.kind, false);
+            app.enabled_columns
+                .insert(tab, columns.iter().map(|c| c.to_string()).collect());
+            let reversed: Vec<String> = columns.iter().rev().map(|c| c.to_string()).collect();
+            app.column_order.insert(tab, reversed.clone());
+            match tab {
+                Tab::Jobs => {
+                    app.jobs.items = serde_json::from_value(serde_json::json!([
+                        { "id": 1, "status": "success", "stage": "build", "name": "compile" }
+                    ]))
+                    .unwrap();
+                }
+                Tab::Todos => app.todos.items = vec![Default::default()],
+                Tab::Milestones => app.milestones.items = vec![Default::default()],
+                _ => {}
+            }
+
+            terminal
+                .draw(|f| {
+                    let area = f.area();
+                    render(
+                        f,
+                        ctx,
+                        &mut app,
+                        Rect::new(0, 0, area.width, 6),
+                        Rect::new(0, 6, area.width, 6),
+                        Block::default(),
+                    );
+                })
+                .unwrap();
+
+            let header = buffer_rows(&terminal)
+                .into_iter()
+                .find(|row| row.contains("ID "))
+                .map(|row| format!(" {row}"))
+                .unwrap_or_else(|| panic!("{tab:?}: no header row"));
+            let positions: Vec<usize> = reversed
+                .iter()
+                .map(|label| {
+                    header
+                        .find(&format!(" {label} "))
+                        .unwrap_or_else(|| panic!("{tab:?}: no {label} in {header:?}"))
+                })
+                .collect();
+            assert!(
+                positions.windows(2).all(|pair| pair[0] < pair[1]),
+                "{tab:?}: {header:?}"
+            );
+        }
+    }
+
+    type TabRenderer = fn(&mut Frame, &RenderCtx<'_>, &mut App, Rect, Rect, Block<'_>);
 
     #[test]
     fn render_tab_environments_strips_escape_sequences_from_url() {

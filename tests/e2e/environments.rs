@@ -150,7 +150,7 @@ const DEPLOYMENT_LOG_HELP: &str = "Open the selected deployment's job log";
 /// move on to staging, whose deployments are not listed.
 fn session_showing_staging_actions(is_github: bool) -> TestSession {
     let mut session =
-        TestSession::with_config(is_github, 40, 160, Some("active_tab = \"environments\"\n"));
+        TestSession::with_config(is_github, 50, 160, Some("active_tab = \"environments\"\n"));
     session
         .wait_for_screen_contains("staging", 30000)
         .expect("the Environments tab lists the fixture environments");

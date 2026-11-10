@@ -1,3 +1,7 @@
+mod layout;
+
+pub use layout::{LayoutConfig, PaneSize, PreviewPlacement, parse_tab_name};
+
 use crate::utils::private_fs;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
@@ -816,6 +820,13 @@ fn merge_toml_values(base: &mut toml::Value, overrides: toml::Value) {
     }
 }
 
+/// Rewrites one parsed config file into the shape `Config` reads, before it
+/// is merged with the others.
+fn normalize_config_file(file: &mut toml::Value) {
+    normalize_custom_keybindings(file);
+    layout::migrate_legacy_keys(file);
+}
+
 /// Renames gh-dash's `custom_keybindings.prs` table to `mrs` in one parsed
 /// file, appending to `mrs` when the file has both. Done per file before
 /// merging, because a merged value holding both keys is a duplicate field for
@@ -1084,6 +1095,10 @@ pub struct KeybindingGlobal {
     pub sort_prev: String,
     #[serde(default = "def_sort_reverse")]
     pub sort_reverse: String,
+    #[serde(default = "def_toggle_nav")]
+    pub toggle_nav: String,
+    #[serde(default = "def_toggle_terminal_pane")]
+    pub toggle_terminal_pane: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1565,6 +1580,8 @@ keybind_defaults! {
     def_sort_next = ">",
     def_sort_prev = "<",
     def_sort_reverse = "=",
+    def_toggle_nav = "Alt+n",
+    def_toggle_terminal_pane = "Alt+t",
     def_submit_edit = "Ctrl+x",
     def_copy_branch = "y",
     def_retry_failed = "R",
@@ -1599,6 +1616,8 @@ impl Default for KeybindingGlobal {
             sort_next: def_sort_next(),
             sort_prev: def_sort_prev(),
             sort_reverse: def_sort_reverse(),
+            toggle_nav: def_toggle_nav(),
+            toggle_terminal_pane: def_toggle_terminal_pane(),
         }
     }
 }
@@ -1848,24 +1867,6 @@ fn def_command_timeout_seconds() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct UiConfig {
-    pub sidebar_width: u16,
-    pub sidebar_visible: bool,
-    pub terminal_pane_visible: bool,
-}
-
-impl Default for UiConfig {
-    fn default() -> Self {
-        Self {
-            sidebar_width: 22,
-            sidebar_visible: true,
-            terminal_pane_visible: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Config {
     pub backend: Option<crate::backend::BackendKind>,
     pub theme_preset: Option<String>,
@@ -1897,8 +1898,7 @@ pub struct Config {
     pub command_timeout_seconds: u64,
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
-    pub disabled_tabs: Option<Vec<String>>,
-    pub ui: UiConfig,
+    pub layout: LayoutConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1928,8 +1928,7 @@ impl Default for Config {
             prefetch_tabs: def_prefetch_tabs(),
             command_timeout_seconds: def_command_timeout_seconds(),
             icons: IconSet::default(),
-            disabled_tabs: None,
-            ui: UiConfig::default(),
+            layout: LayoutConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -2058,6 +2057,8 @@ jump_to_id = "g"
 sort_next = ">"
 sort_prev = "<"
 sort_reverse = "="
+toggle_nav = "Alt+n"
+toggle_terminal_pane = "Alt+t"
 
 [keybindings.issues]
 create_issue = "n"
@@ -2185,9 +2186,29 @@ inspect_command = "Enter"
 rerun_command = "r"
 cycle_status_filter = "s"
 
-# Tabs to disable/hide from the sidebar.
-# Uncomment to disable specific tabs:
-# disabled_tabs = ["Runners", "Terminal"]
+# Tabs, panes and their sizes. The Configure View (`Tab`) edits all of these
+# and its Save View button writes them here.
+# [layout]
+# Tabs to show, in order. A tab left out is hidden; unset shows every tab.
+# Names: issues, mrs, pipelines, jobs, runners, releases, todos, milestones,
+# branches, environments, terminal.
+# tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
+# nav_visible = true            # navigation sidebar (toggle_nav, Alt+n)
+# nav_width = 22
+# nav_min_width = 80            # the sidebar hides on narrower terminals
+# preview = "right"             # right | bottom | auto (bottom when narrow) | off
+# preview_width = "auto"        # "auto", cells (40) or a percentage ("35%")
+# preview_height = "auto"       # height of a bottom preview; auto is half
+# preview_min_width = 90        # narrower: a right preview hides, auto goes below
+# terminal_pane_visible = true  # compact terminal pane (toggle_terminal_pane, Alt+t)
+# terminal_pane_height = 6
+# terminal_pane_min_height = 18 # the terminal pane hides on shorter terminals
+#
+# `disabled_tabs = [...]` and the `[ui]` keys sidebar_visible, sidebar_width and
+# terminal_pane_visible are deprecated and will be removed in the next minor
+# release. Until then they are read from a file whose [layout] does not set the
+# same thing: disabled_tabs becomes `tabs` without those tabs. Saving from the
+# Configure View writes [layout] and removes them from the file it saves to.
 
 # Per-pane column config (unset = show all columns)
 # [issues]
@@ -2246,7 +2267,7 @@ cycle_status_filter = "s"
         let path = Self::config_path();
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_custom_keybindings(&mut global_val);
+                normalize_config_file(&mut global_val);
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
@@ -2276,7 +2297,7 @@ cycle_status_filter = "s"
                         if let Ok(mut workspace_val) =
                             toml::from_str::<toml::Value>(&workspace_contents)
                         {
-                            normalize_custom_keybindings(&mut workspace_val);
+                            normalize_config_file(&mut workspace_val);
                             merge_toml_values(&mut merged_value, workspace_val);
                         }
                     }
@@ -2359,7 +2380,7 @@ impl Config {
         let path = Self::config_path();
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_custom_keybindings(&mut global_val);
+                normalize_config_file(&mut global_val);
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
@@ -2457,6 +2478,14 @@ impl Config {
         } else {
             table.remove("prefetch_tabs");
         }
+
+        let layout_diff = self.layout.diff_from(&base_config.layout);
+        if layout_diff.is_empty() {
+            table.remove("layout");
+        } else {
+            table.insert("layout".to_string(), toml::Value::Table(layout_diff));
+        }
+        layout::remove_legacy_keys(table);
 
         fn pane_to_value(pane: &PaneConfig) -> toml::Value {
             let mut table = toml::Table::new();
@@ -2899,6 +2928,44 @@ page_size = 250
         "#;
         let config_false: Config = toml::from_str(toml_false).unwrap();
         assert!(!config_false.prefetch_tabs);
+    }
+
+    #[test]
+    fn save_layout_writes_layout_and_drops_deprecated_keys() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let path = Config::config_path();
+        private_fs::write(
+            &path,
+            "disabled_tabs = [\"Runners\"]\n[ui]\nsidebar_visible = false\n",
+        )
+        .unwrap();
+
+        let mut config = Config::load();
+        assert!(!config.layout.nav_visible);
+        assert!(
+            !config
+                .layout
+                .tabs
+                .as_ref()
+                .unwrap()
+                .contains(&crate::app::Tab::Runners)
+        );
+
+        config.layout.tabs = Some(vec![
+            crate::app::Tab::MergeRequests,
+            crate::app::Tab::Issues,
+        ]);
+        config.layout.preview = PreviewPlacement::Bottom;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let written: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(!written.contains_key("disabled_tabs"));
+        assert!(!written.contains_key("ui"));
+        let reloaded = Config::load();
+        assert_eq!(reloaded.layout, config.layout);
     }
 
     #[test]

@@ -473,296 +473,33 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             };
         let tab = app.active_tab;
         let kind = ctx.kind;
-        let cols = tab.columns(kind, app.scope.is_group());
+        let rows = crate::configure_view::configure_rows(app);
+        let active_idx = active_idx.min(rows.len().saturating_sub(1));
+        let width: u16 = 64;
+        let inner_w = width.saturating_sub(2) as usize;
 
-        let group_cols: Vec<&str> = cols.to_vec();
-
-        let cols_end = cols.len();
-        let group_end = cols_end + group_cols.len();
-        let order_end = group_end + 2;
-        let page_size_idx = order_end;
-        let prefetch_idx = page_size_idx + 1;
-        let theme_idx = prefetch_idx + 1;
-        let save_end = theme_idx + 1;
-
-        // Build the entire Configure view as one flat, scrollable list so the
-        // section headers scroll together with their items.
+        // One flat, scrollable list so the section headings scroll with
+        // their rows.
         let mut lines: Vec<(Option<usize>, ListItem)> = Vec::new();
         let mut active_line: Option<usize> = None;
-
-        let t = &ctx.theme;
-
-        // COLUMNS header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} COLUMNS", icons.label_columns)).style(
-                Style::default()
-                    .fg(t.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ));
-
-        for (i, col) in cols.iter().enumerate() {
-            let logical = i;
-            let checked = app.is_column_visible(tab, col);
-            let filter_count = app
-                .get_column_filter(tab, col)
-                .map(|s| s.len())
-                .filter(|&n| n > 0);
-            let text = if let Some(count) = filter_count {
-                format!(
-                    "  [{}] {} ({})",
-                    if checked { "x" } else { " " },
-                    col,
-                    count
-                )
-            } else {
-                format!("  [{}] {}", if checked { "x" } else { " " }, col)
-            };
-            let is_active = logical == active_idx;
+        let mut section = None;
+        for (idx, row) in rows.iter().copied().enumerate() {
+            if section != Some(row.section()) {
+                if section.is_some() {
+                    lines.push((None, ListItem::new("")));
+                }
+                section = Some(row.section());
+                if let Some(heading) = configure_heading(ctx, row.section()) {
+                    lines.push((None, heading));
+                }
+            }
+            let is_active = idx == active_idx;
             if is_active {
                 active_line = Some(lines.len());
             }
-            let style = if is_active {
-                Style::default()
-                    .fg(t.highlight_bg)
-                    .bg(t.border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else if checked {
-                Style::default().fg(t.text_normal)
-            } else {
-                Style::default().fg(t.text_muted)
-            };
-            lines.push((Some(logical), ListItem::new(text).style(style)));
+            let item = configure_row_item(app, ctx, row, is_active, editing_page_size, inner_w);
+            lines.push((Some(idx), item));
         }
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // GROUP BY header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} GROUP BY", icons.label_group))
-                .style(Style::default().fg(t.green).add_modifier(Modifier::BOLD)),
-        ));
-
-        for (j, col) in group_cols.iter().enumerate() {
-            let logical = cols_end + j;
-            let is_selected =
-                app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
-            let text = format!(
-                "  {} {}",
-                if is_selected {
-                    &icons.radio_on
-                } else {
-                    &icons.radio_off
-                },
-                col
-            );
-            let is_active = logical == active_idx;
-            if is_active {
-                active_line = Some(lines.len());
-            }
-            let style = if is_active {
-                Style::default()
-                    .fg(t.highlight_bg)
-                    .bg(t.border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(t.green)
-            } else {
-                Style::default().fg(t.text_normal)
-            };
-            lines.push((Some(logical), ListItem::new(text).style(style)));
-        }
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // ORDER header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} ORDER", icons.label_order))
-                .style(Style::default().fg(t.yellow).add_modifier(Modifier::BOLD)),
-        ));
-
-        for (i, label) in ["Ascending", "Descending"].iter().enumerate() {
-            let logical = group_end + i;
-            let is_selected = app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
-            let text = format!(
-                " {} {}",
-                if is_selected {
-                    &icons.radio_on
-                } else {
-                    &icons.radio_off
-                },
-                label
-            );
-            let is_active = logical == active_idx;
-            if is_active {
-                active_line = Some(lines.len());
-            }
-            let style = if is_active {
-                Style::default()
-                    .fg(t.highlight_bg)
-                    .bg(t.border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(t.yellow)
-            } else {
-                Style::default().fg(t.text_normal)
-            };
-            lines.push((Some(logical), ListItem::new(text).style(style)));
-        }
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // Page Size — inline row (icon + label in header_fg, value in text_normal)
-        let is_page_size_active = active_idx == page_size_idx;
-        let page_size_value = if editing_page_size {
-            format!("[ {}| ]", app.page_size_input)
-        } else {
-            format!("[ {} ]", app.page_size)
-        };
-        let page_size_style = if editing_page_size {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.green)
-                .add_modifier(Modifier::BOLD)
-        } else if is_page_size_active {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_normal)
-        };
-        let page_size_line = if is_page_size_active || editing_page_size {
-            Line::from(Span::styled(
-                format!(
-                    " {} Page Size      {} ",
-                    icons.label_page_size, page_size_value
-                ),
-                page_size_style,
-            ))
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} Page Size      ", icons.label_page_size),
-                    Style::default()
-                        .fg(t.header_fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(page_size_value, Style::default().fg(t.text_normal)),
-            ])
-        };
-        if is_page_size_active {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(page_size_idx),
-            ListItem::new(page_size_line).style(page_size_style),
-        ));
-
-        // Prefetch Tabs — inline row (icon + label in header_fg, value in text_normal)
-        let is_prefetch_active = active_idx == prefetch_idx;
-        let prefetch_value = format!("[ {} ]", app.config.prefetch_tabs);
-        let prefetch_style = if is_prefetch_active {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_normal)
-        };
-        let prefetch_line = if is_prefetch_active {
-            Line::from(Span::styled(
-                format!(
-                    " {} Prefetch Tabs  {} ",
-                    icons.label_fetching, prefetch_value
-                ),
-                prefetch_style,
-            ))
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} Prefetch Tabs  ", icons.label_fetching),
-                    Style::default()
-                        .fg(t.header_fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(prefetch_value, Style::default().fg(t.text_normal)),
-            ])
-        };
-        if is_prefetch_active {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(prefetch_idx),
-            ListItem::new(prefetch_line).style(prefetch_style),
-        ));
-
-        // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
-        let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
-        let is_theme_active = active_idx == theme_idx;
-        let theme_value = format!("[ {current_theme_name} ]");
-        let theme_style = if is_theme_active {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_normal)
-        };
-        let theme_line = if is_theme_active {
-            Line::from(Span::styled(
-                format!(" {} Theme          {} ", icons.label_theme, theme_value),
-                theme_style,
-            ))
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} Theme          ", icons.label_theme),
-                    Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(theme_value, Style::default().fg(t.text_normal)),
-            ])
-        };
-        if is_theme_active {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(theme_idx),
-            ListItem::new(theme_line).style(theme_style),
-        ));
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // Save button — no header, centered in the inner area
-        let is_save_selected = active_idx == save_end;
-        let width: u16 = 64;
-        let inner_w = width.saturating_sub(2) as usize; // -2 for borders
-        let save_label = format!("{} Save View", icons.label_save);
-        let save_visible_width = save_label.chars().count();
-        let save_left_pad = (inner_w.saturating_sub(save_visible_width)) / 2;
-        let save_button_text = format!("{:pad$}{}", "", save_label, pad = save_left_pad);
-        let save_button_style = if is_save_selected {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_muted)
-        };
-        if is_save_selected {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(save_end),
-            ListItem::new(save_button_text).style(save_button_style),
-        ));
 
         // Grow the popup with content, but cap it so the whole list scrolls
         // within the available terminal height (headers included).
@@ -790,6 +527,11 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 Style::default()
                     .fg(ctx.theme.border_focused)
                     .add_modifier(Modifier::BOLD),
+            )
+            .title_bottom(
+                Line::from(" Space toggle | J/K move | h/l change | Tab next section ")
+                    .centered()
+                    .style(Style::default().fg(ctx.theme.text_muted)),
             );
 
         clear_area(f, ctx, area);
@@ -797,10 +539,23 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
         let inner_area = checklist_block.inner(area);
 
+        let line_rows: Vec<Option<usize>> = lines.iter().map(|(row, _)| *row).collect();
         let items: Vec<ListItem> = lines.into_iter().map(|(_, li)| li).collect();
         let mut state = ListState::default();
         state.select(active_line);
         f.render_stateful_widget(List::new(items), inner_area, &mut state);
+
+        let offset = state.offset();
+        let row_hits: Vec<(u16, usize)> = line_rows
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(inner_area.height as usize)
+            .filter_map(|(line, row)| Some((inner_area.y + (line - offset) as u16, (*row)?)))
+            .collect();
+        if let Some(configure) = app.configure_mut() {
+            configure.row_hits = row_hits;
+        }
 
         // Save submenu
         if save_menu_open {
@@ -1234,6 +989,185 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     render_help(f, ctx, app, size);
 }
 
+fn configure_heading(
+    ctx: &RenderCtx<'_>,
+    section: crate::configure_view::ConfigureSection,
+) -> Option<ListItem<'static>> {
+    use crate::configure_view::ConfigureSection;
+    let t = &ctx.theme;
+    let icons = ctx.icons;
+    let (icon, color) = match section {
+        ConfigureSection::Columns => (&icons.label_columns, t.header_fg),
+        ConfigureSection::GroupBy => (&icons.label_group, t.green),
+        ConfigureSection::Order => (&icons.label_order, t.yellow),
+        ConfigureSection::Tabs => (&icons.label_navigation, t.header_fg),
+        ConfigureSection::Layout => (&icons.label_configure, t.purple),
+        ConfigureSection::View | ConfigureSection::Save => return None,
+    };
+    let heading = section.heading()?;
+    Some(
+        ListItem::new(format!("  {icon} {heading}"))
+            .style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
+    )
+}
+
+/// One Configure View row: a checkbox, radio, value or the Save button.
+fn configure_row_item(
+    app: &App,
+    ctx: &RenderCtx<'_>,
+    row: crate::configure_view::ConfigureRow,
+    is_active: bool,
+    editing_page_size: bool,
+    inner_width: usize,
+) -> ListItem<'static> {
+    use crate::configure_view::ConfigureRow;
+    let t = &ctx.theme;
+    let icons = ctx.icons;
+    let tab = app.active_tab;
+    let active_style = Style::default()
+        .fg(t.highlight_bg)
+        .bg(t.border_focused)
+        .add_modifier(Modifier::BOLD);
+    let checkbox = |checked: bool| if checked { "x" } else { " " };
+    let radio = |selected: bool| {
+        if selected {
+            icons.radio_on.clone()
+        } else {
+            icons.radio_off.clone()
+        }
+    };
+    // A setting row: its label in `label_color`, its value after it, both in
+    // the focus colors while focused.
+    let setting = |label: String, value: String, label_color, style: Style| {
+        let line = if is_active {
+            Line::from(Span::styled(format!("{label}{value} "), style))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    label,
+                    Style::default()
+                        .fg(label_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(value, Style::default().fg(t.text_normal)),
+            ])
+        };
+        ListItem::new(line).style(style)
+    };
+    let plain_style = if is_active {
+        active_style
+    } else {
+        Style::default().fg(t.text_normal)
+    };
+
+    match row {
+        ConfigureRow::Column(col) => {
+            let checked = app.is_column_visible(tab, col);
+            let filter_count = app
+                .get_column_filter(tab, col)
+                .map(|s| s.len())
+                .filter(|&n| n > 0);
+            let text = match filter_count {
+                Some(count) => format!("  [{}] {col} ({count})", checkbox(checked)),
+                None => format!("  [{}] {col}", checkbox(checked)),
+            };
+            let style = match (is_active, checked) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.text_normal),
+                (false, false) => Style::default().fg(t.text_muted),
+            };
+            ListItem::new(text).style(style)
+        }
+        ConfigureRow::GroupBy(col) => {
+            let is_selected =
+                app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
+            let style = match (is_active, is_selected) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.green),
+                (false, false) => Style::default().fg(t.text_normal),
+            };
+            ListItem::new(format!("  {} {col}", radio(is_selected))).style(style)
+        }
+        ConfigureRow::Order { ascending } => {
+            let is_selected = app.group_ascending.get(&tab).copied().unwrap_or(true) == ascending;
+            let label = if ascending { "Ascending" } else { "Descending" };
+            let style = match (is_active, is_selected) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.yellow),
+                (false, false) => Style::default().fg(t.text_normal),
+            };
+            ListItem::new(format!(" {} {label}", radio(is_selected))).style(style)
+        }
+        ConfigureRow::PageSize => {
+            let value = if editing_page_size {
+                format!("[ {}| ]", app.page_size_input)
+            } else {
+                format!("[ {} ]", app.page_size)
+            };
+            let style = if editing_page_size {
+                Style::default()
+                    .fg(t.highlight_bg)
+                    .bg(t.green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                plain_style
+            };
+            let label = format!(" {} Page Size      ", icons.label_page_size);
+            if editing_page_size && !is_active {
+                ListItem::new(Line::from(Span::styled(format!("{label}{value} "), style)))
+                    .style(style)
+            } else {
+                setting(label, value, t.header_fg, style)
+            }
+        }
+        ConfigureRow::PrefetchTabs => setting(
+            format!(" {} Prefetch Tabs  ", icons.label_fetching),
+            format!("[ {} ]", app.config.prefetch_tabs),
+            t.header_fg,
+            plain_style,
+        ),
+        ConfigureRow::Theme => setting(
+            format!(" {} Theme          ", icons.label_theme),
+            format!(
+                "[ {} ]",
+                app.config.theme_preset.as_deref().unwrap_or("default")
+            ),
+            t.purple,
+            plain_style,
+        ),
+        ConfigureRow::Tab(shown_tab) => {
+            let shown = app.config.layout.tab_order().contains(&(shown_tab, true));
+            let style = match (is_active, shown) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.text_normal),
+                (false, false) => Style::default().fg(t.text_muted),
+            };
+            ListItem::new(format!(
+                "  [{}] {}",
+                checkbox(shown),
+                shown_tab.title(ctx.kind, icons)
+            ))
+            .style(style)
+        }
+        ConfigureRow::Layout(layout_setting) => setting(
+            format!("  {:<21}", layout_setting.label()),
+            format!("[ {} ]", layout_setting.value(&app.config.layout)),
+            t.header_fg,
+            plain_style,
+        ),
+        ConfigureRow::Save => {
+            let label = format!("{} Save View", icons.label_save);
+            let left_pad = inner_width.saturating_sub(label.chars().count()) / 2;
+            let style = if is_active {
+                active_style
+            } else {
+                Style::default().fg(t.text_muted)
+            };
+            ListItem::new(format!("{:left_pad$}{label}", "")).style(style)
+        }
+    }
+}
+
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
 const START_MANUAL_JOB_ACTION: &str = "Start manual job";
 /// GitHub deployments carry no job, so they have no log to open.
@@ -1288,7 +1222,17 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Global & Nav",
             key: d(app.config.keybindings.global.configure.to_string()),
-            action: "Toggle columns config popup (filter / group / sort)",
+            action: "Configure View: columns (filter / group / sort / order), tabs and layout",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(app.config.keybindings.global.toggle_nav.clone()),
+            action: "Show / hide the navigation sidebar",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(app.config.keybindings.global.toggle_terminal_pane.clone()),
+            action: "Show / hide the terminal pane",
         },
         Shortcut {
             category: "Global & Nav",

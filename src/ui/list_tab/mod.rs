@@ -116,6 +116,8 @@ pub struct ViewInputs<'a> {
     pub query: &'a str,
     /// `None` shows every column.
     pub enabled_columns: Option<&'a HashSet<String>>,
+    /// The user's column order; `None` keeps `ColumnDef::ALL` order.
+    pub column_order: Option<&'a [String]>,
     pub column_filters: Option<&'a HashMap<String, HashSet<String>>>,
     /// Column label to sort by, and whether ascending.
     pub sort: Option<(&'a str, bool)>,
@@ -126,6 +128,7 @@ pub struct ViewInputs<'a> {
 struct ViewSpec {
     query: String,
     enabled_columns: Option<HashSet<String>>,
+    column_order: Option<Vec<String>>,
     column_filters: HashMap<String, HashSet<String>>,
     sort: Option<(String, bool)>,
 }
@@ -135,6 +138,7 @@ impl ViewSpec {
         Self {
             query: inputs.query.to_string(),
             enabled_columns: inputs.enabled_columns.cloned(),
+            column_order: inputs.column_order.map(<[String]>::to_vec),
             column_filters: inputs.column_filters.cloned().unwrap_or_default(),
             sort: inputs.sort.map(|(col, asc)| (col.to_string(), asc)),
         }
@@ -143,6 +147,7 @@ impl ViewSpec {
     fn matches(&self, inputs: ViewInputs) -> bool {
         self.query == inputs.query
             && self.enabled_columns.as_ref() == inputs.enabled_columns
+            && self.column_order.as_deref() == inputs.column_order
             && match inputs.column_filters {
                 Some(filters) => self.column_filters == *filters,
                 None => self.column_filters.is_empty(),
@@ -266,12 +271,24 @@ impl<C: ColumnDef> ListTab<C> {
     }
 
     /// Columns shown by the last refresh, in display order.
-    pub fn visible_columns(&self) -> impl Iterator<Item = C> + '_ {
-        C::ALL.iter().copied().filter(|col| {
-            self.spec
-                .as_ref()
-                .is_none_or(|spec| spec.is_column_visible(col.label()))
-        })
+    pub fn visible_columns(&self) -> Vec<C> {
+        let labels: Vec<&'static str> = C::ALL
+            .iter()
+            .map(|col| col.label())
+            .filter(|label| {
+                self.spec
+                    .as_ref()
+                    .is_none_or(|spec| spec.is_column_visible(label))
+            })
+            .collect();
+        let order = self
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.column_order.as_deref());
+        crate::column_order::order_columns(&labels, order)
+            .into_iter()
+            .filter_map(C::from_label)
+            .collect()
     }
 
     fn move_cursor_to(&mut self, pos: usize) {
@@ -297,7 +314,7 @@ impl<C: ColumnDef> ListTab<C> {
     }
 
     pub fn render(&mut self, f: &mut Frame, area: Rect, table: TableContext<'_, C::Row>) {
-        let columns: Vec<C> = self.visible_columns().collect();
+        let columns = self.visible_columns();
         let show_checked_column = table.is_checked.is_some();
         let rows = self.view.iter().enumerate().map(|(pos, &idx)| {
             let is_highlighted = self.cursor_pos == Some(pos);
@@ -570,6 +587,7 @@ mod tests {
         ViewInputs {
             query,
             enabled_columns: None,
+            column_order: None,
             column_filters: filters,
             sort,
         }

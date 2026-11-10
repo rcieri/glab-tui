@@ -3,20 +3,20 @@
 
 
 
-┌ + Merge Merge Request #2 ────────────────────────────────┐
-│                                                          │
-│                                                          │
-│            Merging: feature/pagination → main            │
-│                                                          │
-│                 ( ) Merge commit                         │
-│                 (x) Squash                               │
-│                 ( ) Rebase                               │
-│                 [x] Delete source branch                 │
-│                 [ ] Auto-merge                           │
-│──────────────────────────────────────────────────────────│
-│           + Merge                     - Cancel           │
-└──────────────────────────────────────────────────────────┘
-
+╔ + Merge Merge Request #2 ════════════════════════════════╗
+║                                                          ║
+║ Merging: feature/pagination → main                       ║
+║                                                          ║
+║ Merge method                                             ║
+║ o Merge commit                                           ║
+║ * Squash                                                 ║
+║                                                          ║
+║ + Delete source branch                                   ║
+║ - Auto-merge                                             ║
+║ ──────────────────────────────────────────────────────── ║
+║           + Merge                     - Cancel           ║
+║ h/l button · j/k options · Enter select · Esc cancel     ║
+╚══════════════════════════════════════════════════════════╝
 
 
 

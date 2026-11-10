@@ -1,18 +1,14 @@
-use super::MODAL_NOTICE_ROWS;
-use super::diff::{centered_rect_fixed, centered_rect_min};
+use super::form::{Extent, FormFrame, FormSize, render_form};
 use super::helpers::highlight_fuzzy_match;
-use super::modal::{button_style, clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
-use crate::notice::{Notice, NoticeLevel};
 use crate::ui::render_ctx::RenderCtx;
-use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Layout, Rect},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
 
 /// Word-wrap text to a target width, returning a multi-line `Text` suitable for
@@ -45,32 +41,6 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
     (Text::from(lines), count)
 }
 
-/// One row inside a modal for a notice about the modal's own request.
-fn modal_notice_line(ctx: &RenderCtx<'_>, notice: &Notice) -> Line<'static> {
-    let theme = &ctx.theme;
-    let mut spans = match notice.level() {
-        NoticeLevel::Error => vec![Span::styled(
-            format!(
-                " {} {}",
-                ctx.icons.status_failed,
-                sanitize_untrusted(notice.text())
-            ),
-            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
-        )],
-        NoticeLevel::Info => vec![Span::styled(
-            format!(" {}", sanitize_untrusted(notice.text())),
-            Style::default().fg(theme.yellow),
-        )],
-    };
-    if let Some(detail) = notice.detail() {
-        spans.push(Span::styled(
-            format!(" {}", sanitize_untrusted(detail)),
-            Style::default().fg(theme.text_muted),
-        ));
-    }
-    Line::from(spans)
-}
-
 pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ctx.icons;
@@ -89,376 +59,10 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // Below the re-run confirmation it opens.
     super::terminal_inspector::render_terminal_inspector(f, ctx, app, size);
 
-    let selector_notice = app.modal_notice().cloned();
-    if app.column_filter_context.is_none() {
-        let App {
-            modal_stack,
-            overlay_stack,
-            switch_repo_groups,
-            switch_repo_paths,
-            ..
-        } = app;
-        if let Some(crate::app::Modal::Selector(selector)) = modal_stack
-            .iter_mut()
-            .rev()
-            .find(|m| matches!(m, crate::app::Modal::Selector(_)))
-        {
-            let selector_area = centered_rect_min(70, 70, 60, 8, size);
-            let body = modal_area(f, ctx, &selector.title, selector_area);
-            overlay_stack.push((crate::app::OverlayKind::Selector, selector_area));
+    render_selector(f, ctx, app, size);
 
-            let has_filter = selector.has_filter_bar();
-
-            let mut constraints = Vec::with_capacity(3);
-            if has_filter {
-                constraints.push(Constraint::Length(3)); // Search/Filter
-            }
-            constraints.push(Constraint::Min(0)); // List of items
-            if selector_notice.is_some() {
-                constraints.push(Constraint::Length(MODAL_NOTICE_ROWS));
-            }
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(body);
-
-            let (search_chunk, list_chunk) = if has_filter {
-                (Some(chunks[0]), chunks[1])
-            } else {
-                (None, chunks[0])
-            };
-            if let Some(notice) = &selector_notice {
-                let notice_chunk = chunks[chunks.len() - 1];
-                f.render_widget(
-                    Paragraph::new(modal_notice_line(ctx, notice))
-                        .style(Style::default().bg(ctx.theme.bg)),
-                    notice_chunk,
-                );
-            }
-
-            let border_color_search = if selector.is_filtering {
-                ctx.theme.border_focused
-            } else {
-                ctx.theme.border
-            };
-            let search_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
-                .title(" Filter ");
-
-            let search_text = if selector.is_filtering {
-                format!("{}▋", selector.search_query)
-            } else if selector.search_query.is_empty() {
-                "Type to filter...".to_string()
-            } else {
-                selector.search_query.clone()
-            };
-
-            let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
-                Style::default()
-                    .fg(ctx.theme.text_muted)
-                    .bg(ctx.theme.bg)
-                    .add_modifier(Modifier::ITALIC)
-            } else {
-                Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg)
-            };
-
-            let search_p = Paragraph::new(Span::styled(search_text, search_style))
-                .block(search_block)
-                .style(Style::default().bg(ctx.theme.bg))
-                .wrap(ratatui::widgets::Wrap { trim: true });
-
-            if let Some(sc) = search_chunk {
-                f.render_widget(search_p, sc);
-            }
-
-            if selector.is_loading {
-                let p = Paragraph::new("\n  Loading options from GitLab...")
-                    .style(
-                        Style::default()
-                            .fg(ctx.theme.text_muted)
-                            .bg(ctx.theme.bg)
-                            .add_modifier(Modifier::ITALIC),
-                    )
-                    .wrap(ratatui::widgets::Wrap { trim: true });
-                f.render_widget(p, list_chunk);
-            } else {
-                let filtered_items = selector.get_filtered_items_with_indices();
-                if filtered_items.is_empty() {
-                    let p = Paragraph::new("\n  No matching options found.")
-                        .style(
-                            Style::default()
-                                .fg(ctx.theme.text_muted)
-                                .bg(ctx.theme.bg)
-                                .add_modifier(Modifier::ITALIC),
-                        )
-                        .wrap(ratatui::widgets::Wrap { trim: true });
-                    f.render_widget(p, list_chunk);
-                } else {
-                    let items: Vec<ListItem> = filtered_items
-                        .iter()
-                        .enumerate()
-                        .map(|(i, (item, indices))| {
-                            let is_selected = if item.starts_with("+ Create \"") {
-                                let clean_val = selector.search_query.trim().to_string();
-                                selector.selected_items.contains(&clean_val)
-                            } else {
-                                selector.selected_items.contains(item)
-                            };
-
-                            let marker = if is_selected {
-                                format!(" {} ", icons.check_on)
-                            } else {
-                                format!(" {} ", icons.check_off)
-                            };
-                            let marker_color = if is_selected {
-                                ctx.theme.green
-                            } else {
-                                ctx.theme.text_muted
-                            };
-
-                            let item_bg = if i == selector.cursor_idx {
-                                ctx.theme.highlight_bg
-                            } else {
-                                ctx.theme.bg
-                            };
-
-                            let style = if i == selector.cursor_idx {
-                                Style::default()
-                                    .bg(item_bg)
-                                    .fg(ctx.theme.text_normal)
-                                    .add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(ctx.theme.text_normal).bg(item_bg)
-                            };
-
-                            let highlight_style = if i == selector.cursor_idx {
-                                Style::default()
-                                    .bg(item_bg)
-                                    .fg(ctx.theme.yellow)
-                                    .add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default()
-                                    .fg(ctx.theme.yellow)
-                                    .bg(item_bg)
-                                    .add_modifier(Modifier::BOLD)
-                            };
-
-                            let mut line_spans = vec![Span::styled(
-                                marker,
-                                Style::default()
-                                    .fg(marker_color)
-                                    .bg(item_bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )];
-
-                            // Group rows in the Switch Repository overlay get
-                            // a group icon; repo rows keep their basename plus
-                            // a muted absolute path.
-                            let is_group = selector.field_type == "switch_repo"
-                                && switch_repo_groups.contains(item);
-
-                            if is_group {
-                                line_spans.push(Span::styled(
-                                    format!("{} ", icons.label_group),
-                                    Style::default().fg(ctx.theme.text_muted).bg(item_bg),
-                                ));
-                            }
-
-                            if let Some(indices) = indices {
-                                line_spans.extend(highlight_fuzzy_match(
-                                    item,
-                                    indices,
-                                    style,
-                                    highlight_style,
-                                ));
-                            } else {
-                                line_spans.push(Span::styled(item.clone(), style));
-                            }
-
-                            // For the Switch Repository overlay, render the
-                            // absolute on-disk path alongside the basename
-                            // (display name) in muted text so users can
-                            // distinguish repos that share a basename.
-                            if selector.field_type == "switch_repo" && !is_group {
-                                if let Some(abs_path) = switch_repo_paths.get(item) {
-                                    if !abs_path.is_empty() && abs_path != item {
-                                        line_spans.push(Span::styled(
-                                            format!(" {abs_path}"),
-                                            Style::default().fg(ctx.theme.text_muted).bg(item_bg),
-                                        ));
-                                    }
-                                }
-                            }
-
-                            ListItem::new(vec![Line::from(line_spans)])
-                                .style(Style::default().bg(item_bg))
-                        })
-                        .collect();
-
-                    let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
-                    let mut state = selector.state;
-                    f.render_stateful_widget(list, list_chunk, &mut state);
-                    selector.state = state;
-                }
-            }
-        }
-    }
-
-    if let Some(text_input) = app.text_input().cloned() {
-        let block = Block::default()
-            .title(format!(" {} ", text_input.title))
-            .title_style(
-                Style::default()
-                    .fg(ctx.theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(ctx.theme.border_focused))
-            .style(Style::default().bg(ctx.theme.bg));
-
-        let area = centered_rect_min(60, 60, 36, 6, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::TextInput, area));
-        clear_area(f, ctx, area);
-        f.render_widget(block, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints(
-                [
-                    Constraint::Min(0), // Value input line
-                ]
-                .as_ref(),
-            )
-            .split(area);
-
-        let value_p = Paragraph::new(text_input.buffer.value_with_cursor('▋'))
-            .style(Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg))
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        f.render_widget(value_p, chunks[0]);
-    }
-
-    if let Some(date_picker) = app.date_picker().cloned() {
-        let block = Block::default()
-            .title(format!(" {} ", date_picker.title))
-            .title_style(
-                Style::default()
-                    .fg(ctx.theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(ctx.theme.border_focused))
-            .style(Style::default().bg(ctx.theme.bg));
-
-        // 36 columns wide, 11 rows high
-        let area = centered_rect_fixed(36, 11, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::DatePicker, area));
-        let inner_area = block.inner(area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Length(1), // Month/Year line
-                    Constraint::Min(0),    // Grid of days
-                ]
-                .as_ref(),
-            )
-            .split(inner_area);
-
-        let month_str = match date_picker.month {
-            1 => "January",
-            2 => "February",
-            3 => "March",
-            4 => "April",
-            5 => "May",
-            6 => "June",
-            7 => "July",
-            8 => "August",
-            9 => "September",
-            10 => "October",
-            11 => "November",
-            12 => "December",
-            _ => "",
-        };
-        let header_str = format!(
-            "{}  {} {}  {}",
-            icons.nav_prev, month_str, date_picker.year, icons.nav_next
-        );
-        let header_p = Paragraph::new(header_str)
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(ctx.theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            );
-
-        // Weekday headers
-        let weekday_headers = vec!["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-        let col_headers = weekday_headers
-            .into_iter()
-            .map(|h| Cell::from(Line::from(h).alignment(Alignment::Center)));
-        let table_header = Row::new(col_headers).style(Style::default().fg(ctx.theme.text_muted));
-
-        // Calculate days grid
-        let first_date =
-            chrono::NaiveDate::from_ymd_opt(date_picker.year, date_picker.month, 1).unwrap();
-        use chrono::Datelike;
-        let start_weekday = first_date.weekday().num_days_from_sunday(); // 0 = Sunday, 1 = Monday, etc.
-        let total_days = crate::app::days_in_month(date_picker.year, date_picker.month);
-
-        let mut rows = Vec::new();
-        for r in 0..6 {
-            let mut row_cells = Vec::new();
-            for c in 0..7 {
-                let cell_idx = r * 7 + c;
-                let day_num = cell_idx - (start_weekday as i32) + 1;
-                if day_num >= 1 && day_num <= total_days as i32 {
-                    let is_selected = day_num as u32 == date_picker.day;
-                    let style = if is_selected {
-                        Style::default()
-                            .bg(ctx.theme.highlight_bg)
-                            .fg(ctx.theme.header_fg)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(ctx.theme.text_normal)
-                    };
-                    row_cells.push(Cell::from(
-                        Line::from(day_num.to_string())
-                            .alignment(Alignment::Center)
-                            .style(style),
-                    ));
-                } else {
-                    row_cells.push(Cell::from(""));
-                }
-            }
-            rows.push(Row::new(row_cells));
-        }
-
-        let widths = [
-            Constraint::Length(4),
-            Constraint::Length(4),
-            Constraint::Length(4),
-            Constraint::Length(4),
-            Constraint::Length(4),
-            Constraint::Length(4),
-            Constraint::Length(4),
-        ];
-
-        let table = Table::new(rows, widths)
-            .header(table_header)
-            .column_spacing(1);
-
-        clear_area(f, ctx, area);
-        f.render_widget(block, area);
-        f.render_widget(header_p, chunks[0]);
-        f.render_widget(table, chunks[1]);
-    }
+    render_text_input(f, ctx, app, size);
+    render_date_picker(f, ctx, app, size);
 
     if app.focus_column_checklist() && app.selector().is_none() {
         let (active_idx, editing_page_size, save_menu_open, save_menu_selection) =
@@ -740,14 +344,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         // spacer
         lines.push((None, ListItem::new("")));
 
-        // Save button — no header, centered in the inner area
         let is_save_selected = active_idx == save_end;
-        let width: u16 = 64;
-        let inner_w = width.saturating_sub(2) as usize; // -2 for borders
-        let save_label = format!("{} Save View", icons.label_save);
-        let save_visible_width = save_label.chars().count();
-        let save_left_pad = (inner_w.saturating_sub(save_visible_width)) / 2;
-        let save_button_text = format!("{:pad$}{}", "", save_label, pad = save_left_pad);
         let save_button_style = if is_save_selected {
             Style::default()
                 .fg(t.highlight_bg)
@@ -761,477 +358,513 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
         lines.push((
             Some(save_end),
-            ListItem::new(save_button_text).style(save_button_style),
+            ListItem::new(
+                Line::from(format!("{} Save View", icons.label_save)).alignment(Alignment::Center),
+            )
+            .style(save_button_style),
         ));
 
-        // Grow the popup with content, but cap it so the whole list scrolls
-        // within the available terminal height (headers included).
-        let content_len = lines.len() as u16;
-        // +2 accounts for the block's top/bottom border so inner_area has room
-        // for every item without clipping the save button.
-        let height = content_len
-            .saturating_add(2)
-            .max(18)
-            .min(size.height.saturating_sub(2));
-        let area = centered_rect_fixed(width, height, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::Configure, area));
-
-        let checklist_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(ctx.theme.border_focused))
-            .style(Style::default().bg(ctx.theme.bg))
-            .title(format!(
-                " {} Configure View: {}",
-                icons.label_configure,
-                tab.title(kind, ctx.icons)
-            ))
-            .title_style(
-                Style::default()
-                    .fg(ctx.theme.border_focused)
-                    .add_modifier(Modifier::BOLD),
-            );
-
-        clear_area(f, ctx, area);
-        f.render_widget(checklist_block.clone(), area);
-
-        let inner_area = checklist_block.inner(area);
-
-        let items: Vec<ListItem> = lines.into_iter().map(|(_, li)| li).collect();
-        let mut state = ListState::default();
-        state.select(active_line);
-        f.render_stateful_widget(List::new(items), inner_area, &mut state);
-
-        // Save submenu
-        if save_menu_open {
-            let submenu_height = 7;
-            let submenu_width = 30;
-            let submenu_area = centered_rect_fixed(submenu_width, submenu_height, size);
+        let title = format!(
+            "{} Configure View: {}",
+            icons.label_configure,
+            tab.title(kind, ctx.icons)
+        );
+        let list_rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+        let mut form: crate::form::Form<()> = crate::form::Form::new(
+            vec![crate::form::Group::Custom(crate::form::Rows::Fixed(
+                list_rows,
+            ))],
+            Vec::new(),
+        );
+        let hints = if editing_page_size {
+            CONFIGURE_PAGE_SIZE_HINTS
+        } else {
+            CONFIGURE_HINTS
+        };
+        let frame = FormFrame {
+            title: &title,
+            size: FormSize {
+                width: Extent::Fixed(CONFIGURE_WIDTH),
+                height: Extent::Content,
+            },
+            hints: Some(hints),
+            notice: None,
+        };
+        render_form(f, ctx, size, &frame, &mut form);
+        if let Some(layout) = form.layout {
+            let targets: Vec<Option<usize>> = lines.iter().map(|(target, _)| *target).collect();
+            let items: Vec<ListItem> = lines.into_iter().map(|(_, li)| li).collect();
+            let mut state = ListState::default();
+            state.select(active_line);
+            f.render_stateful_widget(List::new(items), layout.groups[0], &mut state);
             app.overlay_stack
-                .push((crate::app::OverlayKind::SaveMenu, submenu_area));
-            let submenu_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(ctx.theme.border_focused))
-                .title(format!(" {} Save to Config ", icons.label_save))
-                .title_style(
-                    Style::default()
-                        .fg(ctx.theme.border_focused)
-                        .add_modifier(Modifier::BOLD),
-                );
-            clear_area(f, ctx, submenu_area);
-            f.render_widget(submenu_block.clone(), submenu_area);
-            let submenu_inner = submenu_block.inner(submenu_area);
+                .push((crate::app::OverlayKind::Configure, layout.area));
+            if let Some(configure) = app.configure_mut() {
+                configure.visible_rows = targets.into_iter().skip(state.offset()).collect();
+                configure.layout = Some(layout);
+            }
+        }
 
-            let options = ["Local Repo", "Global", "Cancel"];
-            let submenu_items: Vec<ListItem> = options
-                .iter()
-                .enumerate()
-                .map(|(i, &label)| {
-                    let is_active = match save_menu_selection {
-                        Some(SaveMenu::Local) => i == 0,
-                        Some(SaveMenu::Global) => i == 1,
-                        Some(SaveMenu::Cancel) => i == 2,
-                        None => false,
-                    };
-                    let style = if is_active {
+        if save_menu_open {
+            render_save_menu(f, ctx, app, size, save_menu_selection);
+        }
+    }
+
+    render_submit_dialog(f, ctx, app, size);
+
+    super::review_submit::render_review_submit(f, ctx, app, size);
+    render_help(f, ctx, app, size);
+}
+
+const CONFIGURE_WIDTH: u16 = 64;
+const CONFIGURE_HINTS: &str =
+    "j/k move · J/K section · Space toggle · Enter filter / pick · Esc close";
+const CONFIGURE_PAGE_SIZE_HINTS: &str = "Type digits · Enter save · Esc cancel";
+const SAVE_MENU_WIDTH: u16 = 32;
+const SAVE_MENU_HINTS: &str = "j/k move · Enter pick · Esc back";
+/// The save submenu's choices, top to bottom.
+pub(crate) const SAVE_MENU_CHOICES: [(SaveMenu, &str); 3] = [
+    (SaveMenu::Local, "Local Repo"),
+    (SaveMenu::Global, "Global"),
+    (SaveMenu::Cancel, "Cancel"),
+];
+
+fn render_save_menu(
+    f: &mut Frame,
+    ctx: &RenderCtx<'_>,
+    app: &mut App,
+    size: Rect,
+    selection: Option<SaveMenu>,
+) {
+    let title = format!("{} Save to Config", ctx.icons.label_save);
+    let mut form: crate::form::Form<()> = crate::form::Form::new(
+        vec![crate::form::Group::Custom(crate::form::Rows::Fixed(
+            SAVE_MENU_CHOICES.len() as u16,
+        ))],
+        Vec::new(),
+    );
+    let frame = FormFrame {
+        title: &title,
+        size: FormSize {
+            width: Extent::Fixed(SAVE_MENU_WIDTH),
+            height: Extent::Content,
+        },
+        hints: Some(SAVE_MENU_HINTS),
+        notice: None,
+    };
+    render_form(f, ctx, size, &frame, &mut form);
+    let Some(layout) = form.layout else {
+        return;
+    };
+    let items: Vec<ListItem> = SAVE_MENU_CHOICES
+        .iter()
+        .map(|&(choice, label)| {
+            let style = if selection == Some(choice) {
+                Style::default()
+                    .fg(ctx.theme.highlight_bg)
+                    .bg(ctx.theme.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ctx.theme.text_normal)
+            };
+            ListItem::new(label).style(style)
+        })
+        .collect();
+    f.render_widget(List::new(items), layout.groups[0]);
+    app.overlay_stack
+        .push((crate::app::OverlayKind::SaveMenu, layout.area));
+    if let Some(configure) = app.configure_mut() {
+        configure.save_menu_layout = Some(layout);
+    }
+}
+
+const TEXT_INPUT_HINTS: &str = "Type to edit · Enter submit · Ctrl+E $EDITOR · Esc cancel";
+const DATE_PICKER_HINTS: &str = "h/l month · j/k day · Enter pick · Esc cancel";
+/// Month line, weekday header and six weeks.
+const CALENDAR_ROWS: u16 = 8;
+/// Seven 4-column day cells with one column between them, plus the frame.
+const DATE_PICKER_WIDTH: u16 = 7 * 4 + 6 + 4;
+
+fn render_text_input(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
+    let Some(text_input) = app.text_input_mut() else {
+        return;
+    };
+    let frame = FormFrame {
+        title: &text_input.title,
+        size: FormSize {
+            width: Extent::Percent {
+                percent: 60,
+                min: 36,
+            },
+            height: Extent::Content,
+        },
+        hints: Some(TEXT_INPUT_HINTS),
+        notice: None,
+    };
+    render_form(f, ctx, size, &frame, &mut text_input.form);
+    if let Some(area) = text_input.form.layout.as_ref().map(|layout| layout.area) {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::TextInput, area));
+    }
+}
+
+fn month_name(month: u32) -> &'static str {
+    match month {
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
+        _ => "",
+    }
+}
+
+fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
+    use chrono::Datelike;
+    let Some(date_picker) = app.date_picker_mut() else {
+        return;
+    };
+    let mut form: crate::form::Form<()> = crate::form::Form::new(
+        vec![crate::form::Group::Custom(crate::form::Rows::Fixed(
+            CALENDAR_ROWS,
+        ))],
+        Vec::new(),
+    );
+    let frame = FormFrame {
+        title: &date_picker.title,
+        size: FormSize {
+            width: Extent::Fixed(DATE_PICKER_WIDTH),
+            height: Extent::Content,
+        },
+        hints: Some(DATE_PICKER_HINTS),
+        notice: None,
+    };
+    render_form(f, ctx, size, &frame, &mut form);
+    let Some(layout) = form.layout else {
+        return;
+    };
+    let calendar = layout.groups[0];
+    let area = layout.area;
+
+    let [month_area, grid_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(calendar);
+    f.render_widget(
+        Paragraph::new(format!(
+            "{}  {} {}  {}",
+            ctx.icons.nav_prev,
+            month_name(date_picker.month),
+            date_picker.year,
+            ctx.icons.nav_next
+        ))
+        .alignment(Alignment::Center)
+        .style(
+            Style::default()
+                .fg(ctx.theme.header_fg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        month_area,
+    );
+
+    let header = Row::new(
+        ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+            .into_iter()
+            .map(|day| Cell::from(Line::from(day).alignment(Alignment::Center))),
+    )
+    .style(Style::default().fg(ctx.theme.text_muted));
+    let start_weekday = chrono::NaiveDate::from_ymd_opt(date_picker.year, date_picker.month, 1)
+        .map_or(0, |first| first.weekday().num_days_from_sunday());
+    let total_days = crate::app::days_in_month(date_picker.year, date_picker.month);
+    let rows = (0..6u32).map(|week| {
+        Row::new((0..7u32).map(|weekday| {
+            let day = (week * 7 + weekday + 1).checked_sub(start_weekday);
+            match day.filter(|&day| (1..=total_days).contains(&day)) {
+                Some(day) => {
+                    let style = if day == date_picker.day {
                         Style::default()
-                            .fg(ctx.theme.highlight_bg)
-                            .bg(ctx.theme.border_focused)
+                            .bg(ctx.theme.highlight_bg)
+                            .fg(ctx.theme.header_fg)
                             .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(ctx.theme.text_normal)
                     };
-                    ListItem::new(label).style(style)
-                })
-                .collect();
-
-            let mut submenu_state = ListState::default();
-            submenu_state.select(Some(match save_menu_selection {
-                Some(SaveMenu::Local) => 0,
-                Some(SaveMenu::Global) => 1,
-                Some(SaveMenu::Cancel) => 2,
-                None => 0,
-            }));
-
-            f.render_stateful_widget(
-                List::new(submenu_items)
-                    .highlight_style(Style::default().add_modifier(Modifier::BOLD)),
-                submenu_inner,
-                &mut submenu_state,
-            );
-        }
-    }
-
-    // Render value-based column filter selector as overlay on configure view
-    if app.focus_column_checklist() && app.column_filter_context.is_some() {
-        let App {
-            modal_stack,
-            overlay_stack,
-            ..
-        } = app;
-        if let Some(crate::app::Modal::Selector(selector)) = modal_stack
-            .iter_mut()
-            .rev()
-            .find(|m| matches!(m, crate::app::Modal::Selector(_)))
-        {
-            let selector_area = centered_rect_min(70, 70, 60, 8, size);
-            let body = modal_area(f, ctx, &selector.title, selector_area);
-            overlay_stack.push((crate::app::OverlayKind::ColumnFilter, selector_area));
-
-            let constraints = vec![
-                Constraint::Length(3), // Search/Filter
-                Constraint::Min(0),    // List of items
-            ];
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(body);
-
-            let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
-
-            let border_color_search = if selector.is_filtering {
-                ctx.theme.border_focused
-            } else {
-                ctx.theme.border
-            };
-            let search_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
-                .title(" Filter ");
-
-            let search_text = if selector.is_filtering {
-                format!("{}▋", selector.search_query)
-            } else if selector.search_query.is_empty() {
-                "Type to filter...".to_string()
-            } else {
-                selector.search_query.clone()
-            };
-            let search_p = Paragraph::new(search_text)
-                .block(search_block)
-                .style(Style::default().fg(ctx.theme.text_normal));
-
-            f.render_widget(search_p, search_chunk);
-
-            let filtered_items = selector.get_filtered_items_with_indices();
-            if filtered_items.is_empty() {
-                let p = Paragraph::new("\n  No matching options found.")
-                    .style(
-                        Style::default()
-                            .fg(ctx.theme.text_muted)
-                            .bg(ctx.theme.bg)
-                            .add_modifier(Modifier::ITALIC),
+                    Cell::from(
+                        Line::from(day.to_string())
+                            .alignment(Alignment::Center)
+                            .style(style),
                     )
-                    .wrap(ratatui::widgets::Wrap { trim: true });
-                f.render_widget(p, list_chunk);
-            } else {
-                let items: Vec<ListItem> = filtered_items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (item, indices))| {
-                        let is_selected = selector.selected_items.contains(item);
-
-                        let marker = if is_selected {
-                            format!(" {} ", icons.check_on)
-                        } else {
-                            format!(" {} ", icons.check_off)
-                        };
-                        let marker_color = if is_selected {
-                            ctx.theme.green
-                        } else {
-                            ctx.theme.text_muted
-                        };
-
-                        let item_bg = if i == selector.cursor_idx {
-                            ctx.theme.highlight_bg
-                        } else {
-                            ctx.theme.bg
-                        };
-
-                        let style = if i == selector.cursor_idx {
-                            Style::default()
-                                .bg(item_bg)
-                                .fg(ctx.theme.text_normal)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(ctx.theme.text_normal).bg(item_bg)
-                        };
-
-                        let highlight_style = if i == selector.cursor_idx {
-                            Style::default()
-                                .bg(item_bg)
-                                .fg(ctx.theme.yellow)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .fg(ctx.theme.yellow)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::BOLD)
-                        };
-
-                        let mut line_spans = vec![Span::styled(
-                            marker,
-                            Style::default()
-                                .fg(marker_color)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::BOLD),
-                        )];
-
-                        if let Some(indices) = indices {
-                            line_spans.extend(highlight_fuzzy_match(
-                                item,
-                                indices,
-                                style,
-                                highlight_style,
-                            ));
-                        } else {
-                            line_spans.push(Span::styled(item.clone(), style));
-                        }
-
-                        ListItem::new(vec![Line::from(line_spans)])
-                            .style(Style::default().bg(item_bg))
-                    })
-                    .collect();
-
-                let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
-                let mut state = selector.state;
-                f.render_stateful_widget(list, list_chunk, &mut state);
-                selector.state = state;
+                }
+                None => Cell::from(""),
             }
+        }))
+    });
+    f.render_widget(
+        Table::new(rows, [Constraint::Length(4); 7])
+            .header(header)
+            .column_spacing(1),
+        grid_area,
+    );
+    date_picker.layout = Some(layout);
+    app.overlay_stack
+        .push((crate::app::OverlayKind::DatePicker, area));
+}
+
+fn submit_dialog_icon(icons: &crate::config::Icons, action: &crate::app::ConfirmAction) -> String {
+    use crate::app::ConfirmAction;
+    match action {
+        ConfirmAction::DeleteMilestone(_)
+        | ConfirmAction::DeleteRelease(_)
+        | ConfirmAction::DeleteBranch(_)
+        | ConfirmAction::BulkDeleteBranches(_)
+        | ConfirmAction::DeleteIssue(_)
+        | ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
+        ConfirmAction::CloseIssue(_)
+        | ConfirmAction::CloseMr(_)
+        | ConfirmAction::CloseMilestone(_)
+        | ConfirmAction::StopEnvironment(_) => icons.action_close.clone(),
+        ConfirmAction::ReopenIssue(_)
+        | ConfirmAction::ReopenMr(_)
+        | ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
+        ConfirmAction::MergeMr(_)
+        | ConfirmAction::MergeStack(_)
+        | ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
+        ConfirmAction::RevokeMr(_) | ConfirmAction::SubmitReview(_) => icons.action_review.clone(),
+        ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
+        ConfirmAction::MarkAllTodosRead => icons.tab_todo.clone(),
+        ConfirmAction::CancelPipeline(_) | ConfirmAction::CancelJobs { .. } => {
+            icons.status_canceled.clone()
         }
+        ConfirmAction::RerunCommand(_) => icons.tab_terminal.clone(),
+        ConfirmAction::RollbackDeployment { .. } => icons.label_deployment.clone(),
+    }
+}
+
+/// The bordered filter box above a selector's list.
+const SELECTOR_FILTER_ROWS: u16 = 3;
+
+fn selector_hints(selector: &crate::app::Selector) -> &'static str {
+    if selector.is_filtering {
+        return "Type to filter · Enter / Esc done";
+    }
+    match (selector.multi_select, selector.purpose.has_filter_bar()) {
+        (true, true) => "j/k move · Space select · / filter · Enter confirm · Esc close",
+        (true, false) => "j/k move · Space select · Enter confirm · Esc close",
+        (false, true) => "j/k move · / filter · Enter pick · Esc close",
+        (false, false) => "j/k move · Enter pick · Esc close",
+    }
+}
+
+/// Every selector, the column-filter picker and the repo switcher included,
+/// is drawn here: what differs between them is read from its purpose.
+fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
+    let notice = app.modal_notice().cloned();
+    let App {
+        modal_stack,
+        overlay_stack,
+        switch_repo_groups,
+        switch_repo_paths,
+        selector_layout,
+        ..
+    } = app;
+    let Some(crate::app::Modal::Selector(selector)) = modal_stack
+        .iter_mut()
+        .rev()
+        .find(|m| matches!(m, crate::app::Modal::Selector(_)))
+    else {
+        return;
+    };
+    let has_filter = selector.purpose.has_filter_bar();
+    let mut groups = Vec::with_capacity(2);
+    if has_filter {
+        groups.push(crate::form::Group::Custom(crate::form::Rows::Fixed(
+            SELECTOR_FILTER_ROWS,
+        )));
+    }
+    groups.push(crate::form::Group::Custom(crate::form::Rows::Fill));
+    let mut form: crate::form::Form<()> = crate::form::Form::new(groups, Vec::new());
+    let frame = FormFrame {
+        title: selector.title.trim(),
+        size: FormSize {
+            width: Extent::Percent {
+                percent: 70,
+                min: 60,
+            },
+            height: Extent::Percent {
+                percent: 70,
+                min: 8,
+            },
+        },
+        hints: Some(selector_hints(selector)),
+        notice: notice.as_ref(),
+    };
+    render_form(f, ctx, size, &frame, &mut form);
+    let Some(layout) = form.layout else {
+        return;
+    };
+    let theme = &ctx.theme;
+    let icons = ctx.icons;
+
+    if has_filter {
+        let search_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if selector.is_filtering {
+                theme.border_focused
+            } else {
+                theme.border
+            }))
+            .title(" Filter ");
+        let (search_text, search_style) = if selector.is_filtering {
+            (
+                format!("{}▋", selector.search_query),
+                Style::default().fg(theme.text_normal),
+            )
+        } else if selector.search_query.is_empty() {
+            (
+                "Type to filter...".to_string(),
+                Style::default()
+                    .fg(theme.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+        } else {
+            (
+                selector.search_query.clone(),
+                Style::default().fg(theme.text_normal),
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(search_text, search_style)).block(search_block),
+            layout.groups[0],
+        );
     }
 
-    if let Some(dialog) = app.submit_dialog().cloned() {
-        let theme = &ctx.theme;
-        let icon = match dialog.action {
-            crate::app::ConfirmAction::DeleteMilestone(_)
-            | crate::app::ConfirmAction::DeleteRelease(_)
-            | crate::app::ConfirmAction::DeleteBranch(_)
-            | crate::app::ConfirmAction::BulkDeleteBranches(_)
-            | crate::app::ConfirmAction::DeleteIssue(_)
-            | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
-            crate::app::ConfirmAction::CloseIssue(_)
-            | crate::app::ConfirmAction::CloseMr(_)
-            | crate::app::ConfirmAction::CloseMilestone(_) => icons.action_close.clone(),
-            crate::app::ConfirmAction::ReopenIssue(_)
-            | crate::app::ConfirmAction::ReopenMr(_)
-            | crate::app::ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
-            crate::app::ConfirmAction::MergeMr(_)
-            | crate::app::ConfirmAction::MergeStack(_)
-            | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
-            crate::app::ConfirmAction::RevokeMr(_) | crate::app::ConfirmAction::SubmitReview(_) => {
-                icons.action_review.clone()
-            }
-            crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
-            crate::app::ConfirmAction::MarkAllTodosRead => icons.tab_todo.clone(),
-            crate::app::ConfirmAction::CancelPipeline(_)
-            | crate::app::ConfirmAction::CancelJobs { .. } => icons.status_canceled.clone(),
-            crate::app::ConfirmAction::RerunCommand(_) => icons.tab_terminal.clone(),
-            crate::app::ConfirmAction::StopEnvironment(_) => icons.action_close.clone(),
-            crate::app::ConfirmAction::RollbackDeployment { .. } => icons.label_deployment.clone(),
-        };
-        let option_rows = dialog.options.len();
+    let list_area = layout.groups[layout.groups.len() - 1];
+    let filtered_items = selector.get_filtered_items_with_indices();
+    let placeholder = if selector.is_loading {
+        Some("Loading options…")
+    } else if filtered_items.is_empty() {
+        Some("No matching options found.")
+    } else {
+        None
+    };
+    if let Some(placeholder) = placeholder {
+        f.render_widget(
+            Paragraph::new(placeholder).style(
+                Style::default()
+                    .fg(theme.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            list_area,
+        );
+    } else {
+        let is_switch_repo = selector.purpose == crate::app::SelectorPurpose::SwitchRepo;
+        let items: Vec<ListItem> = filtered_items
+            .iter()
+            .enumerate()
+            .map(|(i, (item, indices))| {
+                let is_selected = if item.starts_with("+ Create \"") {
+                    selector
+                        .selected_items
+                        .contains(selector.search_query.trim())
+                } else {
+                    selector.selected_items.contains(item)
+                };
+                let is_cursor = i == selector.cursor_idx;
+                let item_bg = if is_cursor {
+                    theme.highlight_bg
+                } else {
+                    theme.bg
+                };
+                let text_style = Style::default().fg(theme.text_normal).bg(item_bg);
+                let style = if is_cursor {
+                    text_style.add_modifier(Modifier::BOLD)
+                } else {
+                    text_style
+                };
+                let match_style = Style::default()
+                    .fg(theme.yellow)
+                    .bg(item_bg)
+                    .add_modifier(Modifier::BOLD);
+                let (marker, marker_color) = if is_selected {
+                    (&icons.check_on, theme.green)
+                } else {
+                    (&icons.check_off, theme.text_muted)
+                };
+                let mut spans = vec![Span::styled(
+                    format!(" {marker} "),
+                    Style::default()
+                        .fg(marker_color)
+                        .bg(item_bg)
+                        .add_modifier(Modifier::BOLD),
+                )];
+                let is_group = is_switch_repo && switch_repo_groups.contains(item);
+                if is_group {
+                    spans.push(Span::styled(
+                        format!("{} ", icons.label_group),
+                        Style::default().fg(theme.text_muted).bg(item_bg),
+                    ));
+                }
+                match indices {
+                    Some(indices) => {
+                        spans.extend(highlight_fuzzy_match(item, indices, style, match_style))
+                    }
+                    None => spans.push(Span::styled(item.clone(), style)),
+                }
+                // Repos sharing a basename are told apart by their path.
+                if is_switch_repo && !is_group {
+                    if let Some(path) = switch_repo_paths
+                        .get(item)
+                        .filter(|path| !path.is_empty() && *path != item)
+                    {
+                        spans.push(Span::styled(
+                            format!(" {path}"),
+                            Style::default().fg(theme.text_muted).bg(item_bg),
+                        ));
+                    }
+                }
+                ListItem::new(Line::from(spans)).style(Style::default().bg(item_bg))
+            })
+            .collect();
+        let mut state = selector.state;
+        f.render_stateful_widget(
+            List::new(items).style(Style::default().bg(theme.bg)),
+            list_area,
+            &mut state,
+        );
+        selector.state = state;
+    }
+    overlay_stack.push((crate::app::OverlayKind::Selector, layout.area));
+    *selector_layout = Some(layout);
+}
 
-        let title = format!(" {} {} ", icon, dialog.title);
-        let mut body_lines = if dialog.body.is_empty() {
-            0
-        } else {
-            textwrap(&dialog.body, 56).len() + 1 // text + leading blank line
-        };
-        if option_rows > 0 {
-            body_lines += 1; // +1 gap before options
-        }
-        let option_rows = dialog.options.len();
-        let button_height: u16 = 1; // label only (no top/bottom borders)
-        // [border top] + [pad] + body + options + [separator] + [buttons]
-        let mut dialog_height =
-            (2u16 + 1 + body_lines as u16 + option_rows as u16 + 1 + button_height) as u16;
-        let max_h = size.height.saturating_sub(2).max(11);
-        dialog_height = dialog_height.clamp(11, max_h);
-
-        let area = centered_rect_fixed(crate::app::SubmitDialog::DIALOG_WIDTH, dialog_height, size);
+fn render_submit_dialog(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
+    let Some(dialog) = app.submit_dialog_mut() else {
+        return;
+    };
+    let title = format!(
+        "{} {}",
+        submit_dialog_icon(ctx.icons, &dialog.action),
+        dialog.title
+    );
+    let frame = FormFrame {
+        title: &title,
+        size: FormSize {
+            width: Extent::Fixed(crate::app::SubmitDialog::DIALOG_WIDTH),
+            height: Extent::Content,
+        },
+        hints: None,
+        notice: None,
+    };
+    render_form(f, ctx, size, &frame, &mut dialog.form);
+    if let Some(area) = dialog.form.layout.as_ref().map(|layout| layout.area) {
         app.overlay_stack
             .push((crate::app::OverlayKind::ConfirmPopup, area));
-
-        let block = Block::default()
-            .title(title)
-            .title_style(
-                Style::default()
-                    .fg(theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.border_focused))
-            .style(Style::default().bg(theme.bg));
-
-        // Draw the backdrop + border first so the content below renders
-        // on top of it (the block fills the whole area with its bg).
-        clear_area(f, ctx, area);
-        f.render_widget(block, area);
-
-        let v = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(1),             // pad below title
-                Constraint::Min(0),                // body + options (flexes)
-                Constraint::Length(1),             // separator
-                Constraint::Length(button_height), // button row
-            ])
-            .split(area);
-
-        let content = v[1];
-        let sep = v[2];
-        let buttons = v[3];
-
-        let content_chunks = if option_rows > 0 {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(option_rows as u16)])
-                .split(content)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0)])
-                .split(content)
-        };
-
-        let mut body_lines = if dialog.body.is_empty() {
-            vec![]
-        } else {
-            textwrap(&dialog.body, 56)
-        };
-
-        if !dialog.body.is_empty() {
-            body_lines.insert(0, Line::from(""));
-            if option_rows > 0 {
-                body_lines.push(Line::from(""));
-            }
-        } else if option_rows > 0 {
-            body_lines.push(Line::from(""));
-        }
-        let body_p = Paragraph::new(body_lines)
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(theme.text_normal))
-            .wrap(ratatui::widgets::Wrap { trim: true });
-        f.render_widget(body_p, content_chunks[0]);
-
-        if option_rows > 0 {
-            let mut state = ListState::default();
-            state.select(dialog.option_idx());
-            let items: Vec<Line<'static>> = dialog
-                .options
-                .iter()
-                .map(|o| {
-                    let is_radio = o.label.starts_with("Strategy: ");
-                    let display_label = if is_radio {
-                        o.label.trim_start_matches("Strategy: ")
-                    } else {
-                        &o.label
-                    };
-                    let mark = if is_radio {
-                        if o.checked {
-                            "(x) ".to_string()
-                        } else {
-                            "( ) ".to_string()
-                        }
-                    } else if o.checked {
-                        "[x] ".to_string()
-                    } else {
-                        "[ ] ".to_string()
-                    };
-                    Line::from(format!("{mark}{display_label}"))
-                })
-                .collect();
-            let list = List::new(items)
-                .style(Style::default().fg(theme.text_normal))
-                .highlight_style(
-                    Style::default()
-                        .bg(theme.border_focused)
-                        .fg(theme.highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                );
-
-            // Center the options list to match the centered body text
-            let max_option_width = dialog
-                .options
-                .iter()
-                .map(|o| {
-                    let text = o.label.trim_start_matches("Strategy: ");
-                    text.chars().count() + 4 // "[x] "
-                })
-                .max()
-                .unwrap_or(20) as u16;
-            let pad = content_chunks[1].width.saturating_sub(max_option_width) / 2;
-            let list_layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(pad),
-                    Constraint::Length(max_option_width),
-                    Constraint::Min(0),
-                ])
-                .split(content_chunks[1]);
-
-            f.render_stateful_widget(list, list_layout[1], &mut state);
-        }
-
-        f.render_widget(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(theme.border)),
-            sep,
-        );
-
-        let accent_for_submit = if dialog.action.is_destructive() {
-            theme.red
-        } else {
-            theme.green
-        };
-        let buttons_row: Vec<(usize, String, Option<Color>)> = dialog
-            .button_cursors()
-            .map(|cursor| {
-                if cursor == crate::app::SubmitDialog::SUBMIT_IDX {
-                    (
-                        cursor,
-                        format!("{} {}", icons.check_on, dialog.submit_label),
-                        Some(accent_for_submit),
-                    )
-                } else if cursor == dialog.cancel_idx() {
-                    (cursor, format!("{} Cancel", icons.check_off), None)
-                } else {
-                    let choice = dialog.extra_buttons[cursor - dialog.options.len() - 1];
-                    let accent = choice.is_destructive().then_some(theme.red);
-                    (cursor, choice.label().to_string(), accent)
-                }
-            })
-            .collect();
-
-        let button_count = buttons_row.len() as u32;
-        let constraints: Vec<Constraint> = (0..buttons_row.len())
-            .flat_map(|i| {
-                let spacer = (i > 0).then_some(Constraint::Length(1));
-                spacer
-                    .into_iter()
-                    .chain(std::iter::once(Constraint::Ratio(1, button_count)))
-            })
-            .collect();
-        let cells = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(buttons);
-
-        for (i, (cursor, label, accent)) in buttons_row.into_iter().enumerate() {
-            f.render_widget(
-                Paragraph::new(label)
-                    .alignment(Alignment::Center)
-                    .style(button_style(theme, dialog.cursor_idx == cursor, accent)),
-                cells[i * 2],
-            );
-        }
     }
-
-    super::review_submit::render_review_submit(f, ctx, app, size);
-    render_help(f, ctx, app, size);
 }
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
@@ -2392,37 +2025,65 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         .filter(|s| s.key.split('/').any(|k| !k.trim().is_empty()))
         .collect();
 
-    let block = Block::default()
-        .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
-        .title_style(
-            Style::default()
-                .fg(ctx.theme.header_fg)
-                .add_modifier(Modifier::BOLD),
+    let query = app.help_search_query.to_lowercase();
+    let is_grouped = query.is_empty();
+    let listed: Vec<&Shortcut> = if is_grouped {
+        filtered_shortcuts
+    } else {
+        shortcuts
+            .iter()
+            .filter(|s| {
+                s.category.to_lowercase().contains(&query)
+                    || s.key.to_lowercase().contains(&query)
+                    || s.action.to_lowercase().contains(&query)
+            })
+            .collect()
+    };
+    let shortcut_count = listed.len();
+    app.help_selected = app.help_selected.min(shortcut_count.saturating_sub(1));
+    let position = if shortcut_count == 0 {
+        "0/0 · type to filter · Esc close".to_string()
+    } else {
+        format!(
+            "{}/{shortcut_count} · ↑↓ PgUp/PgDn · type to filter · Esc close",
+            app.help_selected + 1
         )
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(ctx.theme.border_focused))
-        .border_type(BorderType::Double)
-        .style(Style::default().bg(ctx.theme.bg));
+    };
 
-    let area = centered_rect_min(90, 85, 95, 38, size);
+    let title = format!("{} Keyboard Shortcuts", icons.label_keyboard);
+    let mut form: crate::form::Form<()> = crate::form::Form::new(
+        vec![
+            crate::form::Group::Custom(crate::form::Rows::Fixed(HELP_SEARCH_ROWS)),
+            crate::form::Group::Custom(crate::form::Rows::Fill),
+        ],
+        Vec::new(),
+    );
+    let frame = FormFrame {
+        title: &title,
+        size: FormSize {
+            width: Extent::Percent {
+                percent: 90,
+                min: 95,
+            },
+            height: Extent::Percent {
+                percent: 85,
+                min: 38,
+            },
+        },
+        hints: Some(&position),
+        notice: None,
+    };
+    render_form(f, ctx, size, &frame, &mut form);
+    let Some(layout) = form.layout else {
+        return;
+    };
+    let (search_area, table_area) = (layout.groups[0], layout.groups[1]);
     app.overlay_stack
-        .push((crate::app::OverlayKind::Help, area));
+        .push((crate::app::OverlayKind::Help, layout.area));
 
-    let help_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(1)
-        .constraints(
-            [
-                Constraint::Length(3), // Search / Filter
-                Constraint::Min(0),    // Table
-            ]
-            .as_ref(),
-        )
-        .split(area);
-
-    // Action column width: inner table width minus the two fixed columns
+    // Action column width: the table width minus the two fixed columns
     // (20 + 24) and the inter-column spacing (2 gaps of 2).
-    let action_width = help_chunks[1].width.saturating_sub(20 + 24 + 4).max(8);
+    let action_width = table_area.width.saturating_sub(20 + 24 + 4).max(8);
 
     let border_color = if app.help_search_query.is_empty() {
         ctx.theme.border
@@ -2453,25 +2114,13 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Style::default().fg(ctx.theme.text_normal)
     };
 
-    let search_p = Paragraph::new(search_text)
-        .style(search_style)
-        .block(search_block)
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-    let query = app.help_search_query.to_lowercase();
-    let is_grouped = query.is_empty();
-    let listed: Vec<&Shortcut> = if is_grouped {
-        filtered_shortcuts
-    } else {
-        shortcuts
-            .iter()
-            .filter(|s| {
-                s.category.to_lowercase().contains(&query)
-                    || s.key.to_lowercase().contains(&query)
-                    || s.action.to_lowercase().contains(&query)
-            })
-            .collect()
-    };
+    f.render_widget(
+        Paragraph::new(search_text)
+            .style(search_style)
+            .block(search_block)
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+        search_area,
+    );
 
     let theme = &ctx.theme;
     let mut rows: Vec<Row> = Vec::new();
@@ -2515,20 +2164,8 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         );
         last_category = s.category;
     }
-
-    let shortcut_count = shortcut_rows.len();
-    app.help_selected = app.help_selected.min(shortcut_count.saturating_sub(1));
     app.help_table_state
         .select(shortcut_rows.get(app.help_selected).copied());
-    let position = if shortcut_count == 0 {
-        " 0/0 ".to_string()
-    } else {
-        format!(
-            " {}/{shortcut_count} · ↑↓ PgUp/PgDn ",
-            app.help_selected + 1
-        )
-    };
-    let block = block.title_bottom(Line::from(position).right_aligned());
 
     let widths = [
         Constraint::Length(20),
@@ -2548,33 +2185,25 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             ])
             .height(1),
         )
-        .block(block)
         .row_highlight_style(Style::default().bg(theme.highlight_bg))
         .column_spacing(2);
-    clear_area(f, ctx, area);
-    f.render_widget(search_p, help_chunks[0]);
-    f.render_stateful_widget(table, help_chunks[1], &mut app.help_table_state);
+    f.render_stateful_widget(table, table_area, &mut app.help_table_state);
     let mut scrollbar_state =
         ratatui::widgets::ScrollbarState::new(shortcut_count).position(app.help_selected);
     f.render_stateful_widget(
         ratatui::widgets::Scrollbar::new(ratatui::widgets::ScrollbarOrientation::VerticalRight),
-        help_chunks[1].inner(ratatui::layout::Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
+        Rect {
+            y: table_area.y.saturating_add(1),
+            height: table_area.height.saturating_sub(1),
+            ..table_area
+        },
         &mut scrollbar_state,
     );
+    app.help_layout = Some(layout);
 }
 
-/// Wrap a string into `width`-character lines at word boundaries,
-/// returning one `Line` per wrapped line. Hard-break overlong words
-/// instead of panicking on zero width.
-fn textwrap(text: &str, width: usize) -> Vec<Line<'static>> {
-    crate::utils::format::wrap_text(text, width)
-        .into_iter()
-        .map(Line::from)
-        .collect()
-}
+/// The help overlay's filter box, a bordered single line.
+const HELP_SEARCH_ROWS: u16 = 3;
 
 #[cfg(test)]
 mod tests {
@@ -2781,13 +2410,20 @@ command = "true"
     }
 
     /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:
-    /// a body line, five options and both buttons. Drawn with the ASCII icon
-    /// set, the one the snapshots are written in.
+    /// a body line, the methods a project allowing merge commits and squash
+    /// offers, two toggles and both buttons. Drawn with the ASCII icon set,
+    /// the one the snapshots are written in.
     fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        use crate::domain::mr::{MergeMethod, MergeMethods};
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut app = App::default();
         app.mrs.items =
             serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
+        let project = app.scope.as_str().to_string();
+        app.merge_methods.insert(
+            project,
+            MergeMethods::new(&[MergeMethod::Merge, MergeMethod::Squash], None).unwrap(),
+        );
         app.open_submit_dialog(crate::app::SubmitDialog::build(
             crate::app::ConfirmAction::MergeMr(2),
             &app,
@@ -2852,5 +2488,86 @@ command = "true"
     fn merge_dialog_at_120_columns_matches_snapshot() {
         let terminal = render_merge_dialog(120, 24);
         assert_snapshot("submit_dialog_merge_120x24", &snapshot_text(&terminal));
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        let mut fx = crate::effect::Effects::default();
+        let tx = app.tx.clone();
+        crate::handlers::mouse::handle_mouse_event(
+            app,
+            &crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column,
+                row,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+            &tx,
+            &mut fx,
+        );
+    }
+
+    /// The column-filter picker and a field picker share one render, and a
+    /// click lands on the row drawn under it, also while a notice is shown.
+    #[test]
+    fn a_click_on_a_selector_row_selects_that_row_whatever_the_purpose() {
+        use crate::app::{Selector, SelectorField, SelectorPurpose};
+        for (purpose, notice) in [
+            (
+                SelectorPurpose::ColumnFilter {
+                    tab: Tab::Issues,
+                    column: "State".to_string(),
+                },
+                false,
+            ),
+            (SelectorPurpose::Field(SelectorField::Labels), true),
+        ] {
+            let mut app = App::default();
+            let request = notice.then(|| app.next_request_tag());
+            app.open_selector(Selector {
+                title: "Pick".to_string(),
+                all_items: vec!["alpha".to_string(), "beta".to_string()],
+                selected_items: std::collections::HashSet::new(),
+                cursor_idx: 0,
+                search_query: String::new(),
+                is_filtering: false,
+                is_loading: false,
+                entity_iid: 0,
+                entity_type: String::new(),
+                purpose: purpose.clone(),
+                multi_select: true,
+                state: ListState::default(),
+                request,
+            });
+            if let Some(request) = request {
+                app.push_notice(crate::notice::Notice::error("offline").from_request(request));
+            }
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            let icons = crate::config::Icons::ascii();
+            let ctx = &crate::ui::render_ctx::RenderCtx {
+                theme: crate::config::Theme::default(),
+                icons: &icons,
+                kind: crate::backend::BackendKind::GitLab,
+            };
+            terminal
+                .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+                .unwrap();
+            let text = snapshot_text(&terminal);
+            let (beta_row, beta_line) = text
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains("beta"))
+                .expect("beta is drawn");
+            let beta_column = beta_line.find("beta").unwrap();
+
+            click(&mut app, beta_column as u16, beta_row as u16);
+
+            let selector = app.selector().unwrap();
+            assert_eq!(selector.cursor_idx, 1, "{purpose:?}");
+            assert_eq!(
+                selector.selected_items,
+                std::collections::HashSet::from(["beta".to_string()]),
+                "{purpose:?}"
+            );
+        }
     }
 }

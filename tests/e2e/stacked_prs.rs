@@ -166,6 +166,13 @@ fn request_bodies(session: &TestSession) -> Vec<String> {
         .collect()
 }
 
+/// Submit is refused until the dialog has read the repository's merge methods.
+fn wait_for_merge_methods(session: &mut TestSession) {
+    session
+        .wait_for_screen_contains("Merge method", 15000)
+        .expect("the merge dialog should list the methods the repository allows");
+}
+
 #[test]
 fn merging_a_stacked_pr_merges_its_downstack_through_the_async_endpoint() {
     let mut session = session_on_prs_tab(None);
@@ -178,6 +185,7 @@ fn merging_a_stacked_pr_merges_its_downstack_through_the_async_endpoint() {
             .wait_for_screen_contains(entry, 15000)
             .expect("the stack merge dialog should list every PR it merges");
     }
+    wait_for_merge_methods(&mut session);
 
     session.send_input(b"\r");
     wait_for_calls(&mut session, "merge-async/mock-merge-uuid", 1);
@@ -204,6 +212,7 @@ fn merging_a_pr_outside_any_stack_keeps_using_gh_pr_merge() {
     session
         .wait_for_screen_contains("Delete source branch", 15000)
         .expect("m on a lone PR should open the plain merge dialog");
+    wait_for_merge_methods(&mut session);
 
     session.send_input(b"\r");
     wait_for_calls(&mut session, "pr merge 12", 1);
@@ -227,6 +236,7 @@ fn bulk_merge_sends_stacked_prs_through_the_async_endpoint() {
     session
         .wait_for_screen_contains("Merge 2 ", 15000)
         .expect("m with two PRs selected should open the bulk merge dialog");
+    wait_for_merge_methods(&mut session);
 
     session.send_input(b"\r");
     wait_for_calls(&mut session, "pr merge 12", 1);

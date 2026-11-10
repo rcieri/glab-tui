@@ -228,7 +228,7 @@ pub fn handle_key(
                         is_loading: false,
                         entity_iid: 0,
                         entity_type: "theme_selector".to_string(),
-                        field_type: "theme_selector".to_string(),
+                        purpose: crate::app::SelectorPurpose::Theme,
                         multi_select: false,
                         state: {
                             let mut s = ListState::default();
@@ -263,7 +263,6 @@ pub fn handle_key(
                         .and_then(|f| f.get(&col_str))
                         .cloned()
                         .unwrap_or_default();
-                    app.column_filter_context = Some((app.active_tab, col_str.clone()));
                     app.open_selector(crate::app::Selector {
                         title: format!("Filter by {col_name}"),
                         all_items: all_values,
@@ -274,7 +273,10 @@ pub fn handle_key(
                         is_loading: false,
                         entity_iid: 0,
                         entity_type: String::new(),
-                        field_type: "column_filter".to_string(),
+                        purpose: crate::app::SelectorPurpose::ColumnFilter {
+                            tab: app.active_tab,
+                            column: col_str.clone(),
+                        },
                         multi_select: true,
                         state: {
                             let mut s = ratatui::widgets::ListState::default();
@@ -342,7 +344,7 @@ pub fn handle_key(
                         is_loading: false,
                         entity_iid: 0,
                         entity_type: "theme_selector".to_string(),
-                        field_type: "theme_selector".to_string(),
+                        purpose: crate::app::SelectorPurpose::Theme,
                         multi_select: false,
                         state: {
                             let mut s = ListState::default();

@@ -196,7 +196,7 @@ mod tests {
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
             request: None,
@@ -418,7 +418,10 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(press(&mut app, KeyCode::Char('a')));
 
         let selector = app.selector().expect("a opens the comment picker");
-        assert_eq!(selector.field_type, "comment_select");
+        assert!(matches!(
+            selector.purpose,
+            crate::app::SelectorPurpose::CommentChoice { .. }
+        ));
         assert_eq!(selector.all_items.len(), 2);
         assert!(
             !press(&mut app, KeyCode::Char('j')),
@@ -526,7 +529,10 @@ diff --git a/src/lib.rs b/src/lib.rs
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right; 3]);
-        assert!(app.submit_dialog().is_some_and(|d| d.is_on_cancel()));
+        assert!(
+            app.submit_dialog()
+                .is_some_and(|d| d.focused() == Some(crate::app::DialogControl::Cancel))
+        );
         press_in_dialog(&mut app, &[KeyCode::Enter]);
 
         assert!(app.submit_dialog().is_none());

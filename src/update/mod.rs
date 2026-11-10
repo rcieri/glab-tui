@@ -21,6 +21,7 @@ pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
     if may_move_highlight {
         crate::fetch::prefetch_highlighted(app, &tx, &mut fx);
     }
+    crate::fetch::fetch_missing_merge_methods(app, &tx, &mut fx);
     fx.into_vec()
 }
 
@@ -163,7 +164,7 @@ mod tests {
             },
         );
 
-        assert_eq!(app.text_input().map(|ti| ti.buffer.value()), Some("50"));
+        assert_eq!(app.text_input().map(|ti| ti.value()), Some("50"));
     }
 
     #[test]
@@ -316,7 +317,7 @@ mod tests {
             is_loading: false,
             entity_iid: 0,
             entity_type: String::new(),
-            field_type: "pipeline_select".to_string(),
+            purpose: crate::app::SelectorPurpose::PipelineSelect,
             multi_select: false,
             state: ratatui::widgets::ListState::default(),
             request: None,

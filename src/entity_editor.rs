@@ -1381,14 +1381,15 @@ pub fn apply_selector_changes(
     app: &mut App,
     entity_type: &str,
     iid: u64,
-    field_type: &str,
+    field: &crate::app::SelectorField,
     values: Vec<String>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
+    use crate::app::SelectorField;
     let tab = app.active_tab;
-    match field_type {
-        "labels" => {
+    match field {
+        SelectorField::Labels => {
             let current_labels: Vec<String> = if entity_is_issue(entity_type) {
                 app.issues
                     .items
@@ -1449,7 +1450,7 @@ pub fn apply_selector_changes(
                 }
             }
         }
-        "assignees" => {
+        SelectorField::Assignees => {
             let clean_values: Vec<String> = values
                 .iter()
                 .map(|v| v.trim_start_matches('@').to_string())
@@ -1524,7 +1525,7 @@ pub fn apply_selector_changes(
                 }
             }
         }
-        "reviewers" => {
+        SelectorField::Reviewers => {
             if entity_is_mr(entity_type) {
                 let clean_values: Vec<String> = values
                     .iter()
@@ -1575,7 +1576,7 @@ pub fn apply_selector_changes(
                 }
             }
         }
-        "milestone" => {
+        SelectorField::Milestone => {
             let first_val = values.first().cloned().unwrap_or_default();
             let clear_milestone = first_val.is_empty() || first_val == "--";
             if entity_is_issue(entity_type) {
@@ -1624,7 +1625,7 @@ pub fn apply_selector_changes(
                 ));
             });
         }
-        "confidential" => {
+        SelectorField::Confidential => {
             if entity_is_issue(entity_type) {
                 let is_confidential = values.iter().any(|v| v == "Yes" || v == "true");
                 let Some(client) = app.gitlab_client.clone() else {
@@ -1643,7 +1644,7 @@ pub fn apply_selector_changes(
                 });
             }
         }
-        "source_branch" | "target_branch" | "create_from" => {
+        SelectorField::SourceBranch | SelectorField::TargetBranch | SelectorField::CreateFrom => {
             // Intentional lazy path for the *edit/create form* selector.
             // We only mutate the in-memory `edit_menu` field here; the API
             // call is driven later by `submit_edit` once the user commits
@@ -1656,9 +1657,9 @@ pub fn apply_selector_changes(
             // for the inline-edit counterpart.
             if let Some(menu) = app.edit_menu_mut() {
                 for f in menu.fields.iter_mut() {
-                    if f.label == "Source Branch" && field_type == "source_branch"
-                        || f.label == "Target Branch" && field_type == "target_branch"
-                        || f.label == "Create From" && field_type == "create_from"
+                    if f.label == "Source Branch" && *field == SelectorField::SourceBranch
+                        || f.label == "Target Branch" && *field == SelectorField::TargetBranch
+                        || f.label == "Create From" && *field == SelectorField::CreateFrom
                     {
                         f.value = values.first().cloned().unwrap_or_default();
                         break;
@@ -2070,7 +2071,7 @@ mod tests {
             &mut app,
             "issue",
             1,
-            "milestone",
+            &crate::app::SelectorField::Milestone,
             vec![],
             tx.clone(),
             &mut crate::effect::Effects::default(),
@@ -2083,7 +2084,7 @@ mod tests {
             &mut app,
             "mr",
             1,
-            "milestone",
+            &crate::app::SelectorField::Milestone,
             vec![],
             tx,
             &mut crate::effect::Effects::default(),

@@ -1,11 +1,12 @@
-use crate::app::{App, ConfirmAction, DialogChoice};
-use crate::effect::Effects;
+use crate::app::{App, ConfirmAction, DialogChoice, MergeChoices, SubmitDialog};
+use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
+use crate::form::FormAction;
 use crate::handlers::tabs::{
     OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
     spawn_cancel_jobs,
 };
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn handle_submit_dialog(
@@ -14,91 +15,65 @@ pub fn handle_submit_dialog(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
-    let Some(mut dialog) = app.submit_dialog.take() else {
+    let Some(dialog) = app.submit_dialog.as_mut() else {
         return false;
     };
-
-    let mut submit = false;
-    let mut cancel = false;
-    let mut choice = None;
-
-    match key_event.code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if dialog.is_on_button() {
-                if !dialog.options.is_empty() {
-                    dialog.cursor_idx = dialog.options.len(); // jump up to last option
-                }
-            } else if dialog.cursor_idx > 1 {
-                dialog.cursor_idx -= 1; // move up
-            } else {
-                dialog.cursor_idx = dialog.cancel_idx(); // wrap around to buttons
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if dialog.is_on_button() {
-                if !dialog.options.is_empty() {
-                    dialog.cursor_idx = 1; // wrap around to first option
-                }
-            } else if dialog.cursor_idx < dialog.options.len() {
-                dialog.cursor_idx += 1; // move down
-            } else {
-                dialog.cursor_idx = dialog.cancel_idx(); // jump down to buttons
-            }
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            dialog.move_between_buttons(-1);
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            dialog.move_between_buttons(1);
-        }
-        KeyCode::Tab => {
-            dialog.move_next();
-        }
-        KeyCode::BackTab => {
-            dialog.move_prev();
-        }
-        KeyCode::Char(' ') => {
-            dialog.toggle_focused_option();
-        }
-        KeyCode::Enter => {
-            if dialog.is_on_submit() {
-                submit = true;
-            } else if dialog.is_on_cancel() {
-                cancel = true;
-            } else if let Some(focused) = dialog.focused_choice() {
-                choice = Some(focused);
-            } else {
-                dialog.toggle_focused_option();
-            }
-        }
-        KeyCode::Char('y') | KeyCode::Char('Y') if dialog.is_on_submit() => {
-            submit = true;
-        }
-        KeyCode::Esc => {
-            cancel = true;
-        }
-        _ => {
-            // Consume all other keys while the dialog is open so they
-            // don't fall through to the underlying tab.
-        }
-    }
-
-    if submit {
-        // Drain the dialog so we can inspect option toggles before
-        // dispatching the API call.
-        let action = dialog.action.clone();
-        let project_path = std::mem::take(&mut dialog.project_path);
-        let options = std::mem::take(&mut dialog.options);
-        run_submit_action(app, action, project_path, options, tx.clone(), fx);
-    } else if let Some(choice) = choice {
-        run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
-    } else if !cancel {
-        // Either the user navigated or toggled an option — keep the
-        // dialog open.
-        app.submit_dialog = Some(dialog);
-    }
-
+    let action = dialog.form.handle_key(key_event);
+    apply_form_action(app, action, tx, fx);
     true
+}
+
+/// Clicks on the open dialog's rows and buttons, at the places its last draw
+/// recorded.
+pub fn click_submit_dialog(
+    app: &mut App,
+    column: u16,
+    row: u16,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    let Some(dialog) = app.submit_dialog.as_mut() else {
+        return;
+    };
+    let action = dialog.form.click_at(column, row);
+    apply_form_action(app, action, tx, fx);
+}
+
+/// Carries out what a key or click on the open dialog's form asked for.
+/// Every outcome but a button press or Cancel keeps the dialog open.
+fn apply_form_action(
+    app: &mut App,
+    action: FormAction,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    match action {
+        FormAction::None => {}
+        FormAction::OpenEditor { path, text } => fx.suspend(ForegroundJob::Edit {
+            text,
+            file_suffix: ".txt".to_string(),
+            purpose: EditPurpose::DialogField { path },
+        }),
+        FormAction::Cancel => app.submit_dialog = None,
+        FormAction::Activate(button) => {
+            let Some(dialog) = app.submit_dialog.take() else {
+                return;
+            };
+            if button == SubmitDialog::SUBMIT_BUTTON {
+                let merge = dialog.merge_choices();
+                run_submit_action(
+                    app,
+                    dialog.action,
+                    dialog.project_path,
+                    merge,
+                    tx.clone(),
+                    fx,
+                );
+            } else if let Some(choice) = dialog.choice_at(button) {
+                run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
+            }
+        }
+    }
 }
 
 fn run_dialog_choice(
@@ -131,37 +106,6 @@ fn run_dialog_choice(
     app.diff_view = None;
 }
 
-fn merge_options_from(
-    options: &[crate::app::SubmitOption],
-) -> (bool, bool, Option<&'static str>, bool) {
-    let mut squash = false;
-    let mut delete_branch = false;
-    let mut strategy: Option<&'static str> = None;
-    let mut auto_merge = false;
-    for opt in options.iter().filter(|o| o.checked) {
-        match opt.label.as_str() {
-            "Strategy: Squash" => squash = true,
-            "Delete source branch" => delete_branch = true,
-            "Strategy: Merge commit" => strategy = Some("merge"),
-            "Strategy: Rebase" => strategy = Some("rebase"),
-            "Auto-merge" => auto_merge = true,
-            _ => {}
-        }
-    }
-    (squash, delete_branch, strategy, auto_merge)
-}
-
-/// The merge method the dialog's strategy options pick, with the precedence
-/// `GhBackend::merge_args` gives them.
-fn merge_method_from(options: &[crate::app::SubmitOption]) -> crate::domain::mr::MergeMethod {
-    use crate::domain::mr::MergeMethod;
-    match merge_options_from(options) {
-        (true, ..) => MergeMethod::Squash,
-        (false, _, Some("rebase"), _) => MergeMethod::Rebase,
-        _ => MergeMethod::Merge,
-    }
-}
-
 /// The PRs among `items` (project path, number) that sit in a stack, which
 /// only the stack merge can merge. A failed lookup leaves a project's PRs to
 /// the plain merge, whose error then names the problem.
@@ -188,7 +132,7 @@ fn run_submit_action(
     app: &mut App,
     confirm_action: crate::app::ConfirmAction,
     project_path: String,
-    options: Vec<crate::app::SubmitOption>,
+    merge: MergeChoices,
     tx: UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
@@ -464,7 +408,6 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
-            let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
             // Capture the source-branch head SHA before removing the row so
             // `glab mr merge --sha=<sha>` can satisfy GitLab 19.2+ merge
             // requirements (#470). Pre-19.2 instances ignore it; GitHub's
@@ -479,17 +422,7 @@ fn run_submit_action(
             let tx2 = tx.clone();
             fx.spawn(async move {
                 let result = client
-                    .merge_mr(
-                        &project_path,
-                        iid,
-                        &crate::backend::MergeOptions {
-                            squash,
-                            delete_branch,
-                            strategy: merge_strategy,
-                            auto_merge,
-                            sha: mr_sha.as_deref(),
-                        },
-                    )
+                    .merge_mr(&project_path, iid, &merge.options(mr_sha.as_deref()))
                     .await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
@@ -508,7 +441,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeStack(pr_number) => {
-            let method = merge_method_from(&options);
+            let method = merge.method;
             let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
                 Some(crate::domain::mr::StackLookup::Full(stack)) => {
                     stack.downstack_open_entries().map(|e| e.number).collect()
@@ -531,8 +464,6 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
-            let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
-            let method = merge_method_from(&options);
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
             let mut items_with_sha: Vec<(String, u64, Option<String>)> =
@@ -573,20 +504,10 @@ fn run_submit_action(
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
                     let result = if stacked.contains(&(proj.clone(), mr_iid)) {
-                        client.merge_pr_stack(&proj, mr_iid, method).await
+                        client.merge_pr_stack(&proj, mr_iid, merge.method).await
                     } else {
                         client
-                            .merge_mr(
-                                &proj,
-                                mr_iid,
-                                &crate::backend::MergeOptions {
-                                    squash,
-                                    delete_branch,
-                                    strategy: merge_strategy,
-                                    auto_merge,
-                                    sha: sha.as_deref(),
-                                },
-                            )
+                            .merge_mr(&proj, mr_iid, &merge.options(sha.as_deref()))
                             .await
                     };
                     if let Err(e) = result {

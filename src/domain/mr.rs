@@ -136,6 +136,16 @@ pub enum MergeMethod {
 }
 
 impl MergeMethod {
+    pub const ALL: [Self; 3] = [Self::Merge, Self::Squash, Self::Rebase];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Merge => "Merge commit",
+            Self::Squash => "Squash",
+            Self::Rebase => "Rebase",
+        }
+    }
+
     pub fn as_api_str(self) -> &'static str {
         match self {
             Self::Merge => "merge",

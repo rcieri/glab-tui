@@ -23,6 +23,11 @@ pub fn apply(
                 text_input.buffer.set_value(text);
             }
         }
+        EditPurpose::DialogField { path } => {
+            if let Some(dialog) = &mut app.submit_dialog {
+                dialog.form.apply_editor_text(path, &text);
+            }
+        }
         EditPurpose::ReviewSummary => {
             if let Some(overlay) = &mut app.review_submit {
                 overlay.summary.set_value(text);

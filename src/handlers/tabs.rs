@@ -4710,7 +4710,7 @@ mod tests {
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
         let dialog = app.submit_dialog.as_ref().expect("Delete dialog shown");
-        assert_eq!(dialog.title, "Delete Branch 'branch-00'");
+        assert_eq!(dialog.form.title, "Delete Branch 'branch-00'");
         if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
             assert_eq!(name, "branch-00");
         } else {
@@ -4743,7 +4743,7 @@ mod tests {
             .submit_dialog
             .as_ref()
             .expect("Bulk delete dialog shown");
-        assert_eq!(dialog.title, "Delete 2 Branches");
+        assert_eq!(dialog.form.title, "Delete 2 Branches");
         if let crate::app::ConfirmAction::BulkDeleteBranches(names) = &dialog.action {
             assert_eq!(
                 names,

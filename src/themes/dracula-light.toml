@@ -57,3 +57,9 @@ label_palette_6 = "#f66a0a"
 label_palette_7 = "#0366d6"
 label_palette_8 = "#00867d"
 label_palette_9 = "#44475a"
+
+# ── Forms ──
+accent = "#6f42c1"
+key_hint = "#b08800"
+danger_border = "#d73a49"
+backdrop_dim = "#c1c2c7"

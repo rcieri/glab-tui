@@ -1,7 +1,6 @@
 use crate::app::{App, SaveMenu};
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::handlers::overlays::handle_submit_dialog;
 use tokio::sync::mpsc::UnboundedSender;
 
 fn rect_contains(rect: ratatui::layout::Rect, row: u16, col: u16) -> bool {
@@ -170,7 +169,9 @@ pub fn handle_mouse_event(
                 let inner = border_inner(*rect);
                 match kind {
                     OverlayKind::ConfirmPopup => {
-                        handle_submit_dialog_mouse(app, *rect, row, col, tx, fx);
+                        crate::handlers::overlays::submit_dialog::click_submit_dialog(
+                            app, col, row, tx, fx,
+                        );
                         return;
                     }
                     OverlayKind::ColumnFilter => {
@@ -252,63 +253,6 @@ pub fn handle_mouse_event(
             }
         }
         _ => {}
-    }
-}
-
-/// Mouse click on SubmitDialog buttons and option rows.
-///
-/// The dialog button band sits at the bottom of the popup area; the
-/// options (if any) sit between the body and the button band. Clicks
-/// outside both zones are ignored — keyboard navigation still drives
-/// the dialog otherwise.
-fn handle_submit_dialog_mouse(
-    app: &mut App,
-    rect: ratatui::layout::Rect,
-    row: u16,
-    col: u16,
-    tx: &UnboundedSender<Event>,
-    fx: &mut Effects,
-) {
-    let Some(dialog) = app.submit_dialog.as_ref() else {
-        return;
-    };
-
-    let button_height: u16 = 3;
-    let band_top = rect.y + rect.height.saturating_sub(button_height);
-
-    // Click anywhere in the button band.
-    if row >= band_top && row < rect.y + rect.height {
-        let buttons: Vec<usize> = dialog.button_cursors().collect();
-        let inner_x = rect.x + 1;
-        let inner_width = usize::from(rect.width.saturating_sub(2).max(1));
-        let offset = usize::from(col.saturating_sub(inner_x));
-        let button = (offset * buttons.len() / inner_width).min(buttons.len() - 1);
-        if let Some(d) = app.submit_dialog.as_mut() {
-            d.cursor_idx = buttons[button];
-        }
-        let key = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Enter,
-            crossterm::event::KeyModifiers::NONE,
-        );
-        handle_submit_dialog(app, &key, tx, fx);
-        return;
-    }
-
-    // Option rows sit just above the separator, after the body.
-    let body_lines =
-        crate::utils::format::wrap_text(&dialog.body, crate::app::SubmitDialog::BODY_INNER_WIDTH)
-            .len()
-            .max(1);
-    let option_rows = dialog.options.len();
-    if option_rows > 0 {
-        let options_y_start = rect.y + 2 + body_lines as u16;
-        if row >= options_y_start && row < options_y_start + option_rows as u16 {
-            let option_idx = (row - options_y_start) as usize;
-            if let Some(d) = app.submit_dialog.as_mut() {
-                d.cursor_idx = option_idx + 1;
-                d.toggle_focused_option();
-            }
-        }
     }
 }
 

@@ -54,3 +54,9 @@ label_palette_8 = "#b4e628"
 label_palette_9 = "#dca0ff"
 
 badge_group_bg = "#00bcd4"
+
+# ── Forms ──
+accent = "#bc8cff"
+key_hint = "#d29922"
+danger_border = "#f85149"
+backdrop_dim = "#2e323c"

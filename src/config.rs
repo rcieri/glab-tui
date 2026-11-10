@@ -130,6 +130,15 @@ pub struct Theme {
     pub comment_draft_bg: Color,
     // ── Modals ──
     pub modal_border: Color,
+    // ── Forms ──
+    /// The selected choice of a form's radio group and the counter of a line input.
+    pub accent: Color,
+    /// The keys of a form's key footer.
+    pub key_hint: Color,
+    /// The border of a form whose primary action cannot be undone.
+    pub danger_border: Color,
+    /// Text of the screen behind an open form.
+    pub backdrop_dim: Color,
     // ── Pipelines ──
     pub pipeline_success: Color,
     pub pipeline_failed: Color,
@@ -603,6 +612,15 @@ struct ThemeToml {
     // ── Modals ──
     #[serde(default)]
     modal_border: Option<String>,
+    // ── Forms ──
+    #[serde(default)]
+    accent: Option<String>,
+    #[serde(default)]
+    key_hint: Option<String>,
+    #[serde(default)]
+    danger_border: Option<String>,
+    #[serde(default)]
+    backdrop_dim: Option<String>,
     // ── Pipelines ──
     #[serde(default)]
     pipeline_success: Option<String>,
@@ -699,6 +717,10 @@ impl ThemeToml {
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
             comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
             modal_border: hex_or(&self.modal_border, border_focused),
+            accent: hex_or(&self.accent, purple),
+            key_hint: hex_or(&self.key_hint, yellow),
+            danger_border: hex_or(&self.danger_border, red),
+            backdrop_dim: hex_or(&self.backdrop_dim, border),
             pipeline_success: hex_or(&self.pipeline_success, green),
             pipeline_failed: hex_or(&self.pipeline_failed, red),
             pipeline_running: hex_or(&self.pipeline_running, blue),
@@ -962,6 +984,11 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
     // ── Modals ──
     apply_color(&mut base.modal_border, &overrides.modal_border);
+    // ── Forms ──
+    apply_color(&mut base.accent, &overrides.accent);
+    apply_color(&mut base.key_hint, &overrides.key_hint);
+    apply_color(&mut base.danger_border, &overrides.danger_border);
+    apply_color(&mut base.backdrop_dim, &overrides.backdrop_dim);
     // ── Pipelines ──
     apply_color(&mut base.pipeline_success, &overrides.pipeline_success);
     apply_color(&mut base.pipeline_failed, &overrides.pipeline_failed);
@@ -1018,6 +1045,11 @@ pub struct ThemeOverrides {
     comment_draft_bg: Option<String>,
     // ── Modals ──
     modal_border: Option<String>,
+    // ── Forms ──
+    accent: Option<String>,
+    key_hint: Option<String>,
+    danger_border: Option<String>,
+    backdrop_dim: Option<String>,
     // ── Pipelines ──
     pipeline_success: Option<String>,
     pipeline_failed: Option<String>,
@@ -3030,6 +3062,10 @@ label_palette_6 = "#2a2a2a"
 label_palette_7 = "#2b2b2b"
 label_palette_8 = "#2c2c2c"
 label_palette_9 = "#2d2d2d"
+accent = "#2e2e2e"
+key_hint = "#2f2f2f"
+danger_border = "#303030"
+backdrop_dim = "#313131"
 "##;
         let config: Config =
             toml::from_str(toml_str).expect("deserialize config with full theme overrides");
@@ -3080,5 +3116,24 @@ label_palette_9 = "#2d2d2d"
         assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
         assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
         assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
+        assert_eq!(theme.accent, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.key_hint, Color::Rgb(47, 47, 47));
+        assert_eq!(theme.danger_border, Color::Rgb(48, 48, 48));
+        assert_eq!(theme.backdrop_dim, Color::Rgb(49, 49, 49));
+    }
+
+    #[test]
+    fn every_bundled_theme_sets_the_form_tokens_itself() {
+        let missing: Vec<String> = BUNDLED_THEMES
+            .iter()
+            .flat_map(|(name, toml_str)| {
+                let table: toml::Table = toml::from_str(toml_str).expect("bundled theme parses");
+                ["accent", "key_hint", "danger_border", "backdrop_dim"]
+                    .into_iter()
+                    .filter(move |key| !table.contains_key(*key))
+                    .map(move |key| format!("{name}: {key}"))
+            })
+            .collect();
+        assert_eq!(missing, Vec::<String>::new());
     }
 }

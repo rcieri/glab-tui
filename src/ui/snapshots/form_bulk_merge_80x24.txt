@@ -1,0 +1,24 @@
+
+
+
+
+
+        ┌ + Merge 20 Merge Requests ───────────────────────────────────┐
+        │ Merging 20 MRs                                               │
+        │ !1 test-owner/test-repo                                      │
+        │ !2 test-owner/test-repo                                      │
+        │ !3 test-owner/test-repo                                      │
+        │ v 17 more                                                    │
+        │ Strategy ( ) Merge commit  (x) Squash  ( ) Rebase            │
+        │ Options [x] Delete source branch                             │
+        │         [ ] Auto-merge                                       │
+        │ ──────────────────────────────────────────────────────────── │
+        │           [ Merge ]                     [ Cancel ]           │
+        │ h/l button  Tab next  Enter merge  Esc cancel                │
+        └──────────────────────────────────────────────────────────────┘
+
+
+
+
+
+

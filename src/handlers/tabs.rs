@@ -3,8 +3,8 @@ use crate::effect::{Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
-use crate::keybinding::{KeyPress, keybinding_matches};
-use crossterm::event::{KeyCode, KeyEvent};
+use crate::keybinding::KeyPress;
+use crate::keymap::{Action, KeyContext};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -351,23 +351,27 @@ fn spawn_fetch_deployments(
 
 /// Navigation keys while the deployments pane has focus. Returns whether
 /// the key was taken.
-fn handle_focused_deployments_key(app: &mut App, key_event: &KeyEvent) -> bool {
+fn handle_focused_deployments_key(app: &mut App, key_event: &KeyPress) -> bool {
+    let action = app
+        .config
+        .keybindings
+        .resolve(KeyContext::ListView, key_event);
     let Some(shown) = app.focused_deployments_mut() else {
         return false;
     };
-    match key_event.code {
-        KeyCode::Down | KeyCode::Char('j') => shown.table.next_item(),
-        KeyCode::Up | KeyCode::Char('k') => shown.table.previous_item(),
-        KeyCode::Home => shown.table.first_item(),
-        KeyCode::End => shown.table.last_item(),
-        KeyCode::Esc | KeyCode::Backspace => shown.is_focused = false,
+    match action {
+        Some(Action::ListNextRow) => shown.table.next_item(),
+        Some(Action::ListPreviousRow) => shown.table.previous_item(),
+        Some(Action::ListFirstRow) => shown.table.first_item(),
+        Some(Action::ListLastRow) => shown.table.last_item(),
+        Some(Action::ListBack) => shown.is_focused = false,
         _ => return false,
     }
     app.detail_scroll = 0;
     true
 }
 
-const NO_DEPLOYMENT_SELECTED: &str =
+pub(crate) const NO_DEPLOYMENT_SELECTED: &str =
     "No deployment selected: list the environment's deployments first";
 
 fn handle_environments_key(
@@ -382,8 +386,11 @@ fn handle_environments_key(
     let Some(environment) = app.environments.cursor_row().cloned() else {
         return false;
     };
-    let keys = &app.config.keybindings.environments;
-    if keybinding_matches(&keys.open_in_browser, key_event) {
+    if app
+        .config
+        .keybindings
+        .matches(Action::EnvironmentsOpenInBrowser, key_event)
+    {
         let project_path = app.scope.as_str().to_string();
         let client = app.gitlab_client.clone();
         let tx = tx.clone();
@@ -399,7 +406,11 @@ fn handle_environments_key(
                 CommandOutcome::read_only(result),
             ));
         });
-    } else if keybinding_matches(&keys.view_deployments, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::EnvironmentsViewDeployments, key_event)
+    {
         app.detail_visible = true;
         if let Some(shown) = app.environment_deployments.as_mut() {
             shown.is_focused = !shown.table.items.is_empty();
@@ -409,33 +420,19 @@ fn handle_environments_key(
         if let Some(shown) = app.environment_deployments.as_mut() {
             shown.is_focused = !shown.is_focused;
         }
-    } else if keybinding_matches(&keys.stop_environment, key_event) {
-        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-            crate::app::ConfirmAction::StopEnvironment(Box::new(environment)),
-            app,
-        ));
-    } else if keybinding_matches(&keys.rollback_deployment, key_event) {
-        match app.selected_deployment().cloned() {
-            Some(deployment) if !app.is_github() && deployment.job_id().is_none() => {
-                let iid = deployment.iid;
-                app.show_error(format!("Deployment #{iid} has no deploy job to re-run"));
-            }
-            Some(deployment) => {
-                app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                    crate::app::ConfirmAction::RollbackDeployment {
-                        environment: environment.name,
-                        deployment: Box::new(deployment),
-                    },
-                    app,
-                ));
-            }
-            None => app.show_error(NO_DEPLOYMENT_SELECTED.to_string()),
-        }
-    } else if keybinding_matches(&keys.copy_url, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::EnvironmentsCopyUrl, key_event)
+    {
         if let Err(error) = app.copy_selected_environment_url() {
             app.show_error(format!("Failed to copy environment URL: {error}"));
         }
-    } else if keybinding_matches(&keys.view_deployment_log, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::EnvironmentsViewDeploymentLog, key_event)
+    {
         spawn_deployment_log_fetch(app, tx, fx);
     } else {
         return false;
@@ -675,22 +672,32 @@ fn apply_page_scroll(app: &mut App, key_event: &KeyPress) -> bool {
             )
             .max(1);
         let half_page = full_page / 2;
-        if keybinding_matches(&app.config.keybindings.global.scroll_page_down, key_event) {
+        if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollPageDown, key_event)
+        {
             app.detail_scroll = app.detail_scroll.saturating_add(full_page);
             return true;
-        } else if keybinding_matches(&app.config.keybindings.global.scroll_page_up, key_event) {
+        } else if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollPageUp, key_event)
+        {
             app.detail_scroll = app.detail_scroll.saturating_sub(full_page);
             return true;
-        } else if keybinding_matches(
-            &app.config.keybindings.global.scroll_half_page_down,
-            key_event,
-        ) {
+        } else if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollHalfPageDown, key_event)
+        {
             app.detail_scroll = app.detail_scroll.saturating_add(half_page);
             return true;
-        } else if keybinding_matches(
-            &app.config.keybindings.global.scroll_half_page_up,
-            key_event,
-        ) {
+        } else if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollHalfPageUp, key_event)
+        {
             app.detail_scroll = app.detail_scroll.saturating_sub(half_page);
             return true;
         }
@@ -705,15 +712,17 @@ fn apply_list_half_page(app: &mut App, key_event: &KeyPress, tx: &UnboundedSende
     if app.detail_visible || app.details_zoomed {
         return false;
     }
-    let down = if keybinding_matches(
-        &app.config.keybindings.global.scroll_half_page_down,
-        key_event,
-    ) {
+    let down = if app
+        .config
+        .keybindings
+        .matches(Action::GlobalScrollHalfPageDown, key_event)
+    {
         true
-    } else if keybinding_matches(
-        &app.config.keybindings.global.scroll_half_page_up,
-        key_event,
-    ) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::GlobalScrollHalfPageUp, key_event)
+    {
         false
     } else {
         return false;
@@ -774,10 +783,19 @@ pub fn handle_active_tab_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
+    if let Some(action) = Action::in_context(KeyContext::Tab(app.active_tab))
+        .find(|a| a.is_destructive() && app.config.keybindings.matches(*a, key_event))
+    {
+        return crate::handlers::confirm::confirmation(app, action);
+    }
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
-            _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesCreateIssue, key_event) =>
+            {
                 let is_github = app.is_github();
                 let project = if app.scope.is_group() {
                     let issues = app.filtered_issues();
@@ -831,7 +849,11 @@ pub fn handle_active_tab_key(
                     source_on_forge: false,
                 });
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesEditEntity, key_event) =>
+            {
                 if app.selected_issues.len() > 1 {
                     let count = app.selected_issues.len();
                     app.open_edit_menu(crate::app::EditMenu {
@@ -895,11 +917,10 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('M')
-                || keybinding_matches(
-                    &app.config.keybindings.issues.jump_related_mrs,
-                    key_event,
-                )) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesJumpRelatedMrs, key_event) =>
             {
                 let Some(issue_iid) = app
                     .issues
@@ -986,40 +1007,20 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.close_entity, key_event) => {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    let filtered = app.filtered_issues();
-                    if let Some(issue) = filtered.get(selected_idx) {
-                        let issue_iid = issue.iid;
-                        let project_path = app.scope.project_of(&issue.project_path).to_string();
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::CloseIssue(issue_iid),
-                            project_path,
-                            app,
-                        ));
-                    }
-                }
-            }
-            _ if keybinding_matches(&app.config.keybindings.issues.delete_entity, key_event) => {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    let filtered = app.filtered_issues();
-                    if let Some(issue) = filtered.get(selected_idx) {
-                        let issue_iid = issue.iid;
-                        let project_path = app.scope.project_of(&issue.project_path).to_string();
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::DeleteIssue(issue_iid),
-                            project_path,
-                            app,
-                        ));
-                    }
-                }
-            }
-            _ if keybinding_matches(&app.config.keybindings.issues.copy_reference, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesCopyReference, key_event) =>
+            {
                 if let Err(error) = app.copy_selected_issue_reference() {
                     app.show_error(format!("Failed to copy issue reference: {error}"));
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.open_in_browser, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesOpenInBrowser, key_event) =>
+            {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
                         let Some(client) = app.gitlab_client.clone() else {
@@ -1044,21 +1045,11 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.reopen_entity, key_event) => {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    let filtered = app.filtered_issues();
-                    if let Some(issue) = filtered.get(selected_idx) {
-                        let issue_iid = issue.iid;
-                        let project_path = app.scope.project_of(&issue.project_path).to_string();
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::ReopenIssue(issue_iid),
-                            project_path,
-                            app,
-                        ));
-                    }
-                }
-            }
-            _ if keybinding_matches(&app.config.keybindings.issues.select_issue, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesSelectIssue, key_event) =>
+            {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(i) = app.filtered_issues().get(selected_idx) {
                         let key = (i.project_path.clone(), i.iid);
@@ -1070,7 +1061,11 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.drill_into_scope, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesDrillIntoScope, key_event) =>
+            {
                 if app.scope.is_group() {
                     if let Some(idx) = app.issues.state.selected() {
                         let filtered = app.filtered_issues();
@@ -1082,14 +1077,26 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.selection_toggle, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesSelectionToggle, key_event) =>
+            {
                 app.toggle_select_mode();
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.select_all, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesSelectAll, key_event) =>
+            {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::IssuesCreateMr, key_event) =>
+            {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
@@ -1142,7 +1149,11 @@ pub fn handle_active_tab_key(
             _ => handled = false,
         },
         crate::app::Tab::MergeRequests => {
-            if keybinding_matches(&app.config.keybindings.mrs.create_mr, key_event) {
+            if app
+                .config
+                .keybindings
+                .matches(Action::MrsCreateMr, key_event)
+            {
                 let project = if app.scope.is_group() {
                     let mrs = app.filtered_mrs();
                     app.mrs
@@ -1171,7 +1182,11 @@ pub fn handle_active_tab_key(
                     0,
                     false,
                 );
-            } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::MrsSelectMr, key_event)
+            {
                 if let Some(selected_idx) = app.mrs.state.selected() {
                     if let Some(m) = app.filtered_mrs().get(selected_idx) {
                         let key = (m.project_path.clone(), m.iid);
@@ -1182,7 +1197,11 @@ pub fn handle_active_tab_key(
                         }
                     }
                 }
-            } else if keybinding_matches(&app.config.keybindings.mrs.drill_into_scope, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::MrsDrillIntoScope, key_event)
+            {
                 if app.scope.is_group() {
                     if let Some(idx) = app.mrs.state.selected() {
                         let filtered = app.filtered_mrs();
@@ -1193,12 +1212,24 @@ pub fn handle_active_tab_key(
                         }
                     }
                 }
-            } else if keybinding_matches(&app.config.keybindings.mrs.selection_toggle, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::MrsSelectionToggle, key_event)
+            {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.mrs.select_all, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::MrsSelectAll, key_event)
+            {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
-            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::MrsEditEntity, key_event)
+            {
                 if app.selected_mrs.len() > 1 {
                     let count = app.selected_mrs.len();
                     let pr_suffix = if app.is_github() { "PR" } else { "MR" };
@@ -1273,7 +1304,10 @@ pub fn handle_active_tab_key(
                     }
                 }
             } else if app.selected_mrs.len() > 1
-                && keybinding_matches(&app.config.keybindings.mrs.merge_mr, key_event)
+                && app
+                    .config
+                    .keybindings
+                    .matches(Action::MrsMergeMr, key_event)
             {
                 let items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
                 app.submit_dialog = Some(crate::app::SubmitDialog::build(
@@ -1286,10 +1320,10 @@ pub fn handle_active_tab_key(
                     let mr_iid = mr.iid;
                     let mr_title = mr.title.clone();
                     match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.approve_mr,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsApproveMr, key_event) =>
                         {
                             if let Some(client) = app.gitlab_client.clone() {
                                 let project_path = app.project_path_for_mr(mr_iid);
@@ -1303,35 +1337,10 @@ pub fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if (key_event.code == KeyCode::Char('A')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.revoke_mr,
-                                key_event,
-                            )) =>
-                        {
-                            let is_github = app
-                                .gitlab_client
-                                .as_ref()
-                                .map(|c| c.is_github)
-                                .unwrap_or(false);
-                            if is_github {
-                                app.show_error(
-                                    "Revoking approval isn't supported on GitHub".to_string(),
-                                );
-                            } else {
-                                app.submit_dialog =
-                                    Some(crate::app::SubmitDialog::build_with_project(
-                                        crate::app::ConfirmAction::RevokeMr(mr_iid),
-                                        app.scope.project_of(&mr.project_path).to_string(),
-                                        app,
-                                    ));
-                            }
-                        }
-                        _ if (key_event.code == KeyCode::Char('R')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.rebase_mr,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsRebaseMr, key_event) =>
                         {
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
@@ -1354,18 +1363,17 @@ pub fn handle_active_tab_key(
                                 }
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.merge_mr,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsMergeMr, key_event) =>
                         {
                             with_pr_stack(app, &mr, crate::app::StackAction::Merge, tx, fx);
                         }
-                        _ if (key_event.code == KeyCode::Char('D')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.view_diff,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsViewDiff, key_event) =>
                         {
                             let project_context = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
@@ -1374,11 +1382,10 @@ pub fn handle_active_tab_key(
                             };
                             spawn_open_diff(app, tx, mr_iid, project_context, fx);
                         }
-                        _ if (key_event.code == KeyCode::Char('P')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.view_related_pipelines,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsViewRelatedPipelines, key_event) =>
                         {
                             let pipe_id = mr.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
                                 app.pipelines
@@ -1400,17 +1407,17 @@ pub fn handle_active_tab_key(
                                 );
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.view_stack,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsViewStack, key_event) =>
                         {
                             with_pr_stack(app, &mr, crate::app::StackAction::Browse, tx, fx);
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.open_in_browser,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsOpenInBrowser, key_event) =>
                         {
                             let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };
@@ -1434,10 +1441,10 @@ pub fn handle_active_tab_key(
                                 ));
                             });
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.toggle_draft,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsToggleDraft, key_event) =>
                         {
                             let is_draft = app
                                 .mrs
@@ -1465,55 +1472,10 @@ pub fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.close_entity,
-                            key_event,
-                        ) =>
-                        {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                                crate::app::ConfirmAction::CloseMr(mr_iid),
-                                app.scope.project_of(&mr.project_path).to_string(),
-                                app,
-                            ));
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.delete_entity,
-                            key_event,
-                        ) =>
-                        {
-                            if !app
-                                .gitlab_client
-                                .as_ref()
-                                .map(|c| c.is_github)
-                                .unwrap_or(false)
-                            {
-                                app.submit_dialog =
-                                    Some(crate::app::SubmitDialog::build_with_project(
-                                        crate::app::ConfirmAction::DeleteMr(mr_iid),
-                                        app.scope.project_of(&mr.project_path).to_string(),
-                                        app,
-                                    ));
-                            } else {
-                                app.show_error(
-                                    "GitHub does not support deleting pull requests".to_string(),
-                                );
-                            }
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.reopen_entity,
-                            key_event,
-                        ) =>
-                        {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                                crate::app::ConfirmAction::ReopenMr(mr_iid),
-                                app.scope.project_of(&mr.project_path).to_string(),
-                                app,
-                            ));
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.copy_reference,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsCopyReference, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_mr_reference() {
                                 let label = if app.is_github() { "PR" } else { "MR" };
@@ -1522,11 +1484,10 @@ pub fn handle_active_tab_key(
                                 ));
                             }
                         }
-                        _ if (key_event.code == KeyCode::Char('I')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.jump_linked_issues,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::MrsJumpLinkedIssues, key_event) =>
                         {
                             use crate::domain::mr::RelatedIssuesState;
                             let state = app
@@ -1616,7 +1577,11 @@ pub fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Pipelines => {
-            if keybinding_matches(&app.config.keybindings.pipelines.enter_jobs, key_event) {
+            if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesEnterJobs, key_event)
+            {
                 let pipe_id = app
                     .pipelines
                     .state
@@ -1633,7 +1598,11 @@ pub fn handle_active_tab_key(
                         fx,
                     );
                 }
-            } else if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesRunNew, key_event)
+            {
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
@@ -1688,30 +1657,38 @@ pub fn handle_active_tab_key(
                     desc_scroll: 0,
                     source_on_forge: false,
                 });
-            } else if keybinding_matches(
-                &app.config.keybindings.pipelines.selection_toggle,
-                key_event,
-            ) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesSelectionToggle, key_event)
+            {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesSelectAll, key_event)
+            {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
-            } else if keybinding_matches(
-                &app.config.keybindings.pipelines.cycle_status_filter,
-                key_event,
-            ) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesCycleStatusFilter, key_event)
+            {
                 let shown = app.cycle_pipeline_status_filter().unwrap_or("ALL");
                 app.show_notice(format!("Status filter: {shown}"));
-            } else if keybinding_matches(
-                &app.config.keybindings.pipelines.toggle_preview,
-                key_event,
-            ) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesTogglePreview, key_event)
+            {
                 app.detail_visible = !app.detail_visible;
                 app.details_zoomed = false;
-            } else if keybinding_matches(
-                &app.config.keybindings.pipelines.trigger_pipeline,
-                key_event,
-            ) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::PipelinesTriggerPipeline, key_event)
+            {
                 if let Some(client) = app.gitlab_client.clone() {
                     let project_path = app.scope.as_str().to_string();
                     let tx2 = tx.clone();
@@ -1735,11 +1712,10 @@ pub fn handle_active_tab_key(
                 if let Some(item) = app.filtered_pipelines().get(selected_idx) {
                     let pipe_id = item.id();
                     match key_event.code {
-                        _ if (key_event.code == KeyCode::Char(' ')
-                            || keybinding_matches(
-                                &app.config.keybindings.pipelines.select_pipeline,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesSelectPipeline, key_event) =>
                         {
                             if app.selected_pipelines.contains(&pipe_id) {
                                 app.selected_pipelines.remove(&pipe_id);
@@ -1747,40 +1723,24 @@ pub fn handle_active_tab_key(
                                 app.selected_pipelines.insert(pipe_id);
                             }
                         }
-                        _ if (key_event.code == KeyCode::Char('r')
-                            || keybinding_matches(
-                                &app.config.keybindings.pipelines.retry,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesRetry, key_event) =>
                         {
                             spawn_pipeline_retry(app, tx, pipe_id, PipelineRetry::Pipeline, fx);
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.pipelines.retry_failed,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesRetryFailed, key_event) =>
                         {
                             spawn_pipeline_retry(app, tx, pipe_id, PipelineRetry::FailedJobs, fx);
                         }
-                        _ if ((key_event.code == KeyCode::Char('d')
-                            && key_event.modifiers.is_empty())
-                            || keybinding_matches(
-                                &app.config.keybindings.pipelines.cancel,
-                                key_event,
-                            )) =>
-                        {
-                            let project_path = app.project_path_for_pipeline(pipe_id);
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                                crate::app::ConfirmAction::CancelPipeline(pipe_id),
-                                project_path,
-                                app,
-                            ));
-                        }
-                        _ if (key_event.code == KeyCode::Char('W')
-                            || keybinding_matches(
-                                &app.config.keybindings.pipelines.open_workflow,
-                                key_event,
-                            )) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesOpenWorkflow, key_event) =>
                         {
                             if !app.is_github() {
                                 app.show_error(
@@ -1818,10 +1778,10 @@ pub fn handle_active_tab_key(
                                 ));
                             });
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.pipelines.open_in_browser,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesOpenInBrowser, key_event) =>
                         {
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
@@ -1843,28 +1803,28 @@ pub fn handle_active_tab_key(
                                 ));
                             });
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.pipelines.copy_url,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesCopyUrl, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_pipeline_url() {
                                 app.show_error(format!("Failed to copy pipeline URL: {error}"));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.pipelines.copy_id,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesCopyId, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_pipeline_id() {
                                 app.show_error(format!("Failed to copy pipeline ID: {error}"));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.pipelines.copy_sha,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::PipelinesCopySha, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_pipeline_sha() {
                                 app.show_error(format!("Failed to copy commit SHA: {error}"));
@@ -1880,7 +1840,11 @@ pub fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Jobs => {
-            if keybinding_matches(&app.config.keybindings.jobs.enter_pipeline, key_event) {
+            if app
+                .config
+                .keybindings
+                .matches(Action::JobsEnterPipeline, key_event)
+            {
                 let pipelines: Vec<String> = app
                     .pipelines
                     .items
@@ -1919,9 +1883,17 @@ pub fn handle_active_tab_key(
                     },
                     request: None,
                 });
-            } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::JobsSelectionToggle, key_event)
+            {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.jobs.select_all, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::JobsSelectAll, key_event)
+            {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
             } else if let Some(idx) = app.jobs.state.selected() {
@@ -1931,10 +1903,10 @@ pub fn handle_active_tab_key(
                     .map(|j| (j.id(), j.name().to_string()));
                 if let Some((job_id, job_name)) = job_info {
                     match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.select_job,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsSelectJob, key_event) =>
                         {
                             if app.selected_jobs.contains(&job_id) {
                                 app.selected_jobs.remove(&job_id);
@@ -1942,7 +1914,7 @@ pub fn handle_active_tab_key(
                                 app.selected_jobs.insert(job_id);
                             }
                         }
-                        _ if keybinding_matches(&app.config.keybindings.jobs.retry, key_event) => {
+                        _ if app.config.keybindings.matches(Action::JobsRetry, key_event) => {
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
@@ -1977,11 +1949,10 @@ pub fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if key_event.code == KeyCode::Char('S')
-                            || keybinding_matches(
-                                &app.config.keybindings.jobs.start_job,
-                                key_event,
-                            ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsStartJob, key_event) =>
                         {
                             // GitHub cannot start a manual job. The key is still
                             // taken there, so it never reaches a custom binding.
@@ -2023,10 +1994,10 @@ pub fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.select_stage,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsSelectStage, key_event) =>
                         {
                             let highlighted_stage = app
                                 .filtered_jobs()
@@ -2045,33 +2016,10 @@ pub fn handle_active_tab_key(
                                 ));
                             }
                         }
-                        _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
-                            let pipe_id = app.active_pipeline_id.unwrap_or(0);
-                            if !app.selected_jobs.is_empty() {
-                                let mut job_ids: Vec<u64> =
-                                    app.selected_jobs.iter().copied().collect();
-                                job_ids.sort_unstable();
-                                let project_path = app.project_path_for_pipeline(pipe_id);
-                                app.submit_dialog =
-                                    Some(crate::app::SubmitDialog::build_with_project(
-                                        crate::app::ConfirmAction::CancelJobs {
-                                            pipeline_id: pipe_id,
-                                            job_ids,
-                                        },
-                                        project_path,
-                                        app,
-                                    ));
-                            } else if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.project_path_for_pipeline(pipe_id);
-                                let tx = app.scoped_sender(tx.clone());
-                                let rows = flip_job_statuses(app, &[job_id], "canceled");
-                                spawn_cancel_jobs(client, tx, project_path, pipe_id, rows, fx);
-                            }
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.download_artifact,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsDownloadArtifact, key_event) =>
                         {
                             if let Some(client) = app.gitlab_client.clone() {
                                 let ref_name = app
@@ -2108,10 +2056,10 @@ pub fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.open_in_browser,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsOpenInBrowser, key_event) =>
                         {
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
@@ -2139,10 +2087,10 @@ pub fn handle_active_tab_key(
                                 ));
                             });
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.view_trace_editor,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsViewTraceEditor, key_event) =>
                         {
                             if app.job_trace.is_some() {
                                 fx.suspend(ForegroundJob::ViewJobTrace { job_id });
@@ -2150,10 +2098,10 @@ pub fn handle_active_tab_key(
                                 app.pending_job_trace_editor = Some(job_id);
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.view_trace,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsViewTrace, key_event) =>
                         {
                             if app.job_trace.is_some() {
                                 app.details_zoomed = !app.details_zoomed;
@@ -2161,54 +2109,54 @@ pub fn handle_active_tab_key(
                                 spawn_job_trace_fetch(app, tx, job_id, fx);
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.toggle_trace_wrap,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsToggleTraceWrap, key_event) =>
                         {
                             app.job_trace_wrap = !app.job_trace_wrap;
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.toggle_trace_follow,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsToggleTraceFollow, key_event) =>
                         {
                             app.job_trace_follow = !app.job_trace_follow;
                             if app.job_trace_follow {
                                 app.detail_scroll_to_bottom = true;
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.copy_sha,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsCopySha, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_job_sha() {
                                 app.show_error(format!("Failed to copy commit SHA: {error}"));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.copy_url,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsCopyUrl, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_job_url() {
                                 app.show_error(format!("Failed to copy job URL: {error}"));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.copy_id,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsCopyId, key_event) =>
                         {
                             if let Err(error) = app.copy_selected_job_id() {
                                 app.show_error(format!("Failed to copy job ID: {error}"));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.jump_to_failure,
-                            key_event,
-                        ) =>
+                        _ if app
+                            .config
+                            .keybindings
+                            .matches(Action::JobsJumpToFailure, key_event) =>
                         {
                             if let Some(view) = &app.job_trace {
                                 let after = view.failure_search_start();
@@ -2228,7 +2176,11 @@ pub fn handle_active_tab_key(
         }
         crate::app::Tab::Runners => {
             let can_manage_runners = app.kind().supports_runner_management();
-            if keybinding_matches(&app.config.keybindings.runners.cycle_status, key_event) {
+            if app
+                .config
+                .keybindings
+                .matches(Action::RunnersCycleStatus, key_event)
+            {
                 app.cycle_runner_status_filter();
             } else if let Some(item) = app.runners.cursor_row() {
                 let runner_id = item.id;
@@ -2237,13 +2189,17 @@ pub fn handle_active_tab_key(
                     // taken there, so a rebinding never reaches a list-view or custom binding.
                     _ if !can_manage_runners
                         && [
-                            &app.config.keybindings.runners.pause,
-                            &app.config.keybindings.runners.resume,
-                            &app.config.keybindings.runners.edit_description,
+                            Action::RunnersPause,
+                            Action::RunnersResume,
+                            Action::RunnersEditDescription,
                         ]
                         .into_iter()
-                        .any(|binding| keybinding_matches(binding, key_event)) => {}
-                    _ if keybinding_matches(&app.config.keybindings.runners.pause, key_event) => {
+                        .any(|action| app.config.keybindings.matches(action, key_event)) => {}
+                    _ if app
+                        .config
+                        .keybindings
+                        .matches(Action::RunnersPause, key_event) =>
+                    {
                         let prev = item.status.clone();
                         let prev_active = item.active;
                         app.runners.update(&runner_id, |runner| {
@@ -2270,7 +2226,11 @@ pub fn handle_active_tab_key(
                             });
                         }
                     }
-                    _ if keybinding_matches(&app.config.keybindings.runners.resume, key_event) => {
+                    _ if app
+                        .config
+                        .keybindings
+                        .matches(Action::RunnersResume, key_event) =>
+                    {
                         let prev = item.status.clone();
                         let prev_active = item.active;
                         app.runners.update(&runner_id, |runner| {
@@ -2297,10 +2257,10 @@ pub fn handle_active_tab_key(
                             });
                         }
                     }
-                    _ if keybinding_matches(
-                        &app.config.keybindings.runners.edit_description,
-                        key_event,
-                    ) =>
+                    _ if app
+                        .config
+                        .keybindings
+                        .matches(Action::RunnersEditDescription, key_event) =>
                     {
                         let current_desc = item.description.clone().unwrap_or_default();
                         app.text_input = Some(crate::app::TextInput::new(
@@ -2313,10 +2273,10 @@ pub fn handle_active_tab_key(
                             },
                         ));
                     }
-                    _ if keybinding_matches(
-                        &app.config.keybindings.runners.open_in_browser,
-                        key_event,
-                    ) =>
+                    _ if app
+                        .config
+                        .keybindings
+                        .matches(Action::RunnersOpenInBrowser, key_event) =>
                     {
                         let runner_id_local = runner_id;
                         let client = app.gitlab_client.clone();
@@ -2334,16 +2294,20 @@ pub fn handle_active_tab_key(
                             ));
                         });
                     }
-                    _ if keybinding_matches(
-                        &app.config.keybindings.runners.copy_url,
-                        key_event,
-                    ) =>
+                    _ if app
+                        .config
+                        .keybindings
+                        .matches(Action::RunnersCopyUrl, key_event) =>
                     {
                         if let Err(error) = app.copy_selected_runner_url() {
                             app.show_error(format!("Failed to copy runner URL: {error}"));
                         }
                     }
-                    _ if keybinding_matches(&app.config.keybindings.runners.copy_id, key_event) => {
+                    _ if app
+                        .config
+                        .keybindings
+                        .matches(Action::RunnersCopyId, key_event) =>
+                    {
                         if let Err(error) = app.copy_selected_runner_id() {
                             app.show_error(format!("Failed to copy runner ID: {error}"));
                         }
@@ -2355,7 +2319,11 @@ pub fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Releases => match key_event.code {
-            _ if keybinding_matches(&app.config.keybindings.releases.create_release, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ReleasesCreateRelease, key_event) =>
+            {
                 let mut fields = vec![crate::app::Field::section("Details")];
                 if app.scope.is_group() {
                     fields.push(crate::app::Field::ref_field("Project", String::new()));
@@ -2390,24 +2358,19 @@ pub fn handle_active_tab_key(
                     source_on_forge: false,
                 });
             }
-            _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ReleasesEditRelease, key_event) =>
+            {
                 if let Some(release) = app.releases.cursor_row().cloned() {
                     crate::entity_editor::open_release_edit_menu(app, &release);
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.releases.delete_release, key_event) => {
-                if let Some(release) = app.releases.cursor_row() {
-                    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                        crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
-                        release.project_or(&app.scope).to_string(),
-                        app,
-                    ));
-                }
-            }
-            _ if keybinding_matches(
-                &app.config.keybindings.releases.open_in_browser,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ReleasesOpenInBrowser, key_event) =>
             {
                 if let Some(release) = app.releases.cursor_row() {
                     let Some(client) = app.gitlab_client.clone() else {
@@ -2431,52 +2394,93 @@ pub fn handle_active_tab_key(
             _ => handled = false,
         },
         crate::app::Tab::Todos => match key_event.code {
-            _ if keybinding_matches(&app.config.keybindings.todos.toggle_show_read, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosToggleShowRead, key_event) =>
+            {
                 crate::handlers::todos::toggle_show_read(app, tx, fx);
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.mark_all_as_read, key_event) => {
-                crate::handlers::todos::confirm_mark_all_read(app);
-            }
-            _ if keybinding_matches(&app.config.keybindings.todos.toggle_preview, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosTogglePreview, key_event) =>
+            {
                 app.detail_visible = !app.detail_visible;
                 app.details_zoomed = false;
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.mark_as_read, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosMarkAsRead, key_event) =>
+            {
                 crate::handlers::todos::activate_todo(app, tx, fx);
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.mark_as_done, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosMarkAsDone, key_event) =>
+            {
                 crate::handlers::todos::mark_selected_done(app, tx, fx);
             }
             _ if app.selected_todo().is_none() => handled = false,
-            _ if keybinding_matches(&app.config.keybindings.todos.unsubscribe, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosUnsubscribe, key_event) =>
+            {
                 crate::handlers::todos::unsubscribe_selected(app, tx, fx);
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.open_in_browser, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosOpenInBrowser, key_event) =>
+            {
                 crate::handlers::todos::open_selected_in_browser(app, tx, fx);
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.select_todo, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosSelectTodo, key_event) =>
+            {
                 app.toggle_todo_selection();
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.selection_toggle, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosSelectionToggle, key_event) =>
+            {
                 app.toggle_select_mode();
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.select_all, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosSelectAll, key_event) =>
+            {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.copy_url, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosCopyUrl, key_event) =>
+            {
                 crate::handlers::todos::copy_selected_url(app);
             }
-            _ if keybinding_matches(&app.config.keybindings.todos.copy_reference, key_event) => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::TodosCopyReference, key_event) =>
+            {
                 crate::handlers::todos::copy_selected_reference(app);
             }
             _ => handled = false,
         },
         crate::app::Tab::Milestones => match key_event.code {
-            _ if keybinding_matches(
-                &app.config.keybindings.milestones.create_milestone,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::MilestonesCreateMilestone, key_event) =>
             {
                 let is_github = app.is_github();
                 let project = if app.scope.is_group() {
@@ -2523,10 +2527,10 @@ pub fn handle_active_tab_key(
                     source_on_forge: false,
                 });
             }
-            _ if keybinding_matches(
-                &app.config.keybindings.milestones.edit_milestone,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::MilestonesEditMilestone, key_event) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let is_github = app.is_github();
@@ -2566,58 +2570,10 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            _ if keybinding_matches(
-                &app.config.keybindings.milestones.close_milestone,
-                key_event,
-            ) =>
-            {
-                if let Some(selected_idx) = app.milestones.state.selected() {
-                    let filtered = app.filtered_milestones();
-                    if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::CloseMilestone(milestone.iid),
-                            app.scope.project_of(&milestone.project_path).to_string(),
-                            app,
-                        ));
-                    }
-                }
-            }
-            _ if keybinding_matches(
-                &app.config.keybindings.milestones.reopen_milestone,
-                key_event,
-            ) =>
-            {
-                if let Some(selected_idx) = app.milestones.state.selected() {
-                    let filtered = app.filtered_milestones();
-                    if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
-                            app.scope.project_of(&milestone.project_path).to_string(),
-                            app,
-                        ));
-                    }
-                }
-            }
-            _ if keybinding_matches(
-                &app.config.keybindings.milestones.delete_milestone,
-                key_event,
-            ) =>
-            {
-                if let Some(selected_idx) = app.milestones.state.selected() {
-                    let filtered = app.filtered_milestones();
-                    if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::DeleteMilestone(milestone.iid),
-                            app.scope.project_of(&milestone.project_path).to_string(),
-                            app,
-                        ));
-                    }
-                }
-            }
-            _ if keybinding_matches(
-                &app.config.keybindings.milestones.open_in_browser,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::MilestonesOpenInBrowser, key_event) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
@@ -2644,12 +2600,23 @@ pub fn handle_active_tab_key(
             _ => handled = false,
         },
         crate::app::Tab::Branches => {
-            if keybinding_matches(&app.config.keybindings.branches.selection_toggle, key_event) {
+            if app
+                .config
+                .keybindings
+                .matches(Action::BranchesSelectionToggle, key_event)
+            {
                 app.toggle_select_mode();
-            } else if keybinding_matches(&app.config.keybindings.branches.select_all, key_event) {
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::BranchesSelectAll, key_event)
+            {
                 let added = app.select_all_filtered();
                 show_selected_all_notice(app, added);
-            } else if keybinding_matches(&app.config.keybindings.branches.select_branch, key_event)
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::BranchesSelectBranch, key_event)
             {
                 if let Some(branch) = app.branches.cursor_row() {
                     let name = branch.name.clone();
@@ -2659,7 +2626,10 @@ pub fn handle_active_tab_key(
                         app.selected_branches.insert(name);
                     }
                 }
-            } else if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event)
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::BranchesCreateBranch, key_event)
             {
                 let create_from = app
                     .branches
@@ -2698,42 +2668,13 @@ pub fn handle_active_tab_key(
                     desc_scroll: 0,
                     source_on_forge: false,
                 });
-            } else if keybinding_matches(&app.config.keybindings.branches.delete_branch, key_event)
-            {
-                if !app.selected_branches.is_empty() {
-                    let default_name = app
-                        .branches
-                        .items()
-                        .iter()
-                        .find(|b| b.default)
-                        .map(|b| b.name.as_str());
-                    let mut names: Vec<String> = app
-                        .selected_branches
-                        .iter()
-                        .filter(|n| default_name != Some(n.as_str()))
-                        .cloned()
-                        .collect();
-                    names.sort();
-                    if names.len() == 1 {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::DeleteBranch(names.remove(0)),
-                            app,
-                        ));
-                    } else if !names.is_empty() {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::BulkDeleteBranches(names),
-                            app,
-                        ));
-                    }
-                } else if let Some(branch) = app.branches.cursor_row() {
-                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                        crate::app::ConfirmAction::DeleteBranch(branch.name.clone()),
-                        app,
-                    ));
-                }
             } else if let Some(branch) = app.branches.cursor_row() {
                 let branch_name = branch.name.clone();
-                if keybinding_matches(&app.config.keybindings.branches.checkout_branch, key_event) {
+                if app
+                    .config
+                    .keybindings
+                    .matches(Action::BranchesCheckoutBranch, key_event)
+                {
                     let tx = tx.clone();
                     fx.spawn(async move {
                         let result = tokio::task::spawn_blocking(move || {
@@ -2750,7 +2691,10 @@ pub fn handle_active_tab_key(
                             }
                         };
                     });
-                } else if keybinding_matches(&app.config.keybindings.branches.create_mr, key_event)
+                } else if app
+                    .config
+                    .keybindings
+                    .matches(Action::BranchesCreateMr, key_event)
                 {
                     let project = app.scope.as_str().to_string();
                     open_create_mr_form(
@@ -2763,10 +2707,11 @@ pub fn handle_active_tab_key(
                         0,
                         true,
                     );
-                } else if keybinding_matches(
-                    &app.config.keybindings.branches.open_in_browser,
-                    key_event,
-                ) {
+                } else if app
+                    .config
+                    .keybindings
+                    .matches(Action::BranchesOpenInBrowser, key_event)
+                {
                     let branch_local = branch_name.clone();
                     let client = app.gitlab_client.clone();
                     let project_path = app.scope.as_str().to_string();
@@ -2783,10 +2728,11 @@ pub fn handle_active_tab_key(
                             CommandOutcome::read_only(result),
                         ));
                     });
-                } else if keybinding_matches(
-                    &app.config.keybindings.branches.copy_branch,
-                    key_event,
-                ) {
+                } else if app
+                    .config
+                    .keybindings
+                    .matches(Action::BranchesCopyBranch, key_event)
+                {
                     if let Err(error) = app.copy_selected_branch_name() {
                         app.show_error(format!("Failed to copy branch name: {error}"));
                     }
@@ -2808,24 +2754,34 @@ pub fn handle_active_tab_key(
     if !handled {
         let mut detail_scrolled = true;
         if app.detail_visible
-            && (keybinding_matches(&app.config.keybindings.global.scroll_down, key_event)
-                || key_event.code == KeyCode::Char('J'))
+            && app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollDown, key_event)
         {
             app.detail_scroll = app.detail_scroll.saturating_add(1);
         } else if app.detail_visible
-            && (keybinding_matches(&app.config.keybindings.global.scroll_up, key_event)
-                || key_event.code == KeyCode::Char('K'))
+            && app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollUp, key_event)
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, key_event)
+            && app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollToEnd, key_event)
         {
             // Only the flag — the last line's index is the render pass's
             // `max`, which no handler knows. `settle_detail_scroll` resolves
             // it in the same frame.
             app.detail_scroll_to_bottom = true;
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_top, key_event)
+            && app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollTop, key_event)
         {
             // `scroll_top` jumps to the first line directly: 0 is a known
             // index, no flag round-trip needed.
@@ -2835,10 +2791,11 @@ pub fn handle_active_tab_key(
         }
 
         match key_event.code {
-            KeyCode::Char('?') | KeyCode::F(1) => {
-                app.show_help = true;
-            }
-            KeyCode::Char('u') if key_event.modifiers.is_empty() => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ListCheckUpdates, key_event) =>
+            {
                 app.show_notice("Checking for updates...");
                 let tx = tx.clone();
                 fx.spawn(async move {
@@ -2860,16 +2817,7 @@ pub fn handle_active_tab_key(
                     }
                 });
             }
-            KeyCode::Char('q') => {
-                if app.details_zoomed {
-                    app.details_zoomed = false;
-                } else if app.detail_visible {
-                    app.detail_visible = false;
-                } else {
-                    fx.quit();
-                }
-            }
-            KeyCode::Esc | KeyCode::Backspace => {
+            _ if app.config.keybindings.matches(Action::ListBack, key_event) => {
                 if app.clear_selections() {
                     app.clear_info_notices();
                 } else if app.job_trace_loading {
@@ -2909,186 +2857,185 @@ pub fn handle_active_tab_key(
                     app.clear_search_query();
                 }
             }
-            KeyCode::Char('f') if key_event.modifiers.is_empty() => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ListSearch, key_event) =>
+            {
                 app.is_typing_search = true;
             }
-            KeyCode::Enter => match app.active_tab {
-                crate::app::Tab::Todos => crate::handlers::todos::activate_todo(app, tx, fx),
-                crate::app::Tab::Pipelines => {
-                    if let Some(idx) = app.pipelines.state.selected() {
-                        let pipe_info = app.filtered_pipelines().get(idx).map(|p| {
-                            // A group-scoped list mixes projects, so the row's
-                            // own path wins over the scope it was listed under.
-                            (p.id(), app.scope.project_of(&p.project_path).to_string())
-                        });
-                        if let Some((pipeline_id, project_context)) = pipe_info {
-                            spawn_open_pipeline(
-                                app,
-                                tx,
-                                pipeline_id,
-                                project_context,
-                                PipelineOpening::Descend,
-                                fx,
-                            );
+            _ if app.config.keybindings.matches(Action::ListOpen, key_event) => {
+                match app.active_tab {
+                    crate::app::Tab::Pipelines => {
+                        if let Some(idx) = app.pipelines.state.selected() {
+                            let pipe_info = app.filtered_pipelines().get(idx).map(|p| {
+                                // A group-scoped list mixes projects, so the row's
+                                // own path wins over the scope it was listed under.
+                                (p.id(), app.scope.project_of(&p.project_path).to_string())
+                            });
+                            if let Some((pipeline_id, project_context)) = pipe_info {
+                                spawn_open_pipeline(
+                                    app,
+                                    tx,
+                                    pipeline_id,
+                                    project_context,
+                                    PipelineOpening::Descend,
+                                    fx,
+                                );
+                            }
                         }
                     }
-                }
-                crate::app::Tab::Jobs => {
-                    if app.job_trace.is_some() {
-                        app.details_zoomed = !app.details_zoomed;
-                    } else if let Some(idx) = app.jobs.state.selected() {
-                        let job_id = app.filtered_jobs().get(idx).map(|j| j.id());
-                        if let Some(job_id) = job_id {
-                            spawn_job_trace_fetch(app, tx, job_id, fx);
-                        }
-                    }
-                }
-                _ => {
-                    if !app.detail_visible {
-                        app.detail_visible = true;
-                        app.details_zoomed = false;
-                    } else if !app.details_zoomed {
-                        app.details_zoomed = true;
-                    } else {
-                        // Already zoomed in! Second Enter enters edit mode
-                        match app.active_tab {
-                            crate::app::Tab::Issues => {
-                                if let Some(selected_idx) = app.issues.state.selected() {
-                                    let filtered = app.filtered_issues();
-                                    if let Some(issue) = filtered.get(selected_idx) {
-                                        let is_github = app.is_github();
-                                        let mut doc = crate::entity_editor::build_issue_document(
-                                            issue,
-                                            is_github,
-                                            app.fetching_related_mrs.contains(&issue.iid),
-                                        );
-                                        doc.fields.push(crate::app::Field::text(
-                                            "Description",
-                                            issue.description.clone().unwrap_or_default(),
-                                        ));
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Edit Issue #{}", issue.iid),
-                                            entity_project: issue.project_path.clone(),
-                                            fields: doc.fields,
-                                            initial_fields: std::collections::HashMap::new(),
-                                            selected_idx: 0,
-                                            entity_iid: issue.iid,
-                                            entity_kind: crate::app::EditEntityKind::EditIssue,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                            source_on_forge: false,
-                                        });
+                    _ => {
+                        if !app.detail_visible {
+                            app.detail_visible = true;
+                            app.details_zoomed = false;
+                        } else if !app.details_zoomed {
+                            app.details_zoomed = true;
+                        } else {
+                            // Already zoomed in! Second Enter enters edit mode
+                            match app.active_tab {
+                                crate::app::Tab::Issues => {
+                                    if let Some(selected_idx) = app.issues.state.selected() {
+                                        let filtered = app.filtered_issues();
+                                        if let Some(issue) = filtered.get(selected_idx) {
+                                            let is_github = app.is_github();
+                                            let mut doc =
+                                                crate::entity_editor::build_issue_document(
+                                                    issue,
+                                                    is_github,
+                                                    app.fetching_related_mrs.contains(&issue.iid),
+                                                );
+                                            doc.fields.push(crate::app::Field::text(
+                                                "Description",
+                                                issue.description.clone().unwrap_or_default(),
+                                            ));
+                                            app.open_edit_menu(crate::app::EditMenu {
+                                                title: format!("Edit Issue #{}", issue.iid),
+                                                entity_project: issue.project_path.clone(),
+                                                fields: doc.fields,
+                                                initial_fields: std::collections::HashMap::new(),
+                                                selected_idx: 0,
+                                                entity_iid: issue.iid,
+                                                entity_kind: crate::app::EditEntityKind::EditIssue,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
+                                                },
+                                                workflow_inputs: vec![],
+                                                cursor_pos: 0,
+                                                editing: false,
+                                                desc_scroll: 0,
+                                                source_on_forge: false,
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                            crate::app::Tab::MergeRequests => {
-                                if let Some(selected_idx) = app.mrs.state.selected() {
-                                    let filtered = app.filtered_mrs();
-                                    if let Some(mr) = filtered.get(selected_idx) {
-                                        let is_github = app.is_github();
-                                        let pr_suffix = if is_github { "PR" } else { "MR" };
-                                        let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid)
-                                            == Some(mr.iid)
-                                        {
-                                            Some(app.unresolved_threads_count())
-                                        } else {
-                                            None
-                                        };
-                                        let is_fetching_issues =
-                                            app.fetching_mr_related_issues.contains(&mr.iid);
-                                        let mut doc = crate::entity_editor::build_mr_document(
-                                            mr,
-                                            is_github,
-                                            unresolved,
-                                            is_fetching_issues,
-                                            &app.icons,
-                                        );
-                                        doc.fields.push(crate::app::Field::text(
-                                            "Description",
-                                            mr.description.clone().unwrap_or_default(),
-                                        ));
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Edit {} #{}", pr_suffix, mr.iid),
-                                            entity_project: mr.project_path.clone(),
-                                            fields: doc.fields,
-                                            initial_fields: std::collections::HashMap::new(),
-                                            selected_idx: 0,
-                                            entity_iid: mr.iid,
-                                            entity_kind: crate::app::EditEntityKind::EditMr,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                            source_on_forge: false,
-                                        });
-                                    }
-                                }
-                            }
-                            crate::app::Tab::Milestones => {
-                                if let Some(selected_idx) = app.milestones.state.selected() {
-                                    let filtered = app.filtered_milestones();
-                                    if let Some(m) = filtered.get(selected_idx) {
-                                        let is_github = app.is_github();
-                                        let issues = app.milestone_issues(m.iid);
-                                        let progress =
-                                            app.milestone_progress_cache.get(&m.iid).copied();
-                                        let mut doc =
-                                            crate::entity_editor::build_milestone_document(
-                                                m, issues, progress, is_github,
+                                crate::app::Tab::MergeRequests => {
+                                    if let Some(selected_idx) = app.mrs.state.selected() {
+                                        let filtered = app.filtered_mrs();
+                                        if let Some(mr) = filtered.get(selected_idx) {
+                                            let is_github = app.is_github();
+                                            let pr_suffix = if is_github { "PR" } else { "MR" };
+                                            let unresolved =
+                                                if app.diff_view.as_ref().map(|d| d.mr_iid)
+                                                    == Some(mr.iid)
+                                                {
+                                                    Some(app.unresolved_threads_count())
+                                                } else {
+                                                    None
+                                                };
+                                            let is_fetching_issues =
+                                                app.fetching_mr_related_issues.contains(&mr.iid);
+                                            let mut doc = crate::entity_editor::build_mr_document(
+                                                mr,
+                                                is_github,
+                                                unresolved,
+                                                is_fetching_issues,
+                                                &app.icons,
                                             );
-                                        doc.fields.push(crate::app::Field::text(
-                                            "Description",
-                                            m.description.clone().unwrap_or_default(),
-                                        ));
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Edit Milestone %{}", m.iid),
-                                            entity_project: m.project_path.clone(),
-                                            fields: doc.fields,
-                                            initial_fields: std::collections::HashMap::new(),
-                                            selected_idx: 0,
-                                            entity_iid: m.iid,
-                                            entity_kind: crate::app::EditEntityKind::EditMilestone,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                            source_on_forge: false,
-                                        });
+                                            doc.fields.push(crate::app::Field::text(
+                                                "Description",
+                                                mr.description.clone().unwrap_or_default(),
+                                            ));
+                                            app.open_edit_menu(crate::app::EditMenu {
+                                                title: format!("Edit {} #{}", pr_suffix, mr.iid),
+                                                entity_project: mr.project_path.clone(),
+                                                fields: doc.fields,
+                                                initial_fields: std::collections::HashMap::new(),
+                                                selected_idx: 0,
+                                                entity_iid: mr.iid,
+                                                entity_kind: crate::app::EditEntityKind::EditMr,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
+                                                },
+                                                workflow_inputs: vec![],
+                                                cursor_pos: 0,
+                                                editing: false,
+                                                desc_scroll: 0,
+                                                source_on_forge: false,
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                            crate::app::Tab::Releases => {
-                                if let Some(release) = app.releases.cursor_row().cloned() {
-                                    crate::entity_editor::open_release_edit_menu(app, &release);
+                                crate::app::Tab::Milestones => {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(m) = filtered.get(selected_idx) {
+                                            let is_github = app.is_github();
+                                            let issues = app.milestone_issues(m.iid);
+                                            let progress =
+                                                app.milestone_progress_cache.get(&m.iid).copied();
+                                            let mut doc =
+                                                crate::entity_editor::build_milestone_document(
+                                                    m, issues, progress, is_github,
+                                                );
+                                            doc.fields.push(crate::app::Field::text(
+                                                "Description",
+                                                m.description.clone().unwrap_or_default(),
+                                            ));
+                                            app.open_edit_menu(crate::app::EditMenu {
+                                                title: format!("Edit Milestone %{}", m.iid),
+                                                entity_project: m.project_path.clone(),
+                                                fields: doc.fields,
+                                                initial_fields: std::collections::HashMap::new(),
+                                                selected_idx: 0,
+                                                entity_iid: m.iid,
+                                                entity_kind:
+                                                    crate::app::EditEntityKind::EditMilestone,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
+                                                },
+                                                workflow_inputs: vec![],
+                                                cursor_pos: 0,
+                                                editing: false,
+                                                desc_scroll: 0,
+                                                source_on_forge: false,
+                                            });
+                                        }
+                                    }
                                 }
-                            }
-                            _ => {
-                                app.details_zoomed = false;
+                                crate::app::Tab::Releases => {
+                                    if let Some(release) = app.releases.cursor_row().cloned() {
+                                        crate::entity_editor::open_release_edit_menu(app, &release);
+                                    }
+                                }
+                                _ => {
+                                    app.details_zoomed = false;
+                                }
                             }
                         }
                     }
                 }
-            },
-            _ if (key_event.code == KeyCode::Right
-                || key_event.code == KeyCode::Char('l')
-                || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
+            }
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::GlobalNextTab, key_event) =>
             {
                 app.next_tab();
                 if let Some(client) = &app.gitlab_client {
@@ -3115,9 +3062,10 @@ pub fn handle_active_tab_key(
                     maybe_fetch_mr_related_issues(app, tx);
                 }
             }
-            _ if (key_event.code == KeyCode::Left
-                || key_event.code == KeyCode::Char('h')
-                || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::GlobalPrevTab, key_event) =>
             {
                 app.previous_tab();
                 if let Some(client) = &app.gitlab_client {
@@ -3144,7 +3092,11 @@ pub fn handle_active_tab_key(
                     maybe_fetch_mr_related_issues(app, tx);
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ListNextRow, key_event) =>
+            {
                 if app.details_zoomed {
                     app.detail_scroll = app.detail_scroll.saturating_add(1);
                 } else {
@@ -3194,7 +3146,11 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ListPreviousRow, key_event) =>
+            {
                 if app.details_zoomed {
                     app.detail_scroll = app.detail_scroll.saturating_sub(1);
                 } else {
@@ -3244,7 +3200,11 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            KeyCode::Home => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ListFirstRow, key_event) =>
+            {
                 if app.details_zoomed {
                     app.detail_scroll = 0;
                 } else {
@@ -3294,7 +3254,11 @@ pub fn handle_active_tab_key(
                     }
                 }
             }
-            KeyCode::End => {
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::ListLastRow, key_event) =>
+            {
                 if app.details_zoomed {
                     // Only the flag — the last line's index is the render
                     // pass's `max`, which no handler knows.
@@ -3555,12 +3519,12 @@ pub fn jump_to_issue_tab_from_selector(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::app::App;
     use crate::event::ScopeGeneration;
     use crate::notice::Notice;
-    use crossterm::event::{KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::collections::{HashMap, HashSet};
 
     #[tokio::test]
@@ -3708,15 +3672,14 @@ mod tests {
         assert_eq!(app.detail_scroll, 5);
     }
 
-    /// With `scroll_down` remapped away from the hardcoded "J", both halves
-    /// of the merged condition remain reachable: the remapped key and the
-    /// hardcoded 'J' fallback each move the pane by exactly one line.
+    /// Remapping `scroll_down` replaces its default key: the old `J`
+    /// no longer scrolls once another key is bound.
     #[tokio::test]
-    async fn remapped_scroll_down_and_hardcoded_j_each_scroll_one_line() {
+    async fn remapped_scroll_down_stops_the_old_default_key() {
         let mut app = App::default();
         app.detail_visible = true;
         app.detail_scroll = 5;
-        app.config.keybindings.global.scroll_down = "z".to_string();
+        app.config.keybindings.set(Action::GlobalScrollDown, &["z"]);
 
         dispatch(
             &mut app,
@@ -3728,7 +3691,7 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
         );
-        assert_eq!(app.detail_scroll, 7);
+        assert_eq!(app.detail_scroll, 6, "the old default no longer fires");
     }
 
     #[tokio::test]
@@ -3990,6 +3953,43 @@ mod tests {
         assert_eq!(app.pipelines.items[0].status, "running");
     }
 
+    /// Remapping `pipelines.retry` replaces its default key: the old `r`
+    /// no longer retries once another key is bound.
+    #[tokio::test]
+    async fn remapped_pipeline_retry_stops_the_old_default_key_and_fires_the_new_one() {
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+            show_read_notifications: false,
+        });
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![listed_pipeline(42)];
+        app.pipelines.state.select(Some(0));
+        app.config.keybindings.set(Action::PipelinesRetry, &["z"]);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        );
+        assert_ne!(
+            app.pipelines.items[0].status, "running",
+            "the old default no longer retries"
+        );
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            app.pipelines.items[0].status, "running",
+            "the remapped key retries"
+        );
+    }
+
     #[tokio::test]
     async fn cancelling_selected_jobs_asks_for_confirmation_first() {
         use crate::domain::pipelines::Job;
@@ -4079,7 +4079,9 @@ mod tests {
         let mut app = App::default();
         app.detail_visible = true;
         app.detail_scroll = 5;
-        app.config.keybindings.global.scroll_to_end = "End".to_string();
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollToEnd, &["End"]);
 
         dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
 
@@ -4092,7 +4094,9 @@ mod tests {
     async fn scroll_to_end_is_ignored_while_the_detail_pane_is_hidden() {
         let mut app = App::default();
         app.detail_visible = false;
-        app.config.keybindings.global.scroll_to_end = "End".to_string();
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollToEnd, &["End"]);
 
         dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
 
@@ -4110,8 +4114,12 @@ mod tests {
         app.detail_visible = true;
         app.detail_scroll = 5;
         app.scope = crate::scope::Scope::Repository("group/project".to_string());
-        app.config.keybindings.global.scroll_to_end = "G".to_string();
-        app.config.keybindings.issues.drill_into_scope = "P".to_string();
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollToEnd, &["G"]);
+        app.config
+            .keybindings
+            .set(Action::IssuesDrillIntoScope, &["P"]);
 
         dispatch(
             &mut app,
@@ -4130,7 +4138,9 @@ mod tests {
         let mut app = App::default();
         app.detail_visible = true;
         app.detail_scroll = 5;
-        app.config.keybindings.global.scroll_top = "Home".to_string();
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollTop, &["Home"]);
 
         dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
 
@@ -4160,7 +4170,7 @@ mod tests {
         let mut app = App::default();
         app.detail_visible = true;
         app.detail_scroll = 5;
-        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.config.keybindings.set(Action::GlobalScrollTop, &["gg"]);
 
         dispatch_press(&mut app, &KeyPress::Sequence("gg".to_string()));
 
@@ -4172,7 +4182,7 @@ mod tests {
     async fn next_tab_bound_to_a_sequence_switches_tab() {
         let mut app = App::default();
         app.active_tab = Tab::Issues;
-        app.config.keybindings.global.next_tab = "zz".to_string();
+        app.config.keybindings.set(Action::GlobalNextTab, &["zz"]);
 
         dispatch_press(&mut app, &KeyPress::Sequence("zz".to_string()));
 
@@ -4202,7 +4212,9 @@ mod tests {
     async fn scroll_top_default_dispatches_without_panic_in_hidden_detail() {
         let mut app = App::default();
         app.detail_visible = false;
-        app.config.keybindings.global.scroll_top = "Home".to_string();
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollTop, &["Home"]);
 
         dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
 
@@ -4220,7 +4232,7 @@ mod tests {
         let mut app = App::default();
         app.detail_visible = false;
         app.detail_scroll = 5;
-        app.config.keybindings.global.scroll_top = "F1".to_string();
+        app.config.keybindings.set(Action::GlobalScrollTop, &["F1"]);
 
         dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
 
@@ -4231,10 +4243,18 @@ mod tests {
     /// scrolling defaults to Ctrl+d / Ctrl+u. These tests drive the
     /// Ctrl+f/b/d/u spelling, so we ensure the full page bindings are set.
     fn bind_vim_page_keys(app: &mut App) {
-        app.config.keybindings.global.scroll_page_down = "Ctrl+f".to_string();
-        app.config.keybindings.global.scroll_page_up = "Ctrl+b".to_string();
-        app.config.keybindings.global.scroll_half_page_down = "Ctrl+d".to_string();
-        app.config.keybindings.global.scroll_half_page_up = "Ctrl+u".to_string();
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollPageDown, &["Ctrl+f"]);
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollPageUp, &["Ctrl+b"]);
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollHalfPageDown, &["Ctrl+d"]);
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollHalfPageUp, &["Ctrl+u"]);
     }
 
     /// `Ctrl+f`/`Ctrl+b` move a full viewport, `Ctrl+d`/`Ctrl+u` half of it,
@@ -4877,17 +4897,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hiding_the_detail_pane_hands_navigation_back_to_the_environment_list() {
-        let mut app = app_with_focused_deployments(two_deployments());
-
-        dispatch(&mut app, &key(KeyCode::Char('q')));
-        dispatch(&mut app, &key(KeyCode::Char('j')));
-
-        assert!(!app.detail_visible);
-        assert_eq!(highlighted_environment(&app), Some("staging"));
-    }
-
-    #[tokio::test]
     async fn deployments_left_off_a_narrow_screen_take_no_keys() {
         let mut app = app_with_focused_deployments(two_deployments());
         app.detail_rect = None;
@@ -4955,5 +4964,117 @@ mod tests {
             crate::app::ConfirmAction::StopEnvironment(env) if env.id == 1
         ));
         assert!(dialog.is_on_cancel());
+    }
+
+    /// A fixture App for `confirm::confirmation`'s coverage test: one row
+    /// selected on the action's tab (plus a deployment for rollback, and a
+    /// pipeline/job context for jobs).
+    pub(crate) fn app_for_destructive_action(action: crate::keymap::Action) -> App {
+        use crate::keymap::Action;
+        match action {
+            Action::IssuesCloseEntity | Action::IssuesReopenEntity | Action::IssuesDeleteEntity => {
+                let mut app = App::default();
+                app.active_tab = Tab::Issues;
+                app.issues.items = vec![crate::domain::issues::Issue {
+                    iid: 1,
+                    title: "Issue 1".to_string(),
+                    state: "opened".to_string(),
+                    labels: vec![],
+                    updated_at: String::new(),
+                    created_at: None,
+                    closed_at: None,
+                    author: crate::domain::issues::Author {
+                        username: "user".to_string(),
+                    },
+                    milestone: None,
+                    assignees: vec![],
+                    description: None,
+                    due_date: None,
+                    web_url: String::new(),
+                    project_path: "acme/a".to_string(),
+                    related_mrs: None,
+                }];
+                app.issues.state.select(Some(0));
+                app
+            }
+            Action::MrsRevokeMr
+            | Action::MrsCloseEntity
+            | Action::MrsReopenEntity
+            | Action::MrsDeleteEntity => {
+                let mut app = App::default();
+                app.active_tab = Tab::MergeRequests;
+                app.mrs.items = vec![mr_in("acme/a", 1, "user")];
+                app.mrs.state.select(Some(0));
+                app
+            }
+            Action::PipelinesCancel => {
+                let mut app = App::default();
+                app.active_tab = Tab::Pipelines;
+                app.pipelines.items = vec![listed_pipeline(1)];
+                app.pipelines.state.select(Some(0));
+                app
+            }
+            Action::JobsCancel => {
+                let mut app = App::default();
+                app.active_tab = Tab::Jobs;
+                app.jobs.items = vec![job(1)];
+                app.jobs.state.select(Some(0));
+                app.active_pipeline_id = Some(1);
+                app
+            }
+            Action::ReleasesDeleteRelease => {
+                let mut app = App::default();
+                app.active_tab = Tab::Releases;
+                app.releases
+                    .set_items(vec![crate::domain::releases::Release {
+                        name: "v1".to_string(),
+                        tag_name: "v1".to_string(),
+                        released_at: String::new(),
+                        description: None,
+                        author_name: None,
+                        commit_id: None,
+                        commit_title: None,
+                        assets_link: None,
+                        project_path: "acme/a".to_string(),
+                    }]);
+                app.sync_list_views();
+                app
+            }
+            Action::MilestonesCloseMilestone
+            | Action::MilestonesReopenMilestone
+            | Action::MilestonesDeleteMilestone => {
+                let mut app = App::default();
+                app.active_tab = Tab::Milestones;
+                app.milestones.items = vec![crate::domain::milestones::Milestone {
+                    iid: 1,
+                    project_path: "acme/a".to_string(),
+                    ..Default::default()
+                }];
+                app.milestones.state.select(Some(0));
+                app
+            }
+            Action::BranchesDeleteBranch => app_with_branches(1),
+            Action::EnvironmentsStopEnvironment => {
+                let mut app = App::default();
+                app.active_tab = Tab::Environments;
+                app.environments.set_items(
+                    serde_json::from_value(serde_json::json!([
+                        {"id": 1, "name": "production", "state": "available"}
+                    ]))
+                    .expect("environment fixture parses"),
+                );
+                app.sync_list_views();
+                app
+            }
+            Action::EnvironmentsRollbackDeployment => {
+                app_with_focused_deployments(two_deployments())
+            }
+            Action::TodosMarkAllAsRead => {
+                let mut app = App::default();
+                app.active_tab = Tab::Todos;
+                app
+            }
+            other => panic!("no fixture for destructive action {other:?}"),
+        }
     }
 }

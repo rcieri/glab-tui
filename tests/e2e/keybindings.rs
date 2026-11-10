@@ -119,6 +119,36 @@ next_tab = "zz"
         .expect("`zz` should switch to the MRs tab");
 }
 
+/// The keys a config sets replace the action's defaults: with `next_tab`
+/// moved to `z`, neither `l` nor `Right` (both defaults) switch tabs.
+#[test]
+fn remapped_action_no_longer_answers_to_its_default_keys() {
+    let config_toml = r#"
+icons = "ascii"
+
+[keybindings.global]
+next_tab = "z"
+"#;
+    let mut session = TestSession::with_config(false, 24, 140, Some(config_toml));
+    session
+        .wait_for_screen_contains("Worktree for seven", 30000)
+        .expect("app should list the issues");
+
+    session.send_input(b"l");
+    session.send_input(b"\x1b[C");
+    session.settle(1_000);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Feature: Add pagination support"),
+        "a default key of the remapped next_tab still switched tabs:\n{screen}"
+    );
+
+    session.send_input(b"z");
+    session
+        .wait_for_screen_contains("Feature: Add pagination support", 15000)
+        .expect("`z` should switch to the MRs tab");
+}
+
 /// `scroll_top = "gg"` makes `g` wait, so `jump_to_id` on `g` only runs once
 /// `keybinding_timeout_ms` passes without another key.
 #[test]

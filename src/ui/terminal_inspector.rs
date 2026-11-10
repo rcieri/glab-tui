@@ -2,7 +2,8 @@ use super::helpers::{log_status_badge, rendered_line_count};
 use super::modal::modal_area;
 use crate::app::{App, OverlayKind, TerminalInspector};
 use crate::command_log::TerminalCommand;
-use crate::config::{Icons, KeybindingTerminal, Theme};
+use crate::config::{Icons, Theme};
+use crate::keymap::{Action, Keymap};
 use crate::ui::diff::centered_rect_min;
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{expand_tabs, format_elapsed, sanitize_untrusted};
@@ -32,8 +33,8 @@ pub(crate) fn render_terminal_inspector(
     };
     let theme = ctx.theme;
     let icons = ctx.icons;
-    let lines = inspector_lines(entry, &app.config.keybindings.terminal, &theme, icons);
-    let hints = key_hints(&app.config.keybindings.terminal);
+    let lines = inspector_lines(entry, &app.config.keybindings, &theme, icons);
+    let hints = key_hints(&app.config.keybindings);
 
     let title = format!("{} Command Details", icons.tab_terminal);
     let area = centered_rect_min(80, 80, 60, 14, size);
@@ -65,16 +66,18 @@ pub(crate) fn render_terminal_inspector(
     );
 }
 
-fn key_hints(keys: &KeybindingTerminal) -> String {
+fn key_hints(keys: &Keymap) -> String {
     format!(
         " Esc close · j/k scroll · {} copy command · {} copy output · {} re-run",
-        keys.copy_command, keys.copy_output, keys.rerun_command
+        keys.display(Action::TerminalCopyCommand),
+        keys.display(Action::TerminalCopyOutput),
+        keys.display(Action::TerminalRerunCommand)
     )
 }
 
 fn inspector_lines(
     entry: &TerminalCommand,
-    keys: &KeybindingTerminal,
+    keys: &Keymap,
     theme: &Theme,
     icons: &Icons,
 ) -> Vec<Line<'static>> {
@@ -121,10 +124,10 @@ fn inspector_lines(
         Some(invocation) if invocation.stdin.is_some() => {
             format!(
                 "press {} (replays the recorded request body)",
-                keys.rerun_command
+                keys.display(Action::TerminalRerunCommand)
             )
         }
-        Some(_) => format!("press {}", keys.rerun_command),
+        Some(_) => format!("press {}", keys.display(Action::TerminalRerunCommand)),
         None => "not available: no glab, gh or git call recorded".to_string(),
     };
     lines.push(text_field("Re-run", rerun, theme));

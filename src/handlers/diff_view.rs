@@ -3,9 +3,9 @@ use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
 use crate::keybinding::KeyPress;
-use crate::keybinding::keybinding_matches;
+use crate::keymap::{Action, KeyContext};
 use crate::{app, handlers};
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::KeyCode;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Runs a review mutation in the background and reports its outcome on the
@@ -51,6 +51,19 @@ pub(crate) fn post_review_comment(
     });
 }
 
+/// Moves the diff cursor to the next (or previous) search match.
+fn step_search(diff_view: &mut crate::app::DiffView, forward: bool) {
+    if diff_view.focus_on_files || diff_view.search_query.is_empty() {
+        return;
+    }
+    if forward {
+        diff_view.search_next();
+    } else {
+        diff_view.search_prev();
+    }
+    diff_view.update_selected_file_from_cursor();
+}
+
 /// Keys while the MR/PR diff view is open.
 pub fn handle_key(
     app: &mut App,
@@ -62,12 +75,74 @@ pub fn handle_key(
         return;
     };
     let in_selection = diff_view.selection_start.is_some();
-    match key_event.code {
-        KeyCode::Esc => {
-            if diff_view.search_active {
-                diff_view.search_active = false;
-                diff_view.clear_search();
-            } else if in_selection {
+
+    if diff_view.search_active {
+        let keys = &app.config.keybindings;
+        if keys.matches(Action::DiffSearchNext, key_event) {
+            step_search(&mut diff_view, true);
+        } else if keys.matches(Action::DiffSearchPrevious, key_event) {
+            step_search(&mut diff_view, false);
+        } else {
+            match key_event.code {
+                KeyCode::Esc => {
+                    diff_view.search_active = false;
+                    diff_view.clear_search();
+                }
+                KeyCode::Backspace => {
+                    diff_view.search_query.pop();
+                    if diff_view.search_query.is_empty() {
+                        diff_view.clear_search();
+                    } else {
+                        diff_view.search(&diff_view.search_query.clone());
+                    }
+                }
+                KeyCode::Char(c) => {
+                    diff_view.search_query.push(c);
+                    diff_view.search(&diff_view.search_query.clone());
+                }
+                _ => {}
+            }
+        }
+        app.diff_view = Some(diff_view);
+        return;
+    }
+
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalScrollHalfPageDown, key_event)
+    {
+        let rows = (diff_view.viewport_height / 2).max(1);
+        diff_view.move_by(true, rows, in_selection);
+        app.diff_view = Some(diff_view);
+        return;
+    }
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalScrollHalfPageUp, key_event)
+    {
+        let rows = (diff_view.viewport_height / 2).max(1);
+        diff_view.move_by(false, rows, in_selection);
+        app.diff_view = Some(diff_view);
+        return;
+    }
+
+    match app
+        .config
+        .keybindings
+        .resolve(KeyContext::DiffView, key_event)
+    {
+        Some(Action::DiffSearchNext) => {
+            step_search(&mut diff_view, true);
+            app.diff_view = Some(diff_view);
+        }
+        Some(Action::DiffSearchPrevious) => {
+            step_search(&mut diff_view, false);
+            app.diff_view = Some(diff_view);
+        }
+        Some(Action::DiffBack) => {
+            if in_selection {
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
             } else if !diff_view.search_query.is_empty() {
@@ -88,90 +163,27 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            if !diff_view.focus_on_files && !diff_view.search_query.is_empty() {
-                diff_view.search_next();
-                diff_view.update_selected_file_from_cursor();
-            }
-            app.diff_view = Some(diff_view);
-        }
-        KeyCode::Char('N') => {
-            if key_event.modifiers.contains(KeyModifiers::CONTROL)
-                && !diff_view.focus_on_files
-                && !diff_view.search_query.is_empty()
-            {
-                diff_view.search_prev();
-                diff_view.update_selected_file_from_cursor();
-            }
-            app.diff_view = Some(diff_view);
-        }
-        // --- Search input mode (real-time) ---
-        _ if diff_view.search_active => {
-            match key_event.code {
-                KeyCode::Esc => {
-                    diff_view.search_active = false;
-                }
-                KeyCode::Backspace => {
-                    diff_view.search_query.pop();
-                    if diff_view.search_query.is_empty() {
-                        diff_view.clear_search();
-                    } else {
-                        diff_view.search(&diff_view.search_query.clone());
-                    }
-                }
-                KeyCode::Char(c) => {
-                    diff_view.search_query.push(c);
-                    diff_view.search(&diff_view.search_query.clone());
-                }
-                _ => {}
-            }
-            app.diff_view = Some(diff_view);
-        }
-        // Ahead of the plain `d` arm, which ignores modifiers.
-        _ if keybinding_matches(
-            &app.config.keybindings.global.scroll_half_page_down,
-            key_event,
-        ) =>
-        {
-            let rows = (diff_view.viewport_height / 2).max(1);
-            diff_view.move_by(true, rows, in_selection);
-            app.diff_view = Some(diff_view);
-        }
-        _ if keybinding_matches(
-            &app.config.keybindings.global.scroll_half_page_up,
-            key_event,
-        ) =>
-        {
-            let rows = (diff_view.viewport_height / 2).max(1);
-            diff_view.move_by(false, rows, in_selection);
-            app.diff_view = Some(diff_view);
-        }
-        KeyCode::Char('q') => {
+        Some(Action::DiffClose) => {
             if in_selection {
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
+            } else if !app.draft_comments.is_empty() {
+                app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+                    crate::app::ConfirmAction::SubmitReview(diff_view.mr_iid),
+                    diff_view.project_path.clone(),
+                    app,
+                ));
             } else {
-                if diff_view.search_active {
-                    diff_view.search_active = false;
-                }
-                if !app.draft_comments.is_empty() {
-                    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                        crate::app::ConfirmAction::SubmitReview(diff_view.mr_iid),
-                        diff_view.project_path.clone(),
-                        app,
-                    ));
-                } else {
-                    app.diff_view = None;
-                    return;
-                }
+                app.diff_view = None;
+                return;
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Tab => {
+        Some(Action::DiffToggleFocus) => {
             diff_view.focus_on_files = !diff_view.focus_on_files;
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('h') | KeyCode::Left => {
+        Some(Action::DiffFocusFiles) => {
             if diff_view.focus_on_files {
                 if !diff_view.visible_nodes.is_empty() {
                     let node = &diff_view.visible_nodes[diff_view.selected_visible_idx];
@@ -186,7 +198,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('l') | KeyCode::Right => {
+        Some(Action::DiffFocusDiff) => {
             if diff_view.focus_on_files && !diff_view.visible_nodes.is_empty() {
                 let node = &diff_view.visible_nodes[diff_view.selected_visible_idx];
                 if node.is_dir && !node.is_expanded {
@@ -198,9 +210,8 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Enter | KeyCode::Char(' ') => {
+        Some(Action::DiffOpen) => {
             if diff_view.focus_on_files {
-                // On a file in the tree → open it, switch to diff
                 if !diff_view.visible_nodes.is_empty() {
                     let node = &diff_view.visible_nodes[diff_view.selected_visible_idx];
                     if node.is_dir {
@@ -211,30 +222,26 @@ pub fn handle_key(
                     }
                 }
             } else if diff_view.file_tree_visible {
-                // Diff focused, tree visible → zoom (hide tree)
                 diff_view.file_tree_visible = false;
             } else {
-                // Diff zoomed, tree hidden → show tree and focus it
                 diff_view.file_tree_visible = true;
                 diff_view.focus_on_files = true;
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('z') => {
+        Some(Action::DiffCollapseAll) => {
             if diff_view.focus_on_files {
                 diff_view.collapse_all();
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('Z') => {
+        Some(Action::DiffExpandAll) => {
             if diff_view.focus_on_files {
                 diff_view.expand_all();
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('m') => {
-            // From the diff pane, mark whatever is under the
-            // cursor rather than a stale tree selection.
+        Some(Action::DiffToggleReviewed) => {
             if !diff_view.focus_on_files {
                 diff_view.update_selected_file_from_cursor();
             }
@@ -260,7 +267,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('M') => {
+        Some(Action::DiffToggleHideReviewed) => {
             let hidden = diff_view.toggle_hide_reviewed();
             app.hide_reviewed_files = hidden;
             let (reviewed, total) = diff_view.review_progress();
@@ -271,7 +278,7 @@ pub fn handle_key(
             });
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('[') => {
+        Some(Action::DiffPreviousHunk) => {
             if !diff_view.focus_on_files {
                 let current = diff_view.cursor_idx;
                 if let Some(&prev_hunk) = diff_view.hunks.iter().rev().find(|&&h| h < current) {
@@ -282,7 +289,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char(']') => {
+        Some(Action::DiffNextHunk) => {
             if !diff_view.focus_on_files {
                 let current = diff_view.cursor_idx;
                 if let Some(&next_hunk) = diff_view.hunks.iter().find(|&&h| h > current) {
@@ -293,7 +300,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('d') => {
+        Some(Action::DiffToggleSideBySide) => {
             if !diff_view.focus_on_files {
                 let old_side_by_side = diff_view.side_by_side;
                 let old_cursor = diff_view.cursor_idx;
@@ -341,7 +348,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('j') | KeyCode::Down => {
+        Some(Action::DiffNextLine) => {
             if diff_view.focus_on_files {
                 if !diff_view.visible_nodes.is_empty() {
                     let old_idx = diff_view.selected_visible_idx;
@@ -371,7 +378,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Action::DiffPreviousLine) => {
             if diff_view.focus_on_files {
                 if diff_view.selected_visible_idx > 0 {
                     let old_idx = diff_view.selected_visible_idx;
@@ -393,22 +400,22 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('J') => {
+        Some(Action::DiffPageDown) => {
             diff_view.move_by(true, 10, in_selection);
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('K') => {
+        Some(Action::DiffPageUp) => {
             diff_view.move_by(false, 10, in_selection);
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('/') | KeyCode::Char('f') => {
+        Some(Action::DiffSearch) => {
             if !diff_view.focus_on_files && !diff_view.search_active {
                 diff_view.clear_search();
                 diff_view.search_active = true;
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('v') | KeyCode::Char('V') => {
+        Some(Action::DiffToggleSelection) => {
             if !diff_view.focus_on_files {
                 if in_selection {
                     diff_view.selection_start = None;
@@ -424,7 +431,7 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('a') => {
+        Some(Action::DiffCommentActions) => {
             if diff_view.focus_on_files {
                 // `a` only acts on diff-side lines; the
                 // tree opening with focus on files makes
@@ -525,14 +532,14 @@ pub fn handle_key(
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('T') => {
+        Some(Action::DiffReviewThreads) => {
             app.review_threads = Some(crate::app::ReviewThreadsOverview::new(
                 &app.current_comments,
                 &diff_view,
             ));
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('c') => {
+        Some(Action::DiffComment) => {
             if let Some(range) = diff_view.get_comment_range() {
                 app.text_input = Some(crate::app::TextInput::new(
                     format!(" Add Comment to {} ", range.file_path),
@@ -545,13 +552,12 @@ pub fn handle_key(
                         end_old_line_num: range.end_old_line_num,
                     },
                 ));
-                // Clear selection after starting a comment
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('C') => {
+        Some(Action::DiffCommentInEditor) => {
             if let Some(range) = diff_view.get_comment_range() {
                 app.show_notice("Opening editor for comment...");
                 fx.suspend(ForegroundJob::Edit {
@@ -561,13 +567,12 @@ pub fn handle_key(
                         draft: draft_at(&range),
                     },
                 });
-                // Clear selection after starting a comment
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
             }
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('r') => {
+        Some(Action::DiffSubmitReview) => {
             crate::handlers::review_submit::open(
                 app,
                 diff_view.mr_iid,
@@ -575,7 +580,7 @@ pub fn handle_key(
             );
             app.diff_view = Some(diff_view);
         }
-        KeyCode::Char('e') => {
+        Some(Action::DiffSuggest) => {
             if let Some(range) = diff_view.get_comment_range() {
                 let content = range
                     .lines
@@ -645,5 +650,53 @@ pub(crate) fn add_diff_comment(
         ));
     } else {
         post_review_comment(app, mr_iid, comment, tx, fx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+
+    fn open_diff(app: &mut App) {
+        let mut view = crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+        );
+        view.focus_on_files = false;
+        app.diff_view = Some(view);
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        let tx = app.tx.clone();
+        handle_key(
+            app,
+            &KeyEvent::new(code, KeyModifiers::NONE).into(),
+            &tx,
+            &mut Effects::default(),
+        );
+    }
+
+    #[test]
+    fn remapping_toggle_side_by_side_off_d_stops_d_and_arms_the_new_key() {
+        let mut app = App::default();
+        open_diff(&mut app);
+        app.config
+            .keybindings
+            .set(Action::DiffToggleSideBySide, &["x"]);
+
+        press(&mut app, KeyCode::Char('d'));
+        assert!(
+            !app.diff_view.as_ref().unwrap().side_by_side,
+            "the old default key must no longer fire the remapped action"
+        );
+
+        press(&mut app, KeyCode::Char('x'));
+        assert!(
+            app.diff_view.as_ref().unwrap().side_by_side,
+            "the new key must trigger the remapped action"
+        );
     }
 }

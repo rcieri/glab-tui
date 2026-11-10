@@ -1,5 +1,6 @@
 use crate::app::App;
-use crate::keybinding::{KeyPress, keybinding_matches};
+use crate::keybinding::KeyPress;
+use crate::keymap::Action;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
@@ -7,16 +8,17 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
         return false;
     }
 
-    let is_f1 = key_event.code == KeyCode::F(1);
-    let is_help_key = is_f1 || keybinding_matches(&app.config.keybindings.global.help, key_event);
+    let is_help_key = app
+        .config
+        .keybindings
+        .matches(Action::GlobalHelp, key_event);
 
     if !is_help_key {
         return false;
     }
 
-    // When the user is actively typing raw text into a text field, allow F1 to open help,
-    // but keep regular character keys (like '?') so they can be typed into the field.
-    if app.is_capturing_text() && !is_f1 {
+    let types_a_character = matches!(key_event.code, KeyCode::Char(_));
+    if app.is_capturing_text() && types_a_character {
         return false;
     }
 
@@ -66,17 +68,17 @@ pub fn handle_help_overlay(app: &mut App, key_event: &KeyPress) -> bool {
                 app.help_search_query.pop();
                 reset_help_selection(app);
             }
-            _ if keybinding_matches(
-                &app.config.keybindings.global.scroll_half_page_down,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollHalfPageDown, key_event) =>
             {
                 move_help_selection(app, true, HELP_PAGE_ROWS / 2)
             }
-            _ if keybinding_matches(
-                &app.config.keybindings.global.scroll_half_page_up,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollHalfPageUp, key_event) =>
             {
                 move_help_selection(app, false, HELP_PAGE_ROWS / 2)
             }

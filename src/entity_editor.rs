@@ -1009,9 +1009,10 @@ pub fn build_branch_document(
 
 pub fn build_environment_document(
     env: &crate::domain::deployments::Environment,
-    keys: &crate::config::KeybindingEnvironments,
+    keys: &crate::keymap::Keymap,
     is_github: bool,
 ) -> crate::app::EntityDocument {
+    use crate::keymap::Action;
     let mut fields = vec![
         crate::app::Field::read_only("Environment", env.name.clone()),
         crate::app::Field::read_only("State", env.state.to_uppercase()),
@@ -1050,24 +1051,27 @@ pub fn build_environment_document(
     }
     let mut action_lines = vec![format!(
         "- `{}` rolls back to the selected deployment",
-        keys.rollback_deployment
+        keys.display(Action::EnvironmentsRollbackDeployment)
     )];
     if !is_github {
         action_lines.push(format!(
             "- `{}` opens the selected deployment's job log",
-            keys.view_deployment_log
+            keys.display(Action::EnvironmentsViewDeploymentLog)
         ));
     }
     action_lines.push(format!(
         "- `{}` stops the environment",
-        keys.stop_environment
+        keys.display(Action::EnvironmentsStopEnvironment)
     ));
-    action_lines.push(format!("- `{}` copies its URL", keys.copy_url));
+    action_lines.push(format!(
+        "- `{}` copies its URL",
+        keys.display(Action::EnvironmentsCopyUrl)
+    ));
     let actions = format!(
         "Press `{}` to list this environment's deployments and `{}` to move between them and \
          the environment list.\n\n{}",
-        keys.view_deployments,
-        keys.focus_deployments,
+        keys.display(Action::EnvironmentsViewDeployments),
+        keys.display(Action::EnvironmentsFocusDeployments),
         action_lines.join("\n"),
     );
     crate::app::EntityDocument {

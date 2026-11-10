@@ -326,8 +326,12 @@ diff --git a/src/lib.rs b/src/lib.rs
                 .map(|id| review_note(id, &format!("t{id}"), None))
                 .collect(),
         );
-        app.config.keybindings.global.scroll_top = "gg".to_string();
-        app.config.keybindings.global.scroll_to_end = "ge".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollToEnd, &["ge"]);
 
         handle_review_threads(&mut app, &KeyPress::Sequence("ge".to_string()));
         assert_eq!(selected_root_id(&app), Some(3));
@@ -492,7 +496,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         for &code in codes {
             assert!(handle_submit_dialog(
                 app,
-                &KeyEvent::new(code, KeyModifiers::NONE),
+                &KeyEvent::new(code, KeyModifiers::NONE).into(),
                 &tx,
                 &mut crate::effect::Effects::default(),
             ));
@@ -683,7 +687,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         let tx = app.tx.clone();
         super::handle_submit_dialog(
             app,
-            &KeyEvent::new(code, KeyModifiers::NONE),
+            &KeyEvent::new(code, KeyModifiers::NONE).into(),
             &tx,
             &mut crate::effect::Effects::default(),
         );
@@ -698,6 +702,26 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.jobs.items.iter().all(|j| j.status == "running"));
         assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[test]
+    fn remapping_dialog_cancel_off_esc_stops_esc_and_arms_the_new_key() {
+        let mut app = app_with_cancel_jobs_dialog();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::DialogCancel, &["x"]);
+
+        press_in_submit_dialog(&mut app, KeyCode::Esc);
+        assert!(
+            app.submit_dialog.is_some(),
+            "the old default key must no longer cancel the dialog"
+        );
+
+        press_in_submit_dialog(&mut app, KeyCode::Char('x'));
+        assert!(
+            app.submit_dialog.is_none(),
+            "the new key must cancel the dialog"
+        );
     }
 
     #[test]

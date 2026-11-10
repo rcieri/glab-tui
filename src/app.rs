@@ -1,6 +1,6 @@
 use crate::backend::BackendKind;
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
-use crate::config::{Config, Icons, KeybindingConfig, Theme};
+use crate::config::{Config, Icons, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
@@ -3741,26 +3741,9 @@ impl SubmitDialog {
     }
 }
 
-/// Every key sequence bound in any `[keybindings.<table>]`.
-fn key_sequences(keybindings: &KeybindingConfig) -> crate::keybinding::KeySequences {
-    fn collect<'a>(value: &'a toml::Value, bindings: &mut Vec<&'a str>) {
-        match value {
-            toml::Value::Table(table) => {
-                for v in table.values() {
-                    collect(v, bindings);
-                }
-            }
-            toml::Value::String(s) => bindings.push(s),
-            _ => {}
-        }
-    }
-
-    let Ok(value) = toml::Value::try_from(keybindings) else {
-        return crate::keybinding::KeySequences::default();
-    };
-    let mut bindings = Vec::new();
-    collect(&value, &mut bindings);
-    crate::keybinding::KeySequences::new(bindings)
+/// Every key sequence bound to any action.
+fn key_sequences(keybindings: &crate::keymap::Keymap) -> crate::keybinding::KeySequences {
+    crate::keybinding::KeySequences::new(keybindings.all_bindings())
 }
 
 pub struct NavFrame {
@@ -7909,10 +7892,10 @@ impl App {
                 .environment_deployments
                 .as_ref()
                 .is_some_and(|shown| !shown.table.items.is_empty())
-            && crate::keybinding::keybinding_matches(
-                &self.config.keybindings.environments.focus_deployments,
-                key,
-            )
+            && self
+                .config
+                .keybindings
+                .matches(crate::keymap::Action::EnvironmentsFocusDeployments, key)
     }
 
     /// Whether a keypress goes into a text field (a search, a filter, an
@@ -11830,8 +11813,18 @@ help = "h"
 
         // Load App (which loads this config)
         let mut app = App::new();
-        assert_eq!(app.config.keybindings.global.quit, "ctrl+c");
-        assert_eq!(app.config.keybindings.global.help, "h");
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalQuit),
+            ["ctrl+c"]
+        );
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalHelp),
+            ["h"]
+        );
 
         // Change layout/page size and save
         app.config.page_size = 456;
@@ -14014,8 +14007,12 @@ index 123456..789012 100644
     #[test]
     fn sequence_bound_in_any_table_resolves_after_apply_config() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
-        app.config.keybindings.terminal.clear_log = "cc".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::TerminalClearLog, &["cc"]);
         app.apply_config();
 
         app.receive_key(typed('z'));
@@ -14036,7 +14033,9 @@ index 123456..789012 100644
     #[test]
     fn key_typed_into_a_text_field_never_waits_for_a_sequence() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
         app.apply_config();
         app.is_typing_search = true;
 
@@ -14051,7 +14050,9 @@ index 123456..789012 100644
     #[test]
     fn function_key_binding_does_not_hold_back_its_letter() {
         let mut app = App::default();
-        app.config.keybindings.global.scroll_top = "F1".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["F1"]);
         app.apply_config();
 
         app.receive_key(typed('F'));
@@ -14065,7 +14066,9 @@ index 123456..789012 100644
     #[test]
     fn ctrl_c_quits_while_a_sequence_is_waiting() {
         let mut app = App::default();
-        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
         app.apply_config();
         let ctrl_c = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('c'),

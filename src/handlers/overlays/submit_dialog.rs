@@ -5,12 +5,13 @@ use crate::handlers::tabs::{
     OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
     spawn_cancel_jobs,
 };
-use crossterm::event::{KeyCode, KeyEvent};
+use crate::keybinding::KeyPress;
+use crate::keymap::{Action, KeyContext};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn handle_submit_dialog(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
@@ -18,12 +19,12 @@ pub fn handle_submit_dialog(
         return false;
     };
 
-    let mut submit = false;
-    let mut cancel = false;
-    let mut choice = None;
-
-    match key_event.code {
-        KeyCode::Up | KeyCode::Char('k') => {
+    let outcome = match app
+        .config
+        .keybindings
+        .resolve(KeyContext::Dialog, key_event)
+    {
+        Some(Action::DialogPreviousField) => {
             if dialog.is_on_button() {
                 if !dialog.options.is_empty() {
                     dialog.cursor_idx = dialog.options.len(); // jump up to last option
@@ -33,8 +34,9 @@ pub fn handle_submit_dialog(
             } else {
                 dialog.cursor_idx = dialog.cancel_idx(); // wrap around to buttons
             }
+            Outcome::StayOpen
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        Some(Action::DialogNextField) => {
             if dialog.is_on_button() {
                 if !dialog.options.is_empty() {
                     dialog.cursor_idx = 1; // wrap around to first option
@@ -44,61 +46,94 @@ pub fn handle_submit_dialog(
             } else {
                 dialog.cursor_idx = dialog.cancel_idx(); // jump down to buttons
             }
+            Outcome::StayOpen
         }
-        KeyCode::Left | KeyCode::Char('h') => {
+        Some(Action::DialogPreviousButton) => {
             dialog.move_between_buttons(-1);
+            Outcome::StayOpen
         }
-        KeyCode::Right | KeyCode::Char('l') => {
+        Some(Action::DialogNextButton) => {
             dialog.move_between_buttons(1);
+            Outcome::StayOpen
         }
-        KeyCode::Tab => {
+        Some(Action::DialogNext) => {
             dialog.move_next();
+            Outcome::StayOpen
         }
-        KeyCode::BackTab => {
+        Some(Action::DialogPrevious) => {
             dialog.move_prev();
+            Outcome::StayOpen
         }
-        KeyCode::Char(' ') => {
+        Some(Action::DialogToggleOption) => {
             dialog.toggle_focused_option();
+            Outcome::StayOpen
         }
-        KeyCode::Enter => {
-            if dialog.is_on_submit() {
-                submit = true;
-            } else if dialog.is_on_cancel() {
-                cancel = true;
-            } else if let Some(focused) = dialog.focused_choice() {
-                choice = Some(focused);
-            } else {
-                dialog.toggle_focused_option();
-            }
-        }
-        KeyCode::Char('y') | KeyCode::Char('Y') if dialog.is_on_submit() => {
-            submit = true;
-        }
-        KeyCode::Esc => {
-            cancel = true;
-        }
-        _ => {
-            // Consume all other keys while the dialog is open so they
-            // don't fall through to the underlying tab.
-        }
-    }
+        Some(Action::DialogActivate) => activate(&mut dialog),
+        Some(Action::DialogSubmit) if dialog.is_on_submit() => Outcome::Submit,
+        Some(Action::DialogCancel) => Outcome::Cancel,
+        // Consume all other keys while the dialog is open so they
+        // don't fall through to the underlying tab.
+        _ => Outcome::StayOpen,
+    };
 
-    if submit {
-        // Drain the dialog so we can inspect option toggles before
-        // dispatching the API call.
-        let action = dialog.action.clone();
-        let project_path = std::mem::take(&mut dialog.project_path);
-        let options = std::mem::take(&mut dialog.options);
-        run_submit_action(app, action, project_path, options, tx.clone(), fx);
-    } else if let Some(choice) = choice {
-        run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
-    } else if !cancel {
-        // Either the user navigated or toggled an option — keep the
-        // dialog open.
-        app.submit_dialog = Some(dialog);
-    }
-
+    apply_outcome(app, dialog, outcome, tx, fx);
     true
+}
+
+enum Outcome {
+    Submit,
+    Cancel,
+    Choice(DialogChoice),
+    StayOpen,
+}
+
+/// Submits, cancels or picks the focused button, or toggles the focused
+/// option.
+fn activate(dialog: &mut crate::app::SubmitDialog) -> Outcome {
+    if dialog.is_on_submit() {
+        Outcome::Submit
+    } else if dialog.is_on_cancel() {
+        Outcome::Cancel
+    } else if let Some(focused) = dialog.focused_choice() {
+        Outcome::Choice(focused)
+    } else {
+        dialog.toggle_focused_option();
+        Outcome::StayOpen
+    }
+}
+
+/// What `DialogActivate` does, for a mouse click that already moved the
+/// cursor, so a click works whatever keys `DialogActivate` is bound to.
+pub fn activate_focused_button(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    let Some(mut dialog) = app.submit_dialog.take() else {
+        return;
+    };
+    let outcome = activate(&mut dialog);
+    apply_outcome(app, dialog, outcome, tx, fx);
+}
+
+fn apply_outcome(
+    app: &mut App,
+    mut dialog: crate::app::SubmitDialog,
+    outcome: Outcome,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    match outcome {
+        Outcome::Submit => {
+            // Drain the dialog so we can inspect option toggles before
+            // dispatching the API call.
+            let action = dialog.action.clone();
+            let project_path = std::mem::take(&mut dialog.project_path);
+            let options = std::mem::take(&mut dialog.options);
+            run_submit_action(app, action, project_path, options, tx.clone(), fx);
+        }
+        Outcome::Choice(choice) => {
+            run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
+        }
+        Outcome::Cancel => {}
+        Outcome::StayOpen => app.submit_dialog = Some(dialog),
+    }
 }
 
 fn run_dialog_choice(

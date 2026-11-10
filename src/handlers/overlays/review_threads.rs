@@ -1,5 +1,6 @@
 use crate::app::App;
-use crate::keybinding::{KeyPress, keybinding_matches};
+use crate::keybinding::KeyPress;
+use crate::keymap::Action;
 use crossterm::event::KeyCode;
 
 /// Keys for the review threads overlay. Selectors and text inputs opened from
@@ -15,24 +16,32 @@ pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
     let mut keep_open = true;
     match key_event.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('T') => keep_open = false,
-        _ if keybinding_matches(&app.config.keybindings.global.scroll_top, key_event) => {
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollTop, key_event) =>
+        {
             overview.first()
         }
-        _ if keybinding_matches(&app.config.keybindings.global.scroll_to_end, key_event) => {
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollToEnd, key_event) =>
+        {
             overview.last()
         }
         // Ahead of the plain `u` arm, which ignores modifiers.
-        _ if keybinding_matches(
-            &app.config.keybindings.global.scroll_half_page_down,
-            key_event,
-        ) =>
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollHalfPageDown, key_event) =>
         {
             move_review_threads_half_page(&mut overview, true)
         }
-        _ if keybinding_matches(
-            &app.config.keybindings.global.scroll_half_page_up,
-            key_event,
-        ) =>
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollHalfPageUp, key_event) =>
         {
             move_review_threads_half_page(&mut overview, false)
         }

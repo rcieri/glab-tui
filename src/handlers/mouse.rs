@@ -1,7 +1,7 @@
 use crate::app::{App, SaveMenu};
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::handlers::overlays::handle_submit_dialog;
+use crate::handlers::overlays::submit_dialog::activate_focused_button;
 use tokio::sync::mpsc::UnboundedSender;
 
 fn rect_contains(rect: ratatui::layout::Rect, row: u16, col: u16) -> bool {
@@ -286,11 +286,7 @@ fn handle_submit_dialog_mouse(
         if let Some(d) = app.submit_dialog.as_mut() {
             d.cursor_idx = buttons[button];
         }
-        let key = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Enter,
-            crossterm::event::KeyModifiers::NONE,
-        );
-        handle_submit_dialog(app, &key, tx, fx);
+        activate_focused_button(app, tx, fx);
         return;
     }
 

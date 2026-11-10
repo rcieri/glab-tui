@@ -1,21 +1,13 @@
 use crate::app::App;
 use crate::keybinding::KeyPress;
-use crossterm::event::KeyCode;
+use crate::keymap::Action;
 use ratatui::widgets::ListState;
 
 pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
-    let is_switch_repo = (key_event.code == KeyCode::Char('s')
-        && key_event
-            .modifiers
-            .contains(crossterm::event::KeyModifiers::CONTROL))
-        || (key_event.code == KeyCode::Char('S')
-            && key_event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL))
-        || crate::keybinding::keybinding_matches(
-            &app.config.keybindings.global.switch_repo,
-            key_event,
-        );
+    let is_switch_repo = app
+        .config
+        .keybindings
+        .matches(Action::GlobalSwitchRepo, key_event);
 
     if is_switch_repo
         && app.text_input.is_none()

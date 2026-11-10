@@ -4309,6 +4309,23 @@ fn milestone_progress_sort_key(
     "000%".to_string()
 }
 
+/// Ids of the pipelines in `fetched` whose status differs from their row in
+/// `listed`.
+fn changed_pipeline_ids(
+    listed: &[crate::domain::pipelines::Pipeline],
+    fetched: &[crate::domain::pipelines::Pipeline],
+) -> Vec<u64> {
+    fetched
+        .iter()
+        .filter(|new| {
+            listed
+                .iter()
+                .any(|old| old.id() == new.id() && old.status() != new.status())
+        })
+        .map(|pipeline| pipeline.id())
+        .collect()
+}
+
 impl App {
     /// Open an edit/create menu, capturing the current zoom state so Esc
     /// can restore it. Use this helper instead of assigning to
@@ -6068,15 +6085,18 @@ impl App {
             .pipeline_nav
             .first()
             .map_or(&self.pipelines.items, |frame| &frame.items);
-        let changed: Vec<u64> = fetched
-            .iter()
-            .filter(|new| {
-                root.iter()
-                    .any(|old| old.id() == new.id() && old.status() != new.status())
-            })
-            .map(|pipeline| pipeline.id())
-            .collect();
-        for id in changed {
+        for id in changed_pipeline_ids(root, fetched) {
+            self.pipeline_jobs.remove(&id);
+        }
+    }
+
+    /// The same for a refetched child level, compared against the level on
+    /// screen.
+    pub fn drop_jobs_of_changed_children(
+        &mut self,
+        fetched: &[crate::domain::pipelines::Pipeline],
+    ) {
+        for id in changed_pipeline_ids(&self.pipelines.items, fetched) {
             self.pipeline_jobs.remove(&id);
         }
     }
@@ -6111,8 +6131,13 @@ impl App {
     }
 
     /// Show one level down in the Pipelines tab, remembering the current level
-    /// so `ascend` can restore it without another API call.
+    /// so `ascend` can restore it without another API call. Forgets the cached
+    /// jobs of the level's children: there is no earlier status to compare
+    /// against, and one may have changed since its jobs were fetched.
     pub fn descend_into(&mut self, parent_id: u64, level: crate::domain::pipelines::ChildLevel) {
+        for child in &level.children {
+            self.pipeline_jobs.remove(&child.id());
+        }
         self.pipeline_nav.push(NavFrame {
             parent_id,
             items: std::mem::take(&mut self.pipelines.items),

@@ -5,9 +5,12 @@ use std::ops::Range;
 use std::sync::LazyLock;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
-/// The newline variant: its grammars match `\n` at line ends, so every line is
-/// fed with its newline restored (see [`LineHighlighter::highlight`]).
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+/// bat's curated grammars (via `two-face`), a superset of syntect's bundled
+/// set that adds TypeScript, TOML, Dockerfile, Kotlin, Swift, Nix, Zig,
+/// Terraform, Svelte, Vue and more. The newline variant: its grammars match
+/// `\n` at line ends, so every line is fed with its newline restored (see
+/// [`LineHighlighter::highlight`]).
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 
 pub type Syntax = &'static SyntaxReference;
 
@@ -361,6 +364,33 @@ mod tests {
             syntax_for_path("src/GNUmakefile").map(|s| s.name.as_str()),
             Some("Makefile")
         );
+    }
+
+    #[test]
+    fn bat_grammars_highlight_languages_syntect_does_not_bundle() {
+        let samples = [
+            ("web/app.ts", "const answer: number = 42;"),
+            ("web/App.tsx", "export const App = () => <div />;"),
+            ("Cargo.toml", "name = \"glab-tui\""),
+            ("Dockerfile", "FROM alpine:3.20"),
+            ("app/Main.kt", "val answer = 42"),
+            ("Sources/main.swift", "let answer = 42"),
+            ("flake.nix", "{ pkgs }: let x = 1; in x"),
+            ("src/main.zig", "const std = @import(\"std\");"),
+            ("infra/main.tf", "resource \"aws_s3_bucket\" \"b\" {}"),
+            ("src/App.svelte", "<script>let count = 0;</script>"),
+            ("src/App.vue", "<template><div /></template>"),
+        ];
+        let plain: Vec<&str> = samples
+            .iter()
+            .filter(|(path, code)| {
+                let mut highlighter = DiffHighlighter::default();
+                let tokens = highlighter.highlight_row(path, DiffSide::New, code, Some(1));
+                tokens.is_none_or(|tokens| tokens.iter().all(|t| t.kind == TokenKind::Plain))
+            })
+            .map(|(path, _)| *path)
+            .collect();
+        assert_eq!(plain, Vec::<&str>::new());
     }
 
     #[test]

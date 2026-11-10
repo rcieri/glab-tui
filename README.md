@@ -891,6 +891,8 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
 | [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
+| [`two-face`](https://crates.io/crates/two-face) | 0.5 | bat's syntax definitions for syntect (TypeScript, TOML, Dockerfile, Kotlin, Swift, Nix, Zig, Terraform, Svelte, Vue, …) |
+| [`similar`](https://crates.io/crates/similar) | 3.2 | Word-level diff of changed lines in the diff view |
 | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) | 0.13.0 | CommonMark and GFM markdown renderer for details panes |
 | [`arboard`](https://crates.io/crates/arboard) | 3.6 | System clipboard integration for copy shortcuts |
 | [`libc`](https://crates.io/crates/libc) | 0.2 | POSIX process management and terminal session isolation |

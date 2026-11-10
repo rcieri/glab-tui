@@ -121,8 +121,12 @@ pub struct Theme {
     // ── Diff ──
     pub diff_addition_fg: Color,
     pub diff_addition_bg: Color,
+    /// Background of the words an added line changed, over `diff_addition_bg`.
+    pub diff_addition_emph_bg: Color,
     pub diff_deletion_fg: Color,
     pub diff_deletion_bg: Color,
+    /// Background of the words a removed line changed, over `diff_deletion_bg`.
+    pub diff_deletion_emph_bg: Color,
     pub diff_gutter_bg: Color,
     pub diff_sep: Color,
     // ── Comments ──
@@ -561,6 +565,22 @@ fn color_to_hex(c: Color) -> String {
     }
 }
 
+/// Share of a diff row's foreground mixed into its background to derive the
+/// word-emphasis background of a theme that sets none.
+const DIFF_EMPHASIS_FG_SHARE: f32 = 0.3;
+
+/// Mixes `share` of `toward` into `base`. Anything but two RGB colours (a
+/// `Reset` background, say) leaves `base` unchanged.
+fn blend(base: Color, toward: Color, share: f32) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(to_r, to_g, to_b)) = (base, toward) else {
+        return base;
+    };
+    let mix = |from: u8, to: u8| {
+        (f32::from(from) + (f32::from(to) - f32::from(from)) * share).round() as u8
+    };
+    Color::Rgb(mix(r, to_r), mix(g, to_g), mix(b, to_b))
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ThemeToml {
     bg: String,
@@ -588,9 +608,13 @@ struct ThemeToml {
     #[serde(default)]
     diff_addition_bg: Option<String>,
     #[serde(default)]
+    diff_addition_emph_bg: Option<String>,
+    #[serde(default)]
     diff_deletion_fg: Option<String>,
     #[serde(default)]
     diff_deletion_bg: Option<String>,
+    #[serde(default)]
+    diff_deletion_emph_bg: Option<String>,
     #[serde(default)]
     diff_gutter_bg: Option<String>,
     #[serde(default)]
@@ -669,6 +693,10 @@ impl ThemeToml {
                 .and_then(|s| hex_to_color(s))
                 .unwrap_or(fallback)
         };
+        let diff_addition_fg = hex_or(&self.diff_addition_fg, green);
+        let diff_addition_bg = hex_or(&self.diff_addition_bg, green_bg);
+        let diff_deletion_fg = hex_or(&self.diff_deletion_fg, red);
+        let diff_deletion_bg = hex_or(&self.diff_deletion_bg, red_bg);
 
         Some(Theme {
             bg,
@@ -690,10 +718,18 @@ impl ThemeToml {
             yellow_bg,
             purple,
             purple_bg,
-            diff_addition_fg: hex_or(&self.diff_addition_fg, green),
-            diff_addition_bg: hex_or(&self.diff_addition_bg, green_bg),
-            diff_deletion_fg: hex_or(&self.diff_deletion_fg, red),
-            diff_deletion_bg: hex_or(&self.diff_deletion_bg, red_bg),
+            diff_addition_fg,
+            diff_addition_bg,
+            diff_addition_emph_bg: hex_or(
+                &self.diff_addition_emph_bg,
+                blend(diff_addition_bg, diff_addition_fg, DIFF_EMPHASIS_FG_SHARE),
+            ),
+            diff_deletion_fg,
+            diff_deletion_bg,
+            diff_deletion_emph_bg: hex_or(
+                &self.diff_deletion_emph_bg,
+                blend(diff_deletion_bg, diff_deletion_fg, DIFF_EMPHASIS_FG_SHARE),
+            ),
             diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
             diff_sep: hex_or(&self.diff_sep, text_muted),
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
@@ -953,8 +989,16 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     // ── Diff ──
     apply_color(&mut base.diff_addition_fg, &overrides.diff_addition_fg);
     apply_color(&mut base.diff_addition_bg, &overrides.diff_addition_bg);
+    apply_color(
+        &mut base.diff_addition_emph_bg,
+        &overrides.diff_addition_emph_bg,
+    );
     apply_color(&mut base.diff_deletion_fg, &overrides.diff_deletion_fg);
     apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
+    apply_color(
+        &mut base.diff_deletion_emph_bg,
+        &overrides.diff_deletion_emph_bg,
+    );
     apply_color(&mut base.diff_gutter_bg, &overrides.diff_gutter_bg);
     apply_color(&mut base.diff_sep, &overrides.diff_sep);
     // ── Comments ──
@@ -1009,8 +1053,10 @@ pub struct ThemeOverrides {
     // ── Diff ──
     diff_addition_fg: Option<String>,
     diff_addition_bg: Option<String>,
+    diff_addition_emph_bg: Option<String>,
     diff_deletion_fg: Option<String>,
     diff_deletion_bg: Option<String>,
+    diff_deletion_emph_bg: Option<String>,
     diff_gutter_bg: Option<String>,
     diff_sep: Option<String>,
     // ── Comments ──
@@ -3008,6 +3054,8 @@ diff_addition_fg = "#141414"
 diff_addition_bg = "#151515"
 diff_deletion_fg = "#161616"
 diff_deletion_bg = "#171717"
+diff_addition_emph_bg = "#2e2e2e"
+diff_deletion_emph_bg = "#2f2f2f"
 diff_gutter_bg = "#181818"
 diff_sep = "#191919"
 comment_bg = "#1a1a1a"
@@ -3080,5 +3128,41 @@ label_palette_9 = "#2d2d2d"
         assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
         assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
         assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
+        assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Rgb(47, 47, 47));
+    }
+
+    #[test]
+    fn a_theme_without_emphasis_tokens_mixes_them_from_the_diff_row_colors() {
+        let theme_toml = r##"
+bg = "#000000"
+border = "#000000"
+border_focused = "#000000"
+header_fg = "#000000"
+highlight_bg = "#000000"
+inactive_bg = "#000000"
+text_normal = "#000000"
+text_muted = "#000000"
+checked_bg = "#000000"
+green = "#00c800"
+green_bg = "#003200"
+red = "#c80000"
+red_bg = "#320000"
+blue = "#000000"
+blue_bg = "#000000"
+yellow = "#000000"
+yellow_bg = "#000000"
+purple = "#000000"
+purple_bg = "#000000"
+diff_deletion_fg = "#ffffff"
+diff_deletion_bg = ""
+"##;
+        let theme = toml::from_str::<ThemeToml>(theme_toml)
+            .expect("theme parses")
+            .to_theme()
+            .expect("theme resolves");
+
+        assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(0, 95, 0));
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Reset);
     }
 }

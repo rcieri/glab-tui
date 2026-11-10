@@ -87,34 +87,17 @@ fn truncate_url(url: &str) -> String {
     }
 }
 
-/// Map a fenced code block language token (e.g. `"shell"`, `"c#"`) to a
-/// name or file extension syntect knows (e.g. `"sh"`, `"cs"`). Returns `None`
-/// when the token is already one or simply unknown (caller falls back to the
-/// token itself).
+/// Maps a fenced code block language token that names no grammar by itself
+/// to the grammar it means. Every other token (`typescript`, `kotlin`, `toml`,
+/// `ts`, `c#`) is resolved directly by [`syntax_for_token`], by extension or
+/// by grammar name.
 fn resolve_syntax_lang(lang: &str) -> Option<&'static str> {
-    // Compare case-insensitively by ASCII-lowering the input byte-by-byte.
-    let lower = lang.to_ascii_lowercase();
-    match lower.as_str() {
-        "rust" => Some("rs"),
-        "python" | "python3" => Some("py"),
-        "javascript" => Some("js"),
-        "typescript" => Some("ts"),
-        "c++" | "cpp" => Some("cpp"),
-        "c#" | "csharp" => Some("cs"),
-        "kotlin" => Some("kt"),
-        "swift" => Some("swift"),
-        "scala" => Some("scala"),
-        "haskell" => Some("hs"),
-        "elixir" => Some("ex"),
-        "erlang" => Some("erl"),
-        "clojure" => Some("clj"),
-        "ocaml" => Some("ml"),
-        "f#" | "fsharp" => Some("fs"),
-        "dockerfile" => Some("dockerfile"),
-        "makefile" => Some("makefile"),
-        "toml" => Some("toml"),
-        "shell" | "zsh" | "bash" => Some("sh"),
-        _ => None, // pass token through unchanged
+    match lang.to_ascii_lowercase().as_str() {
+        "python3" => Some("Python"),
+        "shell" => Some("Bourne Again Shell (bash)"),
+        "csharp" => Some("C#"),
+        "fsharp" => Some("F#"),
+        _ => None,
     }
 }
 
@@ -489,8 +472,8 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
-        // Resolve the fenced language token to a name or extension syntect
-        // knows (e.g. "shell" → "sh"). An unmapped token is looked up as is.
+        // An aliased token (e.g. "shell") is looked up by the grammar it
+        // means; any other token as is.
         let syntax = code_block
             .language
             .as_deref()
@@ -864,6 +847,56 @@ mod tests {
             .join("\n");
 
         assert_eq!(text, "┌─ yaml\n│ - item\n│ + plus\n│   nested: true\n└─");
+    }
+
+    #[test]
+    fn fence_tokens_resolve_to_their_grammar() {
+        let resolved: Vec<(&str, Option<&str>)> = [
+            "typescript",
+            "kotlin",
+            "swift",
+            "dockerfile",
+            "toml",
+            "python3",
+            "shell",
+            "csharp",
+            "fsharp",
+            "f#",
+        ]
+        .into_iter()
+        .map(|lang| {
+            let syntax = syntax_for_token(resolve_syntax_lang(lang).unwrap_or(lang));
+            (lang, syntax.map(|s| s.name.as_str()))
+        })
+        .collect();
+
+        assert_eq!(
+            resolved,
+            [
+                ("typescript", Some("TypeScript")),
+                ("kotlin", Some("Kotlin")),
+                ("swift", Some("Swift")),
+                ("dockerfile", Some("Dockerfile")),
+                ("toml", Some("TOML")),
+                ("python3", Some("Python")),
+                ("shell", Some("Bourne Again Shell (bash)")),
+                ("csharp", Some("C#")),
+                ("fsharp", Some("F#")),
+                ("f#", Some("F#")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_typescript_fence_colors_its_keywords() {
+        let lines = render_markdown_for_test("```typescript\nconst answer = 42;\n```");
+        let theme = Theme::default();
+        let keyword = lines[1]
+            .spans
+            .iter()
+            .find(|span| span.content == "const")
+            .expect("keyword rendered as its own span");
+        assert_eq!(keyword.style.fg, Some(theme.purple));
     }
 
     #[test]

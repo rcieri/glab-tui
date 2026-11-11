@@ -10,7 +10,7 @@ use super::modal::{button_style, clear_area};
 use crate::config::{Icons, Theme};
 use crate::form::{
     ButtonTone, ClickTarget, Focus, Form, FormLayout, FormTone, Group, GroupKind, GroupPath,
-    ItemList, LineInput, NoteLevel, Preview, Progress, Radio, Toggles,
+    ItemList, LineInput, ListEntry, NoteLevel, Preview, Progress, Radio, Toggles,
 };
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{sanitize_untrusted, wrap_ranges};
@@ -22,6 +22,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use std::ops::Range;
 
 const FORM_WIDTH: u16 = 64;
 /// The border plus one padding column on each side, and the border alone
@@ -32,7 +33,7 @@ const SEPARATOR_ROWS: u16 = 1;
 const BUTTON_ROWS: u16 = 1;
 const FOOTER_ROWS: u16 = 1;
 const CHROME_ROWS: u16 = BORDER_ROWS + SEPARATOR_ROWS + BUTTON_ROWS + FOOTER_ROWS;
-/// Rows a bulk item list keeps once the form is short of room.
+/// Entries a bulk item list keeps once the form is short of room.
 const SHORT_LIST_ROWS: usize = 3;
 /// Columns between two radios drawn on one row.
 const RADIO_GAP: usize = 2;
@@ -48,7 +49,7 @@ enum Compaction {
     NoSpacers,
     /// Previews fold to their first line and a `+N lines` hint.
     FoldedPreviews,
-    /// Item lists keep their first rows and a `N more` row.
+    /// Item lists keep their first entries and a `N more` row.
     ShortLists,
     /// Collapsible sections fold.
     FoldedSections,
@@ -399,9 +400,13 @@ fn group_rows(
         GroupKind::Preview(preview) => {
             preview_rows(preview, compaction >= Compaction::FoldedPreviews, styles)
         }
-        GroupKind::ItemList(list) => {
-            item_rows(list, compaction >= Compaction::ShortLists, ctx, styles)
-        }
+        GroupKind::ItemList(list) => item_rows(
+            list,
+            compaction >= Compaction::ShortLists,
+            ctx,
+            styles,
+            content_width,
+        ),
         GroupKind::Note(note) => {
             let (icon, style) = match note.level {
                 NoteLevel::Info => (None, styles.text),
@@ -473,13 +478,20 @@ fn group_label(group: &Group, icons: &Icons) -> Option<String> {
 }
 
 /// `text` split into rows of at most `width` display columns, breaking a
-/// word too long for a row. A break at a space would otherwise leave that
-/// space as a row of its own, so whitespace-only rows are dropped while the
-/// blank rows between paragraphs stay.
+/// word too long for a row.
 fn wrapped_rows(text: &str, width: usize) -> impl Iterator<Item = &str> {
+    wrapped_ranges(text, width).map(|range| &text[range])
+}
+
+/// The byte ranges of `wrapped_rows`, trimmed. A break at a space would
+/// otherwise leave that space as a row of its own, so whitespace-only rows
+/// are dropped while the blank rows between paragraphs stay.
+fn wrapped_ranges(text: &str, width: usize) -> impl Iterator<Item = Range<usize>> + '_ {
     wrap_ranges(text, width).into_iter().filter_map(|range| {
-        let row = text[range.clone()].trim();
-        (range.is_empty() || !row.is_empty()).then_some(row)
+        let row = &text[range.clone()];
+        let start = range.start + (row.len() - row.trim_start().len());
+        let end = range.start + row.trim_end().len();
+        (range.is_empty() || start < end).then_some(start..end.max(start))
     })
 }
 
@@ -696,6 +708,7 @@ fn item_rows(
     is_short_of_room: bool,
     ctx: &RenderCtx<'_>,
     styles: &Styles,
+    width: usize,
 ) -> Vec<BodyRow> {
     let shown = if is_short_of_room {
         SHORT_LIST_ROWS
@@ -707,35 +720,67 @@ fn item_rows(
         .entries
         .iter()
         .take(shown)
-        .map(|entry| {
-            let label = sanitize_untrusted(&entry.label).into_owned();
-            if !has_started {
-                return BodyRow::plain(Line::from(Span::styled(label, styles.text)));
-            }
-            let (icon, color) = match &entry.progress {
-                Progress::Queued => (&ctx.icons.status_pending, ctx.theme.text_muted),
-                Progress::Running => (&ctx.icons.status_running, ctx.theme.blue),
-                Progress::Done => (&ctx.icons.status_success, ctx.theme.green),
-                Progress::Failed(_) => (&ctx.icons.status_failed, ctx.theme.red),
-            };
-            let mut spans = vec![
-                Span::styled(format!("{icon} "), styles.text.fg(color)),
-                Span::styled(label, styles.text),
-            ];
-            if let Progress::Failed(reason) = &entry.progress {
-                spans.push(Span::styled(
-                    format!(": {}", sanitize_untrusted(reason)),
-                    styles.muted,
-                ));
-            }
-            BodyRow::plain(Line::from(spans))
-        })
+        .flat_map(|entry| entry_rows(entry, has_started, ctx, styles, width))
         .collect();
     let more = list.entries.len().saturating_sub(shown);
     if more > 0 {
         rows.push(BodyRow::plain(Line::from(Span::styled(
             format!("{} {more} more", ctx.icons.sort_desc),
             styles.muted,
+        ))));
+    }
+    rows
+}
+
+/// One list entry wrapped to `width` columns. Once the list has started, the
+/// first row carries the progress marker, the rows below are indented under
+/// it, and a failure reason follows the label muted.
+fn entry_rows(
+    entry: &ListEntry,
+    has_started: bool,
+    ctx: &RenderCtx<'_>,
+    styles: &Styles,
+    width: usize,
+) -> Vec<BodyRow> {
+    let label = sanitize_untrusted(&entry.label);
+    if !has_started {
+        return wrapped_rows(&label, width)
+            .map(|row| BodyRow::plain(Line::from(Span::styled(row.to_string(), styles.text))))
+            .collect();
+    }
+    let (icon, color) = match &entry.progress {
+        Progress::Queued => (&ctx.icons.status_pending, ctx.theme.text_muted),
+        Progress::Running => (&ctx.icons.status_running, ctx.theme.blue),
+        Progress::Done => (&ctx.icons.status_success, ctx.theme.green),
+        Progress::Failed(_) => (&ctx.icons.status_failed, ctx.theme.red),
+    };
+    let marker = format!("{icon} ");
+    let marker_width = Span::raw(marker.as_str()).width();
+    let reason = match &entry.progress {
+        Progress::Failed(reason) => format!(": {}", sanitize_untrusted(reason)),
+        _ => String::new(),
+    };
+    let text = format!("{label}{reason}");
+    let mut rows: Vec<BodyRow> = wrapped_ranges(&text, width.saturating_sub(marker_width))
+        .enumerate()
+        .map(|(position, range)| {
+            let lead = if position == 0 {
+                Span::styled(marker.clone(), styles.text.fg(color))
+            } else {
+                Span::raw(" ".repeat(marker_width))
+            };
+            let split = label.len().clamp(range.start, range.end);
+            BodyRow::plain(Line::from(vec![
+                lead,
+                Span::styled(text[range.start..split].to_string(), styles.text),
+                Span::styled(text[split..range.end].to_string(), styles.muted),
+            ]))
+        })
+        .collect();
+    if rows.is_empty() {
+        rows.push(BodyRow::plain(Line::from(Span::styled(
+            marker,
+            styles.text.fg(color),
         ))));
     }
     rows
@@ -1018,6 +1063,30 @@ mod tests {
                 "",
                 "x 1 failed"
             ]
+        );
+    }
+
+    #[test]
+    fn list_entries_wrap_with_a_failure_reason_indented_under_the_marker() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let styles = Styles::new(&ctx.theme);
+        let queued = ItemList {
+            entries: vec![ListEntry::queued("#12: aaaa bbbb cccc dddd eeee [draft]")],
+        };
+        assert_eq!(
+            rows_text(&item_rows(&queued, false, &ctx, &styles, 15)),
+            ["#12: aaaa bbbb", "cccc dddd eeee", "[draft]"]
+        );
+        let failed = ItemList {
+            entries: vec![ListEntry {
+                label: "!2: aa".into(),
+                progress: Progress::Failed("merge conflict in src".into()),
+            }],
+        };
+        assert_eq!(
+            rows_text(&item_rows(&failed, false, &ctx, &styles, 15)),
+            ["x !2: aa: merge", "  conflict in", "  src"]
         );
     }
 

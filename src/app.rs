@@ -1327,6 +1327,10 @@ pub struct DiffView {
     pub selection_end: Option<usize>,
     pub side_by_side: bool,
     pub side_by_side_lines: Vec<SideBySideLine>,
+    /// Unified row the cursor left when the view last went side by side. A row
+    /// pairing a removal with an addition shows two unified lines, so the row
+    /// alone cannot say which one to return to.
+    unified_cursor_before_split: Option<usize>,
     pub viewport_height: usize,
     pub search_query: String,
     pub search_matches: Vec<usize>,
@@ -1723,6 +1727,7 @@ impl DiffView {
             selection_end: None,
             side_by_side: false,
             side_by_side_lines: Vec::new(),
+            unified_cursor_before_split: None,
             viewport_height: 15,
             search_query: String::new(),
             search_matches: Vec::new(),
@@ -2043,23 +2048,23 @@ impl DiffView {
         self.update_active_lines();
 
         let new_cursor = if side_by_side {
+            self.unified_cursor_before_split = Some(old_cursor);
             self.lines.get(old_cursor).and_then(|unified| {
                 self.side_by_side_lines
                     .iter()
                     .position(|row| side_by_side_row_shows(row, unified))
             })
         } else {
-            self.side_by_side_lines
-                .get(old_cursor)
-                .and_then(|row| row.right.as_ref().or(row.left.as_ref()))
-                .and_then(|target| {
-                    self.lines.iter().position(|l| {
-                        l.file_path == target.file_path
-                            && l.old_line_num == target.old_line_num
-                            && l.new_line_num == target.new_line_num
-                            && l.line_type == target.line_type
+            let remembered = self.unified_cursor_before_split.take();
+            self.side_by_side_lines.get(old_cursor).and_then(|row| {
+                remembered
+                    .filter(|&line| {
+                        self.lines
+                            .get(line)
+                            .is_some_and(|unified| side_by_side_row_shows(row, unified))
                     })
-                })
+                    .or_else(|| unified_row_of(row, &self.lines))
+            })
         };
         if let Some(new_cursor) = new_cursor {
             self.cursor_idx = new_cursor;
@@ -2579,6 +2584,17 @@ fn side_by_side_row_shows(row: &SideBySideLine, unified: &DiffLine) -> bool {
         })
     };
     same_line(&row.left) || same_line(&row.right)
+}
+
+/// Unified row of the line `row` shows on its new side, else on its old side.
+fn unified_row_of(row: &SideBySideLine, lines: &[DiffLine]) -> Option<usize> {
+    let target = row.right.as_ref().or(row.left.as_ref())?;
+    lines.iter().position(|line| {
+        line.file_path == target.file_path
+            && line.old_line_num == target.old_line_num
+            && line.new_line_num == target.new_line_num
+            && line.line_type == target.line_type
+    })
 }
 
 pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
@@ -11442,6 +11458,23 @@ deleted file mode 100644
 
         view.set_side_by_side(false);
         assert_eq!(view.cursor_idx, diff_row(&view, "+added eleven"));
+
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+        view.set_side_by_side(true);
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "-removed eleven"));
+    }
+
+    #[test]
+    fn leaving_side_by_side_ignores_the_remembered_line_once_the_cursor_moved_off_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+
+        view.set_side_by_side(true);
+        view.cursor_idx = side_by_side_row(&view, " context twelve");
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, " context twelve"));
     }
 
     fn side_by_side_row(view: &DiffView, content: &str) -> usize {

@@ -783,9 +783,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .split(inner_area)
             };
 
-            // Auto picks the layout from the pane width, which only the draw knows.
+            // Auto picks the layout from the pane width, which only the draw
+            // knows. A selection holds the layout: switching would drop it, and
+            // the layout catches up once it ends.
             let diff_columns = main_chunks[1].width.saturating_sub(2);
-            diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+            if diff_view.selection_start.is_none() {
+                diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+            }
 
             // 1. Render Files list on the left (only if visible)
             let files_rect = main_chunks[0];
@@ -2149,5 +2153,27 @@ mod tests {
         use crate::app::DiffLayout;
         assert!(!diff_is_side_by_side_at(220, DiffLayout::Unified));
         assert!(diff_is_side_by_side_at(60, DiffLayout::SideBySide));
+    }
+
+    #[test]
+    fn auto_diff_layout_waits_for_a_line_selection_to_end() {
+        let mut terminal = Terminal::new(TestBackend::new(220, 30)).unwrap();
+        let mut app = App::default();
+        let mut view = crate::app::DiffView::new(1, "o/r".to_string(), ONE_LINE_DIFF.to_string());
+        view.selection_start = Some(4);
+        view.selection_end = Some(5);
+        app.diff_view = Some(view);
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let view = app.diff_view.as_mut().expect("diff view open");
+        assert_eq!(
+            (view.side_by_side, view.selection_start, view.selection_end),
+            (false, Some(4), Some(5))
+        );
+
+        view.selection_start = None;
+        view.selection_end = None;
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.diff_view.is_some_and(|view| view.side_by_side));
     }
 }

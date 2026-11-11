@@ -79,7 +79,7 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
         ReviewSubmitFocus::Summary => match code {
             KeyCode::Up => overlay.focus = ReviewSubmitFocus::Verdicts,
             KeyCode::Down => overlay.focus = ReviewSubmitFocus::SubmitButton,
-            _ if is_shortcut(code, modifiers) => {}
+            _ if crate::keybinding::is_shortcut(code, modifiers) => {}
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
                 overlay.summary.apply_edit_key(code);
                 overlay.clear_outcome();
@@ -93,14 +93,6 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
             _ => {}
         },
     }
-}
-
-/// Windows reports AltGr as Ctrl+Alt with the composed character, so a German
-/// `@` or a Nordic `{` arrives as Ctrl+Alt and is text, not a shortcut.
-fn is_shortcut(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    let is_alt_gr_text = modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        && matches!(code, KeyCode::Char(c) if !c.is_ascii_alphanumeric());
-    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) && !is_alt_gr_text
 }
 
 fn select_verdict(overlay: &mut ReviewSubmit, verdict: ReviewVerdict) {

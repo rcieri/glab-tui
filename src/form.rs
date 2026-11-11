@@ -592,10 +592,7 @@ impl Form {
             KeyCode::Esc => self.is_editing = false,
             KeyCode::Tab => self.step_stop(1),
             KeyCode::BackTab => self.step_stop(-1),
-            KeyCode::Char(_)
-                if key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {}
+            KeyCode::Char(_) if crate::keybinding::is_shortcut(key.code, key.modifiers) => {}
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
                 if let Some(path) = self.focused_line_input() {
                     if let Some(group) = self.group_at_mut(path) {
@@ -1159,6 +1156,16 @@ mod tests {
         let mut form = message_form();
         press(&mut form, KeyCode::Tab);
         assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(0));
+    }
+
+    #[test]
+    fn altgr_characters_reach_a_line_input_but_ctrl_shortcuts_do_not() {
+        let mut form = message_form();
+        press(&mut form, KeyCode::Tab);
+        let ctrl_alt = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        form.handle_key(&KeyEvent::new(KeyCode::Char('@'), ctrl_alt));
+        form.handle_key(&KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(subject(&form), "Fix@");
     }
 
     #[test]

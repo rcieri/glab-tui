@@ -44,24 +44,40 @@ struct Workspace {
     detail: Rect,
 }
 
+/// Terminal columns below which the sidebar is left out, giving its columns to
+/// the list.
+const MIN_SIDEBAR_TERMINAL_COLUMNS: u16 = 80;
+
 impl Workspace {
-    /// Lays out the sidebar, the list with the terminal log under it, and, when
-    /// `preview_columns` is set, the preview where `compaction::place_preview`
-    /// puts it: beside the list at that width or narrowed, below the list, or
-    /// hidden when neither fits.
+    /// Lays out the sidebar (left out on a terminal narrower than
+    /// `MIN_SIDEBAR_TERMINAL_COLUMNS`), the list with the terminal log under
+    /// it, and, when `preview_columns` is set, the preview where
+    /// `compaction::place_preview` puts it: beside the list at that width or
+    /// narrowed, below the list, or hidden when neither fits.
     fn split(
         area: Rect,
         sidebar_width: u16,
         terminal_height: u16,
         preview_columns: Option<u16>,
     ) -> Self {
-        let [sidebar, main] =
-            Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)]).areas(area);
+        let shown_sidebar_width = if area.width >= MIN_SIDEBAR_TERMINAL_COLUMNS {
+            sidebar_width
+        } else {
+            0
+        };
+        let [sidebar, main] = Layout::horizontal([
+            Constraint::Length(shown_sidebar_width),
+            Constraint::Min(0),
+        ])
+        .areas(area);
         let placement = match preview_columns {
             Some(preferred_columns) => {
                 let column_rows = main.height.saturating_sub(terminal_height);
+                // Measured as if the sidebar were shown, so leaving it out on a
+                // narrow terminal never moves the preview back beside the list.
                 compaction::place_preview(
                     Rect {
+                        width: area.width.saturating_sub(sidebar_width),
                         height: column_rows,
                         ..main
                     },
@@ -445,7 +461,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Middle: Sidebar | Main Area | Preview Area
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
-    let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
+    let sidebar_width = if app.config.ui.sidebar_visible {
         app.config.ui.sidebar_width
     } else {
         0
@@ -2074,7 +2090,7 @@ mod tests {
 
     #[test]
     fn preview_moves_below_the_list_on_a_narrow_terminal() {
-        for width in [60, 80] {
+        for width in [60, 68, 79, 80, 89] {
             let (Some(list), Some(preview)) = workspace_panes_at(width, 30) else {
                 panic!("list and preview drawn at {width} columns");
             };

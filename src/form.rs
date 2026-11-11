@@ -134,6 +134,7 @@ impl Radio {
 pub struct Toggle {
     pub label: String,
     pub is_on: bool,
+    is_touched: bool,
 }
 
 impl Toggle {
@@ -141,6 +142,7 @@ impl Toggle {
         Self {
             label: label.into(),
             is_on,
+            is_touched: false,
         }
     }
 }
@@ -323,9 +325,11 @@ impl Group {
     }
 
     /// Whether the user changed the group, which keeps values that arrive
-    /// later from overwriting it.
+    /// later from overwriting it. The toggles of a group are tracked one by
+    /// one, so this holds once any of them was flipped.
     pub fn is_touched(&self) -> bool {
         self.is_touched
+            || matches!(&self.kind, GroupKind::Toggles(toggles) if toggles.items.iter().any(|t| t.is_touched))
     }
 
     pub fn is_focus_stop(&self) -> bool {
@@ -520,8 +524,9 @@ impl Form {
     }
 
     /// Hands values that arrived after the form opened to the group `id`,
-    /// unless the user already changed it. Either way it stops loading.
-    /// Returns whether `update` ran.
+    /// unless the user already changed it. A toggle the user flipped keeps
+    /// its value while the others take the loaded ones. Either way the group
+    /// stops loading. Returns whether `update` ran.
     pub fn apply_loaded(&mut self, id: GroupId, update: impl FnOnce(&mut GroupKind)) -> bool {
         let Some(group) = self.path_of(id).and_then(|path| self.group_at_mut(path)) else {
             return false;
@@ -530,9 +535,28 @@ impl Form {
         if group.is_touched {
             return false;
         }
+        let flipped: Vec<(usize, bool)> = match &group.kind {
+            GroupKind::Toggles(toggles) => toggles
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, toggle)| toggle.is_touched)
+                .map(|(index, toggle)| (index, toggle.is_on))
+                .collect(),
+            _ => Vec::new(),
+        };
         update(&mut group.kind);
-        if let GroupKind::Radio(radio) = &mut group.kind {
-            radio.cursor = radio.selected;
+        match &mut group.kind {
+            GroupKind::Radio(radio) => radio.cursor = radio.selected,
+            GroupKind::Toggles(toggles) => {
+                for (index, is_on) in flipped {
+                    if let Some(toggle) = toggles.items.get_mut(index) {
+                        toggle.is_on = is_on;
+                        toggle.is_touched = true;
+                    }
+                }
+            }
+            _ => {}
         }
         true
     }
@@ -848,7 +872,7 @@ impl Form {
             GroupKind::Toggles(toggles) => {
                 if let Some(toggle) = toggles.items.get_mut(toggles.cursor) {
                     toggle.is_on = !toggle.is_on;
-                    group.is_touched = true;
+                    toggle.is_touched = true;
                 }
             }
             GroupKind::Collapsible(_) => self.toggle_section(path.index),
@@ -1278,7 +1302,7 @@ mod tests {
             }
         });
 
-        assert_eq!((strategy_applied, options_applied), (true, false));
+        assert_eq!((strategy_applied, options_applied), (true, true));
         assert_eq!(
             form.radio(STRATEGY).map(|r| (r.selected, r.cursor)),
             Some((2, 2)),
@@ -1287,7 +1311,8 @@ mod tests {
         assert_eq!(
             form.toggles(OPTIONS)
                 .map(|t| (t.items[0].is_on, t.items[1].is_on)),
-            Some((true, true))
+            Some((false, true)),
+            "the loaded Delete branch applies, the flipped Auto-merge stays"
         );
         assert!(!form.is_loading());
     }

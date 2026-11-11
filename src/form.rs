@@ -4,8 +4,9 @@
 //! Focus moves between groups with `Tab` / `BackTab` and within a group with
 //! `j` / `k`, which continue into the neighbouring group at either end. `h` /
 //! `l` move across the radios of a group and across the buttons. `Space`
-//! selects a radio, flips a toggle or folds a collapsible section. `Enter`
-//! activates the focused button, and from anywhere else the primary one.
+//! selects a radio, flips a toggle or folds a collapsible section, and so
+//! does `Enter` there. `Enter` on a button activates it, and from a line
+//! input the primary one.
 //! `Esc` leaves a line input being edited before it cancels the form.
 
 use crate::app::TextBuffer;
@@ -589,9 +590,13 @@ impl Form {
             KeyCode::Left | KeyCode::Char('h') => self.step_across(-1),
             KeyCode::Right | KeyCode::Char('l') => self.step_across(1),
             KeyCode::Char(' ') => self.press_focused(),
-            KeyCode::Enter => {
-                return FormAction::Activate(self.focused_button().unwrap_or(self.primary));
-            }
+            KeyCode::Enter => match self.focus {
+                Focus::Button(button) => return FormAction::Activate(button),
+                Focus::Group(_) if self.focused_line_input().is_some() => {
+                    return FormAction::Activate(self.primary);
+                }
+                Focus::Group(_) => self.press_focused(),
+            },
             KeyCode::Esc => return FormAction::Cancel,
             KeyCode::Char('e') => return self.open_editor(),
             KeyCode::Char('i') if self.focused_line_input().is_some() => self.is_editing = true,
@@ -930,15 +935,17 @@ impl Form {
         let mut hints = match self.focus {
             Focus::Button(_) => vec![KeyHint::new("h/l", "button")],
             Focus::Group(path) => match self.group_at(path).map(|g| &g.kind) {
-                Some(GroupKind::Radio(_)) => {
-                    vec![KeyHint::new("h/l", "move"), KeyHint::new("Space", "select")]
-                }
-                Some(GroupKind::Toggles(_)) => {
-                    vec![KeyHint::new("j/k", "move"), KeyHint::new("Space", "toggle")]
-                }
+                Some(GroupKind::Radio(_)) => vec![
+                    KeyHint::new("h/l", "move"),
+                    KeyHint::new("Space/Enter", "select"),
+                ],
+                Some(GroupKind::Toggles(_)) => vec![
+                    KeyHint::new("j/k", "move"),
+                    KeyHint::new("Space/Enter", "toggle"),
+                ],
                 Some(GroupKind::LineInput(_)) => vec![KeyHint::new("i", "type")],
                 Some(GroupKind::Collapsible(section)) => vec![KeyHint::new(
-                    "Space",
+                    "Space/Enter",
                     if section.is_expanded {
                         "collapse"
                     } else {
@@ -953,10 +960,13 @@ impl Form {
         }
         hints.push(KeyHint::new("Tab", "next"));
         let enter = match self.focus {
-            Focus::Button(button) => self.buttons[button].label.to_lowercase(),
-            Focus::Group(_) => primary,
+            Focus::Button(button) => Some(self.buttons[button].label.to_lowercase()),
+            Focus::Group(_) if self.focused_line_input().is_some() => Some(primary),
+            Focus::Group(_) => None,
         };
-        hints.push(KeyHint::new("Enter", enter));
+        if let Some(enter) = enter {
+            hints.push(KeyHint::new("Enter", enter));
+        }
         hints.push(KeyHint::new("Esc", "cancel"));
         hints
     }
@@ -1062,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn space_selects_the_radio_under_the_cursor_and_enter_still_runs_the_primary() {
+    fn space_and_enter_select_the_radio_under_the_cursor_without_running_the_primary() {
         let mut form = merge_form();
         press(&mut form, KeyCode::Tab);
         press(&mut form, KeyCode::Char('l'));
@@ -1073,7 +1083,18 @@ mod tests {
         );
         press(&mut form, KeyCode::Char(' '));
         assert_eq!(form.radio(STRATEGY).map(|r| r.selected), Some(2));
-        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(0));
+        press(&mut form, KeyCode::Char('h'));
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
+        assert_eq!(form.radio(STRATEGY).map(|r| r.selected), Some(1));
+    }
+
+    #[test]
+    fn enter_on_a_toggle_flips_it_instead_of_merging() {
+        let mut form = merge_form();
+        press(&mut form, KeyCode::Char('k'));
+        press(&mut form, KeyCode::Char('k'));
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
+        assert_eq!(form.toggles(OPTIONS).map(|t| t.items[0].is_on), Some(false));
     }
 
     #[test]
@@ -1128,12 +1149,12 @@ mod tests {
     }
 
     #[test]
-    fn a_danger_form_opens_on_cancel_and_enter_from_a_field_cancels() {
+    fn a_danger_form_opens_on_cancel_and_enter_on_a_field_runs_nothing() {
         let mut form = merge_form().danger();
         assert_eq!(form.tone(), FormTone::Danger);
         assert_eq!(form.focus(), Focus::Button(1));
         press(&mut form, KeyCode::Tab);
-        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(1));
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
         press(&mut form, KeyCode::BackTab);
         assert_eq!(
             form.focus(),
@@ -1351,13 +1372,7 @@ mod tests {
         press(&mut form, KeyCode::Tab);
         assert_eq!(
             keys(&form),
-            [
-                "h/l move",
-                "Space select",
-                "Tab next",
-                "Enter merge",
-                "Esc cancel"
-            ]
+            ["h/l move", "Space/Enter select", "Tab next", "Esc cancel"]
         );
     }
 

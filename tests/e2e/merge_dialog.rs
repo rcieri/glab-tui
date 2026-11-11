@@ -94,6 +94,7 @@ fn gitlab_merge_dialog_sends_the_picked_strategy_and_options() {
     pick(&mut session, b"\tl ", &["(x) Rebase"]);
     pick(&mut session, b"\t ", &["[ ] Delete source branch"]);
     pick(&mut session, b"j ", &["[x] Auto-merge"]);
+    pick(&mut session, b"\t", &["h/l button"]);
     session.send_input(b"\r");
 
     assert_eq!(
@@ -109,6 +110,7 @@ fn github_merge_dialog_sends_the_picked_strategy_and_options() {
     pick(&mut session, b"\th ", &["(x) Merge commit"]);
     pick(&mut session, b"\t ", &["[ ] Delete source branch"]);
     pick(&mut session, b"j ", &["[x] Auto-merge"]);
+    pick(&mut session, b"\t", &["h/l button"]);
     session.send_input(b"\r");
 
     assert_eq!(

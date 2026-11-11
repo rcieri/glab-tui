@@ -749,7 +749,7 @@ fn item_rows(
     styles: &Styles,
     width: usize,
 ) -> Vec<BodyRow> {
-    let shown = if is_short_of_room {
+    let shown = if is_short_of_room && list.entries.len() > SHORT_LIST_ROWS + 1 {
         SHORT_LIST_ROWS
     } else {
         list.entries.len()
@@ -1032,6 +1032,26 @@ mod tests {
         assert_eq!(
             rows.iter().position(|row| row.is_focused),
             Some(rows.len() - 1)
+        );
+    }
+
+    #[test]
+    fn a_short_list_is_cut_only_when_that_saves_a_row() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let styles = Styles::new(&ctx.theme);
+        let list = |count: usize| ItemList {
+            entries: (1..=count)
+                .map(|i| ListEntry::queued(format!("!{i}")))
+                .collect(),
+        };
+        assert_eq!(
+            rows_text(&item_rows(&list(4), true, &ctx, &styles, 60)),
+            ["!1", "!2", "!3", "!4"]
+        );
+        assert_eq!(
+            rows_text(&item_rows(&list(5), true, &ctx, &styles, 60)),
+            ["!1", "!2", "!3", "v 2 more"]
         );
     }
 

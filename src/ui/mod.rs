@@ -48,6 +48,15 @@ struct Workspace {
 /// the list.
 const MIN_SIDEBAR_TERMINAL_COLUMNS: u16 = 80;
 
+/// Terminal columns above which the preview asks for `WIDE_PREVIEW_PERCENT` of
+/// the width.
+const WIDE_TERMINAL_COLUMNS: u16 = 150;
+const WIDE_PREVIEW_PERCENT: u32 = 35;
+
+/// Terminal columns above which the preview asks for `MEDIUM_PREVIEW_COLUMNS`.
+const MEDIUM_TERMINAL_COLUMNS: u16 = 100;
+const MEDIUM_PREVIEW_COLUMNS: u16 = 45;
+
 impl Workspace {
     /// Lays out the sidebar (left out on a terminal narrower than
     /// `MIN_SIDEBAR_TERMINAL_COLUMNS`), the list with the terminal log under
@@ -128,10 +137,10 @@ impl Workspace {
 /// Columns the preview asks for beside the list in a terminal `width` wide,
 /// before `compaction::place_preview` narrows it to keep the list readable.
 fn preview_columns(width: u16) -> u16 {
-    if width > 150 {
-        (u32::from(width) * 35 / 100) as u16
-    } else if width > 100 {
-        45
+    if width > WIDE_TERMINAL_COLUMNS {
+        (u32::from(width) * WIDE_PREVIEW_PERCENT / 100) as u16
+    } else if width > MEDIUM_TERMINAL_COLUMNS {
+        MEDIUM_PREVIEW_COLUMNS
     } else {
         compaction::MIN_PREVIEW_COLUMNS
     }

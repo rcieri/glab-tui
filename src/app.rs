@@ -3165,11 +3165,7 @@ impl MergeChoices {
         crate::backend::MergeOptions {
             squash: self.method == MergeMethod::Squash,
             delete_branch: self.delete_branch,
-            strategy: match self.method {
-                MergeMethod::Merge => Some("merge"),
-                MergeMethod::Rebase => Some("rebase"),
-                MergeMethod::Squash => None,
-            },
+            strategy: (self.method != MergeMethod::Squash).then(|| self.method.as_api_str()),
             auto_merge: self.auto_merge,
             sha,
         }

@@ -457,6 +457,7 @@ pub fn run_cache_list() {
 
 pub async fn run_open_in_browser(entity: &str, id: &str) {
     let is_github = detect_github().await;
+    let web_url;
 
     let (program, subcommand) = match entity {
         "issue" => {
@@ -491,14 +492,16 @@ pub async fn run_open_in_browser(entity: &str, id: &str) {
                 );
                 return;
             } else {
-                ("glab", vec!["ci", "view", id, "-w"])
+                web_url = gitlab_web_url_or_exit("jobs", id);
+                ("git", vec!["web--browse", web_url.as_str()])
             }
         }
         "milestone" => {
             if is_github {
                 ("gh", vec!["issue", "list", "--milestone", id, "--web"])
             } else {
-                ("glab", vec!["milestone", "view", id, "-w"])
+                web_url = gitlab_web_url_or_exit("milestones", id);
+                ("git", vec!["web--browse", web_url.as_str()])
             }
         }
         _ => {
@@ -583,6 +586,31 @@ pub async fn run_update() {
             std::process::exit(1);
         }
     }
+}
+
+/// `https://<host>/<project>/-/<page>/<id>` for the project of the `origin`
+/// remote. Exits with an error when there is no `origin` to read them from.
+fn gitlab_web_url_or_exit(page: &str, id: &str) -> String {
+    let remote = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
+    let host_and_project = remote.as_deref().and_then(|url| {
+        Some((
+            crate::git_helpers::parse_remote_host(url)?,
+            crate::git_helpers::parse_project_path(url)?,
+        ))
+    });
+    let Some((host, project)) = host_and_project else {
+        eprintln!(
+            "{} no GitLab project found in the `origin` remote",
+            styled("error:", C_RED)
+        );
+        std::process::exit(1);
+    };
+    format!("https://{host}/{project}/-/{page}/{id}")
 }
 
 async fn detect_github() -> bool {

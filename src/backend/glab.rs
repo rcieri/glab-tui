@@ -2944,7 +2944,7 @@ impl Backend for GlabBackend {
         milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
-        let action = if close { "close" } else { "reopen" };
+        let state = if close { "close" } else { "activate" };
         let desc = if close {
             "CLOSING MILESTONE"
         } else {
@@ -2953,8 +2953,10 @@ impl Backend for GlabBackend {
         self.run_glab(
             &[
                 "milestone",
-                action,
-                &milestone.iid.to_string(),
+                "edit",
+                &milestone.id.to_string(),
+                "--state",
+                state,
                 "-R",
                 project,
             ],
@@ -2975,8 +2977,8 @@ impl Backend for GlabBackend {
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "milestone".into(),
-            "update".into(),
-            milestone.iid.to_string(),
+            "edit".into(),
+            milestone.id.to_string(),
             "-R".into(),
             project.to_string(),
             "--title".into(),
@@ -3008,10 +3010,9 @@ impl Backend for GlabBackend {
             &[
                 "milestone",
                 "delete",
-                &milestone.iid.to_string(),
+                &milestone.id.to_string(),
                 "-R",
                 project,
-                "-y",
             ],
             "Deleting Milestone",
         )
@@ -3521,19 +3522,9 @@ impl Backend for GlabBackend {
     }
 
     async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
-        self.run_glab(
-            &[
-                "milestone",
-                "view",
-                &milestone.iid.to_string(),
-                "-w",
-                "-R",
-                project,
-            ],
-            "OPENING IN BROWSER",
-        )
-        .await?;
-        Ok(())
+        let host = gitlab_host_or_default();
+        let url = format!("https://{host}/{project}/-/milestones/{}", milestone.iid);
+        open_url(&url, self.tx.clone(), "OPENING MILESTONE IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
@@ -3654,7 +3645,7 @@ const RUNNER_DETAILS_QUERY_MAX: usize = 100;
 /// reading `git remote get-url origin` and stripping the path, falling back
 /// to `DEFAULT_GITLAB_HOST` when there is no remote to read. Used to
 /// construct browser URLs for entities whose `glab` subcommand doesn't
-/// ship a `-w` flag (runners, branches, environments).
+/// ship a `-w` flag (runners, branches, environments, milestones).
 fn gitlab_host_or_default() -> String {
     let output = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])

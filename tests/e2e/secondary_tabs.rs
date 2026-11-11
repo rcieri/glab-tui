@@ -173,8 +173,9 @@ fn milestones_tab_lists_and_filters_milestones() {
     assert_hides(&session, "v1.0 Milestone");
 }
 
+/// The fixture gives each milestone an `id` other than its `iid`: GitLab's
+/// `glab milestone edit` and `delete` take the id.
 #[test]
-#[ignore = "#705: `glab milestone close` does not exist"]
 fn milestones_tab_lists_filters_and_closes_the_matching_milestone() {
     let mut session = session_on_tab(7, "v1.0 Milestone");
     assert_lists(&mut session, &["v1.0 Milestone", "v2.0 Roadmap"]);
@@ -185,8 +186,79 @@ fn milestones_tab_lists_filters_and_closes_the_matching_milestone() {
     session.press_keys(b"c");
     confirm_dialog(&mut session, "Close Milestone #2");
     session
-        .wait_for_cli_call("glab milestone close 2 -R test-owner/test-repo", 5000)
+        .wait_for_cli_call(
+            "glab milestone edit 102 --state close -R test-owner/test-repo",
+            5000,
+        )
         .expect("confirming should close the milestone the search selected");
+}
+
+#[test]
+fn milestones_tab_reopens_the_selected_milestone() {
+    let mut session = session_on_tab(7, "v1.0 Milestone");
+    search(&mut session, "Roadmap");
+    assert_hides(&session, "v1.0 Milestone");
+
+    session.press_keys(b"r");
+    confirm_dialog(&mut session, "Reopen Milestone #2");
+    session
+        .wait_for_cli_call(
+            "glab milestone edit 102 --state activate -R test-owner/test-repo",
+            5000,
+        )
+        .expect("confirming should reopen the selected milestone");
+}
+
+#[test]
+fn milestones_tab_edits_the_selected_milestone() {
+    let mut session = session_on_tab(7, "v1.0 Milestone");
+    search(&mut session, "Roadmap");
+    assert_hides(&session, "v1.0 Milestone");
+
+    session.press_keys(b"e");
+    session
+        .wait_for_screen_contains("Edit Milestone %2", 5000)
+        .expect("e should open the milestone edit form");
+    // An unchanged form submits nothing, so append to the title first. The
+    // form opens on the read-only ID row above it.
+    session.press_keys(b"j\r");
+    session.press_keys(b"-rc");
+    session.press_keys(b"\x18"); // Ctrl+X submits the form
+    session
+        .wait_for_cli_call(
+            "glab milestone edit 102 -R test-owner/test-repo --title v2.0 Roadmap-rc \
+             --description Next release --start-date 2026-08-01 --due-date 2026-08-31\n",
+            5000,
+        )
+        .expect("submitting should edit the selected milestone");
+}
+
+#[test]
+fn milestones_tab_deletes_the_selected_milestone() {
+    let mut session = session_on_tab(7, "v1.0 Milestone");
+    search(&mut session, "Roadmap");
+    assert_hides(&session, "v1.0 Milestone");
+
+    session.press_keys(b"d");
+    confirm_dialog(&mut session, "Delete Milestone #2");
+    session
+        .wait_for_cli_call("glab milestone delete 102 -R test-owner/test-repo\n", 5000)
+        .expect("confirming should delete the selected milestone");
+}
+
+#[test]
+fn milestones_tab_opens_the_selected_milestone_in_the_browser() {
+    let mut session = session_on_tab(7, "v1.0 Milestone");
+    search(&mut session, "Roadmap");
+    assert_hides(&session, "v1.0 Milestone");
+
+    session.press_keys(b"o");
+    session
+        .wait_for_cli_call(
+            "browser https://gitlab.com/test-owner/test-repo/-/milestones/2\n",
+            5000,
+        )
+        .expect("the milestone page should open in the browser");
 }
 
 #[test]

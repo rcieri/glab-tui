@@ -39,7 +39,6 @@ pub fn click_submit_dialog(
     apply_form_action(app, action, tx, fx);
 }
 
-/// Carries out what a key or click on the open dialog's form asked for.
 /// Every outcome but a button press or Cancel keeps the dialog open.
 fn apply_form_action(
     app: &mut App,

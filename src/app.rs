@@ -1286,7 +1286,7 @@ pub fn note_position_anchors(
     path_matches && (new_line_matches || old_line_matches)
 }
 
-/// How the diff view lays out its rows, chosen once for the whole session.
+/// The session's diff layout: picked from the diff pane width, or pinned by a layout key.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DiffLayout {
     /// Side by side when the diff pane is wide enough, unified otherwise.

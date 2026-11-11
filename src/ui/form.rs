@@ -789,7 +789,7 @@ fn footer_line(form: &Form, theme: &Theme, width: usize) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::form::{Button, Collapsible, Group, ListEntry, Note, Toggle};
+    use crate::form::{Button, ButtonRow, Collapsible, Group, ListEntry, Note, Toggle};
     use ratatui::{Terminal, backend::TestBackend};
 
     fn ctx(icons: &Icons) -> RenderCtx<'_> {
@@ -837,12 +837,11 @@ mod tests {
                     ])))],
                 })),
             ],
-            vec![
+            ButtonRow::new(
                 Button::new("Merge", ButtonTone::Positive),
+                [],
                 Button::new("Cancel", ButtonTone::Neutral),
-            ],
-            0,
-            1,
+            ),
         )
     }
 
@@ -913,7 +912,10 @@ mod tests {
         let tab = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Tab);
         form.handle_key(&tab);
         let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
-        assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  [ ] Bypass rules"]);
+        assert_eq!(
+            rows_text(&rows)[5..],
+            ["v Advanced  a", "  [ ] Bypass rules"]
+        );
         form.handle_key(&tab);
         let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
         assert_eq!(
@@ -974,9 +976,7 @@ mod tests {
                     text: "1 failed".into(),
                 })),
             ],
-            vec![Button::new("Close", ButtonTone::Neutral)],
-            0,
-            0,
+            ButtonRow::single(Button::new("Close", ButtonTone::Neutral)),
         );
         assert_eq!(
             rows_text(&body_rows(&form, &ctx, 60, Compaction::Roomy)),
@@ -1002,9 +1002,7 @@ mod tests {
                 NoteLevel::Info,
                 format!("Delete branch {branch}?"),
             )],
-            vec![Button::new("Cancel", ButtonTone::Neutral)],
-            0,
-            0,
+            ButtonRow::single(Button::new("Cancel", ButtonTone::Neutral)),
         );
         assert_eq!(
             rows_text(&body_rows(&form, &ctx, 60, Compaction::Roomy)),
@@ -1040,9 +1038,7 @@ mod tests {
                 Group::new(GroupKind::LineInput(LineInput::new("Fix".into(), Some(72))))
                     .with_label("Subject"),
             ],
-            vec![Button::new("Merge", ButtonTone::Positive)],
-            0,
-            0,
+            ButtonRow::single(Button::new("Merge", ButtonTone::Positive)),
         );
         assert_eq!(
             rows_text(&body_rows(&form, &ctx, 30, Compaction::NoSpacers)),

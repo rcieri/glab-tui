@@ -62,6 +62,25 @@ impl Button {
     }
 }
 
+/// A form's buttons: the primary first and Cancel last, so neither index can
+/// name a button that is not there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ButtonRow(Vec<Button>);
+
+impl ButtonRow {
+    pub fn new(primary: Button, others: impl IntoIterator<Item = Button>, cancel: Button) -> Self {
+        let mut buttons = vec![primary];
+        buttons.extend(others);
+        buttons.push(cancel);
+        Self(buttons)
+    }
+
+    /// One button that both runs and dismisses the form.
+    pub fn single(button: Button) -> Self {
+        Self(vec![button])
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
     /// The group at this path, on its row `Radio::cursor` / `Toggles::cursor`.
@@ -386,31 +405,17 @@ pub struct Form {
 impl Form {
     /// Opens with the focus on the primary button, so an immediate `Enter`
     /// runs it.
-    ///
-    /// # Panics
-    ///
-    /// When `primary` or `cancel` is not the index of a button: the form is
-    /// built by code, never from input, so that is a bug in its caller.
-    pub fn new(
-        title: impl Into<String>,
-        groups: Vec<Group>,
-        buttons: Vec<Button>,
-        primary: usize,
-        cancel: usize,
-    ) -> Self {
-        assert!(
-            primary < buttons.len() && cancel < buttons.len(),
-            "primary {primary} and cancel {cancel} must name one of {} buttons",
-            buttons.len()
-        );
+    pub fn new(title: impl Into<String>, groups: Vec<Group>, row: ButtonRow) -> Self {
+        let ButtonRow(buttons) = row;
+        let cancel = buttons.len() - 1;
         Self {
             title: title.into(),
             tone: FormTone::Normal,
             groups,
             buttons,
-            primary,
+            primary: 0,
             cancel,
-            focus: Focus::Button(primary),
+            focus: Focus::Button(0),
             is_editing: false,
             scroll: 0,
             layout: None,
@@ -988,12 +993,11 @@ mod tests {
                 strategy(1),
                 options(),
             ],
-            vec![
+            ButtonRow::new(
                 Button::new("Merge", ButtonTone::Positive),
+                [],
                 Button::new("Cancel", ButtonTone::Neutral),
-            ],
-            0,
-            1,
+            ),
         )
     }
 
@@ -1124,12 +1128,11 @@ mod tests {
                     is_collapsed: false,
                 })),
             ],
-            vec![
+            ButtonRow::new(
                 Button::new("Merge", ButtonTone::Positive),
+                [],
                 Button::new("Cancel", ButtonTone::Neutral),
-            ],
-            0,
-            1,
+            ),
         )
     }
 
@@ -1250,12 +1253,11 @@ mod tests {
                     ])))],
                 })),
             ],
-            vec![
+            ButtonRow::new(
                 Button::new("Merge", ButtonTone::Positive),
+                [],
                 Button::new("Cancel", ButtonTone::Neutral),
-            ],
-            0,
-            1,
+            ),
         )
     }
 

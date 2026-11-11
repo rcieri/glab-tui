@@ -7,8 +7,8 @@ use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::state_query::{StateQueries, StateQuery};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::form::{
-    Button, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel, Radio,
-    Toggle, Toggles,
+    Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel,
+    Radio, Toggle, Toggles,
 };
 use crate::syntax::{DiffHighlighter, DiffSide, SyntaxToken, styled_tokens};
 use crate::ui::list_tab::branches::BranchColumn;
@@ -3612,18 +3612,20 @@ impl SubmitDialog {
         } else {
             ButtonTone::Positive
         };
-        let mut buttons = vec![Button::new(submit_label, submit_tone)];
-        buttons.extend(extra_buttons.iter().map(|choice| {
+        let extras = extra_buttons.iter().map(|choice| {
             let tone = if choice.is_destructive() {
                 ButtonTone::Destructive
             } else {
                 ButtonTone::Neutral
             };
             Button::new(choice.label(), tone)
-        }));
-        buttons.push(Button::new("Cancel", ButtonTone::Neutral));
-        let cancel = buttons.len() - 1;
-        let form = Form::new(title, groups, buttons, Self::SUBMIT_BUTTON, cancel);
+        });
+        let buttons = ButtonRow::new(
+            Button::new(submit_label, submit_tone),
+            extras,
+            Button::new("Cancel", ButtonTone::Neutral),
+        );
+        let form = Form::new(title, groups, buttons);
 
         Self {
             action: action_clone,
@@ -7858,7 +7860,10 @@ impl App {
             || self.selector.as_ref().is_some_and(|s| s.is_filtering)
             || self.edit_menu.as_ref().is_some_and(|m| m.editing)
             || self.diff_view.as_ref().is_some_and(|d| d.search_active)
-            || self.submit_dialog.as_ref().is_some_and(|d| d.form.is_editing())
+            || self
+                .submit_dialog
+                .as_ref()
+                .is_some_and(|d| d.form.is_editing())
     }
 
     fn keybinding_timeout(&self) -> std::time::Duration {

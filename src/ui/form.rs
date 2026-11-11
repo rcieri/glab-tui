@@ -500,7 +500,7 @@ fn radio_rows(
         })
         .collect();
     let one_row_width = choices.iter().map(|(span, _)| span.width()).sum::<usize>()
-        + RADIO_GAP * (choices.len() - 1);
+        + RADIO_GAP * choices.len().saturating_sub(1);
 
     if one_row_width > width {
         return choices
@@ -1014,6 +1014,20 @@ mod tests {
                 format!("{}?", "b".repeat(10)),
             ]
         );
+    }
+
+    #[test]
+    fn a_radio_with_no_choices_draws_an_empty_row() {
+        let theme = Theme::default();
+        let rows = radio_rows(
+            &Radio::new(Vec::new(), 0),
+            GroupPath::top(0),
+            None,
+            &theme,
+            &Styles::new(&theme),
+            60,
+        );
+        assert_eq!(rows_text(&rows), [""]);
     }
 
     #[test]

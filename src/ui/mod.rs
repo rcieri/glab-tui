@@ -45,24 +45,30 @@ struct Workspace {
 }
 
 impl Workspace {
-    /// Lays out the sidebar, the list with the terminal log under it, and,
-    /// when `show_preview`, the preview beside the list or, once the list
-    /// would be squeezed, below it.
-    fn split(area: Rect, sidebar_width: u16, terminal_height: u16, show_preview: bool) -> Self {
+    /// Lays out the sidebar, the list with the terminal log under it, and, when
+    /// `preview_columns` is set, the preview where `compaction::place_preview`
+    /// puts it: beside the list at that width or narrowed, below the list, or
+    /// hidden when neither fits.
+    fn split(
+        area: Rect,
+        sidebar_width: u16,
+        terminal_height: u16,
+        preview_columns: Option<u16>,
+    ) -> Self {
         let [sidebar, main] =
             Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)]).areas(area);
-        let preferred_columns = preview_columns(area.width);
-        let placement = if show_preview {
-            let column_rows = main.height.saturating_sub(terminal_height);
-            compaction::place_preview(
-                Rect {
-                    height: column_rows,
-                    ..main
-                },
-                preferred_columns,
-            )
-        } else {
-            PreviewPlacement::Hidden
+        let placement = match preview_columns {
+            Some(preferred_columns) => {
+                let column_rows = main.height.saturating_sub(terminal_height);
+                compaction::place_preview(
+                    Rect {
+                        height: column_rows,
+                        ..main
+                    },
+                    preferred_columns,
+                )
+            }
+            None => PreviewPlacement::Hidden,
         };
         let split_terminal = |column: Rect| -> [Rect; 2] {
             Layout::vertical([Constraint::Min(0), Constraint::Length(terminal_height)])
@@ -467,7 +473,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
     } else {
         let show_preview = app.detail_visible && app.active_tab != Tab::Terminal;
-        Workspace::split(chunks[1], sidebar_width, term_height, show_preview)
+        let preview_columns = show_preview.then(|| preview_columns(chunks[1].width));
+        Workspace::split(chunks[1], sidebar_width, term_height, preview_columns)
     };
     let Workspace {
         sidebar: sidebar_rect,

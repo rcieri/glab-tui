@@ -521,6 +521,9 @@ impl Form {
             return false;
         }
         update(&mut group.kind);
+        if let GroupKind::Radio(radio) = &mut group.kind {
+            radio.cursor = radio.selected;
+        }
         true
     }
 
@@ -1220,7 +1223,11 @@ mod tests {
         });
 
         assert_eq!((strategy_applied, options_applied), (true, false));
-        assert_eq!(form.radio(STRATEGY).map(|r| r.selected), Some(2));
+        assert_eq!(
+            form.radio(STRATEGY).map(|r| (r.selected, r.cursor)),
+            Some((2, 2)),
+            "the cursor follows the loaded choice"
+        );
         assert_eq!(
             form.toggles(OPTIONS)
                 .map(|t| (t.items[0].is_on, t.items[1].is_on)),

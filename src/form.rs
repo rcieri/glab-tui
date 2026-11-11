@@ -800,13 +800,14 @@ impl Form {
     }
 
     /// Focuses the group at `path` on its first row when entered from above
-    /// (`step > 0`), on its last row from below.
+    /// (`step > 0`), on its last row from below. A radio is entered on its
+    /// selected choice, so the highlight and the selection agree.
     fn enter_group(&mut self, path: GroupPath, step: isize) {
         if let Some(group) = self.group_at_mut(path) {
-            let row = if step > 0 {
-                0
-            } else {
-                group.focus_rows().saturating_sub(1)
+            let row = match &group.kind {
+                GroupKind::Radio(radio) => radio.selected,
+                _ if step > 0 => 0,
+                _ => group.focus_rows().saturating_sub(1),
             };
             group.set_focus_row(row);
         }
@@ -1055,7 +1056,11 @@ mod tests {
         press(&mut form, KeyCode::Char('k'));
         press(&mut form, KeyCode::Char('k'));
         assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
-        assert_eq!(form.radio(STRATEGY).map(|r| r.cursor), Some(2));
+        assert_eq!(
+            form.radio(STRATEGY).map(|r| r.cursor),
+            Some(1),
+            "a radio is entered on its selected choice"
+        );
         for _ in 0..3 {
             press(&mut form, KeyCode::Char('k'));
         }

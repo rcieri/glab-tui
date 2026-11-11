@@ -904,10 +904,7 @@ impl Form {
             layout
                 .targets
                 .iter()
-                .find(|(rect, _)| {
-                    (rect.x..rect.x + rect.width).contains(&column)
-                        && (rect.y..rect.y + rect.height).contains(&row)
-                })
+                .find(|(rect, _)| rect.contains((column, row).into()))
                 .map(|&(_, target)| target)
         });
         target.map_or(FormAction::None, |target| self.click(target))

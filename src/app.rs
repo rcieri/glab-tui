@@ -7858,6 +7858,7 @@ impl App {
             || self.selector.as_ref().is_some_and(|s| s.is_filtering)
             || self.edit_menu.as_ref().is_some_and(|m| m.editing)
             || self.diff_view.as_ref().is_some_and(|d| d.search_active)
+            || self.submit_dialog.as_ref().is_some_and(|d| d.form.is_editing())
     }
 
     fn keybinding_timeout(&self) -> std::time::Duration {

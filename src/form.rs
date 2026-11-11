@@ -737,9 +737,14 @@ impl Form {
 
     /// Moves to the next (`step > 0`) or previous focus stop, the button row
     /// being the last one, wrapping at both ends. Landing on a line input
-    /// starts editing it.
+    /// starts editing it. A form with no stop steps across its buttons
+    /// instead, so `Tab` still reaches Cancel.
     fn step_stop(&mut self, step: isize) {
         let stops = self.focus_stops();
+        if stops.is_empty() {
+            self.step_across(step);
+            return;
+        }
         let count = stops.len() + 1;
         let current = match self.focus {
             Focus::Group(path) => stops.iter().position(|&p| p == path).unwrap_or(0),
@@ -1100,6 +1105,26 @@ mod tests {
         press(&mut form, KeyCode::Char('l'));
         assert_eq!(form.focus(), Focus::Button(1));
         assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(1));
+    }
+
+    #[test]
+    fn tab_steps_across_the_buttons_of_a_form_without_focus_stops() {
+        let mut form = Form::new(
+            "Rebase !1",
+            vec![Group::note(NoteLevel::Info, "Rebase !1 onto main?")],
+            ButtonRow::new(
+                Button::new("Rebase", ButtonTone::Positive),
+                [],
+                Button::new("Cancel", ButtonTone::Neutral),
+            ),
+        );
+        press(&mut form, KeyCode::Tab);
+        assert_eq!(form.focus(), Focus::Button(1));
+        press(&mut form, KeyCode::Tab);
+        assert_eq!(form.focus(), Focus::Button(1), "stops at Cancel");
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(1));
+        press(&mut form, KeyCode::BackTab);
+        assert_eq!(form.focus(), Focus::Button(0));
     }
 
     #[test]

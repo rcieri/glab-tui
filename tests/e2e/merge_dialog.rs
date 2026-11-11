@@ -55,7 +55,7 @@ fn merge_calls(session: &mut TestSession, prefix: &str) -> Vec<String> {
         .collect()
 }
 
-/// Presses `keys` one at a time from the dialog's initial focus, then waits
+/// Presses `keys` one at a time from the current focus, then waits
 /// until every entry of `shown` is drawn, so Enter confirms what was picked.
 fn pick(session: &mut TestSession, keys: &[u8], shown: &[&str]) {
     session.press_keys(keys);
@@ -80,13 +80,9 @@ fn gitlab_merge_dialog_squashes_and_removes_the_source_branch_by_default() {
 #[test]
 fn gitlab_merge_dialog_sends_the_picked_strategy_and_options() {
     let mut session = open_merge_dialog(false, GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
-    // Tab into Strategy, `l` onto Rebase, Space selects it. Tab into Options,
-    // Space clears Delete source branch, `j` onto Auto-merge, Space sets it.
-    pick(
-        &mut session,
-        b"\tl \t j ",
-        &["(x) Rebase", "[ ] Delete source branch", "[x] Auto-merge"],
-    );
+    pick(&mut session, b"\tl ", &["(x) Rebase"]);
+    pick(&mut session, b"\t ", &["[ ] Delete source branch"]);
+    pick(&mut session, b"j ", &["[x] Auto-merge"]);
     session.send_input(b"\r");
 
     assert_eq!(
@@ -99,18 +95,9 @@ fn gitlab_merge_dialog_sends_the_picked_strategy_and_options() {
 fn github_merge_dialog_sends_the_picked_strategy_and_options() {
     let mut session =
         open_merge_dialog(true, GITHUB_FIRST_PR_TITLE, b"jj", "Merge Pull Request #12");
-    // Tab into Strategy, `h` onto Merge commit, Space selects it. Tab into
-    // Options, Space clears Delete source branch, `j` onto Auto-merge, Space
-    // sets it.
-    pick(
-        &mut session,
-        b"\th \t j ",
-        &[
-            "(x) Merge commit",
-            "[ ] Delete source branch",
-            "[x] Auto-merge",
-        ],
-    );
+    pick(&mut session, b"\th ", &["(x) Merge commit"]);
+    pick(&mut session, b"\t ", &["[ ] Delete source branch"]);
+    pick(&mut session, b"j ", &["[x] Auto-merge"]);
     session.send_input(b"\r");
 
     assert_eq!(

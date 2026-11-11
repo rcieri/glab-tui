@@ -590,11 +590,11 @@ fn set_layout(app: &mut App, diff_view: &mut app::DiffView, layout: app::DiffLay
         app::DiffLayout::Auto => "Diff layout follows the diff pane width again",
         app::DiffLayout::SideBySide => {
             diff_view.set_side_by_side(true);
-            "Diff layout pinned to side-by-side (0 follows the width again)"
+            "Diff layout pinned to side-by-side (0 follows the diff pane width again)"
         }
         app::DiffLayout::Unified => {
             diff_view.set_side_by_side(false);
-            "Diff layout pinned to unified (0 follows the width again)"
+            "Diff layout pinned to unified (0 follows the diff pane width again)"
         }
     };
     app.show_notice(notice);

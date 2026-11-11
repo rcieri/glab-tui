@@ -27,8 +27,11 @@ const FORM_WIDTH: u16 = 64;
 /// The border plus one padding column on each side, and the border alone
 /// above and below.
 const CONTENT_MARGIN: Margin = Margin::new(2, 1);
-/// Border rows, the separator above the buttons, the buttons and the footer.
-const CHROME_ROWS: u16 = 2 + 3;
+const BORDER_ROWS: u16 = 2 * CONTENT_MARGIN.vertical;
+const SEPARATOR_ROWS: u16 = 1;
+const BUTTON_ROWS: u16 = 1;
+const FOOTER_ROWS: u16 = 1;
+const CHROME_ROWS: u16 = BORDER_ROWS + SEPARATOR_ROWS + BUTTON_ROWS + FOOTER_ROWS;
 /// Rows a bulk item list keeps once the form is short of room.
 const SHORT_LIST_ROWS: usize = 3;
 /// Columns between two radios drawn on one row.
@@ -150,9 +153,9 @@ pub(crate) fn render_form(
 
     let [body_area, separator, buttons_area, footer_area] = Layout::vertical([
         Constraint::Length(body_height),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(SEPARATOR_ROWS),
+        Constraint::Length(BUTTON_ROWS),
+        Constraint::Length(FOOTER_ROWS),
     ])
     .areas(area.inner(CONTENT_MARGIN));
 

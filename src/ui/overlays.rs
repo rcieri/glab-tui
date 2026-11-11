@@ -2136,7 +2136,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Diff View",
             key: s("0"),
-            action: "Pick the layout from the width again (unified when narrow)",
+            action: "Pick the layout from the diff pane width again (unified when narrow)",
         },
         Shortcut {
             category: "Diff View",

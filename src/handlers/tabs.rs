@@ -1275,7 +1275,8 @@ pub fn handle_active_tab_key(
             } else if app.selected_mrs.len() > 1
                 && keybinding_matches(&app.config.keybindings.mrs.merge_mr, key_event)
             {
-                let items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
+                let mut items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
+                items.sort_unstable();
                 app.submit_dialog = Some(crate::app::SubmitDialog::build(
                     crate::app::ConfirmAction::BulkMergeMrs(items),
                     app,

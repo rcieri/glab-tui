@@ -2,9 +2,8 @@
 //! small for its full form.
 //!
 //! A screen lists the steps it can take, most expendable first, and [`compact`]
-//! applies them one at a time until the layout fits. Every size-dependent
-//! layout decision goes through it, so screens share one algorithm instead of
-//! each inventing its own thresholds.
+//! applies them one at a time until the layout fits, so screens share one
+//! algorithm instead of each inventing its own thresholds.
 
 use ratatui::layout::Rect;
 

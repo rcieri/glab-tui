@@ -2261,26 +2261,35 @@ impl DiffView {
         self.rebuild_visible_nodes();
     }
 
+    /// Ranks the rows of the active layout against `query`: a side-by-side row
+    /// matches once, with the better score of its two sides.
     pub fn search(&mut self, query: &str) {
         self.search_query = query.to_string();
-        self.search_matches.clear();
-
-        // Clear previous fuzzy indices on all lines
-        for line in &mut self.lines {
-            line.fuzzy_indices = None;
-        }
+        self.clear_fuzzy_indices();
 
         let matcher = &*FUZZY_MATCHER;
-        let mut scored: Vec<(i64, usize)> = self
-            .lines
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, line)| {
-                let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
-                line.fuzzy_indices = Some(indices);
-                Some((score, i))
-            })
-            .collect();
+        let score = |line: &mut DiffLine| {
+            let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
+            line.fuzzy_indices = Some(indices);
+            Some(score)
+        };
+        let mut scored: Vec<(i64, usize)> = if self.side_by_side {
+            self.side_by_side_lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, row)| {
+                    let left = row.left.as_mut().and_then(score);
+                    let right = row.right.as_mut().and_then(score);
+                    Some((left.max(right)?, i))
+                })
+                .collect()
+        } else {
+            self.lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, line)| Some((score(line)?, i)))
+                .collect()
+        };
         scored.sort_by_key(|(score, _)| -(*score));
         self.search_matches = scored.into_iter().map(|(_, i)| i).collect();
         self.search_cursor = 0;
@@ -2320,7 +2329,15 @@ impl DiffView {
         self.search_matches.clear();
         self.search_cursor = 0;
         self.search_active = false;
-        for line in &mut self.lines {
+        self.clear_fuzzy_indices();
+    }
+
+    fn clear_fuzzy_indices(&mut self) {
+        let halves = self
+            .side_by_side_lines
+            .iter_mut()
+            .flat_map(|row| row.left.iter_mut().chain(row.right.iter_mut()));
+        for line in self.lines.iter_mut().chain(halves) {
             line.fuzzy_indices = None;
         }
     }
@@ -11425,6 +11442,68 @@ deleted file mode 100644
 
         view.set_side_by_side(false);
         assert_eq!(view.cursor_idx, diff_row(&view, "+added eleven"));
+    }
+
+    fn side_by_side_row(view: &DiffView, content: &str) -> usize {
+        view.side_by_side_lines
+            .iter()
+            .position(|row| {
+                [&row.left, &row.right]
+                    .into_iter()
+                    .flatten()
+                    .any(|line| line.content == content)
+            })
+            .unwrap_or_else(|| panic!("no side-by-side row {content:?}"))
+    }
+
+    #[test]
+    fn search_in_side_by_side_lands_on_the_matching_row() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("context twelve");
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+
+        view.search("gone two");
+        assert_eq!(view.cursor_idx, side_by_side_row(&view, "-gone two"));
+    }
+
+    #[test]
+    fn search_in_side_by_side_matches_a_paired_row_once_and_marks_both_sides() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("eleven");
+        let eleven = side_by_side_row(&view, "-removed eleven");
+        assert_eq!(view.search_matches, vec![eleven]);
+        let row = &view.side_by_side_lines[eleven];
+        assert_eq!(
+            (
+                row.left.as_ref().map(|l| l.fuzzy_indices.is_some()),
+                row.right.as_ref().map(|l| l.fuzzy_indices.is_some())
+            ),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn search_made_in_unified_follows_a_switch_to_side_by_side() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context twelve");
+
+        view.set_side_by_side(true);
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
     }
 
     #[test]

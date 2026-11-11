@@ -2082,7 +2082,7 @@ mod tests {
     #[test]
     fn preview_is_hidden_when_the_terminal_is_too_short_to_stack_it() {
         let (list, preview) = workspace_panes_at(80, 12);
-        assert!(list.is_some_and(|list| list.height == 10));
+        assert_eq!(list.map(|list| list.height), Some(10));
         assert_eq!(preview, None);
     }
 

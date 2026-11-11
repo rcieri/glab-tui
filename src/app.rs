@@ -3285,27 +3285,24 @@ impl SubmitDialog {
         let marker = if kind.is_github() { "#" } else { "!" };
 
         let action_clone = action.clone();
-        let (title, body, submit_label, options, safe) = match &action {
+        let (title, body, submit_label, options) = match &action {
             ConfirmAction::DeleteMilestone(iid) => (
                 format!("Delete Milestone #{iid}"),
                 format!("Are you sure you want to delete milestone #{iid}?"),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteRelease(tag_name) => (
                 format!("Delete Release {tag_name}"),
                 format!("Are you sure you want to delete release {tag_name}?"),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteBranch(branch_name) => (
                 format!("Delete Branch '{branch_name}'"),
                 format!("Are you sure you want to delete branch \'{branch_name}\'?"),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::BulkDeleteBranches(branch_names) => (
                 format!("Delete {} Branches", branch_names.len()),
@@ -3316,56 +3313,48 @@ impl SubmitDialog {
                 ),
                 "Delete All".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::CloseIssue(iid) => (
                 format!("Close Issue #{iid}"),
                 format!("Are you sure you want to close issue #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteIssue(iid) => (
                 format!("Delete Issue #{iid}"),
                 format!("Are you sure you want to delete issue #{iid}? This action is permanent."),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::CloseMr(iid) => (
                 format!("Close {mr} #{iid}"),
                 format!("Are you sure you want to close {mr_short} #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::CloseMilestone(iid) => (
                 format!("Close Milestone #{iid}"),
                 format!("Are you sure you want to close milestone #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenIssue(iid) => (
                 format!("Reopen Issue #{iid}"),
                 format!("Are you sure you want to reopen issue #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenMr(iid) => (
                 format!("Reopen {mr} #{iid}"),
                 format!("Are you sure you want to reopen {mr_short} #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenMilestone(iid) => (
                 format!("Reopen Milestone #{iid}"),
                 format!("Are you sure you want to reopen milestone #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteMr(iid) => (
                 format!("Delete {mr} #{iid}"),
@@ -3374,7 +3363,6 @@ impl SubmitDialog {
                 ),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::MergeMr(iid) => {
                 let (source, target) = app
@@ -3395,7 +3383,6 @@ impl SubmitDialog {
                     body,
                     "Merge".to_string(),
                     options,
-                    false,
                 )
             }
             ConfirmAction::MergeStack(iid) => {
@@ -3428,7 +3415,7 @@ impl SubmitDialog {
                     None => (String::new(), Vec::new()),
                 };
                 options.push(Self::strategy_group());
-                (title, body, "Merge".to_string(), options, false)
+                (title, body, "Merge".to_string(), options)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
@@ -3441,7 +3428,6 @@ impl SubmitDialog {
                     format!("Merging {} {}s", iids.len(), mr_short),
                     "Merge".to_string(),
                     options,
-                    false,
                 )
             }
             ConfirmAction::RevokeMr(iid) => (
@@ -3449,7 +3435,6 @@ impl SubmitDialog {
                 format!("Are you sure you want to revoke your approval on {mr_short} #{iid}?"),
                 "Revoke".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::RebaseMr(iid) => {
                 let target = app
@@ -3463,7 +3448,6 @@ impl SubmitDialog {
                     ),
                     "Rebase".to_string(),
                     vec![],
-                    false,
                 )
             }
             ConfirmAction::SubmitReview(iid) => {
@@ -3478,7 +3462,6 @@ impl SubmitDialog {
                     ),
                     "Submit".to_string(),
                     vec![],
-                    false,
                 )
             }
             ConfirmAction::CancelPipeline(id) => {
@@ -3491,7 +3474,6 @@ impl SubmitDialog {
                     ),
                     format!("Cancel {pipeline}"),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::CancelJobs {
@@ -3509,7 +3491,6 @@ impl SubmitDialog {
                     ),
                     format!("Cancel {jobs}"),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::RerunCommand(invocation) => {
@@ -3526,7 +3507,6 @@ impl SubmitDialog {
                     ),
                     "Re-run".to_string(),
                     vec![],
-                    false,
                 )
             }
             ConfirmAction::MarkAllTodosRead => {
@@ -3542,7 +3522,6 @@ impl SubmitDialog {
                     body,
                     "Mark All".to_string(),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::StopEnvironment(environment) => {
@@ -3563,7 +3542,6 @@ impl SubmitDialog {
                     body,
                     "Stop".to_string(),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::RollbackDeployment {
@@ -3591,7 +3569,6 @@ impl SubmitDialog {
                     ),
                     "Roll Back".to_string(),
                     vec![],
-                    true,
                 )
             }
         };
@@ -3607,7 +3584,8 @@ impl SubmitDialog {
             groups.push(Group::note(NoteLevel::Info, body).with_id(Self::BODY));
         }
         groups.extend(options);
-        let submit_tone = if action.is_destructive() {
+        let is_destructive = action.is_destructive();
+        let submit_tone = if is_destructive {
             ButtonTone::Destructive
         } else {
             ButtonTone::Positive
@@ -3631,7 +3609,7 @@ impl SubmitDialog {
             action: action_clone,
             project_path,
             extra_buttons,
-            form: if safe { form.danger() } else { form },
+            form: if is_destructive { form.danger() } else { form },
         }
     }
 

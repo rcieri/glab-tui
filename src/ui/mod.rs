@@ -51,7 +51,7 @@ impl Workspace {
     fn split(area: Rect, sidebar_width: u16, terminal_height: u16, show_preview: bool) -> Self {
         let [sidebar, main] =
             Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)]).areas(area);
-        let preview_columns = preview_columns(area.width);
+        let preferred_columns = preview_columns(area.width);
         let placement = if show_preview {
             let column_rows = main.height.saturating_sub(terminal_height);
             compaction::place_preview(
@@ -59,7 +59,7 @@ impl Workspace {
                     height: column_rows,
                     ..main
                 },
-                preview_columns,
+                preferred_columns,
             )
         } else {
             PreviewPlacement::Hidden
@@ -69,9 +69,9 @@ impl Workspace {
                 .areas(column)
         };
         match placement {
-            PreviewPlacement::Beside => {
+            PreviewPlacement::Beside { columns } => {
                 let [column, detail] =
-                    Layout::horizontal([Constraint::Min(0), Constraint::Length(preview_columns)])
+                    Layout::horizontal([Constraint::Min(0), Constraint::Length(columns)])
                         .areas(main);
                 let [list, terminal] = split_terminal(column);
                 Self {
@@ -105,14 +105,15 @@ impl Workspace {
     }
 }
 
-/// Columns the preview takes beside the list in a terminal `width` wide.
+/// Columns the preview asks for beside the list in a terminal `width` wide,
+/// before `compaction::place_preview` narrows it to keep the list readable.
 fn preview_columns(width: u16) -> u16 {
     if width > 150 {
         (u32::from(width) * 35 / 100) as u16
     } else if width > 100 {
         45
     } else {
-        30
+        compaction::MIN_PREVIEW_COLUMNS
     }
 }
 
@@ -2048,6 +2049,20 @@ mod tests {
             panic!("list and preview drawn");
         };
         assert_eq!((preview.x, preview.y), (list.right(), list.y));
+    }
+
+    #[test]
+    fn preview_narrows_beside_the_list_where_its_preferred_width_would_squeeze_the_list() {
+        for width in 101..=104 {
+            let (Some(list), Some(preview)) = workspace_panes_at(width, 30) else {
+                panic!("list and preview drawn at {width} columns");
+            };
+            assert_eq!(
+                (preview.x, preview.y, preview.width),
+                (list.right(), list.y, compaction::MIN_PREVIEW_COLUMNS),
+                "at {width} columns"
+            );
+        }
     }
 
     #[test]

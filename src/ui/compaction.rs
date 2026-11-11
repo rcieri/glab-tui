@@ -33,39 +33,47 @@ const MIN_LIST_COLUMNS: u16 = 38;
 /// a table header and a few rows.
 const MIN_STACKED_PANE_ROWS: u16 = 6;
 
+/// Columns the preview narrows to before it gives up its place beside the list.
+pub(crate) const MIN_PREVIEW_COLUMNS: u16 = 30;
+
 /// Where the detail/preview pane goes relative to the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewPlacement {
-    Beside,
+    Beside { columns: u16 },
     Below,
     Hidden,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum WorkspaceRule {
-    StackPreview,
-    HidePreview,
+enum PreviewRule {
+    Narrow,
+    Stack,
+    Hide,
 }
 
-const WORKSPACE_RULES: &[WorkspaceRule] =
-    &[WorkspaceRule::StackPreview, WorkspaceRule::HidePreview];
+const PREVIEW_RULES: &[PreviewRule] = &[PreviewRule::Narrow, PreviewRule::Stack, PreviewRule::Hide];
 
 /// Where the preview goes in `area`, the space shared by the list and the
 /// preview, when the preview wants `preview_columns` beside the list.
 pub fn place_preview(area: Rect, preview_columns: u16) -> PreviewPlacement {
     compact(
-        PreviewPlacement::Beside,
-        WORKSPACE_RULES,
+        PreviewPlacement::Beside {
+            columns: preview_columns,
+        },
+        PREVIEW_RULES,
         |placement| match placement {
-            PreviewPlacement::Beside => {
-                area.width >= preview_columns.saturating_add(MIN_LIST_COLUMNS)
+            PreviewPlacement::Beside { columns } => {
+                area.width >= columns.saturating_add(MIN_LIST_COLUMNS)
             }
             PreviewPlacement::Below => area.height >= 2 * MIN_STACKED_PANE_ROWS,
             PreviewPlacement::Hidden => true,
         },
         |_, rule| match rule {
-            WorkspaceRule::StackPreview => PreviewPlacement::Below,
-            WorkspaceRule::HidePreview => PreviewPlacement::Hidden,
+            PreviewRule::Narrow => PreviewPlacement::Beside {
+                columns: MIN_PREVIEW_COLUMNS,
+            },
+            PreviewRule::Stack => PreviewPlacement::Below,
+            PreviewRule::Hide => PreviewPlacement::Hidden,
         },
     )
 }
@@ -123,17 +131,30 @@ mod tests {
     }
 
     #[test]
-    fn preview_stays_beside_the_list_while_the_list_keeps_its_minimum_width() {
+    fn preview_stays_beside_the_list_at_its_preferred_width_while_the_list_keeps_its_minimum() {
         assert_eq!(
-            place_preview(Rect::new(0, 0, 30 + MIN_LIST_COLUMNS, 20), 30),
-            PreviewPlacement::Beside
+            place_preview(Rect::new(0, 0, 45 + MIN_LIST_COLUMNS, 20), 45),
+            PreviewPlacement::Beside { columns: 45 }
         );
     }
 
     #[test]
-    fn preview_moves_below_the_list_one_column_short_of_the_minimum() {
+    fn preview_narrows_before_it_leaves_the_side_of_the_list() {
         assert_eq!(
-            place_preview(Rect::new(0, 0, 30 + MIN_LIST_COLUMNS - 1, 20), 30),
+            place_preview(Rect::new(0, 0, 45 + MIN_LIST_COLUMNS - 1, 20), 45),
+            PreviewPlacement::Beside {
+                columns: MIN_PREVIEW_COLUMNS
+            }
+        );
+    }
+
+    #[test]
+    fn preview_moves_below_the_list_one_column_short_of_the_narrowed_preview() {
+        assert_eq!(
+            place_preview(
+                Rect::new(0, 0, MIN_PREVIEW_COLUMNS + MIN_LIST_COLUMNS - 1, 20),
+                45
+            ),
             PreviewPlacement::Below
         );
     }

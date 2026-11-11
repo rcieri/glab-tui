@@ -77,6 +77,18 @@ fn gitlab_merge_dialog_squashes_and_removes_the_source_branch_by_default() {
 }
 
 #[test]
+fn github_merge_dialog_squashes_and_deletes_the_branch_by_default() {
+    let mut session =
+        open_merge_dialog(true, GITHUB_FIRST_PR_TITLE, b"jj", "Merge Pull Request #12");
+    session.send_input(b"\r");
+
+    assert_eq!(
+        merge_calls(&mut session, "gh pr merge"),
+        ["gh pr merge 12 -R test-owner/test-repo --squash --delete-branch"]
+    );
+}
+
+#[test]
 fn gitlab_merge_dialog_sends_the_picked_strategy_and_options() {
     let mut session = open_merge_dialog(false, GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
     pick(&mut session, b"\tl ", &["(x) Rebase"]);

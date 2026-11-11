@@ -310,7 +310,7 @@ pub fn handle_key(
         }
         KeyCode::Char('0') => {
             app.diff_layout = app::DiffLayout::Auto;
-            app.show_notice("Diff layout follows the terminal width");
+            app.show_notice("Diff layout follows the diff pane width again");
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('j') | KeyCode::Down => {

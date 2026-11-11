@@ -644,7 +644,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `M` | Hide / show reviewed files in the file tree |
 | `d` | Toggle unified / side-by-side layout, pinned for the session |
 | `1` / `2` | Pin side-by-side / unified layout for the session |
-| `0` | Pick the layout from the width again: side-by-side when the diff pane is at least 120 columns wide, unified below |
+| `0` | Pick the layout from the width again: side-by-side when the diff pane has at least 120 columns inside its border, unified below |
 | `v` / `V` | Start / stop multi-line selection for comments |
 | `c` | Add comment on current line / selection |
 | `C` | Add comment via external `$EDITOR` |

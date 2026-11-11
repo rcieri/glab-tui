@@ -13,7 +13,7 @@ use crate::form::{
     ItemList, LineInput, ListEntry, NoteLevel, Preview, Progress, Radio, Toggles,
 };
 use crate::ui::render_ctx::RenderCtx;
-use crate::utils::format::{sanitize_untrusted, wrap_ranges};
+use crate::utils::format::{displayable, sanitize_untrusted, wrap_ranges};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -639,31 +639,35 @@ fn line_input_row(
         field
     };
 
-    let value = sanitize_untrusted(input.buffer.value()).replace(['\t', '\r'], " ");
-    let chars: Vec<char> = value.chars().collect();
-    let cursor = input.buffer.value()[..input.buffer.cursor_byte_offset()]
-        .chars()
-        .count()
-        .min(chars.len());
-    let first = (cursor + 1).saturating_sub(field_width);
-    let shown: String = chars.iter().skip(first).take(field_width).collect();
+    let (head, tail) = input
+        .buffer
+        .value()
+        .split_at(input.buffer.cursor_byte_offset());
+    let (head, tail) = (displayable(head), displayable(tail));
+    let (under_cursor, rest) = tail.split_at(tail.chars().next().map_or(0, char::len_utf8));
+    let cursor_columns = Span::raw(under_cursor).width().max(1);
+    let head = suffix_within(&head, field_width.saturating_sub(cursor_columns));
+    let rest = prefix_within(
+        rest,
+        field_width.saturating_sub(Span::raw(head).width() + cursor_columns),
+    );
 
     let mut spans = if is_editing && is_focused {
-        let (before, after) = shown.split_at(
-            shown
-                .char_indices()
-                .nth(cursor - first)
-                .map_or(shown.len(), |(offset, _)| offset),
-        );
-        let mut after = after.chars();
-        let under_cursor = after.next().map_or_else(|| " ".to_string(), String::from);
+        let under_cursor = if under_cursor.is_empty() {
+            " "
+        } else {
+            under_cursor
+        };
         vec![
-            Span::styled(before.to_string(), field),
-            Span::styled(under_cursor, field.add_modifier(Modifier::REVERSED)),
-            Span::styled(after.as_str().to_string(), field),
+            Span::styled(head.to_string(), field),
+            Span::styled(
+                under_cursor.to_string(),
+                field.add_modifier(Modifier::REVERSED),
+            ),
+            Span::styled(rest.to_string(), field),
         ]
     } else {
-        vec![Span::styled(shown, field)]
+        vec![Span::styled(format!("{head}{under_cursor}{rest}"), field)]
     };
     let used: usize = spans.iter().map(Span::width).sum();
     spans.push(Span::styled(
@@ -680,6 +684,34 @@ fn line_input_row(
         }],
         is_focused,
     }
+}
+
+/// The longest end of `text` that fits in `columns` display columns.
+fn suffix_within(text: &str, columns: usize) -> &str {
+    let mut used = 0;
+    let mut start = text.len();
+    for (offset, c) in text.char_indices().rev() {
+        used += Span::raw(&text[offset..offset + c.len_utf8()]).width();
+        if used > columns {
+            break;
+        }
+        start = offset;
+    }
+    &text[start..]
+}
+
+/// The longest start of `text` that fits in `columns` display columns.
+fn prefix_within(text: &str, columns: usize) -> &str {
+    let mut used = 0;
+    let mut end = 0;
+    for (offset, c) in text.char_indices() {
+        used += Span::raw(&text[offset..offset + c.len_utf8()]).width();
+        if used > columns {
+            break;
+        }
+        end = offset + c.len_utf8();
+    }
+    &text[..end]
 }
 
 fn preview_rows(preview: &Preview, is_short_of_room: bool, styles: &Styles) -> Vec<BodyRow> {
@@ -1125,6 +1157,29 @@ mod tests {
             60,
         );
         assert_eq!(rows_text(&rows), [""]);
+    }
+
+    #[test]
+    fn a_wide_text_scrolls_by_display_columns_so_the_counter_stays_in_the_row() {
+        let theme = Theme::default();
+        let input = LineInput::new("漢".repeat(30), Some(72));
+        let row = line_input_row(&input, GroupPath::top(0), false, false, &theme, 22);
+        assert_eq!(
+            rows_text(std::slice::from_ref(&row)),
+            [format!("{}   30/72", "漢".repeat(7))]
+        );
+        assert_eq!(row.line.width(), 22);
+    }
+
+    #[test]
+    fn the_cursor_is_drawn_where_the_next_key_lands_past_an_escape_sequence() {
+        let theme = Theme::default();
+        let mut input = LineInput::new("ab\u{1b}[31mcd".into(), None);
+        input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
+        input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
+        let row = line_input_row(&input, GroupPath::top(0), true, true, &theme, 20);
+        let spans: Vec<&str> = row.line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(spans[..3], ["ab", "c", "d"]);
     }
 
     #[test]

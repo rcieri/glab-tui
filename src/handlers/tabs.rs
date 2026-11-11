@@ -2116,28 +2116,21 @@ pub fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
-                            let active_pipe_path = app
-                                .active_pipeline_id
-                                .and_then(|p_id| {
-                                    app.pipelines
-                                        .items
-                                        .iter()
-                                        .find(|p| p.id() == p_id)
-                                        .map(|p| p.project_path.clone())
-                                })
-                                .filter(|p| !p.is_empty());
-                            let project_path =
-                                active_pipe_path.unwrap_or_else(|| app.scope.as_str().to_string());
-                            let jid_str = job_id.to_string();
-                            let tx2 = tx.clone();
-                            fx.spawn(async move {
-                                let result =
-                                    client.open_job_in_browser(&project_path, &jid_str).await;
-                                let _ = tx2.send(Event::CommandCompleted(
-                                    crate::app::Tab::Jobs,
-                                    CommandOutcome::read_only(result),
-                                ));
-                            });
+                            match app.selected_job_url() {
+                                Ok(url) => {
+                                    let tx2 = tx.clone();
+                                    fx.spawn(async move {
+                                        let result = client.open_url(&url).await;
+                                        let _ = tx2.send(Event::CommandCompleted(
+                                            crate::app::Tab::Jobs,
+                                            CommandOutcome::read_only(result),
+                                        ));
+                                    });
+                                }
+                                Err(error) => {
+                                    app.show_error(format!("Failed to open job: {error}"))
+                                }
+                            }
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace_editor,

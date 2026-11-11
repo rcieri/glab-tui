@@ -3520,20 +3520,6 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_glab(
-                &["job", "view", id, "-R", project, "-w"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_glab(&["job", "view", id, "-w"], "OPENING IN BROWSER")
-                .await?;
-        }
-        Ok(())
-    }
-
     async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_glab(
             &[

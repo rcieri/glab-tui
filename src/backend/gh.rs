@@ -4005,20 +4005,6 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_gh(
-                &["run", "view", id, "-R", project, "--web"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
-                .await?;
-        }
-        Ok(())
-    }
-
     async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
         let url = format!("https://github.com/{project}/milestone/{}", milestone.iid);
         open_url(&url, self.tx.clone(), "OPENING IN BROWSER").await

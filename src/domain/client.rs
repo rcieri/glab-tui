@@ -558,8 +558,8 @@ impl GitlabClient {
     pub async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
         self.backend.open_pipeline_in_browser(project, id).await
     }
-    pub async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        self.backend.open_job_in_browser(project, id).await
+    pub async fn open_url(&self, url: &str) -> Result<()> {
+        crate::backend::browser::open_url(url, self.tx.clone(), "OPENING JOB IN BROWSER").await
     }
     pub async fn open_milestone_in_browser(
         &self,

@@ -2069,6 +2069,13 @@ impl DiffView {
         if let Some(new_cursor) = new_cursor {
             self.cursor_idx = new_cursor;
         }
+        if let Some(position) = self
+            .search_matches
+            .iter()
+            .position(|&m| m == self.cursor_idx)
+        {
+            self.search_cursor = position;
+        }
         self.scroll_offset = self.cursor_idx.saturating_sub(5);
     }
 
@@ -11536,6 +11543,24 @@ deleted file mode 100644
         assert_eq!(
             (view.cursor_idx, view.search_matches.clone()),
             (twelve, vec![twelve])
+        );
+    }
+
+    #[test]
+    fn switching_the_diff_layout_keeps_the_search_position_on_the_cursor_match() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context");
+        view.search_next();
+        let unified_match = view.cursor_idx;
+
+        view.set_side_by_side(true);
+        assert_eq!(view.search_matches[view.search_cursor], view.cursor_idx);
+
+        view.set_side_by_side(false);
+        assert_eq!(
+            (view.cursor_idx, view.search_matches[view.search_cursor]),
+            (unified_match, unified_match)
         );
     }
 

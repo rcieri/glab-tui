@@ -705,6 +705,34 @@ pub fn render(f: &mut Frame, app: &mut App) {
         if let Some(mut diff_view) = app.diff_view.take() {
             let area = centered_rect_min(95, 95, 30, 6, size);
 
+            let outer_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ctx.theme.border))
+                .style(Style::default().bg(ctx.theme.bg));
+
+            let inner_area = outer_block.inner(area);
+
+            let main_chunks = {
+                let file_tree_constraint = if diff_view.file_tree_visible {
+                    Constraint::Percentage(25)
+                } else {
+                    Constraint::Length(0)
+                };
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([file_tree_constraint, Constraint::Percentage(100)].as_ref())
+                    .split(inner_area)
+            };
+
+            // Auto picks the layout from the pane width, which only the draw
+            // knows, and before the title, whose search count depends on the
+            // layout's rows. A selection holds the layout: switching would drop
+            // it, and the layout catches up once it ends.
+            let diff_columns = main_chunks[1].width.saturating_sub(2);
+            if diff_view.selection_start.is_none() {
+                diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+            }
+
             let unresolved_count = app.unresolved_threads_count();
             let unresolved_suffix = if unresolved_count > 0 {
                 format!(
@@ -772,33 +800,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 ));
             }
 
-            let outer_block = Block::default()
-                .title(Line::from(title_spans))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(ctx.theme.border))
-                .style(Style::default().bg(ctx.theme.bg));
-
-            let inner_area = outer_block.inner(area);
-
-            let main_chunks = {
-                let file_tree_constraint = if diff_view.file_tree_visible {
-                    Constraint::Percentage(25)
-                } else {
-                    Constraint::Length(0)
-                };
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([file_tree_constraint, Constraint::Percentage(100)].as_ref())
-                    .split(inner_area)
-            };
-
-            // Auto picks the layout from the pane width, which only the draw
-            // knows. A selection holds the layout: switching would drop it, and
-            // the layout catches up once it ends.
-            let diff_columns = main_chunks[1].width.saturating_sub(2);
-            if diff_view.selection_start.is_none() {
-                diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
-            }
+            let outer_block = outer_block.title(Line::from(title_spans));
 
             // 1. Render Files list on the left (only if visible)
             let files_rect = main_chunks[0];
@@ -2184,5 +2186,27 @@ mod tests {
         view.selection_end = None;
         terminal.draw(|f| render(f, &mut app)).unwrap();
         assert!(app.diff_view.is_some_and(|view| view.side_by_side));
+    }
+
+    #[test]
+    fn diff_search_count_follows_an_auto_layout_switch_in_the_same_frame() {
+        let mut terminal = Terminal::new(TestBackend::new(220, 30)).unwrap();
+        let mut app = App::default();
+        let mut view = crate::app::DiffView::new(
+            1,
+            "o/r".to_string(),
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-foo\n+foo bar\n"
+                .to_string(),
+        );
+        view.search("foo");
+        assert_eq!(view.search_matches.len(), 2, "unified counts both lines");
+        app.diff_view = Some(view);
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let title = rendered_rows(&terminal)
+            .into_iter()
+            .find(|row| row.contains("FILTERED"))
+            .expect("filtered title drawn");
+        assert!(title.contains("foo (1/1)"), "{title}");
     }
 }

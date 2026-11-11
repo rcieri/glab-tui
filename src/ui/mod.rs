@@ -39,7 +39,7 @@ pub const MODAL_NOTICE_ROWS: u16 = 1;
 struct Workspace {
     sidebar: Rect,
     list: Rect,
-    /// The compact terminal log under the list.
+    /// The compact terminal log under the list, or under the list and the stacked preview.
     terminal: Rect,
     detail: Rect,
 }

@@ -13,7 +13,7 @@ use crate::form::{
     ItemList, LineInput, NoteLevel, Preview, Progress, Radio, Toggles,
 };
 use crate::ui::render_ctx::RenderCtx;
-use crate::utils::format::{sanitize_untrusted, wrap_text};
+use crate::utils::format::{sanitize_untrusted, wrap_ranges};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -398,9 +398,8 @@ fn group_rows(
                 Some(icon) => format!("{icon} {}", sanitize_untrusted(&note.text)),
                 None => sanitize_untrusted(&note.text).into_owned(),
             };
-            wrap_text(&text, content_width)
-                .into_iter()
-                .map(|row| BodyRow::plain(Line::from(Span::styled(row, style))))
+            wrapped_rows(&text, content_width)
+                .map(|row| BodyRow::plain(Line::from(Span::styled(row.to_string(), style))))
                 .collect()
         }
         GroupKind::Collapsible(_) => Vec::new(),
@@ -451,6 +450,17 @@ fn group_label(group: &Group, icons: &Icons) -> Option<String> {
         )),
         _ => Some(label),
     }
+}
+
+/// `text` split into rows of at most `width` display columns, breaking a
+/// word too long for a row. A break at a space would otherwise leave that
+/// space as a row of its own, so whitespace-only rows are dropped while the
+/// blank rows between paragraphs stay.
+fn wrapped_rows(text: &str, width: usize) -> impl Iterator<Item = &str> {
+    wrap_ranges(text, width).into_iter().filter_map(|range| {
+        let row = text[range.clone()].trim();
+        (range.is_empty() || !row.is_empty()).then_some(row)
+    })
 }
 
 fn radio_rows(
@@ -958,6 +968,31 @@ mod tests {
                 "> !3",
                 "",
                 "x 1 failed"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_note_breaks_a_word_too_long_for_its_row() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let branch = "b".repeat(70);
+        let form = Form::new(
+            "Delete Branch",
+            vec![Group::note(
+                NoteLevel::Info,
+                format!("Delete branch {branch}?"),
+            )],
+            vec![Button::new("Cancel", ButtonTone::Neutral)],
+            0,
+            0,
+        );
+        assert_eq!(
+            rows_text(&body_rows(&form, &ctx, 60, Compaction::Roomy)),
+            [
+                "Delete branch".to_string(),
+                "b".repeat(60),
+                format!("{}?", "b".repeat(10)),
             ]
         );
     }

@@ -5,9 +5,9 @@
 
 ┌ + Merge 20 Merge Requests ───────────────────────────────┐
 │ Merging 20 MRs                                           │
-│ !1: test-owner/test-repo                                 │
-│ !2: test-owner/test-repo                                 │
-│ !3: test-owner/test-repo                                 │
+│ !1                                                       │
+│ !2: Feature: Add pagination support                      │
+│ !3                                                       │
 │ v 17 more                                                │
 │ Strategy o Merge commit  * Squash  o Rebase              │
 │ Options + Delete source branch                           │

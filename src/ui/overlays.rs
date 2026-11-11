@@ -2561,9 +2561,7 @@ command = "true"
     /// A bulk merge of twenty MRs, too tall for 24 rows even without blank
     /// rows, so the form shortens the list.
     fn render_bulk_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
-        let items = (1..=20)
-            .map(|iid| ("test-owner/test-repo".to_string(), iid))
-            .collect();
+        let items = (1..=20).map(|iid| (String::new(), iid)).collect();
         render_dialog(
             crate::app::ConfirmAction::BulkMergeMrs(items),
             width,

@@ -3633,16 +3633,17 @@ impl SubmitDialog {
             .with_label("Options")
     }
 
-    /// The items of a bulk merge, by title when the row is listed.
+    /// The items of a bulk merge, by title when the row is listed, else by
+    /// reference alone.
     fn bulk_merge_items(app: &App, items: &[(String, u64)], marker: &str) -> Group {
         let entries = items
             .iter()
             .map(|(project_path, iid)| {
-                let title = app
-                    .mr_index(project_path, *iid)
-                    .map(|i| app.mrs.items[i].title.as_str())
-                    .unwrap_or(project_path);
-                ListEntry::queued(format!("{marker}{iid}: {title}"))
+                let label = match app.mr_index(project_path, *iid) {
+                    Some(i) => format!("{marker}{iid}: {}", app.mrs.items[i].title),
+                    None => format!("{project_path}{marker}{iid}"),
+                };
+                ListEntry::queued(label)
             })
             .collect();
         Group::new(GroupKind::ItemList(ItemList { entries }))

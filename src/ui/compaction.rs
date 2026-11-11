@@ -26,9 +26,7 @@ pub fn compact<L: Copy, R: Copy>(
     layout
 }
 
-/// Columns the list keeps beside the preview pane. With the default sidebar
-/// and the 30-column preview of a narrow terminal, the preview stays beside the
-/// list from 90 columns up, the width it always needed.
+/// Columns the list keeps when the preview sits beside it.
 const MIN_LIST_COLUMNS: u16 = 38;
 
 /// Rows each of the list and the preview keeps when they are stacked: borders,

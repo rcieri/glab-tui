@@ -295,22 +295,25 @@ pub fn handle_key(
         }
         KeyCode::Char('d') => {
             if !diff_view.focus_on_files {
-                let side_by_side = !diff_view.side_by_side;
-                pin_layout(app, &mut diff_view, side_by_side);
+                let other = if diff_view.side_by_side {
+                    app::DiffLayout::Unified
+                } else {
+                    app::DiffLayout::SideBySide
+                };
+                set_layout(app, &mut diff_view, other);
             }
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('1') => {
-            pin_layout(app, &mut diff_view, true);
+            set_layout(app, &mut diff_view, app::DiffLayout::SideBySide);
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('2') => {
-            pin_layout(app, &mut diff_view, false);
+            set_layout(app, &mut diff_view, app::DiffLayout::Unified);
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('0') => {
-            app.diff_layout = app::DiffLayout::Auto;
-            app.show_notice("Diff layout follows the diff pane width again");
+            set_layout(app, &mut diff_view, app::DiffLayout::Auto);
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('j') | KeyCode::Down => {
@@ -580,16 +583,23 @@ pub fn handle_key(
     }
 }
 
-/// Pins the diff layout for the rest of the session and applies it to the
-/// open diff, whatever the terminal width.
-fn pin_layout(app: &mut App, diff_view: &mut app::DiffView, side_by_side: bool) {
-    app.diff_layout = app::DiffLayout::pinned(side_by_side);
-    diff_view.set_side_by_side(side_by_side);
-    app.show_notice(if side_by_side {
-        "Diff layout pinned to side-by-side (0 follows the width again)"
-    } else {
-        "Diff layout pinned to unified (0 follows the width again)"
-    });
+/// Sets the diff layout for the rest of the session. A pinned layout applies to
+/// the open diff at once. `Auto` is resolved against the pane width on the next
+/// draw.
+fn set_layout(app: &mut App, diff_view: &mut app::DiffView, layout: app::DiffLayout) {
+    app.diff_layout = layout;
+    let notice = match layout {
+        app::DiffLayout::Auto => "Diff layout follows the diff pane width again",
+        app::DiffLayout::SideBySide => {
+            diff_view.set_side_by_side(true);
+            "Diff layout pinned to side-by-side (0 follows the width again)"
+        }
+        app::DiffLayout::Unified => {
+            diff_view.set_side_by_side(false);
+            "Diff layout pinned to unified (0 follows the width again)"
+        }
+    };
+    app.show_notice(notice);
 }
 
 /// A draft anchored to `range`, its body still to be written.

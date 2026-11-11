@@ -1297,15 +1297,6 @@ pub enum DiffLayout {
 }
 
 impl DiffLayout {
-    /// The layout pinned by choosing side by side (`true`) or unified rows.
-    pub fn pinned(side_by_side: bool) -> Self {
-        if side_by_side {
-            Self::SideBySide
-        } else {
-            Self::Unified
-        }
-    }
-
     /// Whether a diff pane `columns` wide shows its rows side by side.
     pub fn is_side_by_side(self, columns: u16) -> bool {
         match self {

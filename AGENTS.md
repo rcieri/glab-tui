@@ -371,9 +371,9 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Create release | `glab release create <tag> -R <repo> -n <name> -N <notes>` |
 | Update release | `glab release create <tag> -R <repo> -n <name> -N <desc>` (updates the existing release, since `glab release` has no `update` subcommand) |
 | Delete release | `glab release delete <tag> -R <repo> -y` |
-| Close/reopen milestone | `glab milestone close\|reopen <iid> -R <repo>` |
-| Update milestone | `glab milestone update <iid> -R <repo> --title ... --description ...` |
-| Delete milestone | `glab milestone delete <iid> -R <repo> -y` |
+| Close/reopen milestone | `glab milestone edit <id> -R <repo> --state close\|activate` (`edit` and `delete` take the milestone's `id`, not its `iid`) |
+| Update milestone | `glab milestone edit <id> -R <repo> --title ... --description ...` |
+| Delete milestone | `glab milestone delete <id> -R <repo>` |
 | Cancel pipeline | `glab ci cancel pipeline <id> -R <repo>` |
 | Retry job | `glab ci retry <job_id> -R <repo>` |
 | Retry failed jobs (`R`) | `glab ci retry <job_id> -R <repo>` for each job the failed-jobs listing below returns, paced with `pace_bulk_operation()` |

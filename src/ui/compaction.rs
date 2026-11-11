@@ -39,8 +39,13 @@ pub(crate) const MIN_PREVIEW_COLUMNS: u16 = 30;
 /// Where the detail/preview pane goes relative to the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewPlacement {
-    Beside { columns: u16 },
-    Below,
+    Beside {
+        columns: u16,
+    },
+    /// Stacked under the list, with the terminal log under both or given up.
+    Below {
+        terminal_log: bool,
+    },
     Hidden,
 }
 
@@ -48,14 +53,21 @@ pub enum PreviewPlacement {
 enum PreviewRule {
     Narrow,
     Stack,
+    DropTerminalLog,
     Hide,
 }
 
-const PREVIEW_RULES: &[PreviewRule] = &[PreviewRule::Narrow, PreviewRule::Stack, PreviewRule::Hide];
+const PREVIEW_RULES: &[PreviewRule] = &[
+    PreviewRule::Narrow,
+    PreviewRule::Stack,
+    PreviewRule::DropTerminalLog,
+    PreviewRule::Hide,
+];
 
-/// Where the preview goes in `area`, the space shared by the list and the
-/// preview, when the preview wants `preview_columns` beside the list.
-pub fn place_preview(area: Rect, preview_columns: u16) -> PreviewPlacement {
+/// Where the preview goes in `area`, the space shared by the list, the
+/// preview and the `terminal_rows` high terminal log under the list, when the
+/// preview wants `preview_columns` beside the list.
+pub fn place_preview(area: Rect, preview_columns: u16, terminal_rows: u16) -> PreviewPlacement {
     compact(
         PreviewPlacement::Beside {
             columns: preview_columns,
@@ -65,14 +77,22 @@ pub fn place_preview(area: Rect, preview_columns: u16) -> PreviewPlacement {
             PreviewPlacement::Beside { columns } => {
                 area.width >= columns.saturating_add(MIN_LIST_COLUMNS)
             }
-            PreviewPlacement::Below => area.height >= 2 * MIN_STACKED_PANE_ROWS,
+            PreviewPlacement::Below { terminal_log: true } => {
+                area.height >= terminal_rows.saturating_add(2 * MIN_STACKED_PANE_ROWS)
+            }
+            PreviewPlacement::Below {
+                terminal_log: false,
+            } => area.height >= 2 * MIN_STACKED_PANE_ROWS,
             PreviewPlacement::Hidden => true,
         },
         |_, rule| match rule {
             PreviewRule::Narrow => PreviewPlacement::Beside {
                 columns: MIN_PREVIEW_COLUMNS,
             },
-            PreviewRule::Stack => PreviewPlacement::Below,
+            PreviewRule::Stack => PreviewPlacement::Below { terminal_log: true },
+            PreviewRule::DropTerminalLog => PreviewPlacement::Below {
+                terminal_log: false,
+            },
             PreviewRule::Hide => PreviewPlacement::Hidden,
         },
     )
@@ -133,7 +153,7 @@ mod tests {
     #[test]
     fn preview_stays_beside_the_list_at_its_preferred_width_while_the_list_keeps_its_minimum() {
         assert_eq!(
-            place_preview(Rect::new(0, 0, 45 + MIN_LIST_COLUMNS, 20), 45),
+            place_preview(Rect::new(0, 0, 45 + MIN_LIST_COLUMNS, 20), 45, 6),
             PreviewPlacement::Beside { columns: 45 }
         );
     }
@@ -141,7 +161,7 @@ mod tests {
     #[test]
     fn preview_narrows_before_it_leaves_the_side_of_the_list() {
         assert_eq!(
-            place_preview(Rect::new(0, 0, 45 + MIN_LIST_COLUMNS - 1, 20), 45),
+            place_preview(Rect::new(0, 0, 45 + MIN_LIST_COLUMNS - 1, 20), 45, 6),
             PreviewPlacement::Beside {
                 columns: MIN_PREVIEW_COLUMNS
             }
@@ -153,21 +173,42 @@ mod tests {
         assert_eq!(
             place_preview(
                 Rect::new(0, 0, MIN_PREVIEW_COLUMNS + MIN_LIST_COLUMNS - 1, 20),
-                45
+                45,
+                6
             ),
-            PreviewPlacement::Below
+            PreviewPlacement::Below { terminal_log: true }
+        );
+    }
+
+    #[test]
+    fn terminal_log_gives_way_before_the_stacked_preview_does() {
+        assert_eq!(
+            place_preview(Rect::new(0, 0, 50, 6 + 2 * MIN_STACKED_PANE_ROWS), 30, 6),
+            PreviewPlacement::Below { terminal_log: true }
+        );
+        assert_eq!(
+            place_preview(
+                Rect::new(0, 0, 50, 6 + 2 * MIN_STACKED_PANE_ROWS - 1),
+                30,
+                6
+            ),
+            PreviewPlacement::Below {
+                terminal_log: false
+            }
         );
     }
 
     #[test]
     fn preview_is_hidden_when_stacking_leaves_too_few_rows() {
         assert_eq!(
-            place_preview(Rect::new(0, 0, 50, 2 * MIN_STACKED_PANE_ROWS - 1), 30),
+            place_preview(Rect::new(0, 0, 50, 2 * MIN_STACKED_PANE_ROWS - 1), 30, 6),
             PreviewPlacement::Hidden
         );
         assert_eq!(
-            place_preview(Rect::new(0, 0, 50, 2 * MIN_STACKED_PANE_ROWS), 30),
-            PreviewPlacement::Below
+            place_preview(Rect::new(0, 0, 50, 2 * MIN_STACKED_PANE_ROWS), 30, 6),
+            PreviewPlacement::Below {
+                terminal_log: false
+            }
         );
     }
 

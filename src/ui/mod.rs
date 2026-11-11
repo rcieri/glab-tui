@@ -53,7 +53,8 @@ impl Workspace {
     /// `MIN_SIDEBAR_TERMINAL_COLUMNS`), the list with the terminal log under
     /// it, and, when `preview_columns` is set, the preview where
     /// `compaction::place_preview` puts it: beside the list at that width or
-    /// narrowed, below the list, or hidden when neither fits.
+    /// narrowed, below the list (giving up the terminal log when both do not
+    /// fit), or hidden when neither fits.
     fn split(
         area: Rect,
         sidebar_width: u16,
@@ -65,37 +66,33 @@ impl Workspace {
         } else {
             0
         };
-        let [sidebar, main] = Layout::horizontal([
-            Constraint::Length(shown_sidebar_width),
-            Constraint::Min(0),
-        ])
-        .areas(area);
+        let [sidebar, main] =
+            Layout::horizontal([Constraint::Length(shown_sidebar_width), Constraint::Min(0)])
+                .areas(area);
         let placement = match preview_columns {
             Some(preferred_columns) => {
-                let column_rows = main.height.saturating_sub(terminal_height);
                 // Measured as if the sidebar were shown, so leaving it out on a
                 // narrow terminal never moves the preview back beside the list.
                 compaction::place_preview(
                     Rect {
                         width: area.width.saturating_sub(sidebar_width),
-                        height: column_rows,
                         ..main
                     },
                     preferred_columns,
+                    terminal_height,
                 )
             }
             None => PreviewPlacement::Hidden,
         };
-        let split_terminal = |column: Rect| -> [Rect; 2] {
-            Layout::vertical([Constraint::Min(0), Constraint::Length(terminal_height)])
-                .areas(column)
+        let split_terminal = |column: Rect, terminal_rows: u16| -> [Rect; 2] {
+            Layout::vertical([Constraint::Min(0), Constraint::Length(terminal_rows)]).areas(column)
         };
         match placement {
             PreviewPlacement::Beside { columns } => {
                 let [column, detail] =
                     Layout::horizontal([Constraint::Min(0), Constraint::Length(columns)])
                         .areas(main);
-                let [list, terminal] = split_terminal(column);
+                let [list, terminal] = split_terminal(column, terminal_height);
                 Self {
                     sidebar,
                     list,
@@ -103,8 +100,9 @@ impl Workspace {
                     detail,
                 }
             }
-            PreviewPlacement::Below => {
-                let [column, terminal] = split_terminal(main);
+            PreviewPlacement::Below { terminal_log } => {
+                let terminal_rows = if terminal_log { terminal_height } else { 0 };
+                let [column, terminal] = split_terminal(main, terminal_rows);
                 let [list, detail] =
                     Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(column);
                 Self {
@@ -115,7 +113,7 @@ impl Workspace {
                 }
             }
             PreviewPlacement::Hidden => {
-                let [list, terminal] = split_terminal(main);
+                let [list, terminal] = split_terminal(main, terminal_height);
                 Self {
                     sidebar,
                     list,
@@ -2098,6 +2096,20 @@ mod tests {
                 (preview.x, preview.y, preview.width),
                 (list.x, list.bottom(), list.width),
                 "at {width} columns"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_log_gives_way_before_the_stacked_preview_is_hidden() {
+        for height in [18, 19] {
+            let (Some(list), Some(preview)) = workspace_panes_at(80, height) else {
+                panic!("list and preview drawn at {height} rows");
+            };
+            assert_eq!(
+                (preview.x, preview.y, preview.bottom()),
+                (list.x, list.bottom(), height),
+                "at {height} rows"
             );
         }
     }

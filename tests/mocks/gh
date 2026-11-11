@@ -17,6 +17,14 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "gh $*" >> "$LOG_FILE"
 
+# A call this mock has no case for. The test harness fails the test when
+# <log>.unhandled is not empty (see `Sandbox::drop`).
+unhandled() {
+    echo "gh $*" >> "$LOG_FILE.unhandled"
+    echo "mock: unhandled: $*" >&2
+    exit 2
+}
+
 # Generic failure injection: fail any call whose arguments contain the value.
 if [[ -n "$TEST_GH_FAIL_MATCH" && "$*" == *"$TEST_GH_FAIL_MATCH"* ]]; then
     echo "mock: HTTP 404: Not Found" >&2
@@ -46,6 +54,22 @@ if [[ "$*" == "pr list"* && " $* " == *" --state merged "* ]]; then
     exit 0
 elif [[ "$*" == "run list"* ]]; then
     echo '[{"databaseId": 12345}]'
+    exit 0
+elif [[ "$*" == "run view "*"--json jobs"* ]]; then
+    echo '[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success"}]'
+    exit 0
+elif [[ "$*" == "issue list"* || "$*" == "label list"* ]]; then
+    echo "[]"
+    exit 0
+elif [[ "$*" == "auth status"* ]]; then
+    # Logged in to github.com only, so other hosts resolve to GitLab.
+    if [[ " $* " == *" --hostname "* && " $* " != *" --hostname github.com "* ]]; then
+        echo "You are not logged into any accounts on that host" >&2
+        exit 1
+    fi
+    exit 0
+elif [[ "$*" == "pr merge "* || "$*" == "run rerun "* ]]; then
+    # Mutations whose output glab-tui does not read.
     exit 0
 fi
 
@@ -129,10 +153,16 @@ if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"comments,reviews"* ]]; then
 fi
 
 if [[ "$*" == *"api"* ]]; then
+    if [[ "$*" == "api user "* ]]; then
+        echo "test-user"
+    elif [[ "$*" == *"closingIssuesReferences"* ]]; then
+        echo '{"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}'
+    elif [[ "$*" == *"/assignees"* ]]; then
+        echo "[]"
+    elif [[ "$*" == *"/events?"* ]]; then
+        cat_relative "$FIXTURES_DIR/gh_events.json"
     # Review threads and comments span two pages. Only `--paginate` gets the
     # second one, printed right after the first as its own JSON document.
-    if [[ "$*" == *"/events?"* ]]; then
-        cat_relative "$FIXTURES_DIR/gh_events.json"
     elif [[ "$*" == *"reviewThreads"* ]]; then
         cat "$FIXTURES_DIR/gh_review_threads.json"
         if [[ " $* " == *" --paginate "* ]]; then
@@ -193,10 +223,8 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/jobs"* ]]; then
         echo '{"jobs": [{"id": 54321, "status": "completed", "conclusion": "success", "name": "rspec"}]}'
     else
-        echo "mock: unhandled: $*" >&2
-        exit 2
+        unhandled "$@"
     fi
 else
-    echo "mock: unhandled: $*" >&2
-    exit 2
+    unhandled "$@"
 fi

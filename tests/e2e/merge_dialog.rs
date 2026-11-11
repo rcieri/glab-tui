@@ -33,6 +33,9 @@ fn open_merge_dialog(
         .wait_for_screen_contains(dialog_title, 15000)
         .expect("m should open the merge dialog of the highlighted MR");
     session
+        .wait_for_screen_contains("h/l button", 5000)
+        .expect("the dialog opens on a button");
+    session
         .wait_for_screen_contains("Enter merge", 5000)
         .expect("the dialog opens on its Merge button");
     session

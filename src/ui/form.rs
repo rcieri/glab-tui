@@ -735,10 +735,11 @@ fn preview_rows(preview: &Preview, is_short_of_room: bool, styles: &Styles) -> V
             .collect();
     }
     let hidden = lines.len() - 1;
+    let noun = if hidden == 1 { "line" } else { "lines" };
     let first = lines.into_iter().next().unwrap_or_default();
     vec![BodyRow::plain(Line::from(vec![
         Span::styled(first, styles.text),
-        Span::styled(format!("  +{hidden} lines · e"), styles.muted),
+        Span::styled(format!("  +{hidden} {noun}"), styles.muted),
     ]))]
 }
 
@@ -999,7 +1000,7 @@ mod tests {
                 "  - Bypass rules",
             ]
         );
-        assert_eq!(text(Compaction::FoldedPreviews)[5], "Subject  +2 lines · e");
+        assert_eq!(text(Compaction::FoldedPreviews)[5], "Subject  +2 lines");
         assert_eq!(
             text(Compaction::ShortLists),
             [
@@ -1007,7 +1008,7 @@ mod tests {
                 "               !2",
                 "               !3",
                 "               v 2 more",
-                "Subject  +2 lines · e",
+                "Subject  +2 lines",
                 "v Advanced  a",
                 "  - Bypass rules",
             ]
@@ -1032,6 +1033,19 @@ mod tests {
         assert_eq!(
             rows.iter().position(|row| row.is_focused),
             Some(rows.len() - 1)
+        );
+    }
+
+    #[test]
+    fn a_folded_preview_counts_its_hidden_lines_in_the_singular_too() {
+        let styles = Styles::new(&Theme::default());
+        let preview = Preview {
+            lines: vec!["Subject".into(), "Body".into()],
+            is_collapsed: true,
+        };
+        assert_eq!(
+            rows_text(&preview_rows(&preview, false, &styles)),
+            ["Subject  +1 line"]
         );
     }
 

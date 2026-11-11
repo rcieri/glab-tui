@@ -102,6 +102,9 @@ pub fn place_preview(area: Rect, preview_columns: u16, terminal_rows: u16) -> Pr
 /// the diff marker and enough code to read without most lines being cut.
 const MIN_SIDE_BY_SIDE_PANE_COLUMNS: u16 = 60;
 
+/// Column the renderer draws between the two sides of a side-by-side diff.
+const SIDE_BY_SIDE_DIVIDER_COLUMNS: u16 = 1;
+
 #[derive(Debug, Clone, Copy)]
 enum DiffRule {
     Unify,
@@ -115,7 +118,10 @@ pub fn fits_side_by_side_diff(columns: u16) -> bool {
     compact(
         true,
         DIFF_RULES,
-        |side_by_side| !side_by_side || columns >= 2 * MIN_SIDE_BY_SIDE_PANE_COLUMNS,
+        |side_by_side| {
+            !side_by_side
+                || columns >= 2 * MIN_SIDE_BY_SIDE_PANE_COLUMNS + SIDE_BY_SIDE_DIVIDER_COLUMNS
+        },
         |_, DiffRule::Unify| false,
     )
 }
@@ -213,10 +219,9 @@ mod tests {
     }
 
     #[test]
-    fn diff_goes_unified_below_two_minimum_panes() {
-        assert!(fits_side_by_side_diff(2 * MIN_SIDE_BY_SIDE_PANE_COLUMNS));
-        assert!(!fits_side_by_side_diff(
-            2 * MIN_SIDE_BY_SIDE_PANE_COLUMNS - 1
-        ));
+    fn diff_goes_unified_below_two_minimum_panes_and_the_divider() {
+        let pair = 2 * MIN_SIDE_BY_SIDE_PANE_COLUMNS + SIDE_BY_SIDE_DIVIDER_COLUMNS;
+        assert!(fits_side_by_side_diff(pair));
+        assert!(!fits_side_by_side_diff(pair - 1));
     }
 }

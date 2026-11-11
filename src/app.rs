@@ -2049,22 +2049,12 @@ impl DiffView {
 
         let new_cursor = if side_by_side {
             self.unified_cursor_before_split = Some(old_cursor);
-            self.lines.get(old_cursor).and_then(|unified| {
-                self.side_by_side_lines
-                    .iter()
-                    .position(|row| side_by_side_row_shows(row, unified))
-            })
+            self.side_by_side_row_of(old_cursor)
         } else {
-            let remembered = self.unified_cursor_before_split.take();
-            self.side_by_side_lines.get(old_cursor).and_then(|row| {
-                remembered
-                    .filter(|&line| {
-                        self.lines
-                            .get(line)
-                            .is_some_and(|unified| side_by_side_row_shows(row, unified))
-                    })
-                    .or_else(|| unified_row_of(row, &self.lines))
-            })
+            self.unified_cursor_before_split
+                .take()
+                .filter(|&line| self.side_by_side_row_of(line) == Some(old_cursor))
+                .or_else(|| self.unified_line_of(old_cursor))
         };
         if let Some(new_cursor) = new_cursor {
             self.cursor_idx = new_cursor;
@@ -2568,21 +2558,53 @@ impl DiffView {
             (right, None) => right.as_ref(),
         }
     }
+
+    /// Side-by-side row showing the unified line `line`.
+    fn side_by_side_row_of(&self, line: usize) -> Option<usize> {
+        let unified = self.lines.get(line)?;
+        if is_marker(unified.line_type) {
+            let nth = self.lines[..line]
+                .iter()
+                .filter(|l| is_marker(l.line_type))
+                .count();
+            return nth_marker(self.side_by_side_lines.iter().map(|row| row.line_type), nth);
+        }
+        self.side_by_side_lines
+            .iter()
+            .position(|row| side_by_side_row_shows(row, unified))
+    }
+
+    /// Unified line shown by the side-by-side row `row_idx`.
+    fn unified_line_of(&self, row_idx: usize) -> Option<usize> {
+        let row = self.side_by_side_lines.get(row_idx)?;
+        if is_marker(row.line_type) {
+            let nth = self.side_by_side_lines[..row_idx]
+                .iter()
+                .filter(|r| is_marker(r.line_type))
+                .count();
+            return nth_marker(self.lines.iter().map(|line| line.line_type), nth);
+        }
+        unified_row_of(row, &self.lines)
+    }
 }
 
-/// Whether the side-by-side `row` shows the unified line `unified`. Hunk
-/// headers and meta rows carry no line numbers, so they match by content.
+/// Hunk headers and meta lines carry no line numbers, but
+/// `build_side_by_side_lines` gives each exactly one row, in order, so they
+/// map between the layouts by ordinal.
+fn is_marker(line_type: DiffLineType) -> bool {
+    matches!(line_type, DiffLineType::HunkHeader | DiffLineType::Meta)
+}
+
+fn nth_marker(types: impl Iterator<Item = DiffLineType>, nth: usize) -> Option<usize> {
+    types
+        .enumerate()
+        .filter(|&(_, line_type)| is_marker(line_type))
+        .nth(nth)
+        .map(|(i, _)| i)
+}
+
+/// Whether the side-by-side `row` shows the unified content line `unified`.
 fn side_by_side_row_shows(row: &SideBySideLine, unified: &DiffLine) -> bool {
-    if matches!(
-        unified.line_type,
-        DiffLineType::HunkHeader | DiffLineType::Meta
-    ) {
-        return row.line_type == unified.line_type
-            && row
-                .left
-                .as_ref()
-                .is_some_and(|l| l.content == unified.content);
-    }
     let same_line = |side: &Option<DiffLine>| {
         side.as_ref().is_some_and(|l| {
             l.old_line_num == unified.old_line_num
@@ -11482,6 +11504,74 @@ deleted file mode 100644
         view.cursor_idx = side_by_side_row(&view, " context twelve");
         view.set_side_by_side(false);
         assert_eq!(view.cursor_idx, diff_row(&view, " context twelve"));
+    }
+
+    const REPEATED_MARKER_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+-old one
++new one
+ two
+@@ -20,2 +20,2 @@
+-old twenty
++new twenty
+ twenty-one
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone one
+-gone two
+diff --git a/src/also_gone.rs b/src/also_gone.rs
+deleted file mode 100644
+--- a/src/also_gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-also gone one
+-also gone two
+";
+
+    #[test]
+    fn leaving_side_by_side_on_a_later_hunk_header_stays_on_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.cursor_idx = view.hunks[1];
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "@@ -20,2 +20,2 @@"));
+    }
+
+    #[test]
+    fn switching_the_diff_layout_on_a_marker_repeated_in_an_earlier_file_keeps_its_file() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+
+        for marker in [
+            "deleted file mode 100644",
+            "+++ /dev/null",
+            "@@ -1,2 +0,0 @@",
+        ] {
+            let last_line = view
+                .lines
+                .iter()
+                .rposition(|line| line.content == marker)
+                .unwrap();
+            let last_row = view
+                .side_by_side_lines
+                .iter()
+                .rposition(|row| row.left.as_ref().is_some_and(|line| line.content == marker))
+                .unwrap();
+
+            view.cursor_idx = last_line;
+            view.set_side_by_side(true);
+            assert_eq!(view.cursor_idx, last_row, "{marker:?} to side-by-side");
+            view.set_side_by_side(false);
+            assert_eq!(view.cursor_idx, last_line, "{marker:?} back to unified");
+        }
     }
 
     fn side_by_side_row(view: &DiffView, content: &str) -> usize {

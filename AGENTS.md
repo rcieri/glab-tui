@@ -305,6 +305,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Keys are the form's: `Tab`/`BackTab` between groups (the button row last), `j`/`k` within a group and on into the next, `h`/`l` across radios and buttons, `Space` selects or toggles, `Enter` runs the focused button and from a field the primary one, `Esc` leaves a line input being edited, then cancels. Cancel never has side effects.
 * Destructive actions (close, delete, revoke, cancel pipeline/jobs) open with `Form::danger()`, which puts the focus and the primary on Cancel; reversible actions (merge, rebase, review) and re-runs (the user asked for that exact call, shown in full in the body) open on Submit.
 * Clicks on rows and buttons go through `Form::click_at`, using the rects the last draw recorded.
+* E2E coverage: `tests/e2e/merge_dialog.rs` picks a strategy and options in the merge dialog with the form's keys and asserts the exact `glab mr merge` / `gh pr merge` call they produce (the `mr merge` and `pr merge` cases of `tests/mocks/glab` and `tests/mocks/gh`). Destructive dialogs are driven from Cancel by `tests/e2e/group_scope_actions.rs`, `secondary_tabs.rs` and `tabs.rs`.
 
 ### Mouse Support
 * Mouse events (`crossterm::event::MouseEvent`) are handled by `handlers::mouse::handle_mouse_event` for selecting tabs, scrolling tables, and interacting with overlays.

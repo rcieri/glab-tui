@@ -730,13 +730,17 @@ impl Form {
         let GroupKind::LineInput(input) = &mut group.kind else {
             return;
         };
-        input.buffer.set_value(first);
-        group.is_touched = true;
+        if input.buffer.value() != first {
+            input.buffer.set_value(first);
+            group.is_touched = true;
+        }
         if let Some(preview_path) = preview_path {
             if let Some(group) = self.group_at_mut(preview_path) {
                 if let GroupKind::Preview(preview) = &mut group.kind {
-                    preview.lines = rest;
-                    group.is_touched = true;
+                    if preview.lines != rest {
+                        preview.lines = rest;
+                        group.is_touched = true;
+                    }
                 }
             }
         }
@@ -1279,6 +1283,17 @@ mod tests {
                 lines: vec!["First".into(), "Second".into()],
                 is_collapsed: false,
             })
+        );
+    }
+
+    #[test]
+    fn text_saved_unchanged_in_the_editor_leaves_the_groups_untouched() {
+        let mut form = message_form();
+        let text = form.editor_text(GroupPath::top(0)).unwrap_or_default();
+        form.apply_editor_text(GroupPath::top(0), &text);
+        assert_eq!(
+            (form.groups()[0].is_touched(), form.groups()[1].is_touched()),
+            (false, false)
         );
     }
 

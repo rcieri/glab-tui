@@ -64,11 +64,16 @@ impl Compaction {
     ];
 }
 
-/// One body row, with the clickable spans on it as `(column offset, width,
-/// target)`.
+#[derive(Clone, Copy)]
+struct RowTarget {
+    column: u16,
+    width: u16,
+    target: ClickTarget,
+}
+
 struct BodyRow {
     line: Line<'static>,
-    targets: Vec<(u16, u16, ClickTarget)>,
+    targets: Vec<RowTarget>,
     is_focused: bool,
 }
 
@@ -172,18 +177,24 @@ pub(crate) fn render_form(
             height: 1,
             ..body_area
         };
-        targets.extend(row.targets.iter().map(|&(column, width, target)| {
-            let x = row_area.x + column.min(row_area.width);
-            let width = width.min(row_area.right().saturating_sub(x));
-            (
-                Rect {
-                    x,
-                    width,
-                    ..row_area
-                },
-                target,
-            )
-        }));
+        targets.extend(row.targets.iter().map(
+            |&RowTarget {
+                 column,
+                 width,
+                 target,
+             }| {
+                let x = row_area.x + column.min(row_area.width);
+                let width = width.min(row_area.right().saturating_sub(x));
+                (
+                    Rect {
+                        x,
+                        width,
+                        ..row_area
+                    },
+                    target,
+                )
+            },
+        ));
         f.render_widget(Paragraph::new(row.line), row_area);
     }
 
@@ -308,7 +319,7 @@ fn indent(mut row: BodyRow) -> BodyRow {
         .spans
         .insert(0, Span::raw(" ".repeat(SECTION_INDENT)));
     for target in &mut row.targets {
-        target.0 += SECTION_INDENT as u16;
+        target.column += SECTION_INDENT as u16;
     }
     row
 }
@@ -339,7 +350,11 @@ fn section_header(
             Span::styled(header, style),
             Span::styled(format!("  {}", section.key), styles.muted),
         ]),
-        targets: vec![(0, width, ClickTarget::Row { path, row: 0 })],
+        targets: vec![RowTarget {
+            column: 0,
+            width,
+            target: ClickTarget::Row { path, row: 0 },
+        }],
         is_focused,
     }
 }
@@ -432,7 +447,7 @@ fn group_rows(
                 };
                 row.line.spans.insert(0, lead);
                 for target in &mut row.targets {
-                    target.0 += prefix_width as u16;
+                    target.column += prefix_width as u16;
                 }
             }
         }
@@ -510,7 +525,11 @@ fn radio_rows(
             .into_iter()
             .enumerate()
             .map(|(row, (span, is_focused))| BodyRow {
-                targets: vec![(0, span.width() as u16, ClickTarget::Row { path, row })],
+                targets: vec![RowTarget {
+                    column: 0,
+                    width: span.width() as u16,
+                    target: ClickTarget::Row { path, row },
+                }],
                 line: Line::from(span),
                 is_focused,
             })
@@ -526,11 +545,11 @@ fn radio_rows(
             column += RADIO_GAP;
         }
         let span_width = span.width();
-        targets.push((
-            column as u16,
-            span_width as u16,
-            ClickTarget::Row { path, row },
-        ));
+        targets.push(RowTarget {
+            column: column as u16,
+            width: span_width as u16,
+            target: ClickTarget::Row { path, row },
+        });
         column += span_width;
         is_focused |= is_choice_focused;
         spans.push(span);
@@ -566,7 +585,11 @@ fn toggle_rows(
                         styles.text
                     },
                 )),
-                targets: vec![(0, width, ClickTarget::Row { path, row })],
+                targets: vec![RowTarget {
+                    column: 0,
+                    width,
+                    target: ClickTarget::Row { path, row },
+                }],
                 is_focused,
             }
         })
@@ -638,7 +661,11 @@ fn line_input_row(
     spans.push(Span::styled(counter, counter_style));
     BodyRow {
         line: Line::from(spans),
-        targets: vec![(0, field_width as u16, ClickTarget::Row { path, row: 0 })],
+        targets: vec![RowTarget {
+            column: 0,
+            width: field_width as u16,
+            target: ClickTarget::Row { path, row: 0 },
+        }],
         is_focused,
     }
 }

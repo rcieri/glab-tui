@@ -2407,6 +2407,7 @@ mod tests {
             page_size: 50,
             api_per_page: 50,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.show_help = true;
         app.active_tab = Tab::MergeRequests;

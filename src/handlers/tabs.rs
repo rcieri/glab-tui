@@ -2886,6 +2886,7 @@ pub fn handle_active_tab_key(
                     if app.job_trace.is_some() {
                         app.job_trace = None;
                     } else {
+                        app.close_opened_pipeline();
                         app.active_tab = crate::app::Tab::Pipelines;
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
@@ -3498,14 +3499,12 @@ pub fn apply_opened_pipeline(
             if !is_still_listed {
                 return;
             }
-            let has_jobs = !jobs.is_empty();
-            app.jobs.items = jobs;
-            app.active_pipeline_project = app.pipeline_project(pipeline_id).map(str::to_owned);
-            app.active_pipeline_id = Some(pipeline_id);
-            app.jobs.state.select(Some(0));
-            app.detail_scroll = 0;
-            app.job_trace = None;
-            if has_jobs || opening == PipelineOpening::Descend {
+            if !jobs.is_empty() || opening == PipelineOpening::Descend {
+                app.jobs.items = jobs;
+                app.open_pipeline_in_jobs_tab(pipeline_id);
+                app.jobs.state.select(Some(0));
+                app.detail_scroll = 0;
+                app.job_trace = None;
                 app.active_tab = crate::app::Tab::Jobs;
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));

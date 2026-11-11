@@ -28,9 +28,9 @@ fn known_and_injected_failures_pass() {
     let sandbox = Sandbox::new(false).unwrap();
     call_mock(&sandbox, "glab", &["todo", "list", "--output=json"]);
     std::process::Command::new(sandbox.bin_dir.join("glab"))
-        .args(["no-such-command"])
+        .args(["snippet", "create"])
         .envs(sandbox.envs())
-        .env("TEST_GLAB_FAIL_MATCH", "no-such-command")
+        .env("TEST_GLAB_FAIL_MATCH", "snippet create")
         .output()
         .unwrap();
 }

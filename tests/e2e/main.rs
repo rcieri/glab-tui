@@ -3,6 +3,7 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod cli_contract;
 mod config;
 mod custom_keybindings;
 mod environments;
@@ -517,8 +518,9 @@ impl Sandbox {
 
 impl Drop for Sandbox {
     /// Fails the test when glab-tui made a `glab` / `gh` call the mocks have no
-    /// case for. A test that already failed keeps its own failure: panicking
-    /// again while unwinding would abort the run.
+    /// case for, or called a subcommand or flag the real CLI does not have. A
+    /// test that already failed keeps its own failure: panicking again while
+    /// unwinding would abort the run.
     fn drop(&mut self) {
         if std::thread::panicking() {
             return;
@@ -530,6 +532,15 @@ impl Drop for Sandbox {
         assert!(
             calls.is_empty(),
             "the CLI mocks have no case for these calls (add one to tests/mocks/):\n{calls}"
+        );
+
+        cli_contract::wait_for_recorded_calls(&self.log_path, Duration::from_secs(2));
+        let refused = cli_contract::violations_in_log(&self.log_path);
+        assert!(
+            refused.is_empty(),
+            "the real CLI would refuse these calls (if a newer CLI has them, bump \
+             the pins in scripts/gen-cli-reference.sh and rerun it):\n{}",
+            refused.join("\n")
         );
     }
 }
@@ -727,6 +738,28 @@ impl TestSession {
         }
         Err(format!(
             "Timeout waiting for a CLI call containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
+            self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
+    }
+
+    /// Feeds output to the emulator until the CLI mocks have logged `count`
+    /// calls containing `expected`. For calls the app makes more than once.
+    pub fn wait_for_cli_call_count(
+        &mut self,
+        expected: &str,
+        count: usize,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if self.get_cli_calls().matches(expected).count() >= count {
+                return Ok(());
+            }
+            self.settle(10);
+        }
+        Err(format!(
+            "Timeout waiting for {count} CLI calls containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
             self.get_cli_calls(),
             self.emulator.get_text()
         ))

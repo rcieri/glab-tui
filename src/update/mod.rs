@@ -44,6 +44,7 @@ fn may_move_highlight(event: &Event) -> bool {
 mod tests {
     use super::*;
     use crate::app::{Tab, TextInput, TextInputAction};
+    use crate::domain::client::JobsSource;
     use crate::effect::{EditPurpose, ForegroundJob};
     use crate::event::CommandOutcome;
     use crate::keybinding::KeyPress;
@@ -58,6 +59,7 @@ mod tests {
             page_size: 30,
             api_per_page: 30,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app
     }
@@ -214,5 +216,365 @@ mod tests {
                 })
         });
         assert_eq!(typed.as_deref(), Some("q?"));
+    }
+
+    fn job(id: u64) -> crate::domain::pipelines::Job {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "running", "stage": "test", "name": format!("job-{id}")
+        }))
+        .expect("job fixture")
+    }
+
+    fn jobs(ids: &[u64]) -> Vec<crate::domain::pipelines::Job> {
+        ids.iter().copied().map(job).collect()
+    }
+
+    fn open_log() -> crate::ui::job_trace::JobTraceView {
+        crate::ui::job_trace::JobTraceView::new(crate::domain::job_trace::JobTrace::from_read(
+            b"line 1\n",
+            false,
+        ))
+    }
+
+    /// The Jobs tab showing pipeline 7 with job 71 selected and its log open.
+    fn jobs_tab_showing_pipeline_7() -> App {
+        let mut app = app_with_client();
+        app.active_tab = Tab::Jobs;
+        app.active_pipeline_id = Some(7);
+        app.jobs.items = jobs(&[70, 71]);
+        app.jobs.state.select(Some(1));
+        app.job_trace = Some(open_log());
+        app
+    }
+
+    #[test]
+    fn a_refresh_of_the_shown_pipeline_keeps_the_selected_job_and_its_log() {
+        let mut app = jobs_tab_showing_pipeline_7();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 7, jobs(&[69, 70, 71])),
+        );
+
+        assert_eq!(app.selected_job().map(|job| job.id), Some(71));
+        assert!(app.job_trace.is_some());
+    }
+
+    #[test]
+    fn a_refresh_that_no_longer_lists_the_selected_job_closes_its_log() {
+        let mut app = jobs_tab_showing_pipeline_7();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 7, jobs(&[70])),
+        );
+
+        assert_eq!(app.selected_job().map(|job| job.id), Some(70));
+        assert!(app.job_trace.is_none());
+    }
+
+    #[test]
+    fn a_retried_job_stays_selected_under_its_new_id_and_its_old_log_closes() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        let mut retry = job(72);
+        retry.name = "job-71".to_string();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 7, vec![job(70), retry]),
+        );
+
+        assert_eq!(app.selected_job().map(|job| job.id), Some(72));
+        assert!(app.job_trace.is_none());
+    }
+
+    #[test]
+    fn a_new_branch_pipeline_replaces_the_shown_one() {
+        let mut app = jobs_tab_showing_pipeline_7();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 8, jobs(&[80, 81])),
+        );
+
+        assert_eq!(app.active_pipeline_id, Some(8));
+        assert_eq!(app.selected_job().map(|job| job.id), Some(80));
+        assert!(app.job_trace.is_none());
+    }
+
+    /// A pipeline opened from the Pipelines tab stays on the Jobs tab across
+    /// a refresh and across a branch reply sent before it was opened.
+    #[test]
+    fn a_pipeline_opened_from_the_pipelines_tab_stays_open_across_refreshes() {
+        let mut app = app_with_client();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![
+            serde_json::from_str(
+                r#"{"id": 7, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"}"#,
+            )
+            .expect("pipeline fixture"),
+        ];
+        app.pipelines.state.select(Some(0));
+
+        update(
+            &mut app,
+            Event::PipelineOpened {
+                pipeline_id: 7,
+                opening: crate::handlers::tabs::PipelineOpening::Descend,
+                result: Ok(crate::handlers::tabs::PipelineContents::Jobs(jobs(&[70]))),
+            },
+        );
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 3, jobs(&[30])),
+        );
+
+        let opened = app
+            .gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref())
+            .map(|pipeline| pipeline.id);
+        assert_eq!(opened, Some(7));
+        assert_eq!(app.active_pipeline_id, Some(7));
+        assert_eq!(app.selected_job().map(|job| job.id), Some(70));
+    }
+
+    #[test]
+    fn a_pipeline_picked_on_the_jobs_tab_replaces_the_opened_one() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        if let Some(client) = app.gitlab_client.as_mut() {
+            client.opened_pipeline = Some(Box::new(crate::domain::client::OpenedPipeline {
+                id: 7,
+                project: "group/project".to_string(),
+                parents: Vec::new(),
+            }));
+        }
+        app.selector = Some(crate::app::Selector {
+            title: " Select Pipeline ".to_string(),
+            all_items: vec!["#9 — main".to_string()],
+            selected_items: Default::default(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 0,
+            entity_type: String::new(),
+            field_type: "pipeline_select".to_string(),
+            multi_select: false,
+            state: ratatui::widgets::ListState::default(),
+            request: None,
+        });
+
+        update(&mut app, press(KeyCode::Enter, KeyModifiers::NONE));
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Opened(9), 9, jobs(&[90])),
+        );
+
+        let opened = app
+            .gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref())
+            .map(|pipeline| pipeline.id);
+        assert_eq!(opened, Some(9));
+        assert_eq!(app.active_pipeline_id, Some(9));
+        assert_eq!(app.selected_job().map(|job| job.id), Some(90));
+    }
+
+    #[test]
+    fn a_retried_job_is_found_in_its_own_stage() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        let in_stage = |id, name: &str, stage: &str| {
+            let mut job = job(id);
+            job.name = name.to_string();
+            job.stage = stage.to_string();
+            job
+        };
+        app.jobs.items = vec![
+            in_stage(70, "deploy", "staging"),
+            in_stage(71, "deploy", "production"),
+        ];
+        app.jobs.state.select(Some(1));
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(
+                JobsSource::Branch,
+                7,
+                vec![
+                    in_stage(70, "deploy", "staging"),
+                    in_stage(72, "deploy", "production"),
+                ],
+            ),
+        );
+
+        assert_eq!(app.selected_job().map(|job| job.id), Some(72));
+    }
+
+    #[test]
+    fn opening_a_pipeline_without_jobs_of_its_own_leaves_the_jobs_tab_alone() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![
+            serde_json::from_str(
+                r#"{"id": 9, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"}"#,
+            )
+            .expect("pipeline fixture"),
+        ];
+
+        update(
+            &mut app,
+            Event::PipelineOpened {
+                pipeline_id: 9,
+                opening: crate::handlers::tabs::PipelineOpening::OwnJobs,
+                result: Ok(crate::handlers::tabs::PipelineContents::Jobs(Vec::new())),
+            },
+        );
+
+        let opened = app
+            .gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref());
+        assert!(opened.is_none());
+        assert_eq!(app.active_pipeline_id, Some(7));
+        assert_eq!(app.selected_job().map(|job| job.id), Some(71));
+    }
+
+    fn opened_pipeline_id(app: &App) -> Option<u64> {
+        app.gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref())
+            .map(|pipeline| pipeline.id)
+    }
+
+    #[test]
+    fn esc_back_to_the_pipelines_tab_ends_the_opened_pipeline() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.open_pipeline_in_jobs_tab(7);
+        app.complete_loading_tab(Tab::Jobs, "Success");
+        app.job_trace = None;
+        app.detail_visible = false;
+        app.details_zoomed = false;
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(app.active_tab, Tab::Pipelines);
+        assert_eq!(opened_pipeline_id(&app), None);
+        assert!(
+            !app.refreshed_tabs.contains(&Tab::Jobs),
+            "the jobs still listed belong to the pipeline that was open"
+        );
+    }
+
+    /// The Jobs tab showing opened pipeline 7, left with `Esc` while a
+    /// refresh of it is in flight.
+    fn pipeline_7_closed_while_its_refresh_runs() -> App {
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.open_pipeline_in_jobs_tab(7);
+        app.complete_loading_tab(Tab::Jobs, "Success");
+        app.start_loading_tab(Tab::Jobs);
+        app.job_trace = None;
+        app.detail_visible = false;
+        app.details_zoomed = false;
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+        app
+    }
+
+    #[test]
+    fn a_reply_for_a_pipeline_closed_meanwhile_changes_nothing() {
+        let mut app = pipeline_7_closed_while_its_refresh_runs();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Opened(7), 7, jobs(&[72])),
+        );
+
+        assert!(
+            !app.loaded_tabs.contains(&Tab::Jobs),
+            "the next visit fetches the branch pipeline"
+        );
+        assert!(!app.refreshed_tabs.contains(&Tab::Jobs));
+        let shown: Vec<u64> = app.jobs.items.iter().map(|job| job.id).collect();
+        assert_eq!(shown, vec![70, 71]);
+    }
+
+    #[test]
+    fn returning_to_the_jobs_tab_after_esc_fetches_the_branch_pipeline() {
+        let mut app = pipeline_7_closed_while_its_refresh_runs();
+        assert!(!app.loading_tabs.contains(&Tab::Jobs));
+
+        app.active_tab = Tab::Jobs;
+        let effects = update(&mut app, press(KeyCode::F(5), KeyModifiers::NONE));
+
+        assert!(app.loading_tabs.contains(&Tab::Jobs));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Spawn(_)))
+        );
+    }
+
+    #[test]
+    fn a_branch_reply_dropped_after_opening_a_pipeline_leaves_the_tab_refreshable() {
+        let mut app = app_with_client();
+        app.start_loading_tab(Tab::Jobs);
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![
+            serde_json::from_str(
+                r#"{"id": 7, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"}"#,
+            )
+            .expect("pipeline fixture"),
+        ];
+        app.pipelines.state.select(Some(0));
+        update(
+            &mut app,
+            Event::PipelineOpened {
+                pipeline_id: 7,
+                opening: crate::handlers::tabs::PipelineOpening::Descend,
+                result: Ok(crate::handlers::tabs::PipelineContents::Jobs(jobs(&[70]))),
+            },
+        );
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 3, jobs(&[30])),
+        );
+        assert!(!app.loading_tabs.contains(&Tab::Jobs));
+        let effects = update(&mut app, press(KeyCode::F(5), KeyModifiers::NONE));
+
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Spawn(_)))
+        );
+        assert_eq!(app.selected_job().map(|job| job.id), Some(70));
+    }
+
+    #[test]
+    fn the_jobs_tab_title_names_the_opened_pipeline_and_its_descent() {
+        let mut app = app_with_client();
+        let pipeline = |id: u64| -> crate::domain::pipelines::Pipeline {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
+            }))
+            .expect("pipeline fixture")
+        };
+        app.pipelines.items = vec![pipeline(1002)];
+        assert_eq!(
+            app.jobs_breadcrumb(),
+            "",
+            "the branch pipeline needs no path"
+        );
+
+        app.descend_into(
+            1002,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![pipeline(2001)],
+                pending: Vec::new(),
+            },
+        );
+        app.open_pipeline_in_jobs_tab(2001);
+
+        assert_eq!(app.jobs_breadcrumb(), "#1002 › #2001");
     }
 }

@@ -294,14 +294,12 @@ pub fn handle_key(
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('d') => {
-            if !diff_view.focus_on_files {
-                let other = if diff_view.side_by_side {
-                    app::DiffLayout::Unified
-                } else {
-                    app::DiffLayout::SideBySide
-                };
-                set_layout(app, &mut diff_view, other);
-            }
+            let other = if diff_view.side_by_side {
+                app::DiffLayout::Unified
+            } else {
+                app::DiffLayout::SideBySide
+            };
+            set_layout(app, &mut diff_view, other);
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('1') => {

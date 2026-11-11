@@ -131,13 +131,9 @@ pub struct Theme {
     // ── Modals ──
     pub modal_border: Color,
     // ── Forms ──
-    /// The selected choice of a form's radio group and the counter of a line input.
     pub accent: Color,
-    /// The keys of a form's key footer.
     pub key_hint: Color,
-    /// The border of a form whose primary action cannot be undone.
     pub danger_border: Color,
-    /// Text of the screen behind an open form.
     pub backdrop_dim: Color,
     // ── Pipelines ──
     pub pipeline_success: Color,

@@ -822,8 +822,6 @@ impl Form {
         }
     }
 
-    /// `Space` on the focused row: select the radio, flip the toggle, fold
-    /// or unfold the section.
     fn press_focused(&mut self) {
         let Focus::Group(path) = self.focus else {
             return;

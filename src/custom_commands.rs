@@ -1113,6 +1113,12 @@ command = "true"
 key = "Alt+d"
 command = "true"
 [[diff]]
+key = "0"
+command = "true"
+[[diff]]
+key = "Alt+1"
+command = "true"
+[[diff]]
 key = "Ctrl+o"
 command = "true"
 "#,
@@ -1125,6 +1131,8 @@ command = "true"
             vec![
                 "never runs: the diff view's \"d\" (toggle side-by-side) takes the key first",
                 "never runs: the diff view's \"d\" (toggle side-by-side) takes the key first",
+                "never runs: the diff view's \"0\" (diff layout) takes the key first",
+                "never runs: the diff view's \"1\" (diff layout) takes the key first",
             ]
         );
         assert_eq!(

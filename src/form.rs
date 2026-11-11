@@ -31,6 +31,12 @@ impl GroupPath {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FoldedChildren {
+    Include,
+    Skip,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FormTone {
     #[default]
@@ -466,8 +472,7 @@ impl Form {
 
     pub fn is_loading(&self) -> bool {
         self.visible_paths()
-            .iter()
-            .any(|&path| self.group_at(path).is_some_and(Group::is_loading))
+            .any(|path| self.group_at(path).is_some_and(Group::is_loading))
     }
 
     pub fn group_at(&self, path: GroupPath) -> Option<&Group> {
@@ -492,7 +497,6 @@ impl Form {
 
     pub fn path_of(&self, id: GroupId) -> Option<GroupPath> {
         self.all_paths()
-            .into_iter()
             .find(|&path| self.group_at(path).is_some_and(|g| g.id == Some(id)))
     }
 
@@ -533,35 +537,38 @@ impl Form {
     }
 
     /// Every group path, the children of folded sections included.
-    fn all_paths(&self) -> Vec<GroupPath> {
-        self.paths(true)
+    fn all_paths(&self) -> impl Iterator<Item = GroupPath> + '_ {
+        self.paths(FoldedChildren::Include)
     }
 
     /// The groups on screen: the children of folded sections are left out.
-    pub fn visible_paths(&self) -> Vec<GroupPath> {
-        self.paths(false)
+    pub fn visible_paths(&self) -> impl Iterator<Item = GroupPath> + '_ {
+        self.paths(FoldedChildren::Skip)
     }
 
-    fn paths(&self, include_folded: bool) -> Vec<GroupPath> {
-        let mut paths = Vec::new();
-        for (index, group) in self.groups.iter().enumerate() {
-            paths.push(GroupPath::top(index));
-            if let GroupKind::Collapsible(section) = &group.kind {
-                if section.is_expanded || include_folded {
-                    paths.extend((0..section.groups.len()).map(|child| GroupPath {
-                        index,
-                        child: Some(child),
-                    }));
-                }
-            }
-        }
-        paths
+    fn paths(&self, folded: FoldedChildren) -> impl Iterator<Item = GroupPath> + '_ {
+        self.groups
+            .iter()
+            .enumerate()
+            .flat_map(move |(index, group)| {
+                let children = match &group.kind {
+                    GroupKind::Collapsible(section)
+                        if section.is_expanded || folded == FoldedChildren::Include =>
+                    {
+                        0..section.groups.len()
+                    }
+                    _ => 0..0,
+                };
+                std::iter::once(GroupPath::top(index)).chain(children.map(move |child| GroupPath {
+                    index,
+                    child: Some(child),
+                }))
+            })
     }
 
     /// The groups `Tab` stops on, in order. The button row comes after them.
     fn focus_stops(&self) -> Vec<GroupPath> {
         self.visible_paths()
-            .into_iter()
             .filter(|&path| self.group_at(path).is_some_and(Group::is_focus_stop))
             .collect()
     }
@@ -642,7 +649,7 @@ impl Form {
     /// The focused line input, else the first one on screen.
     fn editor_target(&self) -> Option<GroupPath> {
         self.focused_line_input().or_else(|| {
-            self.visible_paths().into_iter().find(|&path| {
+            self.visible_paths().find(|&path| {
                 matches!(
                     self.group_at(path).map(|g| &g.kind),
                     Some(GroupKind::LineInput(_))

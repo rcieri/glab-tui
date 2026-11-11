@@ -266,7 +266,9 @@ fn body_rows(
             ));
             continue;
         };
-        let is_expanded = section.is_expanded && compaction < Compaction::FoldedSections;
+        let has_focus = matches!(form.focus(), Focus::Group(focused) if focused.index == index);
+        let is_expanded =
+            section.is_expanded && (compaction < Compaction::FoldedSections || has_focus);
         rows.push(section_header(
             form,
             path,
@@ -900,6 +902,23 @@ mod tests {
         assert_eq!(
             text(Compaction::FoldedSections)[5..],
             ["> Advanced  a".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_folded_section_stays_open_while_the_focus_is_in_it() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let mut form = crowded_form();
+        let tab = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Tab);
+        form.handle_key(&tab);
+        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  [ ] Bypass rules"]);
+        form.handle_key(&tab);
+        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        assert_eq!(
+            rows.iter().position(|row| row.is_focused),
+            Some(rows.len() - 1)
         );
     }
 

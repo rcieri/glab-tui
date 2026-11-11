@@ -1,10 +1,9 @@
 //! End-to-end coverage for the merge dialog: the strategy and options picked
 //! in the form are the flags the merge call carries.
 //!
-//! The mock `glab` lists `tests/fixtures/mrs.json`, whose !2 has no head SHA,
-//! so no `--sha` is sent. The mock `gh` lists `tests/fixtures/gh_prs.json`,
-//! whose third row, #12 "Lone change", is in no stack and gets the plain merge
-//! dialog.
+//! The mock `glab` lists !2 without a head SHA, so no `--sha` is sent. The
+//! mock `gh` lists #12 "Lone change" third, outside any stack, so it gets the
+//! plain merge dialog.
 
 use crate::TestSession;
 

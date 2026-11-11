@@ -58,7 +58,10 @@ elif [[ "$*" == "run list"* ]]; then
 elif [[ "$*" == "run view "*"--json jobs"* ]]; then
     echo '[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success"}]'
     exit 0
-elif [[ "$*" == "issue list"* || "$*" == "label list"* ]]; then
+elif [[ "$*" == "issue list"* ]]; then
+    cat "$FIXTURES_DIR/gh_issues.json"
+    exit 0
+elif [[ "$*" == "label list"* ]]; then
     echo "[]"
     exit 0
 elif [[ "$*" == "auth status"* ]]; then
@@ -88,11 +91,6 @@ fi
 # stack. The per-PR query is matched first: it also asks for `stackEntry`.
 if [[ "$*" == "pr list"* ]]; then
     cat "$FIXTURES_DIR/gh_prs.json"
-    exit 0
-fi
-
-if [[ "$*" == "issue list"* ]]; then
-    cat "$FIXTURES_DIR/gh_issues.json"
     exit 0
 fi
 
@@ -157,6 +155,8 @@ if [[ "$*" == *"api"* ]]; then
         echo "test-user"
     elif [[ "$*" == *"closingIssuesReferences"* ]]; then
         echo '{"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}'
+    elif [[ "$*" == *"closedByPullRequestsReferences"* ]]; then
+        echo '{"data": {"repository": {"issue": {"closedByPullRequestsReferences": {"nodes": []}}}}}'
     elif [[ "$*" == *"/assignees"* ]]; then
         echo "[]"
     elif [[ "$*" == *"/events?"* ]]; then

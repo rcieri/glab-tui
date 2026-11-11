@@ -206,6 +206,14 @@ fn github_repository_dashboard_summarizes_prs_issues_and_activity() {
     session
         .wait_for_screen_contains("@octocat", 15000)
         .expect("the contributors card lists the push event's author");
+    session
+        .wait_for_screen_contains("unassigned", 5000)
+        .expect("the issues card lists its unassigned queue");
+    assert!(
+        screen_line_with(&session, "unassigned").contains("  1 @ "),
+        "the listed issue is unassigned: {}",
+        session.emulator.get_text()
+    );
 
     session.press_keys(b"\rj\r");
     session

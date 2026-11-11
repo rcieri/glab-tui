@@ -3136,4 +3136,27 @@ backdrop_dim = "#313131"
             .collect();
         assert_eq!(missing, Vec::<String>::new());
     }
+
+    #[test]
+    fn a_theme_without_form_tokens_takes_purple_yellow_red_and_text_muted() {
+        let mut table: toml::Table =
+            toml::from_str(include_str!("themes/default.toml")).expect("default theme parses");
+        for key in ["accent", "key_hint", "danger_border", "backdrop_dim"] {
+            table.remove(key);
+        }
+        let theme = toml::Value::Table(table)
+            .try_into::<ThemeToml>()
+            .expect("theme without form tokens parses")
+            .to_theme()
+            .expect("theme without form tokens maps");
+        assert_eq!(
+            [
+                theme.accent,
+                theme.key_hint,
+                theme.danger_border,
+                theme.backdrop_dim
+            ],
+            [theme.purple, theme.yellow, theme.red, theme.text_muted]
+        );
+    }
 }

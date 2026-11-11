@@ -1,4 +1,5 @@
 mod bounded_output;
+pub(crate) mod browser;
 pub mod gh;
 pub mod glab;
 pub(crate) mod logged_command;

@@ -60,6 +60,6 @@ label_palette_9 = "#44475a"
 
 # ── Forms ──
 accent = "#6f42c1"
-key_hint = "#b08800"
+key_hint = "#8a6a00"
 danger_border = "#d73a49"
 backdrop_dim = "#6272a4"

@@ -7,11 +7,11 @@
 │ Merging: feature/pagination → main                       │
 │                                                          │
 │ Strategy                                                 │
-│ ( ) Merge commit  (x) Squash  ( ) Rebase                 │
+│ o Merge commit  * Squash  o Rebase                       │
 │                                                          │
 │ Options                                                  │
-│ [x] Delete source branch                                 │
-│ [ ] Auto-merge                                           │
+│ + Delete source branch                                   │
+│ - Auto-merge                                             │
 │ ──────────────────────────────────────────────────────── │
 │          [ Merge ]                   [ Cancel ]          │
 │ h/l button  Tab next  Enter merge  Esc cancel            │

@@ -9,6 +9,7 @@ use crate::TestSession;
 
 const GITLAB_MR_TITLE: &str = "Feature: Add pagination support";
 const GITHUB_FIRST_PR_TITLE: &str = "Stack top";
+const ASCII_ICONS: &str = "icons = \"ascii\"\n";
 
 /// Launches on `is_github`'s fixture repository, moves to the MRs/PRs tab,
 /// presses `row_keys` to reach the MR to merge and opens its merge dialog.
@@ -18,7 +19,7 @@ fn open_merge_dialog(
     row_keys: &[u8],
     dialog_title: &str,
 ) -> TestSession {
-    let mut session = TestSession::new(is_github, 40, 160);
+    let mut session = TestSession::with_config(is_github, 40, 160, Some(ASCII_ICONS));
     session
         .wait_for_screen_contains("Issues", 30000)
         .expect("app should reach the Issues tab");
@@ -91,9 +92,9 @@ fn github_merge_dialog_squashes_and_deletes_the_branch_by_default() {
 #[test]
 fn gitlab_merge_dialog_sends_the_picked_strategy_and_options() {
     let mut session = open_merge_dialog(false, GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
-    pick(&mut session, b"\tl ", &["(x) Rebase"]);
-    pick(&mut session, b"\t ", &["[ ] Delete source branch"]);
-    pick(&mut session, b"j ", &["[x] Auto-merge"]);
+    pick(&mut session, b"\tl ", &["* Rebase"]);
+    pick(&mut session, b"\t ", &["- Delete source branch"]);
+    pick(&mut session, b"j ", &["+ Auto-merge"]);
     pick(&mut session, b"\t", &["h/l button"]);
     session.send_input(b"\r");
 
@@ -107,9 +108,9 @@ fn gitlab_merge_dialog_sends_the_picked_strategy_and_options() {
 fn github_merge_dialog_sends_the_picked_strategy_and_options() {
     let mut session =
         open_merge_dialog(true, GITHUB_FIRST_PR_TITLE, b"jj", "Merge Pull Request #12");
-    pick(&mut session, b"\th ", &["(x) Merge commit"]);
-    pick(&mut session, b"\t ", &["[ ] Delete source branch"]);
-    pick(&mut session, b"j ", &["[x] Auto-merge"]);
+    pick(&mut session, b"\th ", &["* Merge commit"]);
+    pick(&mut session, b"\t ", &["- Delete source branch"]);
+    pick(&mut session, b"j ", &["+ Auto-merge"]);
     pick(&mut session, b"\t", &["h/l button"]);
     session.send_input(b"\r");
 

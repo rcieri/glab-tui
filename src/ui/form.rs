@@ -385,10 +385,8 @@ fn group_rows(
     };
 
     let mut rows = match &group.kind {
-        GroupKind::Radio(radio) => {
-            radio_rows(radio, path, focus_row, &ctx.theme, styles, content_width)
-        }
-        GroupKind::Toggles(toggles) => toggle_rows(toggles, path, focus_row, styles),
+        GroupKind::Radio(radio) => radio_rows(radio, path, focus_row, ctx, styles, content_width),
+        GroupKind::Toggles(toggles) => toggle_rows(toggles, path, focus_row, ctx.icons, styles),
         GroupKind::LineInput(input) => vec![line_input_row(
             input,
             path,
@@ -499,7 +497,7 @@ fn radio_rows(
     radio: &Radio,
     path: GroupPath,
     focus_row: Option<usize>,
-    theme: &Theme,
+    ctx: &RenderCtx<'_>,
     styles: &Styles,
     width: usize,
 ) -> Vec<BodyRow> {
@@ -514,12 +512,16 @@ fn radio_rows(
         .iter()
         .enumerate()
         .map(|(row, choice)| {
-            let mark = if row == radio.selected { "(x)" } else { "( )" };
+            let mark = if row == radio.selected {
+                &ctx.icons.radio_on
+            } else {
+                &ctx.icons.radio_off
+            };
             let is_focused = focus_row == Some(row);
             let style = if is_focused {
                 styles.focused
             } else if row == radio.selected {
-                styles.text.fg(theme.accent)
+                styles.text.fg(ctx.theme.accent)
             } else {
                 styles.text
             };
@@ -577,6 +579,7 @@ fn toggle_rows(
     toggles: &Toggles,
     path: GroupPath,
     focus_row: Option<usize>,
+    icons: &Icons,
     styles: &Styles,
 ) -> Vec<BodyRow> {
     toggles
@@ -584,7 +587,11 @@ fn toggle_rows(
         .iter()
         .enumerate()
         .map(|(row, toggle)| {
-            let mark = if toggle.is_on { "[x]" } else { "[ ]" };
+            let mark = if toggle.is_on {
+                &icons.check_on
+            } else {
+                &icons.check_off
+            };
             let is_focused = focus_row == Some(row);
             let text = format!("{mark} {}", sanitize_untrusted(&toggle.label));
             let width = Span::raw(text.as_str()).width() as u16;
@@ -974,7 +981,7 @@ mod tests {
                 "Body two",
                 "",
                 "v Advanced  a",
-                "  [ ] Bypass rules",
+                "  - Bypass rules",
             ]
         );
         assert_eq!(
@@ -989,7 +996,7 @@ mod tests {
                 "Body one",
                 "Body two",
                 "v Advanced  a",
-                "  [ ] Bypass rules",
+                "  - Bypass rules",
             ]
         );
         assert_eq!(text(Compaction::FoldedPreviews)[5], "Subject  +2 lines · e");
@@ -1002,7 +1009,7 @@ mod tests {
                 "               v 2 more",
                 "Subject  +2 lines · e",
                 "v Advanced  a",
-                "  [ ] Bypass rules",
+                "  - Bypass rules",
             ]
         );
         assert_eq!(
@@ -1019,10 +1026,7 @@ mod tests {
         let tab = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Tab);
         form.handle_key(&tab);
         let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
-        assert_eq!(
-            rows_text(&rows)[5..],
-            ["v Advanced  a", "  [ ] Bypass rules"]
-        );
+        assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
         form.handle_key(&tab);
         let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
         assert_eq!(
@@ -1147,13 +1151,14 @@ mod tests {
 
     #[test]
     fn a_radio_with_no_choices_draws_an_empty_row() {
-        let theme = Theme::default();
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
         let rows = radio_rows(
             &Radio::new(Vec::new(), 0),
             GroupPath::top(0),
             None,
-            &theme,
-            &Styles::new(&theme),
+            &ctx,
+            &Styles::new(&ctx.theme),
             60,
         );
         assert_eq!(rows_text(&rows), [""]);

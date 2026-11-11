@@ -56,14 +56,54 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
-        Event::JobsTabFetched(pipeline_id, jobs) => {
+        Event::JobsTabFetched(source, pipeline_id, jobs) => {
+            // The reply is for another pipeline than the requested one.
+            // Checked before the loading flag is cleared, since that flag
+            // belongs to the current request.
+            let current = app
+                .gitlab_client
+                .as_ref()
+                .map(|client| client.jobs_source());
+            if current != Some(source) {
+                return;
+            }
             app.complete_loading_tab(app::Tab::Jobs, "Success");
             app.loaded_tabs.insert(app::Tab::Jobs);
-            app.jobs.items = jobs;
-            app.active_pipeline_id = Some(pipeline_id);
-            app.jobs.state.select(Some(0));
-            app.detail_scroll = 0;
-            app.job_trace = None;
+            if app.active_pipeline_id == Some(pipeline_id) {
+                let selected = app.selected_job().map(|job| {
+                    (
+                        job.id,
+                        job.stage.clone(),
+                        job.name.clone(),
+                        job.matrix.clone(),
+                    )
+                });
+                app.jobs.items = jobs;
+                let shown = app.filtered_jobs();
+                let same_run = shown
+                    .iter()
+                    .position(|job| selected.as_ref().is_some_and(|(id, ..)| job.id == *id));
+                // A retry lists the job under a new id, and its log belongs to
+                // the previous run.
+                let retried = shown.iter().position(|job| {
+                    selected.as_ref().is_some_and(|(_, stage, name, matrix)| {
+                        job.stage == *stage && job.name == *name && job.matrix == *matrix
+                    })
+                });
+                if same_run.is_none() {
+                    app.detail_scroll = 0;
+                    app.job_trace = None;
+                }
+                app.jobs
+                    .state
+                    .select(Some(same_run.or(retried).unwrap_or(0)));
+            } else {
+                app.jobs.items = jobs;
+                app.active_pipeline_id = Some(pipeline_id);
+                app.jobs.state.select(Some(0));
+                app.detail_scroll = 0;
+                app.job_trace = None;
+            }
         }
         Event::JobTraceFetched(job_id, result) => {
             app.job_trace_loading = false;

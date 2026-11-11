@@ -129,3 +129,60 @@ fn test_status_filter_key_steps_through_running_failed_success_and_all() {
 
     assert_eq!(visible_after_each_step, vec![false, false, true, true]);
 }
+
+/// A refresh of the Jobs tab fetches the pipeline opened from the Pipelines
+/// tab again, not the checked-out branch's pipeline.
+#[test]
+fn a_jobs_tab_refresh_fetches_the_opened_pipeline_again() {
+    const JOBS_CALL: &str = "/pipelines/12345/jobs";
+    let mut session = session_on_pipelines(&[]);
+    // `enter_jobs` (Alt+j) opens the pipeline's own jobs without descending.
+    session.send_input(b"\x1bj");
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the Jobs tab shows the opened pipeline's job");
+    let before = session.get_cli_calls().matches(JOBS_CALL).count();
+
+    session.press_keys(b"\x12");
+
+    session
+        .wait_for_cli_call_count(JOBS_CALL, before + 1, 5000)
+        .expect("the refresh fetches the opened pipeline's jobs");
+}
+
+/// `Esc` back to the Pipelines tab closes the opened pipeline: the next visit
+/// to the Jobs tab fetches the checked-out branch's pipeline instead of
+/// showing the jobs that were open. The title names the opened pipeline
+/// until then.
+#[test]
+fn esc_back_to_the_pipelines_tab_returns_the_jobs_tab_to_the_branch_pipeline() {
+    // The mock's merge request pipeline, the newest for the branch.
+    const BRANCH_JOBS_CALL: &str = "/pipelines/99999/jobs";
+    const OPENED_JOBS_CALL: &str = "/pipelines/12345/jobs";
+    let mut session = session_on_pipelines(&[]);
+    session.send_input(b"\x1bj");
+    session
+        .wait_for_screen_contains("› #12345", 5000)
+        .expect("the Jobs tab title names the opened pipeline");
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the Jobs tab shows the opened pipeline's job");
+    // After a refresh the tab counts as loaded, so only `Esc` makes the
+    // next visit fetch.
+    let before = session.get_cli_calls().matches(OPENED_JOBS_CALL).count();
+    session.press_keys(b"\x12");
+    session
+        .wait_for_cli_call_count(OPENED_JOBS_CALL, before + 1, 5000)
+        .expect("the refresh fetches the opened pipeline");
+    session.settle(300);
+
+    session.press_keys(b"\x1b");
+    session.press_keys(b"l");
+
+    session
+        .wait_for_cli_call(BRANCH_JOBS_CALL, 5000)
+        .expect("the Jobs tab fetches the branch pipeline's jobs");
+    session
+        .wait_for_screen_without("› #12345", 5000)
+        .expect("the Jobs tab title no longer names the opened pipeline");
+}

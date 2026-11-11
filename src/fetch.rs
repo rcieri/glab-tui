@@ -384,6 +384,21 @@ pub fn spawn_refresh_child_level(
     });
 }
 
+/// Jobs of the pipeline opened from the Pipelines tab, else of the newest
+/// pipeline for the checked-out branch.
+async fn fetch_jobs_tab(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+) -> Result<(u64, Vec<domain::pipelines::Job>), String> {
+    let Some(opened) = &client.opened_pipeline else {
+        return fetch_current_branch_jobs(client, project_path).await;
+    };
+    let jobs = domain::pipelines::list_pipeline_jobs(client, &opened.project, opened.id)
+        .await
+        .map_err(|e| format!("Failed to fetch jobs for pipeline {}: {e}", opened.id))?;
+    Ok((opened.id, jobs))
+}
+
 /// Jobs of the newest pipeline for the checked-out branch.
 async fn fetch_current_branch_jobs(
     client: &domain::client::GitlabClient,
@@ -579,9 +594,13 @@ pub async fn refresh_tab(
                 }
             }
         }
-        app::Tab::Jobs => match fetch_current_branch_jobs(&client, &repo_path).await {
+        app::Tab::Jobs => match fetch_jobs_tab(&client, &repo_path).await {
             Ok((pipeline_id, jobs)) => {
-                let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
+                let _ = tx.send(Event::JobsTabFetched(
+                    client.jobs_source(),
+                    pipeline_id,
+                    jobs,
+                ));
             }
             Err(message) => {
                 let _ = tx.send(Event::FetchFailed(tab, message));
@@ -1163,6 +1182,7 @@ mod tests {
             page_size: 100,
             api_per_page: 100,
             show_read_notifications: false,
+            opened_pipeline: None,
         }
     }
 
@@ -1259,6 +1279,7 @@ mod tests {
             page_size: 100,
             api_per_page: 100,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
         app.active_tab = app::Tab::MergeRequests;

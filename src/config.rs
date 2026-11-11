@@ -720,7 +720,7 @@ impl ThemeToml {
             accent: hex_or(&self.accent, purple),
             key_hint: hex_or(&self.key_hint, yellow),
             danger_border: hex_or(&self.danger_border, red),
-            backdrop_dim: hex_or(&self.backdrop_dim, border),
+            backdrop_dim: hex_or(&self.backdrop_dim, text_muted),
             pipeline_success: hex_or(&self.pipeline_success, green),
             pipeline_failed: hex_or(&self.pipeline_failed, red),
             pipeline_running: hex_or(&self.pipeline_running, blue),

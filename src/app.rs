@@ -3243,7 +3243,7 @@ impl SubmitDialog {
             .form
             .radio(Self::STRATEGY)
             .and_then(|radio| MergeMethod::ALL.get(radio.selected).copied())
-            .unwrap_or(MergeMethod::Squash);
+            .unwrap_or(MergeMethod::DEFAULT);
         let is_on = |toggle: MergeToggle| {
             let row = MergeToggle::ALL.iter().position(|&t| t == toggle);
             self.form
@@ -3614,11 +3614,11 @@ impl SubmitDialog {
             .iter()
             .map(|method| method.label().to_string())
             .collect();
-        let squash = MergeMethod::ALL
+        let default = MergeMethod::ALL
             .iter()
-            .position(|&method| method == MergeMethod::Squash)
+            .position(|&method| method == MergeMethod::DEFAULT)
             .unwrap_or_default();
-        Group::new(GroupKind::Radio(Radio::new(choices, squash)))
+        Group::new(GroupKind::Radio(Radio::new(choices, default)))
             .with_id(Self::STRATEGY)
             .with_label("Strategy")
     }

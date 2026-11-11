@@ -137,6 +137,8 @@ pub enum MergeMethod {
 
 impl MergeMethod {
     pub const ALL: [Self; 3] = [Self::Merge, Self::Squash, Self::Rebase];
+    /// The strategy a merge dialog opens on.
+    pub const DEFAULT: Self = Self::Squash;
 
     pub fn label(self) -> &'static str {
         match self {

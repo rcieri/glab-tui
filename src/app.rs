@@ -5194,12 +5194,16 @@ impl App {
         self.filtered_jobs().get(index).copied()
     }
 
-    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
-        let url = self
-            .selected_job()
+    /// The web page of the highlighted row of the Jobs tab.
+    pub fn selected_job_url(&self) -> anyhow::Result<String> {
+        self.selected_job()
             .and_then(|job| job.web_url.clone())
             .filter(|url| !url.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))?;
+            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))
+    }
+
+    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
+        let url = self.selected_job_url()?;
         self.clipboard.set_text(url)?;
         Ok(())
     }

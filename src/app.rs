@@ -3642,7 +3642,7 @@ impl SubmitDialog {
                     .mr_index(project_path, *iid)
                     .map(|i| app.mrs.items[i].title.as_str())
                     .unwrap_or(project_path);
-                ListEntry::queued(format!("{marker}{iid} {title}"))
+                ListEntry::queued(format!("{marker}{iid}: {title}"))
             })
             .collect();
         Group::new(GroupKind::ItemList(ItemList { entries }))

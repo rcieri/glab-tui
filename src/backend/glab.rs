@@ -2936,7 +2936,7 @@ impl Backend for GlabBackend {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
         let action = if close { "close" } else { "reopen" };
@@ -2949,7 +2949,7 @@ impl Backend for GlabBackend {
             &[
                 "milestone",
                 action,
-                &milestone_iid.to_string(),
+                &milestone.iid.to_string(),
                 "-R",
                 project,
             ],
@@ -2962,7 +2962,7 @@ impl Backend for GlabBackend {
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         start_date: Option<&str>,
@@ -2971,7 +2971,7 @@ impl Backend for GlabBackend {
         let mut args: Vec<String> = vec![
             "milestone".into(),
             "update".into(),
-            milestone_iid.to_string(),
+            milestone.iid.to_string(),
             "-R".into(),
             project.to_string(),
             "--title".into(),
@@ -2998,12 +2998,12 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()> {
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_glab(
             &[
                 "milestone",
                 "delete",
-                &milestone_iid.to_string(),
+                &milestone.iid.to_string(),
                 "-R",
                 project,
                 "-y",
@@ -3529,9 +3529,16 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_glab(
-            &["milestone", "view", id, "-w", "-R", project],
+            &[
+                "milestone",
+                "view",
+                &milestone.iid.to_string(),
+                "-w",
+                "-R",
+                project,
+            ],
             "OPENING IN BROWSER",
         )
         .await?;

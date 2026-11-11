@@ -2575,7 +2575,7 @@ pub fn handle_active_tab_key(
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::CloseMilestone(milestone.iid),
+                            crate::app::ConfirmAction::CloseMilestone((*milestone).clone()),
                             app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
@@ -2591,7 +2591,7 @@ pub fn handle_active_tab_key(
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
+                            crate::app::ConfirmAction::ReopenMilestone((*milestone).clone()),
                             app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
@@ -2607,7 +2607,7 @@ pub fn handle_active_tab_key(
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::DeleteMilestone(milestone.iid),
+                            crate::app::ConfirmAction::DeleteMilestone((*milestone).clone()),
                             app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
@@ -2625,13 +2625,14 @@ pub fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
-                        let project_path = app.scope.as_str().to_string();
-                        let mid_str = milestone.iid.to_string();
+                        let project_path =
+                            app.scope.project_of(&milestone.project_path).to_string();
+                        let milestone = (*milestone).clone();
                         let tx2 = tx.clone();
 
                         fx.spawn(async move {
                             let result = client
-                                .open_milestone_in_browser(&project_path, &mid_str)
+                                .open_milestone_in_browser(&project_path, &milestone)
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Milestones,
@@ -4460,14 +4461,15 @@ mod tests {
         let mut app = App::default();
         app.scope = crate::scope::Scope::Group("acme".to_string());
         app.active_tab = crate::app::Tab::Milestones;
-        let milestone = |project: &str| Milestone {
+        let milestone = |id: u64, project: &str| Milestone {
+            id,
             iid: 3,
             title: format!("{project} v1"),
             state: "active".to_string(),
             project_path: project.to_string(),
             ..Milestone::default()
         };
-        app.milestones.items = vec![milestone("acme/alpha"), milestone("acme/beta")];
+        app.milestones.items = vec![milestone(10, "acme/alpha"), milestone(20, "acme/beta")];
         app.milestones.state.select(Some(1));
 
         dispatch(
@@ -4478,7 +4480,7 @@ mod tests {
         let dialog = app.submit_dialog.expect("close opens a confirm dialog");
         assert!(matches!(
             dialog.action,
-            crate::app::ConfirmAction::CloseMilestone(3)
+            crate::app::ConfirmAction::CloseMilestone(ref milestone) if milestone.id == 20
         ));
         assert_eq!(dialog.project_path, "acme/beta");
     }

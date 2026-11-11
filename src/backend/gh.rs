@@ -3410,7 +3410,7 @@ impl Backend for GhBackend {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
         let state = if close { "closed" } else { "open" };
@@ -3424,7 +3424,7 @@ impl Backend for GhBackend {
                 "api",
                 "-X",
                 "PATCH",
-                &format!("repos/{project}/milestones/{milestone_iid}"),
+                &format!("repos/{project}/milestones/{}", milestone.iid),
                 "-f",
                 &format!("state={state}"),
             ],
@@ -3437,7 +3437,7 @@ impl Backend for GhBackend {
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         _start_date: Option<&str>,
@@ -3447,7 +3447,7 @@ impl Backend for GhBackend {
             "api".into(),
             "-X".into(),
             "PATCH".into(),
-            format!("repos/{}/milestones/{}", project, milestone_iid),
+            format!("repos/{}/milestones/{}", project, milestone.iid),
             "-f".into(),
             format!("title={}", title),
         ];
@@ -3471,13 +3471,13 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()> {
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_gh(
             &[
                 "api",
                 "-X",
                 "DELETE",
-                &format!("repos/{project}/milestones/{milestone_iid}"),
+                &format!("repos/{project}/milestones/{}", milestone.iid),
             ],
             "Deleting Milestone",
         )
@@ -4019,8 +4019,8 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        let url = format!("https://github.com/{project}/milestone/{id}");
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
+        let url = format!("https://github.com/{project}/milestone/{}", milestone.iid);
         open_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
     }
 

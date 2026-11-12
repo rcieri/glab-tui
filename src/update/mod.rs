@@ -558,4 +558,44 @@ mod tests {
         assert_eq!(shown, vec![70, 71]);
         assert!(app.pipeline_jobs.contains_key(&9));
     }
+
+    #[test]
+    fn esc_on_the_pipelines_tab_leaves_the_jobs_tab_rows_and_log_alone() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.active_tab = Tab::Pipelines;
+        app.detail_visible = true;
+        app.details_zoomed = true;
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+
+        let shown: Vec<u64> = app.jobs.items.iter().map(|job| job.id).collect();
+        assert_eq!(shown, vec![70, 71]);
+        assert_eq!(app.selected_job().map(|job| job.id), Some(71));
+        assert!(app.job_trace.is_some());
+    }
+
+    #[test]
+    fn a_job_log_arriving_on_the_pipelines_tab_is_not_shown_there() {
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.job_trace = None;
+        app.job_trace_loading = true;
+        app.active_tab = Tab::Pipelines;
+
+        update(
+            &mut app,
+            Event::JobTraceFetched(
+                71,
+                Ok(crate::domain::job_trace::JobTrace::from_read(
+                    b"line 1\n",
+                    false,
+                )),
+            ),
+        );
+
+        assert!(app.job_trace.is_none());
+        assert!(!app.details_zoomed);
+        assert!(!app.job_trace_loading);
+    }
 }

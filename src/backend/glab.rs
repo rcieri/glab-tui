@@ -3652,7 +3652,7 @@ const RUNNER_DETAILS_QUERY_MAX: usize = 100;
 /// reading `git remote get-url origin` and stripping the path, falling back
 /// to `DEFAULT_GITLAB_HOST` when there is no remote to read. Used to
 /// construct browser URLs for entities whose `glab` subcommand doesn't
-/// ship a `-w` flag (runners, branches, environments, milestones).
+/// ship a `-w` flag.
 fn gitlab_host_or_default() -> String {
     crate::git_helpers::remote_host("origin").unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }

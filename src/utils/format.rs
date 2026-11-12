@@ -331,6 +331,7 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
                 gl_ts,
                 gh_prefix,
                 content,
+                ..
             } = TraceLine::split(raw_line);
 
             let content_spans = if content.contains('\x1b') {
@@ -360,10 +361,37 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
         .collect()
 }
 
+/// Whether a GitLab Runner section marker opens or closes a section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SectionKind {
+    Start,
+    End,
+}
+
+/// A GitLab Runner section marker parsed from a job log line:
+/// `section_start:<unix_ts>:<name>[<options>]` or
+/// `section_end:<unix_ts>:<name>`, terminated by `\r` + erase-line
+/// (`\x1b[0K`). The marker is stripped from the rendered line, but the
+/// parsed name and options are kept on `TraceLine` (and exposed via
+/// `trace_section_marker`) so the section folding of #749 can read them
+/// off the raw line. Note `parse_ansi_trace` discards the marker, so #749
+/// must call `trace_section_marker(line)` per raw line rather than reading
+/// it from the parsed lines; `options` keeps its brackets (e.g.
+/// `"[collapsed=true]"`), so #749 parses the `k=v` pairs itself. The
+/// timestamp is intentionally dropped: #749 folds by name and the
+/// `collapsed` flag only, and no consumer renders it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SectionMarker<'a> {
+    pub kind: SectionKind,
+    pub name: &'a str,
+    pub options: Option<&'a str>,
+}
+
 /// A job log line apart from what the runner or `gh` put before it.
 struct TraceLine<'a> {
     gl_ts: Option<&'a str>,
     gh_prefix: Option<&'a str>,
+    section: Option<SectionMarker<'a>>,
     content: &'a str,
 }
 
@@ -371,12 +399,85 @@ impl<'a> TraceLine<'a> {
     fn split(line: &'a str) -> Self {
         let (gl_ts, line) = strip_gl_ts(line);
         let (gh_prefix, content) = split_gh_prefix(line);
+        // A marker after a `gh` timestamp is not stripped: `split_gh_prefix`
+        // leaves the timestamp in `content`, so the marker is no longer at
+        // the start of the line. That case is unreachable in practice —
+        // GitHub logs never carry GitLab markers — while the GitLab
+        // timestamp case is handled because `strip_gl_ts` runs first.
+        let (section, content) = strip_section_marker(content);
         Self {
             gl_ts,
             gh_prefix,
+            section,
             content,
         }
     }
+}
+
+/// The GitLab Runner section marker at the start of `line`, if any.
+/// Call this on the raw log line: `parse_ansi_trace` does not carry the
+/// marker through. The marker itself is stripped from
+/// `trace_line_content`; this only exposes the parsed marker for the
+/// section folding of #749.
+pub fn trace_section_marker(line: &str) -> Option<SectionMarker<'_>> {
+    TraceLine::split(line).section
+}
+
+/// Strips a GitLab Runner section marker from the start of `line`:
+/// `section_start:<ts>:<name>[<options>]\r\x1b[0K` or
+/// `section_end:<ts>:<name>\r\x1b[0K`. Returns the parsed marker and the
+/// rest of the line. A line without a complete marker — missing the
+/// `\r\x1b[0K` terminator, an empty name, a non-numeric timestamp, or
+/// malformed options — is returned unchanged, so plain text that merely
+/// mentions `section_start` is never eaten.
+fn strip_section_marker(line: &str) -> (Option<SectionMarker<'_>>, &str) {
+    let (kind, rest) = if let Some(rest) = line.strip_prefix("section_start:") {
+        (SectionKind::Start, rest)
+    } else if let Some(rest) = line.strip_prefix("section_end:") {
+        (SectionKind::End, rest)
+    } else {
+        return (None, line);
+    };
+    let Some(ts_end) = rest.find(':') else {
+        return (None, line);
+    };
+    let ts = &rest[..ts_end];
+    if ts.is_empty() || !ts.bytes().all(|b| b.is_ascii_digit()) {
+        return (None, line);
+    }
+    let after_ts = &rest[ts_end + 1..];
+    let Some(cr) = after_ts.find('\r') else {
+        return (None, line);
+    };
+    let name_and_options = &after_ts[..cr];
+    // The first `[` starts the options block. Real section names are
+    // identifiers and in practice never contain `[`, so a bracketed suffix
+    // is the options in practice; stripping is unaffected either way.
+    let (name, options) = match name_and_options.find('[') {
+        Some(bracket) => {
+            let options = &name_and_options[bracket..];
+            if !options.ends_with(']') {
+                return (None, line);
+            }
+            (&name_and_options[..bracket], Some(options))
+        }
+        None => (name_and_options, None),
+    };
+    if name.is_empty() {
+        return (None, line);
+    }
+    let after_cr = &after_ts[cr..];
+    let Some(content) = after_cr.strip_prefix("\r\x1b[0K") else {
+        return (None, line);
+    };
+    (
+        Some(SectionMarker {
+            kind,
+            name,
+            options,
+        }),
+        content,
+    )
 }
 
 /// What the job printed on `line`, without the GitLab Runner timestamp or the
@@ -1095,6 +1196,131 @@ mod tests {
         assert_eq!(
             trace_line_content(&format!("2024-05-14T11:19:20.000000Z 00O {go}")),
             go
+        );
+    }
+
+    #[test]
+    fn parse_ansi_trace_strips_gitlab_section_markers() {
+        let theme = crate::config::Theme::default();
+        // fuzz/seeds/ansi_trace.log:3
+        let trace =
+            "section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m";
+        let lines = parse_ansi_trace(trace, &theme);
+        assert_eq!(lines.len(), 1);
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "$ cargo build");
+        // A bare section_end marker renders as an empty line, keeping the
+        // 1:1 line mapping the Jobs pane relies on.
+        let lines = parse_ansi_trace("section_end:1715685561:build_script\r\u{1b}[0K", &theme);
+        assert_eq!(lines.len(), 1);
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn trace_line_content_strips_gitlab_section_markers_for_failure_search() {
+        assert_eq!(
+            trace_line_content(
+                "section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m"
+            ),
+            "\u{1b}[36;1m$ cargo build\u{1b}[0m"
+        );
+        assert_eq!(
+            trace_line_content("section_end:1715685561:build_script\r\u{1b}[0K"),
+            ""
+        );
+        // The marker is stripped after the runner timestamp too.
+        assert_eq!(
+            trace_line_content(
+                "2024-05-14T11:19:20.000000Z 00O section_start:1715685560:build_script\r\u{1b}[0K$ cargo build"
+            ),
+            "$ cargo build"
+        );
+    }
+
+    #[test]
+    fn trace_section_marker_keeps_name_and_options_for_folding() {
+        assert_eq!(
+            trace_section_marker(
+                "section_start:1715685560:build_script[collapsed=true]\r\u{1b}[0K$ cargo build"
+            ),
+            Some(SectionMarker {
+                kind: SectionKind::Start,
+                name: "build_script",
+                options: Some("[collapsed=true]"),
+            })
+        );
+        assert_eq!(
+            trace_section_marker("section_end:1715685561:build_script\r\u{1b}[0K"),
+            Some(SectionMarker {
+                kind: SectionKind::End,
+                name: "build_script",
+                options: None,
+            })
+        );
+        assert_eq!(trace_section_marker("$ cargo build"), None);
+    }
+
+    #[test]
+    fn section_marker_strip_leaves_plain_lines_untouched() {
+        // Mentions the marker words but has no `\r` + erase-line terminator.
+        let plain = "section_start:1715685560:build_script";
+        assert_eq!(trace_line_content(plain), plain);
+        assert_eq!(trace_section_marker(plain), None);
+        assert_eq!(trace_line_content("$ cargo test"), "$ cargo test");
+    }
+
+    #[test]
+    fn section_marker_malformed_variants_stay_untouched() {
+        // Every malformed variant is returned unchanged: the conservative
+        // grammar never strips a partial marker.
+        let cases = [
+            // Non-numeric timestamp.
+            "section_start:abc:build_script\r\u{1b}[0K$ cargo build",
+            // Empty timestamp.
+            "section_start::build_script\r\u{1b}[0K$ cargo build",
+            // Empty name.
+            "section_start:1715685560:\r\u{1b}[0K$ cargo build",
+            // `\r` without the `\x1b[0K` terminator.
+            "section_start:1715685560:build_script\r$ cargo build",
+            // Unclosed options bracket.
+            "section_start:1715685560:build_script[collapsed=true\r\u{1b}[0K$ cargo build",
+            // Marker mid-line, not at the start.
+            "$ echo section_start:1715685560:build_script\r\u{1b}[0K",
+        ];
+        for line in cases {
+            assert_eq!(trace_line_content(line), line, "line: {line:?}");
+            assert_eq!(trace_section_marker(line), None, "line: {line:?}");
+        }
+        // `section_end` never carries options in practice, but accepting
+        // them is harmless: the whole marker is still stripped either way.
+        assert_eq!(
+            trace_section_marker("section_end:1715685561:build_script[collapsed=true]\r\u{1b}[0K"),
+            Some(SectionMarker {
+                kind: SectionKind::End,
+                name: "build_script",
+                options: Some("[collapsed=true]"),
+            })
+        );
+    }
+
+    #[test]
+    fn stripped_marker_line_keeps_shell_command_style() {
+        // A marker line carrying a command used to hit the `section_start`
+        // branch of `classify_line` (blue); after the strip the bare
+        // command hits the `$` branch instead (purple bold). Pin that.
+        let theme = crate::config::Theme::default();
+        let trace = "section_start:1715685560:build_script\r\u{1b}[0K$ cargo build";
+        let lines = parse_ansi_trace(trace, &theme);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].spans.len(), 1);
+        let span = &lines[0].spans[0];
+        assert_eq!(span.content.as_ref(), "$ cargo build");
+        assert_eq!(
+            span.style,
+            Style::default()
+                .fg(theme.purple)
+                .add_modifier(Modifier::BOLD)
         );
     }
 }

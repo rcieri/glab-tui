@@ -537,4 +537,25 @@ mod tests {
 
         assert_eq!(app.jobs_breadcrumb(), "#1002 › #2001");
     }
+
+    #[test]
+    fn a_pipelines_tab_preview_leaves_the_jobs_tab_rows_alone() {
+        let _home = crate::config::isolate_home();
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.open_pipeline_in_jobs_tab(7);
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![
+            serde_json::from_str(
+                r#"{"id": 9, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"}"#,
+            )
+            .expect("pipeline fixture"),
+        ];
+        app.pipelines.state.select(Some(0));
+
+        update(&mut app, Event::PipelineJobs(9, jobs(&[90])));
+
+        let shown: Vec<u64> = app.jobs.items.iter().map(|job| job.id).collect();
+        assert_eq!(shown, vec![70, 71]);
+        assert!(app.pipeline_jobs.contains_key(&9));
+    }
 }

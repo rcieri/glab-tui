@@ -37,18 +37,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.fetching_pipelines.remove(&id);
             app.pipeline_jobs.insert(id, jobs.clone());
 
-            let mut is_active = false;
             if app.active_tab == app::Tab::Jobs && app.active_pipeline_id == Some(id) {
-                is_active = true;
-            } else if app.active_tab == app::Tab::Pipelines {
-                if let Some(idx) = app.pipelines.state.selected() {
-                    if app.filtered_pipelines().get(idx).map(|p| p.id()) == Some(id) {
-                        is_active = true;
-                    }
-                }
-            }
-
-            if is_active {
                 app.jobs.items = jobs;
                 app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
             }

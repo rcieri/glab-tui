@@ -2173,9 +2173,14 @@ pub fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.job_trace_follow = !app.job_trace_follow;
-                            if app.job_trace_follow {
-                                app.detail_scroll_to_bottom = true;
+                            // GitHub serves only the logs of completed jobs, which
+                            // never grow. The key is still taken there, so it never
+                            // reaches a custom binding.
+                            if !app.is_github() {
+                                app.job_trace_follow = !app.job_trace_follow;
+                                if app.job_trace_follow {
+                                    app.detail_scroll_to_bottom = true;
+                                }
                             }
                         }
                         _ if keybinding_matches(
@@ -4028,6 +4033,46 @@ mod tests {
         }
         assert!(app.jobs.items.iter().all(|j| j.status == "running"));
         assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn follow_key_on_github_jobs_tab_is_consumed_without_enabling_follow() {
+        use crate::domain::pipelines::Job;
+
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.active_tab = crate::app::Tab::Jobs;
+        app.jobs.items = vec![Job {
+            id: 1,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "build".to_string(),
+            ..Default::default()
+        }];
+        app.jobs.state.select(Some(0));
+        app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(
+            crate::domain::job_trace::JobTrace::from_read(b"done\n", false),
+        ));
+        let tx = app.tx.clone();
+
+        let handled = handle_active_tab_key(
+            &mut app,
+            &KeyPress::from(key(KeyCode::Char('f'))),
+            &tx,
+            &mut crate::effect::Effects::default(),
+        );
+
+        assert!(handled, "the follow key is consumed on GitHub");
+        assert!(!app.job_trace_follow, "follow mode stays off on GitHub");
+        assert!(!app.detail_scroll_to_bottom);
     }
 
     /// `Ctrl+u` must not start a self-update check.

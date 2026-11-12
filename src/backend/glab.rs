@@ -899,6 +899,14 @@ impl GlabBackend {
         ]
     }
 
+    /// `<flag>=+user` per added and `<flag>=!user` per removed user. glab
+    /// replaces the whole list for a name without a prefix.
+    fn people_args(flag: &str, add: &[String], remove: &[String]) -> Vec<String> {
+        let added = add.iter().map(|u| format!("{flag}=+{u}"));
+        let removed = remove.iter().map(|u| format!("{flag}=!{u}"));
+        added.chain(removed).collect()
+    }
+
     fn merge_args(
         project: &str,
         iid: u64,
@@ -1420,12 +1428,11 @@ impl Backend for GlabBackend {
         for label in &update.remove_labels {
             args.extend(["--unlabel".into(), label.clone()]);
         }
-        for a in &update.add_assignees {
-            args.extend(["--assignee".into(), a.clone()]);
-        }
-        for a in &update.remove_assignees {
-            args.extend(["--unassign".into(), a.clone()]);
-        }
+        args.extend(Self::people_args(
+            "--assignee",
+            &update.add_assignees,
+            &update.remove_assignees,
+        ));
         if let Some(ref milestone) = update.milestone {
             let val = if milestone == "--" || milestone.is_empty() {
                 "0"
@@ -2154,18 +2161,16 @@ impl Backend for GlabBackend {
         for label in &update.remove_labels {
             args.extend(["--unlabel".into(), label.clone()]);
         }
-        for a in &update.add_assignees {
-            args.extend(["--assignee".into(), a.clone()]);
-        }
-        for a in &update.remove_assignees {
-            args.extend(["--unassign".into(), a.clone()]);
-        }
-        for r in &update.add_reviewers {
-            args.extend(["--reviewer".into(), r.clone()]);
-        }
-        for r in &update.remove_reviewers {
-            args.extend(["--unreviewer".into(), r.clone()]);
-        }
+        args.extend(Self::people_args(
+            "--assignee",
+            &update.add_assignees,
+            &update.remove_assignees,
+        ));
+        args.extend(Self::people_args(
+            "--reviewer",
+            &update.add_reviewers,
+            &update.remove_reviewers,
+        ));
         if let Some(ref milestone) = update.milestone {
             let val = if milestone == "--" || milestone.is_empty() {
                 "0"
@@ -3936,6 +3941,21 @@ mod tests {
             })
             .collect();
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn people_args_prefix_added_and_removed_users() {
+        let add = vec!["a".to_string(), "b".to_string()];
+        let remove = vec!["c".to_string()];
+        assert_eq!(
+            GlabBackend::people_args("--reviewer", &add, &remove),
+            ["--reviewer=+a", "--reviewer=+b", "--reviewer=!c"]
+        );
+    }
+
+    #[test]
+    fn people_args_without_changes_is_empty() {
+        assert!(GlabBackend::people_args("--assignee", &[], &[]).is_empty());
     }
 
     #[test]

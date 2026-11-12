@@ -721,6 +721,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             page_size: 10,
             api_per_page: 10,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
 
         press_in_submit_dialog(&mut app, KeyCode::Left);

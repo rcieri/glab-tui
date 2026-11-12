@@ -3,6 +3,7 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod cli_contract;
 mod config;
 mod custom_keybindings;
 mod dashboard;
@@ -517,20 +518,36 @@ impl Sandbox {
 
 impl Drop for Sandbox {
     /// Fails the test when glab-tui made a `glab` / `gh` call the mocks have no
-    /// case for. A test that already failed keeps its own failure: panicking
-    /// again while unwinding would abort the run.
+    /// case for, or called a subcommand or flag the real CLI does not have.
+    /// Both problems are reported in one failure. A test that already failed
+    /// keeps its own failure: panicking again while unwinding would abort the
+    /// run.
     fn drop(&mut self) {
         if std::thread::panicking() {
             return;
         }
+        // The two waits watch different files: the call log a mock appends to
+        // first, and the argv record it renames once complete.
         self.wait_for_running_mocks(Duration::from_secs(2));
+        cli_contract::wait_for_recorded_calls(&self.log_path, Duration::from_secs(2));
+        let mut problems = Vec::new();
         let mut unhandled = self.log_path.clone().into_os_string();
         unhandled.push(".unhandled");
         let calls = std::fs::read_to_string(unhandled).unwrap_or_default();
-        assert!(
-            calls.is_empty(),
-            "the CLI mocks have no case for these calls (add one to tests/mocks/):\n{calls}"
-        );
+        if !calls.is_empty() {
+            problems.push(format!(
+                "the CLI mocks have no case for these calls (add one to tests/mocks/):\n{calls}"
+            ));
+        }
+        let refused = cli_contract::violations_in_log(&self.log_path);
+        if !refused.is_empty() {
+            problems.push(format!(
+                "the real CLI would refuse these calls (if a newer CLI has them, bump \
+                 the pins in scripts/gen-cli-reference.sh and rerun it):\n{}",
+                refused.join("\n")
+            ));
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 }
 
@@ -727,6 +744,28 @@ impl TestSession {
         }
         Err(format!(
             "Timeout waiting for a CLI call containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
+            self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
+    }
+
+    /// Feeds output to the emulator until the CLI mocks have logged `count`
+    /// calls containing `expected`. For calls the app makes more than once.
+    pub fn wait_for_cli_call_count(
+        &mut self,
+        expected: &str,
+        count: usize,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if self.get_cli_calls().matches(expected).count() >= count {
+                return Ok(());
+            }
+            self.settle(10);
+        }
+        Err(format!(
+            "Timeout waiting for {count} CLI calls containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
             self.get_cli_calls(),
             self.emulator.get_text()
         ))

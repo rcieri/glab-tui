@@ -538,7 +538,7 @@ Key handlers in [src/handlers/](src/handlers/) (`tabs.rs`, `overlays/`, `diff_vi
 
 ### CLI Command & Flag Reference
 
-The `glab` and `gh` subcommands and flags (`glab v1.114.0` / `gh v2.98.0`) are listed in [docs/cli-reference.md](docs/cli-reference.md). Check it before adding a call, to confirm a native subcommand or flag exists before falling back to `glab api` / `gh api`. It does not list the subcommands of `gh issue`, `gh pr`, `gh release`, `gh repo`, `gh org` or `gh discussion`: confirm those with `gh <command> --help`.
+The `glab` and `gh` subcommands and flags (`glab v1.122.0` / `gh v2.102.0`) are listed in [docs/cli-reference.md](docs/cli-reference.md). Check it before adding a call, to confirm a native subcommand or flag exists before falling back to `glab api` / `gh api`. `scripts/gen-cli-reference.sh` regenerates it from the `--help` of the versions pinned at its top. The e2e harness checks every call the CLI mocks record against it (`tests/e2e/cli_contract.rs`, on `Sandbox` drop), so a call to a subcommand or flag the pinned CLI lacks fails the test that made it. After upgrading a CLI, bump the pin and rerun the script.
 
 ## 7. Development & Quality Standards
 

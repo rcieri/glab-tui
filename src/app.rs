@@ -4767,6 +4767,37 @@ impl App {
             .to_string()
     }
 
+    /// Shows pipeline `id` on the Jobs tab. Refreshes fetch it until
+    /// `close_opened_pipeline`.
+    pub fn open_pipeline_in_jobs_tab(&mut self, id: u64) {
+        self.active_pipeline_project = self.pipeline_project(id).map(str::to_owned);
+        self.active_pipeline_id = Some(id);
+        let project = self.project_path_for_jobs();
+        let parents = self
+            .pipeline_nav
+            .iter()
+            .map(|frame| frame.parent_id)
+            .collect();
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.opened_pipeline = Some(Box::new(crate::domain::client::OpenedPipeline {
+                id,
+                project,
+                parents,
+            }));
+        }
+    }
+
+    /// Puts the Jobs tab back on the checked-out branch's pipeline, fetched
+    /// when the tab is next shown.
+    pub fn close_opened_pipeline(&mut self) {
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.opened_pipeline = None;
+        }
+        self.loading_tabs.remove(&Tab::Jobs);
+        self.loaded_tabs.remove(&Tab::Jobs);
+        self.refreshed_tabs.remove(&Tab::Jobs);
+    }
+
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
         self.milestones
             .items
@@ -6154,6 +6185,25 @@ impl App {
         self.pipeline_nav
             .iter()
             .map(|frame| format!("#{}", frame.parent_id))
+            .collect::<Vec<_>>()
+            .join(" › ")
+    }
+
+    /// The pipeline path in the Jobs tab title: the opened pipeline and its
+    /// parents, e.g. `#1002 › #2001`. Empty for the branch's pipeline.
+    pub fn jobs_breadcrumb(&self) -> String {
+        let Some(opened) = self
+            .gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref())
+        else {
+            return String::new();
+        };
+        opened
+            .parents
+            .iter()
+            .chain(std::iter::once(&opened.id))
+            .map(|id| format!("#{id}"))
             .collect::<Vec<_>>()
             .join(" › ")
     }
@@ -14772,6 +14822,7 @@ index 123456..789012 100644
                 page_size: 30,
                 api_per_page: 30,
                 show_read_notifications: shows_read,
+                opened_pipeline: None,
             }),
             active_tab: Tab::Todos,
             ..Default::default()
@@ -14838,6 +14889,7 @@ index 123456..789012 100644
                 page_size: 100,
                 api_per_page: 100,
                 show_read_notifications: false,
+                opened_pipeline: None,
             }),
             ..Default::default()
         }

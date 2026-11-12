@@ -85,7 +85,11 @@ pub enum Event {
         detail_api_path: String,
         result: Result<crate::domain::notifications::NotificationDetail, String>,
     },
-    JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
+    JobsTabFetched(
+        crate::domain::client::JobsSource,
+        u64,
+        Vec<crate::domain::pipelines::Job>,
+    ),
     CommandStarted(String),
     CommandCompleted(crate::app::Tab, Result<CommandOutcome, String>),
     /// Non-error feedback from a background task, shown in the header bar.

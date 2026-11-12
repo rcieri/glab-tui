@@ -12,11 +12,41 @@ pub struct GitlabClient {
     pub api_per_page: usize,
     /// Whether the Todos tab lists read (GitHub) or done (GitLab) items too.
     pub show_read_notifications: bool,
+    /// The pipeline the Jobs tab shows instead of the checked-out branch's
+    /// newest one, opened from the Pipelines tab or picked on the Jobs tab.
+    pub opened_pipeline: Option<Box<OpenedPipeline>>,
+}
+
+/// A pipeline the user opened, and the project its jobs are fetched from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenedPipeline {
+    pub id: u64,
+    pub project: String,
+    /// Its parent pipelines, outermost first, for the Jobs tab title.
+    pub parents: Vec<u64>,
+}
+
+/// The pipeline requested by the Jobs tab: the branch's newest one or the
+/// one the user opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobsSource {
+    /// The newest pipeline of the checked-out branch.
+    Branch,
+    /// The pipeline opened from the Pipelines tab or picked on the Jobs tab.
+    Opened(u64),
 }
 
 impl GitlabClient {
     pub fn kind(&self) -> BackendKind {
         self.backend.kind()
+    }
+
+    /// The pipeline the Jobs tab shows and refreshes.
+    pub fn jobs_source(&self) -> JobsSource {
+        match &self.opened_pipeline {
+            Some(opened) => JobsSource::Opened(opened.id),
+            None => JobsSource::Branch,
+        }
     }
 
     pub async fn new(config: &Config) -> Result<Self> {
@@ -43,6 +73,7 @@ impl GitlabClient {
             page_size: config.page_size,
             api_per_page: config.api_per_page_clamped(),
             show_read_notifications: false,
+            opened_pipeline: None,
         })
     }
 
@@ -717,6 +748,7 @@ impl Clone for GitlabClient {
             page_size: self.page_size,
             api_per_page: self.api_per_page,
             show_read_notifications: self.show_read_notifications,
+            opened_pipeline: self.opened_pipeline.clone(),
         }
     }
 }

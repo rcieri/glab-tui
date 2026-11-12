@@ -156,11 +156,10 @@ pub fn handle_key(
                 crate::app::TextInputAction::EnterPipelineId => {
                     if let Ok(pipeline_id) = value.trim().parse::<u64>() {
                         if let Some(client) = &app.gitlab_client {
-                            app.loading_tabs.insert(app::Tab::Jobs);
                             let client_clone = client.clone();
                             let project_context = app.project_path_for_pipeline(pipeline_id);
-                            app.active_pipeline_project =
-                                app.pipeline_project(pipeline_id).map(str::to_owned);
+                            app.open_pipeline_in_jobs_tab(pipeline_id);
+                            app.loading_tabs.insert(app::Tab::Jobs);
                             let tx = app.scoped_sender(tx.clone());
                             fx.spawn(async move {
                                 match domain::pipelines::list_pipeline_jobs(
@@ -172,6 +171,7 @@ pub fn handle_key(
                                 {
                                     Ok(jobs) => {
                                         let _ = tx.send(Event::JobsTabFetched(
+                                            domain::client::JobsSource::Opened(pipeline_id),
                                             pipeline_id,
                                             jobs,
                                         ));

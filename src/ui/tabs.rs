@@ -3492,6 +3492,7 @@ mod tests {
             page_size: 30,
             api_per_page: 30,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.active_tab = Tab::MergeRequests;
         app.loading_tabs.insert(Tab::MergeRequests);
@@ -3527,6 +3528,7 @@ mod tests {
             page_size: 30,
             api_per_page: 30,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.active_tab = Tab::MergeRequests;
         app.loading_tabs.insert(Tab::MergeRequests);

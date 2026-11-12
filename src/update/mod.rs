@@ -669,4 +669,99 @@ mod tests {
         assert!(!app.details_zoomed);
         assert!(!app.job_trace_loading);
     }
+
+    /// The Jobs tab with job 71's log open and followed, shown beside the
+    /// job list.
+    fn jobs_tab_following_job_71() -> App {
+        let mut app = jobs_tab_showing_pipeline_7();
+        app.job_trace_follow = true;
+        app.detail_visible = true;
+        app.details_zoomed = false;
+        app
+    }
+
+    #[test]
+    fn esc_on_the_zoomed_job_log_closes_it_and_ends_follow_mode() {
+        let mut app = jobs_tab_following_job_71();
+        app.details_zoomed = true;
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(app.job_trace.is_none());
+        assert!(!app.job_trace_follow, "the next log opens unfollowed");
+    }
+
+    #[test]
+    fn esc_on_the_jobs_tab_with_the_detail_pane_hidden_closes_the_log_and_ends_follow_mode() {
+        let mut app = jobs_tab_following_job_71();
+        app.detail_visible = false;
+        app.detail_scroll_to_bottom = true;
+        app.job_trace_scroll_to_line = Some(3);
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(app.job_trace.is_none());
+        assert!(!app.job_trace_follow, "the next log opens unfollowed");
+        assert!(
+            !app.detail_scroll_to_bottom,
+            "the next pane opens at its top"
+        );
+        assert_eq!(
+            app.job_trace_scroll_to_line, None,
+            "the next log does not jump to a line of this one"
+        );
+    }
+
+    #[test]
+    fn a_refresh_that_retried_the_followed_job_ends_follow_mode() {
+        let mut app = jobs_tab_following_job_71();
+        let mut retry = job(72);
+        retry.name = "job-71".to_string();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 7, vec![job(70), retry]),
+        );
+
+        assert!(app.job_trace.is_none());
+        assert!(!app.job_trace_follow, "the next log opens unfollowed");
+    }
+
+    #[test]
+    fn a_new_branch_pipeline_ends_follow_mode_of_the_replaced_log() {
+        let mut app = jobs_tab_following_job_71();
+
+        update(
+            &mut app,
+            Event::JobsTabFetched(JobsSource::Branch, 8, jobs(&[80, 81])),
+        );
+
+        assert!(app.job_trace.is_none());
+        assert!(!app.job_trace_follow, "the next log opens unfollowed");
+    }
+
+    #[test]
+    fn opening_a_pipeline_ends_follow_mode_of_the_replaced_log() {
+        let mut app = jobs_tab_following_job_71();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![
+            serde_json::from_str(
+                r#"{"id": 9, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"}"#,
+            )
+            .expect("pipeline fixture"),
+        ];
+        app.pipelines.state.select(Some(0));
+
+        update(
+            &mut app,
+            Event::PipelineOpened {
+                pipeline_id: 9,
+                opening: crate::handlers::tabs::PipelineOpening::Descend,
+                result: Ok(crate::handlers::tabs::PipelineContents::Jobs(jobs(&[90]))),
+            },
+        );
+
+        assert!(app.job_trace.is_none());
+        assert!(!app.job_trace_follow, "the next log opens unfollowed");
+    }
 }

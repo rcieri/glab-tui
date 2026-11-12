@@ -736,8 +736,7 @@ fn apply_list_half_page(app: &mut App, key_event: &KeyPress, tx: &UnboundedSende
             crate::app::Tab::Jobs => {
                 let len = app.filtered_jobs().len();
                 app.jobs.move_by(len, down, rows);
-                app.job_trace = None;
-                app.job_trace_follow = false;
+                app.close_job_trace();
             }
             crate::app::Tab::Todos => app.todos.move_by(app.filtered_todos().len(), down, rows),
             crate::app::Tab::Milestones => {
@@ -2885,13 +2884,13 @@ pub fn handle_active_tab_key(
                 } else if app.details_zoomed {
                     app.details_zoomed = false;
                     if app.active_tab == crate::app::Tab::Jobs {
-                        app.job_trace = None;
+                        app.close_job_trace();
                     }
                 } else if app.detail_visible {
                     app.detail_visible = false;
                 } else if app.active_tab == crate::app::Tab::Jobs {
                     if app.job_trace.is_some() {
-                        app.job_trace = None;
+                        app.close_job_trace();
                     } else {
                         app.close_opened_pipeline();
                         app.active_tab = crate::app::Tab::Pipelines;
@@ -3160,8 +3159,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.next(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3210,8 +3208,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.previous(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3260,8 +3257,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.first(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3313,8 +3309,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.last(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3500,7 +3495,7 @@ pub fn apply_opened_pipeline(
                 app.open_pipeline_in_jobs_tab(pipeline_id);
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
-                app.job_trace = None;
+                app.close_job_trace();
                 app.active_tab = crate::app::Tab::Jobs;
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));

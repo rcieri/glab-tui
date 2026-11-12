@@ -82,7 +82,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 });
                 if same_run.is_none() {
                     app.detail_scroll = 0;
-                    app.job_trace = None;
+                    app.close_job_trace();
                 }
                 app.jobs
                     .state
@@ -92,7 +92,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.active_pipeline_id = Some(pipeline_id);
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
-                app.job_trace = None;
+                app.close_job_trace();
             }
         }
         Event::JobTraceFetched(job_id, result) => {

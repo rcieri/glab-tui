@@ -5213,6 +5213,14 @@ impl App {
         Ok(())
     }
 
+    /// Closes the shown job log, ending follow mode and any pending jump in it.
+    pub fn close_job_trace(&mut self) {
+        self.job_trace = None;
+        self.job_trace_follow = false;
+        self.detail_scroll_to_bottom = false;
+        self.job_trace_scroll_to_line = None;
+    }
+
     /// Scrolls the shown job log to the first failure line after line
     /// `after` (from the top when `None`), wrapping around.
     pub fn jump_to_trace_failure(&mut self, after: Option<usize>) {

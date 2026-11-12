@@ -141,12 +141,6 @@ mod tests {
         let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
-        let pipeline = |id: u64, status: &str| -> crate::domain::pipelines::Pipeline {
-            serde_json::from_value(serde_json::json!({
-                "id": id, "status": status, "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
-            }))
-            .expect("pipeline fixture")
-        };
         let level = |children| crate::domain::pipelines::ChildLevel {
             children,
             pending: Vec::new(),
@@ -185,12 +179,6 @@ mod tests {
         let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
-        let pipeline = |id: u64, status: &str| -> crate::domain::pipelines::Pipeline {
-            serde_json::from_value(serde_json::json!({
-                "id": id, "status": status, "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
-            }))
-            .expect("pipeline fixture")
-        };
         let opened = |status: &str| Event::PipelineOpened {
             pipeline_id: 1002,
             opening: crate::handlers::tabs::PipelineOpening::Descend,
@@ -258,6 +246,13 @@ mod tests {
         let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
 
         assert!(matches!(effects.as_slice(), [Effect::Quit]));
+    }
+
+    fn pipeline(id: u64, status: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": status, "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
+        }))
+        .expect("pipeline fixture")
     }
 
     fn job(id: u64) -> crate::domain::pipelines::Job {
@@ -595,13 +590,7 @@ mod tests {
     #[test]
     fn the_jobs_tab_title_names_the_opened_pipeline_and_its_descent() {
         let mut app = app_with_client();
-        let pipeline = |id: u64| -> crate::domain::pipelines::Pipeline {
-            serde_json::from_value(serde_json::json!({
-                "id": id, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
-            }))
-            .expect("pipeline fixture")
-        };
-        app.pipelines.items = vec![pipeline(1002)];
+        app.pipelines.items = vec![pipeline(1002, "running")];
         assert_eq!(
             app.jobs_breadcrumb(),
             "",
@@ -611,7 +600,7 @@ mod tests {
         app.descend_into(
             1002,
             crate::domain::pipelines::ChildLevel {
-                children: vec![pipeline(2001)],
+                children: vec![pipeline(2001, "running")],
                 pending: Vec::new(),
             },
         );

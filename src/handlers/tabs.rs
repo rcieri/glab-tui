@@ -3768,12 +3768,24 @@ mod tests {
         assert_eq!(app.detail_scroll, 0);
     }
 
+    /// An `App` whose `config` is `Config::default()`. `App::default()`
+    /// merges the global and the checkout's repo-local config files, either
+    /// of which can move `scroll_page_down` / `scroll_page_up` off
+    /// `PageDown` / `PageUp`. The temporary home keeps `ensure_themes()`
+    /// out of the real config directory.
+    fn app_with_default_config() -> App {
+        let _home = crate::config::isolate_home();
+        let mut app = App::default();
+        app.config = crate::config::Config::default();
+        app
+    }
+
     /// `PageDown` advances `detail_scroll` by the detail pane's usable
     /// height (its `rect.height` minus the two border rows) — the convention
     /// `less` and `man` share.
     #[tokio::test]
     async fn page_down_scrolls_detail_pane_by_one_viewport() {
-        let mut app = App::default();
+        let mut app = app_with_default_config();
         app.detail_visible = true;
         app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
         app.detail_scroll = 5;
@@ -3790,7 +3802,7 @@ mod tests {
     /// the Jobs tab does not change paging on other tabs.
     #[tokio::test]
     async fn page_down_on_a_shown_job_log_moves_by_the_log_pane_rows() {
-        let mut app = App::default();
+        let mut app = app_with_default_config();
         app.active_tab = crate::app::Tab::Jobs;
         app.detail_visible = true;
         app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 30));
@@ -3812,7 +3824,7 @@ mod tests {
     /// `PageUp` is the symmetric `PageDown` — subtracts the same page size.
     #[tokio::test]
     async fn page_up_scrolls_detail_pane_back_by_one_viewport() {
-        let mut app = App::default();
+        let mut app = app_with_default_config();
         app.detail_visible = true;
         app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
         app.detail_scroll = 25;
@@ -3828,7 +3840,7 @@ mod tests {
     /// `PageUp` must not underflow and `PageDown` must step by exactly one.
     #[tokio::test]
     async fn page_scroll_clamps_to_one_line_for_short_detail_pane() {
-        let mut app = App::default();
+        let mut app = app_with_default_config();
         app.detail_visible = true;
         app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 2));
         app.detail_scroll = 0;
@@ -3851,7 +3863,7 @@ mod tests {
     /// `detail_scroll` and risk wrapping.
     #[tokio::test]
     async fn page_scroll_keys_do_nothing_without_detail_rect() {
-        let mut app = App::default();
+        let mut app = app_with_default_config();
         app.detail_visible = true;
         app.detail_rect = None;
         app.detail_scroll = 5;
@@ -3875,7 +3887,7 @@ mod tests {
     /// accidentally catch it.
     #[tokio::test]
     async fn page_down_does_not_also_navigate_the_table() {
-        let mut app = App::default();
+        let mut app = app_with_default_config();
         app.detail_visible = true;
         app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
         app.issues.items = (1..=4)

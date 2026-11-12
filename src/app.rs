@@ -9137,6 +9137,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         };
         let values = App::milestone_filter_values(&m, "State");
         assert_eq!(values, vec!["ACTIVE".to_string()]);

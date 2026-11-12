@@ -3338,6 +3338,7 @@ impl Backend for GhBackend {
                     due_date,
                     created_at: m.created_at,
                     project_path: project.to_string(),
+                    web_url: None,
                 }
             })
             .collect())

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 301,
+    "iid": 3,
+    "group_id": 77,
+    "title": "Group Roadmap",
+    "description": "Group-wide release",
+    "state": "active",
+    "start_date": "2026-09-01",
+    "due_date": "2026-09-30",
+    "created_at": "2026-07-06T12:00:00Z",
+    "web_url": "https://gitlab.com/groups/test-group/-/milestones/3"
+  }
+]

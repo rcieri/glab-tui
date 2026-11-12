@@ -172,6 +172,8 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/todos_done.json"
     elif [[ "$*" == *"/todos"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
+    elif [[ "$*" == *"groups/test-group/milestones"* ]]; then
+        cat "$FIXTURES_DIR/group_milestones.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     else

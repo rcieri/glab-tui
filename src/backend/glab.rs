@@ -2852,6 +2852,7 @@ impl Backend for GlabBackend {
             due_date: Option<String>,
             #[serde(default)]
             created_at: String,
+            web_url: Option<String>,
         }
         let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;
         let project_fallback = match scope {
@@ -2870,6 +2871,7 @@ impl Backend for GlabBackend {
                 due_date: m.due_date,
                 created_at: m.created_at,
                 project_path: project_fallback.clone(),
+                web_url: m.web_url,
             })
             .collect())
     }
@@ -3521,10 +3523,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
-        let host = gitlab_host_or_default();
-        let url = format!("https://{host}/{project}/-/milestones/{}", milestone.iid);
-        open_url(&url, self.tx.clone(), "OPENING MILESTONE IN BROWSER").await
+    async fn open_milestone_in_browser(&self, _project: &str, milestone: &Milestone) -> Result<()> {
+        let url = milestone
+            .web_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Milestone URL unavailable; refresh the Milestones tab")
+            })?;
+        open_url(url, self.tx.clone(), "OPENING MILESTONE IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
@@ -4721,6 +4728,23 @@ mod tests {
                 ),
                 (Some(3), Some("f00dfeed"), "bob", true, None, Some(false)),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_milestone_without_a_web_url_is_not_opened() {
+        let milestone = Milestone {
+            iid: 3,
+            project_path: "test-group".to_string(),
+            ..Milestone::default()
+        };
+        let error = GlabBackend::new()
+            .open_milestone_in_browser("test-group", &milestone)
+            .await
+            .expect_err("a milestone without a web_url has no page to open");
+        assert_eq!(
+            error.to_string(),
+            "Milestone URL unavailable; refresh the Milestones tab"
         );
     }
 }

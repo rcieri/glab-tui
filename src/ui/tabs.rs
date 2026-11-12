@@ -3358,6 +3358,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         // 3 closed of 5 total — the case that triggered the panic.
         app.milestone_progress_cache.insert(7, (3, 5));
@@ -3401,6 +3402,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         app.milestone_progress_cache.insert(9, (4, 4));
         app.milestones.state.select(Some(0));
@@ -3441,6 +3443,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         app.milestones.state.select(Some(0));
         app.selected_milestone_iid = Some(5);
@@ -3487,6 +3490,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         app.milestones.state.select(Some(0));
         app.selected_milestone_iid = Some(6);

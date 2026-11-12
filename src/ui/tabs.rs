@@ -3840,6 +3840,31 @@ mod tests {
     }
 
     #[test]
+    fn trace_search_scrolls_a_wrapped_trace_to_the_match_row() {
+        let mut log = format!("{}\nok\nneedle in the log\n", "x".repeat(250));
+        log.push_str(&"after\n".repeat(50));
+        let trace = crate::domain::job_trace::JobTrace::from_read(log.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.job_trace_wrap = true;
+        app.job_trace_searching = true;
+
+        for c in "needle".chars() {
+            let press = crate::keybinding::KeyPress::from(crossterm::event::KeyEvent::from(
+                crossterm::event::KeyCode::Char(c),
+            ));
+            crate::handlers::search::handle_trace_search_key(&mut app, &press);
+        }
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        // At 98 cells the first line takes rows 0-2 and "ok" row 3.
+        assert_eq!(app.detail_scroll, 4);
+        assert_eq!(
+            buffer_row(&terminal, 11),
+            format!("│{:<98}│", "needle in the log")
+        );
+    }
+
+    #[test]
     fn jump_to_trace_failure_moves_past_failures_on_the_last_page_and_wraps() {
         let mut log = "fatal: early\n".to_string();
         log.push_str(&"ok\n".repeat(50));

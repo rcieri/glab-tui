@@ -591,18 +591,8 @@ pub async fn run_update() {
 /// `https://<host>/<project>/-/<page>/<id>` for the project of the `origin`
 /// remote. Exits with an error when there is no `origin` to read them from.
 fn gitlab_web_url_or_exit(page: &str, id: &str) -> String {
-    let remote = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
-    let host_and_project = remote.as_deref().and_then(|url| {
-        Some((
-            crate::git_helpers::parse_remote_host(url)?,
-            crate::git_helpers::parse_project_path(url)?,
-        ))
-    });
+    let host_and_project = crate::git_helpers::remote_host("origin")
+        .zip(crate::git_helpers::remote_project_path("origin"));
     let Some((host, project)) = host_and_project else {
         eprintln!(
             "{} no GitLab project found in the `origin` remote",

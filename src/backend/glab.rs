@@ -3654,15 +3654,7 @@ const RUNNER_DETAILS_QUERY_MAX: usize = 100;
 /// construct browser URLs for entities whose `glab` subcommand doesn't
 /// ship a `-w` flag (runners, branches, environments, milestones).
 fn gitlab_host_or_default() -> String {
-    let output = std::process::Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .ok();
-    let host = output
-        .and_then(|out| out.status.success().then_some(out))
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .and_then(|url| crate::git_helpers::parse_remote_host(&url));
-    host.unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
+    crate::git_helpers::remote_host("origin").unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }
 
 /// Percent-encode a branch or environment name for use in a GitLab URL

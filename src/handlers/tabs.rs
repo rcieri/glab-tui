@@ -2120,7 +2120,7 @@ pub fn handle_active_tab_key(
                                 Ok(url) => {
                                     let tx2 = tx.clone();
                                     fx.spawn(async move {
-                                        let result = client.open_url(&url).await;
+                                        let result = client.open_job_url(&url).await;
                                         let _ = tx2.send(Event::CommandCompleted(
                                             crate::app::Tab::Jobs,
                                             CommandOutcome::read_only(result),

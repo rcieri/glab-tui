@@ -4309,21 +4309,18 @@ fn milestone_progress_sort_key(
     "000%".to_string()
 }
 
-/// Ids of the pipelines in `fetched` whose status differs from their row in
-/// `listed`.
-fn changed_pipeline_ids(
-    listed: &[crate::domain::pipelines::Pipeline],
-    fetched: &[crate::domain::pipelines::Pipeline],
-) -> Vec<u64> {
+fn ids_with_changed_status<'a>(
+    listed: &'a [crate::domain::pipelines::Pipeline],
+    fetched: &'a [crate::domain::pipelines::Pipeline],
+) -> impl Iterator<Item = u64> + 'a {
     fetched
         .iter()
-        .filter(|new| {
+        .filter(move |new| {
             listed
                 .iter()
                 .any(|old| old.id() == new.id() && old.status() != new.status())
         })
         .map(|pipeline| pipeline.id())
-        .collect()
 }
 
 impl App {
@@ -6085,18 +6082,18 @@ impl App {
             .pipeline_nav
             .first()
             .map_or(&self.pipelines.items, |frame| &frame.items);
-        for id in changed_pipeline_ids(root, fetched) {
+        for id in ids_with_changed_status(root, fetched) {
             self.pipeline_jobs.remove(&id);
         }
     }
 
-    /// The same for a refetched child level, compared against the level on
-    /// screen.
+    /// Forgets the cached jobs of every child on screen whose status differs in
+    /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
     pub fn drop_jobs_of_changed_children(
         &mut self,
         fetched: &[crate::domain::pipelines::Pipeline],
     ) {
-        for id in changed_pipeline_ids(&self.pipelines.items, fetched) {
+        for id in ids_with_changed_status(&self.pipelines.items, fetched) {
             self.pipeline_jobs.remove(&id);
         }
     }

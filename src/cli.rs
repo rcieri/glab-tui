@@ -589,7 +589,7 @@ pub async fn run_update() {
 }
 
 /// `https://<host>/<project>/-/<page>/<id>` for the project of the `origin`
-/// remote. Exits with an error when there is no `origin` to read them from.
+/// remote. Exits with an error when `origin` yields no host or project.
 fn gitlab_web_url_or_exit(page: &str, id: &str) -> String {
     let host_and_project = crate::git_helpers::remote_host("origin")
         .zip(crate::git_helpers::remote_project_path("origin"));

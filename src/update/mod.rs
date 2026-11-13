@@ -137,6 +137,76 @@ mod tests {
     }
 
     #[test]
+    fn a_refetched_child_level_drops_the_cached_jobs_of_children_whose_status_changed() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let level = |children| crate::domain::pipelines::ChildLevel {
+            children,
+            pending: Vec::new(),
+        };
+        let mut app = app_with_client();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![pipeline(1002, "running")];
+        app.pipelines.state.select(Some(0));
+        app.descend_into(
+            1002,
+            level(vec![pipeline(2001, "running"), pipeline(2002, "success")]),
+        );
+        for id in [2001, 2002] {
+            app.pipeline_jobs.insert(id, Vec::new());
+        }
+
+        update(
+            &mut app,
+            Event::ChildLevelFetched(
+                1002,
+                level(vec![pipeline(2001, "failed"), pipeline(2002, "success")]),
+            ),
+        );
+
+        let cached: Vec<u64> = app.pipeline_jobs.keys().copied().collect();
+        assert_eq!(cached, vec![2002]);
+        assert_eq!(app.pipelines.state.selected(), Some(0));
+        assert_eq!(
+            app.fetching_pipelines,
+            std::collections::HashSet::from([2001])
+        );
+    }
+
+    #[test]
+    fn entering_a_pipeline_again_drops_the_cached_jobs_of_its_children() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let opened = |status: &str| Event::PipelineOpened {
+            pipeline_id: 1002,
+            opening: crate::handlers::tabs::PipelineOpening::Descend,
+            result: Ok(crate::handlers::tabs::PipelineContents::Downstream(
+                crate::domain::pipelines::ChildLevel {
+                    children: vec![pipeline(2001, status)],
+                    pending: Vec::new(),
+                },
+            )),
+        };
+        let mut app = app_with_client();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = vec![pipeline(1002, "running")];
+        app.pipelines.state.select(Some(0));
+        update(&mut app, opened("running"));
+        update(&mut app, Event::PipelineJobs(2001, Vec::new()));
+        assert!(app.ascend());
+
+        update(&mut app, opened("failed"));
+
+        assert!(!app.pipeline_jobs.contains_key(&2001));
+        assert_eq!(
+            app.fetching_pipelines,
+            std::collections::HashSet::from([2001])
+        );
+    }
+
+    #[test]
     fn ctrl_e_in_a_text_input_hands_its_value_to_the_editor_and_takes_the_result_back() {
         let mut app = App::default();
         app.text_input = Some(TextInput::new(
@@ -176,6 +246,13 @@ mod tests {
         let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
 
         assert!(matches!(effects.as_slice(), [Effect::Quit]));
+    }
+
+    fn pipeline(id: u64, status: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": status, "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
+        }))
+        .expect("pipeline fixture")
     }
 
     fn job(id: u64) -> crate::domain::pipelines::Job {
@@ -513,13 +590,7 @@ mod tests {
     #[test]
     fn the_jobs_tab_title_names_the_opened_pipeline_and_its_descent() {
         let mut app = app_with_client();
-        let pipeline = |id: u64| -> crate::domain::pipelines::Pipeline {
-            serde_json::from_value(serde_json::json!({
-                "id": id, "status": "running", "ref": "main", "updated_at": "2026-01-01T00:00:00Z"
-            }))
-            .expect("pipeline fixture")
-        };
-        app.pipelines.items = vec![pipeline(1002)];
+        app.pipelines.items = vec![pipeline(1002, "running")];
         assert_eq!(
             app.jobs_breadcrumb(),
             "",
@@ -529,7 +600,7 @@ mod tests {
         app.descend_into(
             1002,
             crate::domain::pipelines::ChildLevel {
-                children: vec![pipeline(2001)],
+                children: vec![pipeline(2001, "running")],
                 pending: Vec::new(),
             },
         );

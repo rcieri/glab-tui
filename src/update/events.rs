@@ -23,6 +23,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             // moved to another level.
             if app.current_parent_id() == Some(parent_id) {
                 let cursor = app.pipelines.state.selected();
+                app.drop_jobs_of_changed_children(&level.children);
                 app.pipelines.items = level.children;
                 app.pending_triggers = level.pending;
                 let selected = if app.pipelines.items.is_empty() {

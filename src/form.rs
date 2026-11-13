@@ -197,8 +197,9 @@ pub struct Preview {
     pub is_collapsed: bool,
 }
 
-/// A section whose groups only show while it is expanded. `key` folds and
-/// unfolds it from anywhere in the form. Its groups are not nested further.
+/// A section whose groups only show while it is expanded. `key` opens it
+/// and moves the focus to its header from anywhere in the form, and folds
+/// it from inside. Its groups are not nested further.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Collapsible {
     pub label: String,
@@ -624,7 +625,7 @@ impl Form {
             KeyCode::Esc => return FormAction::Cancel,
             KeyCode::Char('e') => return self.open_editor(),
             KeyCode::Char('i') if self.focused_line_input().is_some() => self.is_editing = true,
-            KeyCode::Char(c) => self.toggle_section_with_key(c),
+            KeyCode::Char(c) => self.press_section_with_key(c),
             _ => {}
         }
         FormAction::None
@@ -885,13 +886,33 @@ impl Form {
         }
     }
 
-    fn toggle_section_with_key(&mut self, key: char) {
+    fn press_section_with_key(&mut self, key: char) {
         let section = self.groups.iter().position(
             |group| matches!(&group.kind, GroupKind::Collapsible(section) if section.key == key),
         );
         if let Some(index) = section {
-            self.toggle_section(index);
+            self.press_section(index);
         }
+    }
+
+    /// Folds or unfolds the section at `index` when the focus is in it.
+    /// From outside it only opens the section and focuses its header: the
+    /// renderer folds sections the focus is outside of once the form is
+    /// short, so a toggle from there would flip between two states drawn
+    /// the same.
+    fn press_section(&mut self, index: usize) {
+        let has_focus = matches!(self.focus, Focus::Group(path) if path.index == index);
+        if has_focus {
+            self.toggle_section(index);
+            return;
+        }
+        if let Some(GroupKind::Collapsible(section)) =
+            self.groups.get_mut(index).map(|group| &mut group.kind)
+        {
+            section.is_expanded = true;
+        }
+        self.focus = Focus::Group(GroupPath::top(index));
+        self.is_editing = false;
     }
 
     /// Folds or unfolds the section at `index`. Folding it with the focus
@@ -913,7 +934,8 @@ impl Form {
     }
 
     /// A click on `target`: the same as moving the focus there and pressing
-    /// `Space`, or `Enter` on a button.
+    /// `Space`, or `Enter` on a button. A section header clicked from
+    /// outside the section is pressed like its key instead.
     pub fn click(&mut self, target: ClickTarget) -> FormAction {
         match target {
             ClickTarget::Button(button) if button < self.buttons.len() => {
@@ -927,6 +949,10 @@ impl Form {
                     return FormAction::None;
                 };
                 if !group.is_focus_stop() {
+                    return FormAction::None;
+                }
+                if path.child.is_none() && matches!(group.kind, GroupKind::Collapsible(_)) {
+                    self.press_section(path.index);
                     return FormAction::None;
                 }
                 group.set_focus_row(row);
@@ -1388,7 +1414,7 @@ mod tests {
     fn folding_a_section_with_the_focus_inside_moves_it_to_the_header() {
         let mut form = form_with_advanced();
         press(&mut form, KeyCode::Char('a'));
-        press(&mut form, KeyCode::BackTab);
+        press(&mut form, KeyCode::Tab);
         assert_eq!(
             form.focus(),
             Focus::Group(GroupPath {
@@ -1398,6 +1424,18 @@ mod tests {
         );
         press(&mut form, KeyCode::Char('a'));
         assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
+    }
+
+    #[test]
+    fn the_section_key_from_outside_opens_the_section_and_focuses_its_header() {
+        let mut form = form_with_advanced();
+        press(&mut form, KeyCode::Char('a'));
+        press(&mut form, KeyCode::Tab);
+        press(&mut form, KeyCode::Tab);
+        assert_eq!(form.focus(), Focus::Button(0));
+        press(&mut form, KeyCode::Char('a'));
+        assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
+        assert_eq!(form.focus_stops().len(), 3, "the section stays open");
     }
 
     #[test]

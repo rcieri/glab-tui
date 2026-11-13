@@ -1037,6 +1037,31 @@ mod tests {
     }
 
     #[test]
+    fn the_section_key_opens_a_section_the_short_form_folded() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let mut form = crowded_form();
+        form.handle_key(&crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('a'),
+        ));
+        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
+    }
+
+    #[test]
+    fn a_click_on_the_header_opens_a_section_the_short_form_folded() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let mut form = crowded_form();
+        form.click(ClickTarget::Row {
+            path: GroupPath::top(2),
+            row: 0,
+        });
+        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
+    }
+
+    #[test]
     fn a_folded_preview_counts_its_hidden_lines_in_the_singular_too() {
         let styles = Styles::new(&Theme::default());
         let preview = Preview {

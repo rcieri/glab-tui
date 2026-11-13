@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 mod cli_contract;
 mod config;
 mod custom_keybindings;
+mod edit_people;
 mod environments;
 mod group_scope_actions;
 mod job_trace;

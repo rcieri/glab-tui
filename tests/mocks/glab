@@ -77,7 +77,9 @@ if [[ "$*" == *"api"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
-    elif [[ "$*" == *"/members/all"* || "$*" == *"groups/"*"/labels"* ]]; then
+    elif [[ "$*" == *"/members/all"* ]]; then
+        cat "$FIXTURES_DIR/members.json"
+    elif [[ "$*" == *"groups/"*"/labels"* ]]; then
         echo "[]"
     elif [[ "$*" == *"groups/test-group/issues"* ]]; then
         # Pages are requested concurrently; only the first carries the fixture.
@@ -193,8 +195,9 @@ elif [[ "$*" == *"mr list"* ]]; then
         echo "[]"
     fi
 elif [[ "$*" == *"issue list"* ]]; then
+    # TEST_GLAB_ISSUES names another fixture, for tests that need other issues.
     if [[ " $* " == *" --page 1 "* ]]; then
-        cat "$FIXTURES_DIR/custom_command_issues.json"
+        cat "$FIXTURES_DIR/${TEST_GLAB_ISSUES:-custom_command_issues.json}"
     else
         echo "[]"
     fi
@@ -220,7 +223,8 @@ elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* 
         || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* \
         || "$*" == "issue close "* || "$*" == "mr close "* \
         || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
-        || "$*" == "runner update "* ]]; then
+        || "$*" == "runner update "* || "$*" == "issue update "* \
+        || "$*" == "mr update "* ]]; then
     # Mutations whose output glab-tui does not read.
     :
 else

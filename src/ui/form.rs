@@ -65,18 +65,18 @@ impl Compaction {
 }
 
 /// How far a body is shrunk: the compaction step, and the entries an item
-/// list keeps once that step cuts lists.
+/// list keeps when that step cuts lists.
 #[derive(Clone, Copy)]
 struct Fit {
     compaction: Compaction,
-    list_entries: usize,
+    list_entries: Option<usize>,
 }
 
 impl Fit {
     fn at(compaction: Compaction) -> Self {
         Self {
             compaction,
-            list_entries: MIN_SHORT_LIST_ENTRIES,
+            list_entries: (compaction >= Compaction::ShortLists).then_some(MIN_SHORT_LIST_ENTRIES),
         }
     }
 }
@@ -245,17 +245,15 @@ fn fitting_body(form: &Form, ctx: &RenderCtx<'_>, width: usize, capacity: usize)
         if rows.len() > capacity {
             continue;
         }
-        if compaction >= Compaction::ShortLists {
-            return with_longest_lists(form, ctx, width, capacity, fit, rows);
-        }
-        return rows;
+        return with_longest_lists(form, ctx, width, capacity, fit, rows);
     }
     rows
 }
 
 /// Grows the item lists of `rows`, the body at `fit` that fits `capacity`,
-/// by as many entries as the rows left over take. The body only grows with
-/// the entries kept, so a binary search finds the most that still fit.
+/// by as many entries as the rows left over take, when `fit` cuts lists.
+/// The body only grows with the entries kept, so a binary search finds the
+/// most that still fit.
 fn with_longest_lists(
     form: &Form,
     ctx: &RenderCtx<'_>,
@@ -264,7 +262,10 @@ fn with_longest_lists(
     fit: Fit,
     mut rows: Vec<BodyRow>,
 ) -> Vec<BodyRow> {
-    let (mut fitting, mut too_many) = (fit.list_entries, longest_list(form.groups()) + 1);
+    let Some(fewest) = fit.list_entries else {
+        return rows;
+    };
+    let (mut fitting, mut too_many) = (fewest, longest_list(form.groups()) + 1);
     while fitting + 1 < too_many {
         let kept = fitting + (too_many - fitting) / 2;
         let candidate = body_rows(
@@ -272,7 +273,7 @@ fn with_longest_lists(
             ctx,
             width,
             Fit {
-                list_entries: kept,
+                list_entries: Some(kept),
                 ..fit
             },
         );
@@ -463,11 +464,7 @@ fn group_rows(
             preview_rows(preview, compaction >= Compaction::FoldedPreviews, styles)
         }
         GroupKind::ItemList(list) => {
-            let kept = if compaction >= Compaction::ShortLists {
-                fit.list_entries
-            } else {
-                list.entries.len()
-            };
+            let kept = fit.list_entries.unwrap_or(list.entries.len());
             item_rows(list, kept, ctx, styles, content_width)
         }
         GroupKind::Note(note) => {

@@ -165,6 +165,17 @@ pub(super) fn handle_key(
         app.reverse_sort_order();
         return;
     }
+    if keybinding_matches(&app.config.keybindings.global.toggle_nav, key_event) {
+        app.config.layout.nav_visible = !app.config.layout.nav_visible;
+        return;
+    }
+    if keybinding_matches(
+        &app.config.keybindings.global.toggle_terminal_pane,
+        key_event,
+    ) {
+        app.config.layout.terminal_pane_visible = !app.config.layout.terminal_pane_visible;
+        return;
+    }
 
     if keybinding_matches(&app.config.keybindings.global.configure, key_event)
         && !app.is_deployments_focus_key(key_event)

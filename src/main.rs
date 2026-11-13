@@ -125,7 +125,10 @@ async fn main() -> Result<()> {
     let mut app = App::new();
     if let Some(ref tab_str) = cli.tab {
         match crate::app::Tab::from_str(tab_str) {
-            Some(tab) => app.active_tab = tab,
+            Some(tab) => {
+                app.active_tab = tab;
+                app.land_on_available_tab();
+            }
             None => {
                 eprintln!(
                     "Error: --tab '{tab_str}' is not a recognised tab.\nValid values: issues, mrs, pr, pipelines, jobs, runners, releases, todos, milestones, branches, environments, terminal."

@@ -471,6 +471,35 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
         });
     });
 }
+
+/// After the user moved to another tab: fetch it unless it is loading or
+/// fresh, and the related items its highlighted row previews.
+pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    if let Some(client) = &app.gitlab_client {
+        if !app.loading_tabs.contains(&app.active_tab)
+            && !app.refreshed_tabs.contains(&app.active_tab)
+        {
+            if !app.loaded_tabs.contains(&app.active_tab) {
+                app.loading_tabs.insert(app.active_tab);
+            }
+            spawn_refresh_active_tab(
+                fx,
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
+    }
+    if app.active_tab == Tab::Issues {
+        maybe_fetch_related_mrs(app, tx);
+    }
+    if app.active_tab == Tab::MergeRequests {
+        maybe_fetch_mr_related_issues(app, tx);
+    }
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -1388,7 +1417,7 @@ pub fn handle_active_tab_key(
                                     .find(|p| p.ref_branch() == mr.source_branch)
                                     .map(|p| p.id())
                             });
-                            app.active_tab = crate::app::Tab::Pipelines;
+                            app.set_active_tab(crate::app::Tab::Pipelines);
                             app.pending_pipeline_select = pipe_id;
                             if let Some(client) = &app.gitlab_client {
                                 crate::fetch::spawn_refresh_active_tab(
@@ -2889,7 +2918,7 @@ pub fn handle_active_tab_key(
                         app.job_trace = None;
                     } else {
                         app.close_opened_pipeline();
-                        app.active_tab = crate::app::Tab::Pipelines;
+                        app.set_active_tab(crate::app::Tab::Pipelines);
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
                     // Inside a descent Esc means the level you can see, not a
@@ -3094,58 +3123,14 @@ pub fn handle_active_tab_key(
                 || keybinding_matches(&app.config.keybindings.global.next_tab, key_event)) =>
             {
                 app.next_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            fx,
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, tx);
-                }
+                load_entered_tab(app, tx, fx);
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
                 || keybinding_matches(&app.config.keybindings.global.prev_tab, key_event)) =>
             {
                 app.previous_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            fx,
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, tx);
-                }
+                load_entered_tab(app, tx, fx);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if app.details_zoomed {
@@ -3506,7 +3491,7 @@ pub fn apply_opened_pipeline(
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
                 app.job_trace = None;
-                app.active_tab = crate::app::Tab::Jobs;
+                app.set_active_tab(crate::app::Tab::Jobs);
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }

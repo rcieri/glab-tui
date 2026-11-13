@@ -1,13 +1,5 @@
 //! A dialog built from typed groups of fields and a row of buttons, with one
 //! focus model for all of them. `ui::form` draws it.
-//!
-//! Focus moves between groups with `Tab` / `BackTab` and within a group with
-//! `j` / `k`, which continue into the neighbouring group at either end. `h` /
-//! `l` move across the radios of a group and across the buttons. `Space`
-//! selects a radio, flips a toggle or folds a collapsible section, and so
-//! does `Enter` there. `Enter` on a button activates it, and from a line
-//! input the primary one.
-//! `Esc` leaves a line input being edited before it cancels the form.
 
 use crate::app::TextBuffer;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

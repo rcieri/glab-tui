@@ -317,14 +317,6 @@ impl Group {
         self.is_loading
     }
 
-    /// Whether the user changed the group, which keeps values that arrive
-    /// later from overwriting it. The toggles of a group are tracked one by
-    /// one, so this holds once any of them was flipped.
-    pub fn is_touched(&self) -> bool {
-        self.is_touched
-            || matches!(&self.kind, GroupKind::Toggles(toggles) if toggles.items.iter().any(|t| t.is_touched))
-    }
-
     pub fn is_focus_stop(&self) -> bool {
         match &self.kind {
             GroupKind::Radio(radio) => radio.choices.len() > 1,
@@ -1322,7 +1314,7 @@ mod tests {
         let text = form.editor_text(GroupPath::top(0)).unwrap_or_default();
         form.apply_editor_text(GroupPath::top(0), &text);
         assert_eq!(
-            (form.groups()[0].is_touched(), form.groups()[1].is_touched()),
+            (form.groups[0].is_touched, form.groups[1].is_touched),
             (false, false)
         );
     }

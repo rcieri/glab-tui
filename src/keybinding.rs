@@ -263,6 +263,11 @@ pub fn binding_key_event(binding: &str) -> Option<KeyEvent> {
     }
 }
 
+/// Whether `binding` is a key or sequence `keybinding_matches` can match.
+pub(crate) fn is_readable_binding(binding: &str) -> bool {
+    parse_binding(binding).is_some()
+}
+
 /// Every configured key sequence, and every start of one the event loop has
 /// to wait on.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

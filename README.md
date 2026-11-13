@@ -301,7 +301,9 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # Remap any action. A binding is one key ("l", "Ctrl+x", "PageDown", "F5"),
 # a sequence of plain characters typed one after the other ("gg", "gcc"), or a
 # list of either (["j", "Down"]). The keys you set replace the action's default
-# keys: the old key stops triggering it. "" or [] unbinds the action.
+# keys: the old key stops triggering it. "" or [] unbinds the action. A key
+# glab-tui cannot read ("esc", "Ctrl+Shift+N") is reported in the Terminal tab
+# and the action keeps its defaults.
 # While the keys typed so far start a sequence, glab-tui waits for the next one.
 # A sequence that is also the start of a longer one ("g" next to "gg") fires
 # after keybinding_timeout_ms (default 1000) without a key, and a key that

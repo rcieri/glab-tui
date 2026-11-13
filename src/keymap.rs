@@ -10,7 +10,7 @@
 
 use crate::app::Tab;
 use crate::custom_commands::ConfigProblem;
-use crate::keybinding::{KeyPress, keybinding_matches};
+use crate::keybinding::{KeyPress, is_readable_binding, keybinding_matches};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -500,13 +500,25 @@ impl From<RawTables> for Keymap {
                     keymap.report(entry, "not an action glab-tui knows, ignored");
                     continue;
                 };
-                match value.try_into::<BindingValue>() {
-                    Ok(BindingValue::One(key)) => keymap.bindings[action as usize] = vec![key],
-                    Ok(BindingValue::Many(keys)) => keymap.bindings[action as usize] = keys,
+                let keys = match value.try_into::<BindingValue>() {
+                    Ok(BindingValue::One(key)) => vec![key],
+                    Ok(BindingValue::Many(keys)) => keys,
                     Err(_) => {
-                        keymap.report(entry, "expected a key or a list of keys, kept the default")
+                        keymap.report(entry, "expected a key or a list of keys, kept the default");
+                        continue;
                     }
+                };
+                if let Some(unreadable) = keys
+                    .iter()
+                    .find(|key| !key.is_empty() && !is_readable_binding(key))
+                {
+                    keymap.report(
+                        entry,
+                        &format!("{unreadable:?} is not a key glab-tui can read, kept the default"),
+                    );
+                    continue;
                 }
+                keymap.bindings[action as usize] = keys;
             }
         }
         keymap
@@ -727,6 +739,30 @@ mod tests {
                     "expected a key or a list of keys, kept the default"
                 ),
                 problem("keybindings.list", "expected a table of actions, ignored"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_key_keeps_the_default_and_is_reported() {
+        let keymap = keymap(
+            "[dialog]\ncancel = \"esc\"\n[global]\nhelp = \"\"\n[list]\nnext_row = [\"j\", \"down\"]\n",
+        );
+
+        assert_eq!(keymap.bindings(Action::DialogCancel), ["Esc"]);
+        assert_eq!(keymap.bindings(Action::ListNextRow), ["j", "Down"]);
+        assert_eq!(keymap.bindings(Action::GlobalHelp), [""]);
+        assert_eq!(
+            keymap.problems(),
+            [
+                problem(
+                    "keybindings.dialog.cancel",
+                    "\"esc\" is not a key glab-tui can read, kept the default"
+                ),
+                problem(
+                    "keybindings.list.next_row",
+                    "\"down\" is not a key glab-tui can read, kept the default"
+                ),
             ]
         );
     }

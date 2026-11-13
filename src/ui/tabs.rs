@@ -1293,6 +1293,12 @@ pub(crate) fn render_tab_pipelines(
     }
     let icons = ctx.icons;
     let is_github = ctx.kind.is_github();
+    if !Tab::Pipelines.is_fetchable_in(&app.scope, ctx.kind) {
+        let [list, preview] = group_scope_unavailable(app, theme, icons, "Pipelines", main_block);
+        f.render_widget(list, content_area);
+        f.render_widget(preview, detail_rect);
+        return;
+    }
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(if is_github {

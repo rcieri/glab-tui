@@ -2271,42 +2271,7 @@ impl Backend for GlabBackend {
                 }
                 Ok(all)
             }
-            Scope::Group(group) => {
-                let pages = page_count(page_size, per_request);
-                let encoded_group = group.replace('/', "%2F");
-                let requests: Vec<Vec<String>> = (1..=pages)
-                    .map(|page| {
-                        vec![
-                            "api".to_string(),
-                            format!(
-                                "groups/{}/pipelines?per_page={}&page={}",
-                                encoded_group, per_request, page
-                            ),
-                        ]
-                    })
-                    .collect();
-                let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "FETCHING GROUP PIPELINES")
-                        .await,
-                )?;
-
-                let mut all: Vec<Pipeline> = Vec::new();
-                for raw in responses {
-                    let mut pipelines: Vec<Pipeline> =
-                        serde_json::from_str(&raw).unwrap_or_default();
-                    for pipe in &mut pipelines {
-                        if pipe.project_path.is_empty() {
-                            pipe.project_path = pipe
-                                .web_url
-                                .as_deref()
-                                .and_then(crate::git_helpers::parse_project_path_from_web_url)
-                                .unwrap_or_else(|| group.clone());
-                        }
-                    }
-                    all.extend(pipelines);
-                }
-                Ok(all)
-            }
+            Scope::Group(_) => Err(anyhow::anyhow!("Group-level pipelines not supported")),
         }
     }
 

@@ -55,7 +55,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Features
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
-- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
+- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`; pipelines on GitHub organizations only). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
 - **Bulk editing & Visual Select Mode** — select multiple issues, merge requests, or branches with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
 - **Custom commands** — bind a key to your own shell command with the highlighted issue, MR/PR or pipeline as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.PipelineId}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
@@ -663,7 +663,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 ### Pipelines tab
 
-> Remappable via `[keybindings.pipelines]` in `config.toml`.
+> Remappable via `[keybindings.pipelines]` in `config.toml`. GitLab has no group pipelines endpoint, so in GitLab group scope the tab is unavailable.
 
 | Key | Action | Config |
 |---|---|---|

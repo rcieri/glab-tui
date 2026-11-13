@@ -307,9 +307,9 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # after keybinding_timeout_ms (default 1000) without a key, and a key that
 # completes nothing drops what was typed.
 [keybindings.global]
-next_tab = "l"
+next_tab = ["l", "Right"]
 submit_edit = "Ctrl+x"
-scroll_top = "gg"
+scroll_top = ["gg", "Home"]
 help = ["?", "F1"]
 # ...
 

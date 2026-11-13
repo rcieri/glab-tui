@@ -104,3 +104,31 @@ fn own_jobs_key_in_group_scope_fetches_from_the_rows_project() {
         "the group path is not a project; calls:\n{calls}"
     );
 }
+
+/// Group milestones live under `/groups/<group>/-/milestones/`, which only
+/// the milestone's `web_url` names.
+#[test]
+fn opening_a_group_milestone_uses_its_web_url() {
+    let mut session = TestSession::launch_with_args(
+        Sandbox::new(false).unwrap(),
+        30,
+        140,
+        &["-g", "test-group"],
+        &[],
+    );
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.press_keys(&b"l".repeat(7));
+    session
+        .wait_for_screen_contains("Group Roadmap", 5000)
+        .expect("the group milestone is listed");
+
+    session.press_keys(b"o");
+    session
+        .wait_for_cli_call(
+            "browser https://gitlab.com/groups/test-group/-/milestones/3\n",
+            5000,
+        )
+        .expect("the group milestone page should open in the browser");
+}

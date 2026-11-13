@@ -599,6 +599,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                         start_date: None,
                         created_at: String::new(),
                         project_path: project.clone(),
+                        web_url: None,
                     })
                     .collect();
                 cache_updated = true;

@@ -530,6 +530,36 @@ fn test_github_jobs_tab_does_not_offer_start_job() {
     );
 }
 
+/// Opens the highlighted job's page, the URL the job list reported.
+fn open_job_in_browser(github: bool, url: &str) {
+    let mut session = TestSession::new(github, 24, 100);
+    open_jobs_tab(&mut session);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the branch pipeline's jobs are listed");
+
+    session.send_input(b"o");
+    session
+        .wait_for_cli_call(&format!("browser {url}"), 5000)
+        .expect("the job's page is opened");
+}
+
+#[test]
+fn test_github_jobs_tab_opens_the_job_page() {
+    open_job_in_browser(
+        true,
+        "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321",
+    );
+}
+
+#[test]
+fn test_gitlab_jobs_tab_opens_the_job_page() {
+    open_job_in_browser(
+        false,
+        "https://gitlab.com/test-owner/test-repo/-/jobs/54321",
+    );
+}
+
 #[test]
 fn test_gitlab_jobs_help_offers_start_job() {
     let mut session = TestSession::new(false, 60, 100);

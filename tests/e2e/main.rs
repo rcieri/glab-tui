@@ -14,6 +14,7 @@ mod keybindings;
 mod layout;
 mod list_tab;
 mod modal_notices;
+mod open_cli;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;

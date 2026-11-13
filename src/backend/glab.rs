@@ -2852,6 +2852,7 @@ impl Backend for GlabBackend {
             due_date: Option<String>,
             #[serde(default)]
             created_at: String,
+            web_url: Option<String>,
         }
         let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;
         let project_fallback = match scope {
@@ -2870,6 +2871,7 @@ impl Backend for GlabBackend {
                 due_date: m.due_date,
                 created_at: m.created_at,
                 project_path: project_fallback.clone(),
+                web_url: m.web_url,
             })
             .collect())
     }
@@ -2944,7 +2946,7 @@ impl Backend for GlabBackend {
         milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
-        let action = if close { "close" } else { "reopen" };
+        let state = if close { "close" } else { "activate" };
         let desc = if close {
             "CLOSING MILESTONE"
         } else {
@@ -2953,8 +2955,10 @@ impl Backend for GlabBackend {
         self.run_glab(
             &[
                 "milestone",
-                action,
-                &milestone.iid.to_string(),
+                "edit",
+                &milestone.id.to_string(),
+                "--state",
+                state,
                 "-R",
                 project,
             ],
@@ -2975,8 +2979,8 @@ impl Backend for GlabBackend {
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "milestone".into(),
-            "update".into(),
-            milestone.iid.to_string(),
+            "edit".into(),
+            milestone.id.to_string(),
             "-R".into(),
             project.to_string(),
             "--title".into(),
@@ -3008,10 +3012,9 @@ impl Backend for GlabBackend {
             &[
                 "milestone",
                 "delete",
-                &milestone.iid.to_string(),
+                &milestone.id.to_string(),
                 "-R",
                 project,
-                "-y",
             ],
             "Deleting Milestone",
         )
@@ -3520,34 +3523,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_glab(
-                &["job", "view", id, "-R", project, "-w"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_glab(&["job", "view", id, "-w"], "OPENING IN BROWSER")
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
-        self.run_glab(
-            &[
-                "milestone",
-                "view",
-                &milestone.iid.to_string(),
-                "-w",
-                "-R",
-                project,
-            ],
-            "OPENING IN BROWSER",
-        )
-        .await?;
-        Ok(())
+    async fn open_milestone_in_browser(&self, _project: &str, milestone: &Milestone) -> Result<()> {
+        let url = milestone
+            .web_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Milestone URL unavailable; refresh the Milestones tab")
+            })?;
+        open_url(url, self.tx.clone(), "OPENING MILESTONE IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
@@ -3668,17 +3652,9 @@ const RUNNER_DETAILS_QUERY_MAX: usize = 100;
 /// reading `git remote get-url origin` and stripping the path, falling back
 /// to `DEFAULT_GITLAB_HOST` when there is no remote to read. Used to
 /// construct browser URLs for entities whose `glab` subcommand doesn't
-/// ship a `-w` flag (runners, branches, environments).
+/// ship a `-w` flag.
 fn gitlab_host_or_default() -> String {
-    let output = std::process::Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .ok();
-    let host = output
-        .and_then(|out| out.status.success().then_some(out))
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .and_then(|url| crate::git_helpers::parse_remote_host(&url));
-    host.unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
+    crate::git_helpers::remote_host("origin").unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }
 
 /// Percent-encode a branch or environment name for use in a GitLab URL
@@ -4744,6 +4720,23 @@ mod tests {
                 ),
                 (Some(3), Some("f00dfeed"), "bob", true, None, Some(false)),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_milestone_without_a_web_url_is_not_opened() {
+        let milestone = Milestone {
+            iid: 3,
+            project_path: "test-group".to_string(),
+            ..Milestone::default()
+        };
+        let error = GlabBackend::new()
+            .open_milestone_in_browser("test-group", &milestone)
+            .await
+            .expect_err("a milestone without a web_url has no page to open");
+        assert_eq!(
+            error.to_string(),
+            "Milestone URL unavailable; refresh the Milestones tab"
         );
     }
 }

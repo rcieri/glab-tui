@@ -172,6 +172,8 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/todos_done.json"
     elif [[ "$*" == *"/todos"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
+    elif [[ "$*" == *"groups/test-group/milestones"* ]]; then
+        cat "$FIXTURES_DIR/group_milestones.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     else
@@ -224,7 +226,8 @@ elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* 
         || "$*" == "issue close "* || "$*" == "mr close "* \
         || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
         || "$*" == "runner update "* || "$*" == "issue update "* \
-        || "$*" == "mr update "* ]]; then
+        || "$*" == "mr update "* || "$*" == "milestone edit "* \
+        || "$*" == "milestone delete "* ]]; then
     # Mutations whose output glab-tui does not read.
     :
 else

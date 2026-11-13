@@ -2199,6 +2199,7 @@ mod tests {
             due_date: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             project_path: "owner/repo".to_string(),
+            web_url: None,
         };
 
         // Case 1: with progress tuple (3 closed, 5 total)
@@ -2315,6 +2316,7 @@ mod tests {
             due_date: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             project_path: "owner/repo".to_string(),
+            web_url: None,
         };
         let issue = crate::domain::issues::Issue {
             iid: 12,

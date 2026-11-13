@@ -495,7 +495,6 @@ pub trait Backend: Send + Sync {
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()>;
     async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()>;
     async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()>;
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()>;
     async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()>;
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()>;
     async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()>;

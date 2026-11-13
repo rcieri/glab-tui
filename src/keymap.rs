@@ -9,6 +9,7 @@
 //! action's default keys in its context: the old keys stop triggering it.
 
 use crate::app::Tab;
+use crate::custom_commands::ConfigProblem;
 use crate::keybinding::{KeyPress, keybinding_matches};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -444,12 +445,17 @@ enum BindingValue {
 
 type BindingTables = BTreeMap<String, BTreeMap<String, BindingValue>>;
 
+/// `[keybindings]` as written, so an entry the registry does not know is
+/// reported instead of failing the whole config.
+type RawTables = BTreeMap<String, toml::Value>;
+
 /// The keys bound to every action: the registry defaults with the config's
 /// `[keybindings.<table>]` entries in their place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "BindingTables", into = "BindingTables")]
+#[serde(from = "RawTables", into = "BindingTables")]
 pub struct Keymap {
     bindings: Vec<Vec<String>>,
+    problems: Vec<ConfigProblem>,
 }
 
 impl Default for Keymap {
@@ -459,24 +465,49 @@ impl Default for Keymap {
                 .iter()
                 .map(|spec| spec.defaults.iter().map(|key| key.to_string()).collect())
                 .collect(),
+            problems: Vec::new(),
         }
     }
 }
 
-impl From<BindingTables> for Keymap {
-    fn from(tables: BindingTables) -> Self {
+impl From<RawTables> for Keymap {
+    fn from(tables: RawTables) -> Self {
         let mut keymap = Keymap::default();
-        for (action, spec) in Action::ALL.iter().zip(ACTIONS) {
-            let Some(value) = tables
-                .get(spec.context.table())
-                .and_then(|table| table.get(spec.field))
-            else {
-                continue;
+        for (table_name, value) in tables {
+            let table_entry = format!("keybindings.{table_name}");
+            let is_known_table = ACTIONS
+                .iter()
+                .any(|spec| spec.context.table() == table_name);
+            let table = match value {
+                toml::Value::Table(table) if is_known_table => table,
+                _ if is_known_table => {
+                    keymap.report(table_entry, "expected a table of actions, ignored");
+                    continue;
+                }
+                _ => {
+                    keymap.report(
+                        table_entry,
+                        "not a keybinding table glab-tui knows, ignored",
+                    );
+                    continue;
+                }
             };
-            keymap.bindings[*action as usize] = match value {
-                BindingValue::One(key) => vec![key.clone()],
-                BindingValue::Many(keys) => keys.clone(),
-            };
+            for (field, value) in table {
+                let entry = format!("{table_entry}.{field}");
+                let Some(action) = Action::ALL.iter().copied().find(|action| {
+                    action.spec().context.table() == table_name && action.spec().field == field
+                }) else {
+                    keymap.report(entry, "not an action glab-tui knows, ignored");
+                    continue;
+                };
+                match value.try_into::<BindingValue>() {
+                    Ok(BindingValue::One(key)) => keymap.bindings[action as usize] = vec![key],
+                    Ok(BindingValue::Many(keys)) => keymap.bindings[action as usize] = keys,
+                    Err(_) => {
+                        keymap.report(entry, "expected a key or a list of keys, kept the default")
+                    }
+                }
+            }
         }
         keymap
     }
@@ -502,6 +533,18 @@ impl From<Keymap> for BindingTables {
 impl Keymap {
     pub fn bindings(&self, action: Action) -> &[String] {
         &self.bindings[action as usize]
+    }
+
+    /// The `[keybindings]` entries that bind nothing.
+    pub fn problems(&self) -> &[ConfigProblem] {
+        &self.problems
+    }
+
+    fn report(&mut self, entry: String, problem: &str) {
+        self.problems.push(ConfigProblem {
+            binding: entry,
+            problem: problem.to_string(),
+        });
     }
 
     /// Replaces every key of `action`, as a config entry would.
@@ -629,13 +672,63 @@ mod tests {
         assert_eq!(keymap.resolve(KeyContext::Selector, &press("f")), None);
     }
 
+    fn problem(binding: &str, problem: &str) -> ConfigProblem {
+        ConfigProblem {
+            binding: binding.to_string(),
+            problem: problem.to_string(),
+        }
+    }
+
     #[test]
-    fn unlisted_actions_keep_their_defaults_and_unknown_entries_are_ignored() {
-        let keymap =
-            keymap("[issues]\ncreate_issue = \"N\"\nnot_an_action = \"z\"\n[nope]\nx = \"y\"\n");
+    fn unknown_entries_of_any_type_are_reported_and_bind_nothing() {
+        let keymap = keymap(
+            "quit = \"x\"\n[issues]\ncreate_issue = \"N\"\nnot_an_action = 3\n[nope]\nx = \"y\"\n",
+        );
 
         assert_eq!(keymap.bindings(Action::IssuesCreateIssue), ["N"]);
         assert_eq!(keymap.bindings(Action::IssuesEditEntity), ["e"]);
+        assert_eq!(
+            keymap.problems(),
+            [
+                problem(
+                    "keybindings.issues.not_an_action",
+                    "not an action glab-tui knows, ignored"
+                ),
+                problem(
+                    "keybindings.nope",
+                    "not a keybinding table glab-tui knows, ignored"
+                ),
+                problem(
+                    "keybindings.quit",
+                    "not a keybinding table glab-tui knows, ignored"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_key_keeps_the_default_and_is_reported() {
+        let keymap = keymap("list = \"x\"\n[global]\nhelp = 3\nquit = [\"q\", 1]\n");
+
+        assert_eq!(keymap.bindings(Action::GlobalHelp), ["?", "F1"]);
+        assert_eq!(
+            keymap.bindings(Action::GlobalQuit),
+            Keymap::default().bindings(Action::GlobalQuit)
+        );
+        assert_eq!(
+            keymap.problems(),
+            [
+                problem(
+                    "keybindings.global.help",
+                    "expected a key or a list of keys, kept the default"
+                ),
+                problem(
+                    "keybindings.global.quit",
+                    "expected a key or a list of keys, kept the default"
+                ),
+                problem("keybindings.list", "expected a table of actions, ignored"),
+            ]
+        );
     }
 
     #[test]

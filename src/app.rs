@@ -5578,22 +5578,37 @@ impl App {
     }
 
     /// Rebuilds `custom_commands` from the current config, logging every
-    /// ignored or shadowed entry in the terminal log.
-    pub fn load_custom_commands(&mut self) {
-        let (commands, problems) = crate::custom_commands::CustomCommands::load(&self.config);
+    /// `[keybindings]` entry that binds nothing and every ignored or shadowed
+    /// custom keybinding in the terminal log.
+    pub fn load_keybindings(&mut self) {
+        let (commands, custom_problems) =
+            crate::custom_commands::CustomCommands::load(&self.config);
         self.custom_commands = commands;
+        let problems: Vec<_> = self
+            .config
+            .keybindings
+            .problems()
+            .iter()
+            .cloned()
+            .map(|problem| ("Keybinding", problem))
+            .chain(
+                custom_problems
+                    .into_iter()
+                    .map(|problem| ("Custom keybinding", problem)),
+            )
+            .collect();
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        for problem in &problems {
+        for (kind, problem) in &problems {
             self.terminal_commands.push(TerminalCommand {
                 timestamp: timestamp.clone(),
-                command: format!("Custom keybinding: {}", problem.binding),
+                command: format!("{kind}: {}", problem.binding),
                 status: format!("Failed: {}", problem.problem),
                 ..Default::default()
             });
         }
         if !problems.is_empty() {
             self.raise_error_toast(format!(
-                "{} custom keybinding problem(s); see the Terminal tab",
+                "{} keybinding problem(s); see the Terminal tab",
                 problems.len()
             ));
         }
@@ -6080,7 +6095,7 @@ impl App {
             }
         }
         app.apply_config();
-        app.load_custom_commands();
+        app.load_keybindings();
         app
     }
 
@@ -14105,6 +14120,39 @@ index 123456..789012 100644
         assert_eq!(
             resolved(&mut app),
             vec![crate::keybinding::KeyPress::Key(ctrl_q)]
+        );
+    }
+
+    #[test]
+    fn an_unknown_keybinding_entry_is_logged_and_keeps_the_rest_of_the_config() {
+        let mut app = App {
+            config: toml::from_str(
+                "theme_preset = \"nord\"\n[keybindings]\nquit = \"x\"\n[keybindings.issues]\nfoo = 3\n",
+            )
+            .expect("config with stray keybinding entries parses"),
+            ..App::default()
+        };
+
+        app.load_keybindings();
+
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+        let logged: Vec<(&str, &str)> = app
+            .terminal_commands
+            .iter()
+            .map(|entry| (entry.command.as_str(), entry.status.as_str()))
+            .collect();
+        assert_eq!(
+            logged,
+            [
+                (
+                    "Keybinding: keybindings.issues.foo",
+                    "Failed: not an action glab-tui knows, ignored"
+                ),
+                (
+                    "Keybinding: keybindings.quit",
+                    "Failed: not a keybinding table glab-tui knows, ignored"
+                ),
+            ]
         );
     }
 

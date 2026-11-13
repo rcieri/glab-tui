@@ -395,8 +395,8 @@ registry! {
     DialogCancel => ActionSpec::new(Dialog, "cancel", &["Esc"], "Cancel");
 }
 
-/// Global actions that still act while the diff view is open: the overlay
-/// chain in the key router runs them before the diff view sees the key.
+/// Global actions that still act while the diff view is open, ahead of the
+/// diff view's own actions.
 pub const DIFF_VIEW_GLOBAL_ACTIONS: &[Action] = &[
     Action::GlobalForceQuit,
     Action::GlobalHelp,

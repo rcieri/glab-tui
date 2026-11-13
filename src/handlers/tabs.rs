@@ -3629,7 +3629,7 @@ pub(crate) mod tests {
 
     /// Dispatches `key_event` through `handle_active_tab_key`, discarding the
     /// effects it asks for.
-    fn dispatch(app: &mut App, key_event: &KeyEvent) {
+    pub(crate) fn dispatch(app: &mut App, key_event: &KeyEvent) {
         dispatch_press(app, &KeyPress::from(*key_event));
     }
 
@@ -4966,7 +4966,7 @@ pub(crate) mod tests {
         assert!(dialog.is_on_cancel());
     }
 
-    /// A fixture App for `confirm::confirmation`'s coverage test: one row
+    /// A fixture App for the destructive-action coverage test: one row
     /// selected on the action's tab (plus a deployment for rollback, and a
     /// pipeline/job context for jobs).
     pub(crate) fn app_for_destructive_action(action: crate::keymap::Action) -> App {

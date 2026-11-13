@@ -221,18 +221,23 @@ fn rollback_deployment(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handlers::tabs::tests::{app_for_destructive_action, dispatch};
     use crate::keymap::KeyContext;
+    use crossterm::event::{KeyCode, KeyEvent};
 
     #[test]
-    fn every_destructive_action_opens_a_destructive_dialog() {
+    fn every_destructive_action_remapped_to_f9_opens_a_destructive_dialog() {
         for action in Action::ALL.iter().filter(|a| a.is_destructive()) {
-            let mut app = super::super::tabs::tests::app_for_destructive_action(*action);
+            let mut app = app_for_destructive_action(*action);
             assert_eq!(
                 action.context(),
                 KeyContext::Tab(app.active_tab),
                 "{action:?} is not a tab action"
             );
-            confirmation(&mut app, *action);
+            app.config.keybindings.set(*action, &["F9"]);
+
+            dispatch(&mut app, &KeyEvent::from(KeyCode::F(9)));
+
             let dialog = app
                 .submit_dialog
                 .as_ref()

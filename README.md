@@ -980,7 +980,7 @@ Releases are prepared and distributed from a maintainer's machine; CI only build
 scripts/release.sh [patch|minor|major|nightly]   # default: patch
 ```
 
-`scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.
+`scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.
 
 Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final publish step), `jq`, and `vhs`/`ttyd`/`ffmpeg`/JetBrainsMono Nerd Font for the demo recordings. The script fails fast with a clear message when a prerequisite is missing.
 

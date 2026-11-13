@@ -526,19 +526,18 @@ prepare() {
   bump_cargo_version
   spinner "Building release binary" cargo build --release
 
-  note "Regenerating CHANGELOG.md / AGENTS.md / README.md via ${AI_TOOL}..."
+  note "Regenerating CHANGELOG.md / README.md via ${AI_TOOL}..."
   PROMPT="We are prepping a new repository release. The upcoming version tag is going to be: $NEW_TAG.
 
-Your task is to analyze the git commits, merged pull requests, and codebase changes since the last version tag, and update the following three files directly in the workspace:
+Your task is to analyze the git commits, merged pull requests, and codebase changes since the last version tag, and update the following two files directly in the workspace:
 
 1. CHANGELOG.md: Prepend a beautifully structured, developer-friendly update section for version $NEW_TAG at the top of the file, cleanly breaking down Features, Bug Fixes, and Maintenance.
-2. AGENTS.md: Update any agent guidelines, automation logs, or architecture schemas affected by our latest feature set or dependencies. Ensure versioning matrices match $NEW_TAG.
-3. README.md: Scan for installation commands, setup instructions, or documentation badges displaying the old version string, and replace them cleanly with version $NEW_TAG.
+2. README.md: Scan for installation commands, setup instructions, or documentation badges displaying the old version string, and replace them cleanly with version $NEW_TAG.
 
-The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSION; do not modify those files. Save and write these file modifications directly back into the working directory."
+The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSION; do not modify those files or any file other than CHANGELOG.md and README.md. Save and write these file modifications directly back into the working directory."
 
   run_ai "$PROMPT"
-  ok "CHANGELOG.md / AGENTS.md / README.md regenerated"
+  ok "CHANGELOG.md / README.md regenerated"
 }
 
 # ---------------------------------------------------------------------------
@@ -562,7 +561,7 @@ generate_gifs() {
   ok "demo GIFs regenerated"
 
   # Stage and commit the GIFs (and any other outstanding prepare changes).
-  git add CHANGELOG.md AGENTS.md README.md Cargo.toml Cargo.lock assets/demo-*.gif
+  git add CHANGELOG.md README.md Cargo.toml Cargo.lock assets/demo-*.gif
   if ! git diff --cached --quiet; then
     git commit -m "chore: prepare release $NEW_TAG"
   fi
@@ -575,7 +574,7 @@ generate_gifs() {
       --title "chore: prepare release $NEW_TAG" \
       --body "Automated release preparation for **$NEW_TAG**.
 
-Regenerated CHANGELOG.md, AGENTS.md, README.md, and demo GIFs. Bumped the crate version to $VERSION.
+Regenerated CHANGELOG.md, README.md, and demo GIFs. Bumped the crate version to $VERSION.
 
 Review, then this script will merge and cut the release.")"
     PR_NUMBER="$(basename "$PR_URL")"

@@ -559,8 +559,10 @@ impl Keymap {
         });
     }
 
-    /// Replaces every key of `action`, as a config entry would.
-    pub fn set(&mut self, action: Action, keys: &[&str]) {
+    /// Replaces every key of `action`, without the checks a config entry
+    /// goes through.
+    #[cfg(test)]
+    pub(crate) fn set(&mut self, action: Action, keys: &[&str]) {
         self.bindings[action as usize] = keys.iter().map(|key| key.to_string()).collect();
     }
 

@@ -692,14 +692,16 @@ fn line_input_row(
     let is_editing = focus == Focus::Editing(path);
     let is_focused = is_editing || focus == Focus::Group(path);
     let counter = input
-        .soft_limit
+        .soft_char_limit
         .map(|limit| format!(" {}/{limit}", input.char_count()))
         .unwrap_or_default();
-    let counter_style = Style::default().bg(theme.bg).fg(if input.is_over_limit() {
-        theme.yellow
-    } else {
-        theme.accent
-    });
+    let counter_style = Style::default()
+        .bg(theme.bg)
+        .fg(if input.is_over_char_limit() {
+            theme.yellow
+        } else {
+            theme.accent
+        });
     let field_width = width
         .saturating_sub(Span::raw(counter.as_str()).width())
         .max(1);

@@ -160,16 +160,14 @@ impl Toggles {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LineInput {
     pub buffer: TextBuffer,
-    /// Characters past which the counter turns to a warning colour. The text
-    /// may still grow past it.
-    pub soft_limit: Option<usize>,
+    pub soft_char_limit: Option<usize>,
 }
 
 impl LineInput {
-    pub fn new(value: String, soft_limit: Option<usize>) -> Self {
+    pub fn new(value: String, soft_char_limit: Option<usize>) -> Self {
         Self {
             buffer: TextBuffer::new(value),
-            soft_limit,
+            soft_char_limit,
         }
     }
 
@@ -177,8 +175,8 @@ impl LineInput {
         self.buffer.value().chars().count()
     }
 
-    pub fn is_over_limit(&self) -> bool {
-        self.soft_limit
+    pub fn is_over_char_limit(&self) -> bool {
+        self.soft_char_limit
             .is_some_and(|limit| self.char_count() > limit)
     }
 }
@@ -1291,11 +1289,11 @@ mod tests {
     }
 
     #[test]
-    fn the_counter_warns_past_the_soft_limit_without_cutting_the_text() {
+    fn the_counter_warns_past_the_soft_char_limit_without_cutting_the_text() {
         let mut input = LineInput::new("12345".into(), Some(5));
-        assert!(!input.is_over_limit());
+        assert!(!input.is_over_char_limit());
         input.buffer.insert_char('6');
-        assert!(input.is_over_limit());
+        assert!(input.is_over_char_limit());
         assert_eq!(input.char_count(), 6);
     }
 

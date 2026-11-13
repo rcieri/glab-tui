@@ -565,9 +565,12 @@ fn color_to_hex(c: Color) -> String {
     }
 }
 
-/// Share of a diff row's foreground mixed into its background to derive the
-/// word-emphasis background of a theme that sets none.
 const DIFF_EMPHASIS_FG_SHARE: f32 = 0.3;
+
+/// Background of the words a diff row changed, derived from the row's colours.
+fn diff_emphasis_bg(row_fg: Color, row_bg: Color) -> Color {
+    blend(row_bg, row_fg, DIFF_EMPHASIS_FG_SHARE)
+}
 
 /// Mixes `share` of `toward` into `base`. Anything but two RGB colours (a
 /// `Reset` background, say) leaves `base` unchanged.
@@ -722,13 +725,13 @@ impl ThemeToml {
             diff_addition_bg,
             diff_addition_emph_bg: hex_or(
                 &self.diff_addition_emph_bg,
-                blend(diff_addition_bg, diff_addition_fg, DIFF_EMPHASIS_FG_SHARE),
+                diff_emphasis_bg(diff_addition_fg, diff_addition_bg),
             ),
             diff_deletion_fg,
             diff_deletion_bg,
             diff_deletion_emph_bg: hex_or(
                 &self.diff_deletion_emph_bg,
-                blend(diff_deletion_bg, diff_deletion_fg, DIFF_EMPHASIS_FG_SHARE),
+                diff_emphasis_bg(diff_deletion_fg, diff_deletion_bg),
             ),
             diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
             diff_sep: hex_or(&self.diff_sep, text_muted),
@@ -991,11 +994,7 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.diff_addition_fg, &overrides.diff_addition_fg);
     apply_color(&mut base.diff_addition_bg, &overrides.diff_addition_bg);
     if (base.diff_addition_fg, base.diff_addition_bg) != addition_row {
-        base.diff_addition_emph_bg = blend(
-            base.diff_addition_bg,
-            base.diff_addition_fg,
-            DIFF_EMPHASIS_FG_SHARE,
-        );
+        base.diff_addition_emph_bg = diff_emphasis_bg(base.diff_addition_fg, base.diff_addition_bg);
     }
     apply_color(
         &mut base.diff_addition_emph_bg,
@@ -1005,11 +1004,7 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.diff_deletion_fg, &overrides.diff_deletion_fg);
     apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
     if (base.diff_deletion_fg, base.diff_deletion_bg) != deletion_row {
-        base.diff_deletion_emph_bg = blend(
-            base.diff_deletion_bg,
-            base.diff_deletion_fg,
-            DIFF_EMPHASIS_FG_SHARE,
-        );
+        base.diff_deletion_emph_bg = diff_emphasis_bg(base.diff_deletion_fg, base.diff_deletion_bg);
     }
     apply_color(
         &mut base.diff_deletion_emph_bg,

@@ -429,9 +429,15 @@ pub fn handle_key(
                 } else {
                     diff_view.selection_start = Some(diff_view.cursor_idx);
                     diff_view.selection_end = Some(diff_view.cursor_idx);
-                    app.show_notice(
-                        "Selection started. Use j/k to extend, Esc to cancel, c to comment.",
+                    let keys = &app.config.keybindings;
+                    let notice = format!(
+                        "Selection started. Use {} and {} to extend, {} to cancel, {} to comment.",
+                        keys.display(Action::DiffNextLine),
+                        keys.display(Action::DiffPreviousLine),
+                        keys.display(Action::DiffBack),
+                        keys.display(Action::DiffComment),
                     );
+                    app.show_notice(notice);
                 }
             }
             app.diff_view = Some(diff_view);
@@ -443,10 +449,14 @@ pub fn handle_key(
                 // the very first press silently no-op.
                 // Surface that explicitly via the floating
                 // toast (#483).
-                app.show_error(
-                    "Press `l` or `Tab` to focus the diff before pressing `a` on a line."
-                        .to_string(),
+                let keys = &app.config.keybindings;
+                let error = format!(
+                    "Press `{}` or `{}` to focus the diff before pressing `{}` on a line.",
+                    keys.display(Action::DiffFocusDiff),
+                    keys.display(Action::DiffToggleFocus),
+                    keys.display(Action::DiffCommentActions),
                 );
+                app.show_error(error);
             } else {
                 let sline = if diff_view.side_by_side {
                     diff_view
@@ -702,6 +712,24 @@ mod tests {
         assert!(
             app.diff_view.as_ref().unwrap().side_by_side,
             "the new key must trigger the remapped action"
+        );
+    }
+
+    #[test]
+    fn the_focus_hint_names_the_keys_the_config_binds() {
+        let mut app = App::default();
+        open_diff(&mut app);
+        app.diff_view.as_mut().unwrap().focus_on_files = true;
+        app.config
+            .keybindings
+            .set(Action::DiffCommentActions, &["x"]);
+        app.config.keybindings.set(Action::DiffFocusDiff, &["o"]);
+
+        press(&mut app, KeyCode::Char('x'));
+
+        assert_eq!(
+            app.toast_notice().map(|notice| notice.text()),
+            Some("Press `o` or `Tab` to focus the diff before pressing `x` on a line.")
         );
     }
 

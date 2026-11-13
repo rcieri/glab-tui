@@ -87,8 +87,6 @@ enum Outcome {
     StayOpen,
 }
 
-/// Submits, cancels or picks the focused button, or toggles the focused
-/// option.
 fn activate(dialog: &mut crate::app::SubmitDialog) -> Outcome {
     if dialog.is_on_submit() {
         Outcome::Submit

@@ -646,14 +646,13 @@ fn line_input_row(
         field
     };
 
-    let (head, tail) = input
-        .buffer
-        .value()
-        .split_at(input.buffer.cursor_byte_offset());
-    let (head, tail) = (displayable(head), displayable(tail));
+    let value = input.buffer.value();
+    let shown = displayable(value);
+    let cursor = displayable(&value[..input.buffer.cursor_byte_offset()]).len();
+    let (head, tail) = shown.split_at_checked(cursor).unwrap_or((&shown, ""));
     let (under_cursor, rest) = tail.split_at(tail.chars().next().map_or(0, char::len_utf8));
     let cursor_columns = Span::raw(under_cursor).width().max(1);
-    let head = suffix_within(&head, field_width.saturating_sub(cursor_columns));
+    let head = suffix_within(head, field_width.saturating_sub(cursor_columns));
     let rest = prefix_within(
         rest,
         field_width.saturating_sub(Span::raw(head).width() + cursor_columns),
@@ -1241,6 +1240,18 @@ mod tests {
         let mut input = LineInput::new("ab\u{1b}[31mcd".into(), None);
         input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
         input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
+        let row = line_input_row(&input, GroupPath::top(0), true, true, &theme, 20);
+        let spans: Vec<&str> = row.line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(spans[..3], ["ab", "c", "d"]);
+    }
+
+    #[test]
+    fn the_cursor_inside_an_escape_sequence_does_not_reveal_its_tail() {
+        let theme = Theme::default();
+        let mut input = LineInput::new("ab\u{1b}[31mcd".into(), None);
+        for _ in 0..5 {
+            input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
+        }
         let row = line_input_row(&input, GroupPath::top(0), true, true, &theme, 20);
         let spans: Vec<&str> = row.line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(spans[..3], ["ab", "c", "d"]);

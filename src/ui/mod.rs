@@ -2,6 +2,7 @@ mod diff;
 mod helpers;
 pub(crate) mod inspector;
 pub mod job_trace;
+pub mod layout;
 pub mod list_tab;
 pub(crate) mod modal;
 mod overlays;
@@ -237,9 +238,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
         size,
     );
 
+    let plan = app.compute_layout(size);
+    app.layout = Some(plan);
+    app.sidebar_rect = Some(plan.sidebar_rect);
+    app.content_rect = Some(plan.content_area);
+    app.detail_rect = plan.detail_rect_opt();
+
     // Minimum terminal size guard
-    if size.width < 54 || size.height < 10 {
-        let msg = format!("Terminal too small — resize to at least {}×{}", 54, 10);
+    if plan.is_too_small {
+        let msg = format!(
+            "Terminal too small — resize to at least {}×{}",
+            layout::MIN_TERMINAL_WIDTH,
+            layout::MIN_TERMINAL_HEIGHT
+        );
         f.render_widget(
             Paragraph::new(msg)
                 .alignment(Alignment::Center)
@@ -248,17 +259,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         );
         return;
     }
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // Top header bar
-            Constraint::Min(0),    // Main workspace
-            Constraint::Length(0), // Reserved
-        ])
-        .split(size);
-
-    let title_area = chunks[0];
 
     // Top: Title & Context
     let icons = ctx.icons;
@@ -344,12 +344,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     }
 
-    // Top banner split into left content and a right-aligned mode indicator.
-    let banner = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(12)])
-        .split(title_area);
-
     let title = Paragraph::new(Line::from(title_spans))
         .style(Style::default().bg(ctx.theme.bg))
         .block(
@@ -357,87 +351,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .borders(Borders::BOTTOM)
                 .border_style(Style::default().fg(ctx.theme.border)),
         );
-    f.render_widget(title, banner[0]);
-    render_mode_indicator(f, ctx, app, banner[1]);
+    f.render_widget(title, plan.banner_title);
+    render_mode_indicator(f, ctx, app, plan.banner_mode);
 
-    // Middle: Sidebar | Main Area | Preview Area
-    let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
-
-    let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
-        Constraint::Length(app.config.ui.sidebar_width)
-    } else {
-        Constraint::Length(0)
-    };
-
-    let details_width = if !app.detail_visible || size.width < 90 {
-        Constraint::Max(0)
-    } else if size.width > 150 {
-        Constraint::Percentage(35)
-    } else if size.width > 100 {
-        Constraint::Length(45)
-    } else {
-        Constraint::Length(30)
-    };
-
-    // When an edit/create menu is active, force the detail pane to full-zoom
-    // (exactly like the preview's zoomed state) so the form fills the workspace.
-    let edit_zoomed = app.edit_menu().is_some();
-
-    let middle_chunks_raw = if (app.details_zoomed && can_zoom) || edit_zoomed {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(0),
-                Constraint::Length(0),
-                Constraint::Min(0),
-            ])
-            .split(chunks[1])
-    } else if app.active_tab == Tab::Terminal {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([sidebar_width, Constraint::Min(0), Constraint::Length(0)])
-            .split(chunks[1])
-    } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([sidebar_width, Constraint::Min(0), details_width])
-            .split(chunks[1])
-    };
-    let [sidebar_rect, content_rect, mut detail_rect] = [
-        middle_chunks_raw[0],
-        middle_chunks_raw[1],
-        middle_chunks_raw[2],
-    ];
-    if !app.detail_visible && !app.details_zoomed && !edit_zoomed {
-        detail_rect = Rect::default();
-    }
-
-    // Split middle column vertically: main content area + compact terminal pane
-    let term_height = if app.active_tab != Tab::Terminal
-        && size.height >= 18
-        && app.config.ui.terminal_pane_visible
-    {
-        6
-    } else {
-        0
-    };
-    let (content_area, term_area) = if term_height > 0 {
-        let tc = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(term_height)])
-            .split(content_rect);
-        (tc[0], tc[1])
-    } else {
-        (content_rect, Rect::default())
-    };
-
-    app.sidebar_rect = Some(sidebar_rect);
-    app.content_rect = Some(content_area);
-    app.detail_rect = if detail_rect.width > 0 {
-        Some(detail_rect)
-    } else {
-        None
-    };
+    let sidebar_rect = plan.sidebar_rect;
+    let content_area = plan.content_area;
+    let detail_rect = plan.detail_rect;
+    let term_area = plan.term_area;
 
     // Sidebar: Tabs
     let kind = ctx.kind;

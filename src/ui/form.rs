@@ -552,7 +552,7 @@ fn wrapped_ranges(text: &str, width: usize) -> impl Iterator<Item = Range<usize>
         let row = &text[range.clone()];
         let start = range.start + (row.len() - row.trim_start().len());
         let end = range.start + row.trim_end().len();
-        (range.is_empty() || start < end).then_some(start..end.max(start))
+        (range.is_empty() || start < end).then_some(start..end)
     })
 }
 

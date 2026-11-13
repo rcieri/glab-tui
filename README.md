@@ -623,7 +623,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `s` | Toggle Draft / Ready status | `toggle_draft` |
 | `c` | Close selected MR | `close_entity` |
 | `r` | Reopen selected MR | `reopen_entity` |
-| `d` | Delete selected MR (with confirmation) | `delete_entity` |
+| `d` | Delete selected MR (with confirmation) *(GitLab only)* | `delete_entity` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 

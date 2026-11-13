@@ -223,7 +223,7 @@ registry! {
     MrsEditEntity => ActionSpec::new(MRS, "edit_entity", &["e"], "Open parameter edit menu (bulk edit with a selection)");
     MrsCloseEntity => ActionSpec::new(MRS, "close_entity", &["c"], "Close selected {mr}").destructive();
     MrsReopenEntity => ActionSpec::new(MRS, "reopen_entity", &["r"], "Reopen selected {mr}").destructive();
-    MrsDeleteEntity => ActionSpec::new(MRS, "delete_entity", &["d"], "Delete selected {mr}").destructive();
+    MrsDeleteEntity => ActionSpec::new(MRS, "delete_entity", &["d"], "Delete selected {mr}").destructive().only(Support::GitLab);
     MrsSelectMr => ActionSpec::new(MRS, "select_mr", &["Space"], "Toggle {mr} selection (bulk edit/merge with e/m)");
     MrsOpenInBrowser => ActionSpec::new(MRS, "open_in_browser", &["o"], "Open selected {mr} in browser");
     MrsSelectionToggle => ActionSpec::new(MRS, "selection_toggle", &["v"], "Toggle select mode (paint selection while navigating)");

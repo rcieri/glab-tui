@@ -1642,6 +1642,7 @@ mod tests {
         assert!(text.contains("Approve selected MR"));
         assert!(text.contains("Open selected MR in browser"));
         assert!(text.contains("View related pipelines for selected MR"));
+        assert!(text.contains("Delete selected MR"));
     }
 
     #[test]
@@ -1681,6 +1682,7 @@ mod tests {
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related pipelines for selected PR"));
         assert!(text.contains("Create new Pull Request"));
+        assert!(!text.contains("Delete selected PR"), "{text:?}");
     }
 
     #[test]

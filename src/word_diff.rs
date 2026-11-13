@@ -1,5 +1,5 @@
+use similar::DiffOp;
 use similar::algorithms::{Capture, myers};
-use similar::{DiffOp, diff_ratio};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -42,7 +42,7 @@ pub fn changed_ranges(old: &str, new: &str) -> Option<ChangedRanges> {
         0..new_words.words.len(),
     );
     let ops = capture.into_ops();
-    if diff_ratio(&ops, old_words.words.len(), new_words.words.len()) < MIN_UNCHANGED_RATIO {
+    if unchanged_word_ratio(&ops, &old_words, &new_words) < MIN_UNCHANGED_RATIO {
         return None;
     }
     let mut changed = ChangedRanges::default();
@@ -58,6 +58,22 @@ pub fn changed_ranges(old: &str, new: &str) -> Option<ChangedRanges> {
         }
     }
     Some(changed)
+}
+
+/// Share of the two lines' words that the diff kept, counting only segments
+/// with a letter or digit: spaces and punctuation are shared by most code
+/// lines and would let a rewritten line pass as an edit.
+fn unchanged_word_ratio(ops: &[DiffOp], old: &Words, new: &Words) -> f32 {
+    let total = old.word_count(0..old.words.len()) + new.word_count(0..new.words.len());
+    if total == 0 {
+        return 1.0;
+    }
+    let unchanged: usize = ops
+        .iter()
+        .filter(|op| matches!(op, DiffOp::Equal { .. }))
+        .map(|op| old.word_count(op.old_range()))
+        .sum();
+    (2 * unchanged) as f32 / total as f32
 }
 
 /// A line split at its word boundaries. The words partition the line, so
@@ -77,6 +93,13 @@ impl<'a> Words<'a> {
 
     fn byte_range(&self, words: Range<usize>) -> Range<usize> {
         self.starts[words.start]..self.starts[words.end]
+    }
+
+    fn word_count(&self, words: Range<usize>) -> usize {
+        self.words[words]
+            .iter()
+            .filter(|word| word.chars().any(char::is_alphanumeric))
+            .count()
     }
 }
 
@@ -132,6 +155,15 @@ mod tests {
     fn a_rewritten_line_gets_no_marks() {
         assert_eq!(
             changed_ranges("return cache.get(key);", "panic!(\"unreachable\")"),
+            None
+        );
+    }
+
+    #[test]
+    fn shared_punctuation_does_not_make_a_rewritten_line_an_edit() {
+        assert_eq!(changed_ranges("foo(a, b);", "bar(c, d);"), None);
+        assert_eq!(
+            changed_ranges("let foo = bar(baz, qux);", "let aaa = bbb(ccc, ddd);"),
             None
         );
     }

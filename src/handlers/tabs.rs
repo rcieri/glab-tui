@@ -786,7 +786,8 @@ pub fn handle_active_tab_key(
     if let Some(action) = Action::in_context(KeyContext::Tab(app.active_tab))
         .find(|a| a.is_destructive() && app.config.keybindings.matches(*a, key_event))
     {
-        return crate::handlers::confirm::confirmation(app, action);
+        crate::handlers::confirm::confirmation(app, action);
+        return true;
     }
     let mut handled = true;
     match app.active_tab {

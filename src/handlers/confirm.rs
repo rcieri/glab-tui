@@ -7,10 +7,8 @@ use crate::app::{App, ConfirmAction, SubmitDialog};
 use crate::handlers::tabs::NO_DEPLOYMENT_SELECTED;
 use crate::keymap::Action;
 
-/// Builds and opens the dialog for `action`'s current selection. Returns
-/// `false` only when `action` is not one this module knows, in which case
-/// the caller should fall through to its own handling.
-pub fn confirmation(app: &mut App, action: Action) -> bool {
+/// Builds and opens the dialog for `action`'s current selection.
+pub fn confirmation(app: &mut App, action: Action) {
     match action {
         Action::IssuesCloseEntity => selected_issue(app, ConfirmAction::CloseIssue),
         Action::IssuesReopenEntity => selected_issue(app, ConfirmAction::ReopenIssue),
@@ -32,21 +30,18 @@ pub fn confirmation(app: &mut App, action: Action) -> bool {
         Action::BranchesDeleteBranch => delete_branch(app),
         Action::EnvironmentsStopEnvironment => stop_environment(app),
         Action::EnvironmentsRollbackDeployment => rollback_deployment(app),
-        Action::TodosMarkAllAsRead => {
-            crate::handlers::todos::confirm_mark_all_read(app);
-            true
-        }
-        _ => false,
+        Action::TodosMarkAllAsRead => crate::handlers::todos::confirm_mark_all_read(app),
+        _ => {}
     }
 }
 
-fn selected_issue(app: &mut App, build: fn(u64) -> ConfirmAction) -> bool {
+fn selected_issue(app: &mut App, build: fn(u64) -> ConfirmAction) {
     let Some(selected_idx) = app.issues.state.selected() else {
-        return true;
+        return;
     };
     let filtered = app.filtered_issues();
     let Some(issue) = filtered.get(selected_idx) else {
-        return true;
+        return;
     };
     let issue_iid = issue.iid;
     let project_path = app.scope.project_of(&issue.project_path).to_string();
@@ -55,15 +50,14 @@ fn selected_issue(app: &mut App, build: fn(u64) -> ConfirmAction) -> bool {
         project_path,
         app,
     ));
-    true
 }
 
-fn selected_mr(app: &mut App, build: fn(u64) -> ConfirmAction) -> bool {
+fn selected_mr(app: &mut App, build: fn(u64) -> ConfirmAction) {
     let Some(selected_idx) = app.mrs.state.selected() else {
-        return true;
+        return;
     };
     let Some(mr) = app.filtered_mrs().get(selected_idx).cloned().cloned() else {
-        return true;
+        return;
     };
     let project_path = app.scope.project_of(&mr.project_path).to_string();
     app.submit_dialog = Some(SubmitDialog::build_with_project(
@@ -71,10 +65,9 @@ fn selected_mr(app: &mut App, build: fn(u64) -> ConfirmAction) -> bool {
         project_path,
         app,
     ));
-    true
 }
 
-fn revoke_mr(app: &mut App) -> bool {
+fn revoke_mr(app: &mut App) {
     let is_github = app
         .gitlab_client
         .as_ref()
@@ -82,12 +75,12 @@ fn revoke_mr(app: &mut App) -> bool {
         .unwrap_or(false);
     if is_github {
         app.show_error("Revoking approval isn't supported on GitHub".to_string());
-        return true;
+        return;
     }
     selected_mr(app, ConfirmAction::RevokeMr)
 }
 
-fn delete_mr(app: &mut App) -> bool {
+fn delete_mr(app: &mut App) {
     let is_github = app
         .gitlab_client
         .as_ref()
@@ -95,17 +88,17 @@ fn delete_mr(app: &mut App) -> bool {
         .unwrap_or(false);
     if is_github {
         app.show_error("GitHub does not support deleting pull requests".to_string());
-        return true;
+        return;
     }
     selected_mr(app, ConfirmAction::DeleteMr)
 }
 
-fn cancel_pipeline(app: &mut App) -> bool {
+fn cancel_pipeline(app: &mut App) {
     let Some(selected_idx) = app.pipelines.state.selected() else {
-        return true;
+        return;
     };
     let Some(pipe_id) = app.filtered_pipelines().get(selected_idx).map(|p| p.id()) else {
-        return true;
+        return;
     };
     let project_path = app.project_path_for_pipeline(pipe_id);
     app.submit_dialog = Some(SubmitDialog::build_with_project(
@@ -113,15 +106,14 @@ fn cancel_pipeline(app: &mut App) -> bool {
         project_path,
         app,
     ));
-    true
 }
 
-fn cancel_jobs(app: &mut App) -> bool {
+fn cancel_jobs(app: &mut App) {
     let Some(idx) = app.jobs.state.selected() else {
-        return true;
+        return;
     };
     let Some(job_id) = app.filtered_jobs().get(idx).map(|j| j.id()) else {
-        return true;
+        return;
     };
     let pipe_id = app.active_pipeline_id.unwrap_or(0);
     let project_path = app.project_path_for_pipeline(pipe_id);
@@ -140,28 +132,26 @@ fn cancel_jobs(app: &mut App) -> bool {
         project_path,
         app,
     ));
-    true
 }
 
-fn delete_release(app: &mut App) -> bool {
+fn delete_release(app: &mut App) {
     let Some(release) = app.releases.cursor_row() else {
-        return true;
+        return;
     };
     app.submit_dialog = Some(SubmitDialog::build_with_project(
         ConfirmAction::DeleteRelease(release.tag_name.clone()),
         release.project_or(&app.scope).to_string(),
         app,
     ));
-    true
 }
 
-fn selected_milestone(app: &mut App, build: fn(u64) -> ConfirmAction) -> bool {
+fn selected_milestone(app: &mut App, build: fn(u64) -> ConfirmAction) {
     let Some(selected_idx) = app.milestones.state.selected() else {
-        return true;
+        return;
     };
     let filtered = app.filtered_milestones();
     let Some(milestone) = filtered.get(selected_idx) else {
-        return true;
+        return;
     };
     let milestone_iid = milestone.iid;
     let project_path = app.scope.project_of(&milestone.project_path).to_string();
@@ -170,10 +160,9 @@ fn selected_milestone(app: &mut App, build: fn(u64) -> ConfirmAction) -> bool {
         project_path,
         app,
     ));
-    true
 }
 
-fn delete_branch(app: &mut App) -> bool {
+fn delete_branch(app: &mut App) {
     if !app.selected_branches.is_empty() {
         let default_name = app
             .branches
@@ -205,23 +194,21 @@ fn delete_branch(app: &mut App) -> bool {
             app,
         ));
     }
-    true
 }
 
-fn stop_environment(app: &mut App) -> bool {
+fn stop_environment(app: &mut App) {
     let Some(environment) = app.environments.cursor_row().cloned() else {
-        return true;
+        return;
     };
     app.submit_dialog = Some(SubmitDialog::build(
         ConfirmAction::StopEnvironment(Box::new(environment)),
         app,
     ));
-    true
 }
 
-fn rollback_deployment(app: &mut App) -> bool {
+fn rollback_deployment(app: &mut App) {
     let Some(environment) = app.environments.cursor_row().cloned() else {
-        return true;
+        return;
     };
     match app.selected_deployment().cloned() {
         Some(deployment) if !app.is_github() && deployment.job_id().is_none() => {
@@ -239,7 +226,6 @@ fn rollback_deployment(app: &mut App) -> bool {
         }
         None => app.show_error(NO_DEPLOYMENT_SELECTED.to_string()),
     }
-    true
 }
 
 #[cfg(test)]
@@ -256,10 +242,7 @@ mod tests {
                 KeyContext::Tab(app.active_tab),
                 "{action:?} is not a tab action"
             );
-            assert!(
-                confirmation(&mut app, *action),
-                "{action:?} did not open a dialog"
-            );
+            confirmation(&mut app, *action);
             let dialog = app
                 .submit_dialog
                 .as_ref()

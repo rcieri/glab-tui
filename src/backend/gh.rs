@@ -9,8 +9,8 @@ use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, Trace
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{
-    DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NoteKind, NotePosition, ReviewState,
-    ensure_complete_diff,
+    DiscussionNote, MR_DIFF_MAX_BYTES, MergeMethod, MergeMethods, MergeRequest, NoteKind,
+    NotePosition, ReviewState, ensure_complete_diff,
 };
 use crate::domain::notifications::{Notification, NotificationDetail};
 use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
@@ -508,12 +508,13 @@ impl GhBackend {
         name.replace('/', "%2F")
     }
 
+    /// The method is always passed explicitly so `gh pr merge` never falls
+    /// back to the repository's default.
     pub(crate) fn merge_args(
         project: &str,
         iid: u64,
-        squash: bool,
+        method: MergeMethod,
         delete_branch: bool,
-        strategy: Option<&str>,
         auto_merge: bool,
     ) -> Vec<String> {
         let mut args: Vec<String> = vec![
@@ -523,16 +524,14 @@ impl GhBackend {
             "-R".into(),
             project.into(),
         ];
-        if squash {
-            args.push("--squash".into());
-        } else if matches!(strategy, Some("rebase")) {
-            args.push("--rebase".into());
-        } else {
-            // "Strategy: Merge commit" is the default and is always sent
-            // explicitly so gh pr merge doesn't silently fall back to whatever
-            // the repo's default merge method happens to be.
-            args.push("--merge".into());
-        }
+        args.push(
+            match method {
+                MergeMethod::Merge => "--merge",
+                MergeMethod::Squash => "--squash",
+                MergeMethod::Rebase => "--rebase",
+            }
+            .into(),
+        );
         if delete_branch {
             args.push("--delete-branch".into());
         }
@@ -1079,6 +1078,36 @@ fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
             .map(|uuid| AsyncMergeProgress::Pending { uuid })
             .ok_or_else(|| anyhow::anyhow!("GitHub reported a pending merge without its uuid")),
     }
+}
+
+fn parse_repo_merge_methods(raw: &str) -> Result<MergeMethods> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RepoMergeSettings {
+        merge_commit_allowed: bool,
+        squash_merge_allowed: bool,
+        rebase_merge_allowed: bool,
+        #[serde(default)]
+        viewer_default_merge_method: Option<String>,
+    }
+    let settings: RepoMergeSettings =
+        serde_json::from_str(raw.trim()).context("parsing `gh repo view` merge settings")?;
+    let allowed: Vec<MergeMethod> = [
+        (MergeMethod::Merge, settings.merge_commit_allowed),
+        (MergeMethod::Squash, settings.squash_merge_allowed),
+        (MergeMethod::Rebase, settings.rebase_merge_allowed),
+    ]
+    .into_iter()
+    .filter_map(|(method, is_allowed)| is_allowed.then_some(method))
+    .collect();
+    let preferred = match settings.viewer_default_merge_method.as_deref() {
+        Some("MERGE") => Some(MergeMethod::Merge),
+        Some("SQUASH") => Some(MergeMethod::Squash),
+        Some("REBASE") => Some(MergeMethod::Rebase),
+        _ => None,
+    };
+    MergeMethods::new(&allowed, preferred)
+        .ok_or_else(|| anyhow::anyhow!("the repository allows no merge method"))
 }
 
 /// How many of an environment's newest deployments a stop searches for the
@@ -2520,16 +2549,32 @@ impl Backend for GhBackend {
         // GitHub's `gh pr merge` has no `--sha` equivalent — the CLI works
         // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
         let super::MergeOptions {
-            squash,
+            method,
             delete_branch,
-            strategy,
             auto_merge,
             sha: _,
         } = *options;
-        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
+        let args = Self::merge_args(project, iid, method, delete_branch, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "MERGING PR").await?;
         Ok(())
+    }
+
+    async fn list_merge_methods(&self, project: &str) -> Result<MergeMethods> {
+        let raw = self
+            .run_gh(
+                &[
+                    "repo",
+                    "view",
+                    "--json",
+                    "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod",
+                    "--",
+                    project,
+                ],
+                "Reading Merge Settings",
+            )
+            .await?;
+        parse_repo_merge_methods(&raw)
     }
 
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
@@ -5443,36 +5488,59 @@ mod tests {
     }
 
     #[test]
-    fn gh_merge_args_strategy_and_auto_merge() {
-        // auto + squash + delete
-        let args = GhBackend::merge_args("owner/repo", 42, true, true, None, true);
-        assert!(args.contains(&"42".to_string()), "iid must be present");
-        assert!(
-            args.contains(&"owner/repo".to_string()),
-            "project must be present"
+    fn merge_args_pass_exactly_one_explicit_method_flag() {
+        assert_eq!(
+            GhBackend::merge_args("owner/repo", 42, MergeMethod::Squash, true, true),
+            vec![
+                "pr",
+                "merge",
+                "42",
+                "-R",
+                "owner/repo",
+                "--squash",
+                "--delete-branch",
+                "--auto"
+            ]
         );
-        assert!(args.contains(&"--auto".to_string()));
-        assert!(args.contains(&"--squash".to_string()));
-        assert!(args.contains(&"--delete-branch".to_string()));
-        // squash takes priority — no --merge alongside it
-        assert!(!args.contains(&"--merge".to_string()));
-
-        // rebase, no auto-merge
-        let args_rebase =
-            GhBackend::merge_args("owner/repo", 42, false, false, Some("rebase"), false);
-        assert!(!args_rebase.contains(&"--auto".to_string()));
-        assert!(args_rebase.contains(&"--rebase".to_string()));
-        assert!(!args_rebase.contains(&"--merge".to_string()));
-
-        // strategy=None (merge commit) → explicit --merge, not relying on repo default
-        let args_merge_commit = GhBackend::merge_args("owner/repo", 42, false, false, None, false);
-        assert!(
-            args_merge_commit.contains(&"--merge".to_string()),
-            "merge commit strategy must send --merge explicitly"
+        assert_eq!(
+            GhBackend::merge_args("owner/repo", 42, MergeMethod::Rebase, false, false),
+            vec!["pr", "merge", "42", "-R", "owner/repo", "--rebase"]
         );
-        assert!(!args_merge_commit.contains(&"--squash".to_string()));
-        assert!(!args_merge_commit.contains(&"--rebase".to_string()));
-        assert!(!args_merge_commit.contains(&"--auto".to_string()));
+        assert_eq!(
+            GhBackend::merge_args("owner/repo", 42, MergeMethod::Merge, false, false),
+            vec!["pr", "merge", "42", "-R", "owner/repo", "--merge"]
+        );
+    }
+
+    #[test]
+    fn repo_merge_settings_list_only_the_allowed_methods_and_keep_the_viewer_default() {
+        let methods = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"REBASE"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            methods.allowed(),
+            &[MergeMethod::Squash, MergeMethod::Rebase]
+        );
+        assert_eq!(methods.preferred(), MergeMethod::Rebase);
+    }
+
+    #[test]
+    fn a_viewer_default_the_repo_no_longer_allows_falls_back_to_squash() {
+        let methods = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":false,"viewerDefaultMergeMethod":"REBASE"}"#,
+        )
+        .unwrap();
+        assert_eq!(methods.preferred(), MergeMethod::Squash);
+    }
+
+    #[test]
+    fn a_repo_allowing_no_merge_method_is_an_error() {
+        let error = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":false,"squashMergeAllowed":false,"rebaseMergeAllowed":false}"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "the repository allows no merge method");
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub fn handle_key(
         && key_event.code == KeyCode::Char('e')
     {
         fx.suspend(ForegroundJob::Edit {
-            text: text_input.buffer.value().to_string(),
+            text: text_input.value().to_string(),
             file_suffix: ".md".to_string(),
             purpose: EditPurpose::TextInput,
         });
@@ -36,28 +36,18 @@ pub fn handle_key(
         KeyCode::Esc => {
             // Cancel
         }
-        KeyCode::Backspace => {
-            text_input.buffer.delete_char_before_cursor();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
-        }
-        KeyCode::Delete => {
-            text_input.buffer.delete_char_at_cursor();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
-        }
-        KeyCode::Left => {
-            text_input.buffer.move_cursor_left();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
-        }
-        KeyCode::Right => {
-            text_input.buffer.move_cursor_right();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
-        }
-        KeyCode::Char(c) => {
-            text_input.buffer.insert_char(c);
+        KeyCode::Backspace
+        | KeyCode::Delete
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::Char(_) => {
+            if let Some(buffer) = text_input.buffer_mut() {
+                buffer.apply_edit_key(key_event.code);
+            }
             app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
         }
         KeyCode::Enter => {
-            let value = text_input.buffer.value().to_string();
+            let value = text_input.value().to_string();
             match text_input.action {
                 crate::app::TextInputAction::EditPageSize => {
                     if let Ok(new_size) = value.trim().parse::<usize>() {

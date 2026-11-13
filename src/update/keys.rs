@@ -140,7 +140,7 @@ pub(super) fn handle_key(
             is_loading: false,
             entity_iid: 0,
             entity_type: "jump_to_id".to_string(),
-            field_type: "jump_to_id".to_string(),
+            purpose: crate::app::SelectorPurpose::JumpToId,
             multi_select: false,
             state: {
                 let mut s = ratatui::widgets::ListState::default();

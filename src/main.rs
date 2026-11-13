@@ -288,7 +288,7 @@ async fn main() -> Result<()> {
                 is_loading: false,
                 entity_iid: 0,
                 entity_type: "app".to_string(),
-                field_type: "switch_repo".to_string(),
+                purpose: crate::app::SelectorPurpose::SwitchRepo,
                 multi_select: false,
                 state: {
                     let mut s = ListState::default();

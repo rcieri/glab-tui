@@ -1,23 +1,26 @@
+use super::form::{Extent, FormFrame, FormSize, render_form};
 use super::helpers::rendered_line_count;
-use super::modal::modal_area;
 use crate::app::{App, OverlayKind, ReviewThreadsOverview};
 use crate::config::Theme;
 use crate::domain::mr::ReviewState;
 use crate::domain::review_threads::{ReviewThread, ThreadAnchor};
-use crate::ui::diff::centered_rect_min;
+use crate::form::{Form, Group, Rows};
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{sanitize_untrusted, time_ago, truncate};
 use crate::utils::markdown::render_markdown;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
 const EXCERPT_CHARS: usize = 80;
-const KEY_HINTS: &str = " j/k move · Enter jump to line · a actions · u unresolved only · J/K scroll thread · Esc close";
+const KEY_HINTS: &str =
+    "j/k move · Enter jump to line · a actions · u unresolved only · J/K scroll thread · Esc close";
+/// Share of the body the thread list takes; the preview gets the rest.
+const LIST_PERCENT: u16 = 40;
 
 pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     if app.diff_view().is_none() {
@@ -28,19 +31,35 @@ pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mu
     };
     let theme = ctx.theme;
 
-    let area = centered_rect_min(85, 85, 70, 16, size);
-    let body = modal_area(f, ctx, &title, area);
-    app.overlay_stack.push((OverlayKind::ReviewThreads, area));
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(40),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
-        .split(body);
-    let (list_area, preview_area, hints_area) = (chunks[0], chunks[1], chunks[2]);
+    let mut form: Form<()> = Form::new(
+        vec![
+            Group::Custom(Rows::Percent(LIST_PERCENT)),
+            Group::Custom(Rows::Fill),
+        ],
+        Vec::new(),
+    );
+    let frame = FormFrame {
+        title: &title,
+        size: FormSize {
+            width: Extent::Percent {
+                percent: 85,
+                min: 70,
+            },
+            height: Extent::Percent {
+                percent: 85,
+                min: 16,
+            },
+        },
+        hints: Some(KEY_HINTS),
+        notice: None,
+    };
+    render_form(f, ctx, size, &frame, &mut form);
+    let Some(layout) = form.layout else {
+        return;
+    };
+    app.overlay_stack
+        .push((OverlayKind::ReviewThreads, layout.area));
+    let (list_area, preview_area) = (layout.groups[0], layout.groups[1]);
 
     let Some(overview) = app.review_threads_mut() else {
         return;
@@ -48,10 +67,6 @@ pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mu
     overview.list_rect = Some(list_area);
     render_thread_list(f, overview, list_area, &theme);
     render_thread_preview(f, ctx, overview, preview_area);
-    f.render_widget(
-        Paragraph::new(KEY_HINTS).style(Style::default().fg(theme.text_muted).bg(theme.bg)),
-        hints_area,
-    );
 }
 
 fn modal_title(overview: &ReviewThreadsOverview) -> String {

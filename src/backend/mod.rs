@@ -102,11 +102,10 @@ pub struct NewMr<'a> {
 /// that require it for the merge API. GitLab-only: `GhBackend` ignores it.
 /// `None` skips the flag and lets `glab` fall back to its own heuristic on
 /// legacy installs (older GitLab returns 400 otherwise).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MergeOptions<'a> {
-    pub squash: bool,
+    pub method: crate::domain::mr::MergeMethod,
     pub delete_branch: bool,
-    pub strategy: Option<&'a str>,
     pub auto_merge: bool,
     pub sha: Option<&'a str>,
 }
@@ -357,6 +356,8 @@ pub trait Backend: Send + Sync {
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Merge the MR/PR.
     async fn merge_mr(&self, project: &str, iid: u64, options: &MergeOptions<'_>) -> Result<()>;
+    /// The merge methods `project` accepts, read from its settings.
+    async fn list_merge_methods(&self, project: &str) -> Result<crate::domain::mr::MergeMethods>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
     async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()>;
     /// Posts `comments` and `body` as one review carrying `event`.

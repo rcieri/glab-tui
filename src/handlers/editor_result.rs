@@ -19,8 +19,8 @@ pub fn apply(
     };
     match purpose {
         EditPurpose::TextInput => {
-            if let Some(text_input) = app.text_input_mut() {
-                text_input.buffer.set_value(text);
+            if let Some(buffer) = app.text_input_mut().and_then(|t| t.buffer_mut()) {
+                buffer.set_value(text);
             }
         }
         EditPurpose::ReviewSummary => {

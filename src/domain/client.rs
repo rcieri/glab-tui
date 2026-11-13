@@ -231,6 +231,13 @@ impl GitlabClient {
             .await
     }
 
+    pub async fn list_merge_methods(
+        &self,
+        project: &str,
+    ) -> Result<crate::domain::mr::MergeMethods> {
+        self.backend.list_merge_methods(project).await
+    }
+
     pub async fn list_mr_notes(
         &self,
         project: &str,

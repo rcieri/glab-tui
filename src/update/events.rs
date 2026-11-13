@@ -247,6 +247,9 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::MrFetched(iid, Err(err)) => {
             app.show_error(format!("Failed to fetch MR #{iid}: {err}"));
         }
+        Event::MergeMethodsFetched { project, result } => {
+            app.apply_merge_methods(project, result);
+        }
         Event::PrStackFetched {
             pr_number,
             project_path,
@@ -633,22 +636,31 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
 
             if let Some(sel) = app.selector_mut() {
-                let updated = match sel.field_type.as_str() {
-                    "labels" if !labels.is_empty() => {
+                let updated = match &sel.purpose {
+                    crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels)
+                        if !labels.is_empty() =>
+                    {
                         sel.all_items = labels.into_iter().map(|l| l.name).collect();
                         true
                     }
-                    "assignees" | "reviewers" if !members.is_empty() => {
+                    crate::app::SelectorPurpose::Field(
+                        crate::app::SelectorField::Assignees | crate::app::SelectorField::Reviewers,
+                    ) if !members.is_empty() => {
                         sel.all_items = members;
                         true
                     }
-                    "milestone" if !milestones.is_empty() => {
+                    crate::app::SelectorPurpose::Field(crate::app::SelectorField::Milestone)
+                        if !milestones.is_empty() =>
+                    {
                         sel.all_items = milestones;
                         true
                     }
-                    "source_branch" | "target_branch" | "pipeline_branch" | "create_from"
-                        if !branches.is_empty() =>
-                    {
+                    crate::app::SelectorPurpose::Field(
+                        crate::app::SelectorField::SourceBranch
+                        | crate::app::SelectorField::TargetBranch
+                        | crate::app::SelectorField::PipelineBranch
+                        | crate::app::SelectorField::CreateFrom,
+                    ) if !branches.is_empty() => {
                         sel.all_items = branches;
                         true
                     }

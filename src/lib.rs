@@ -12,6 +12,7 @@ pub mod effect;
 pub mod entity_editor;
 pub mod event;
 pub mod fetch;
+pub mod form;
 pub mod git_helpers;
 pub mod handlers;
 pub mod keybinding;

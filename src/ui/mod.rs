@@ -1,4 +1,5 @@
 mod diff;
+pub(crate) mod form;
 mod helpers;
 pub(crate) mod inspector;
 pub mod job_trace;
@@ -23,15 +24,13 @@ use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestio
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
+pub(crate) use self::overlays::{SAVE_MENU_CHOICES, date_picker_month_cells};
 use crate::app::{App, DiffLine, Tab};
 use crate::config::Theme;
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{sanitize_untrusted, truncate};
 use std::collections::HashSet;
 use std::sync::Arc;
-
-/// Rows a modal gives to a notice about its own request, below its content.
-pub const MODAL_NOTICE_ROWS: u16 = 1;
 
 /// Render the active edit/create menu as an interactive inspector into the
 /// (full-zoom) detail pane — the same pane the read-only preview uses. Returns
@@ -1922,7 +1921,7 @@ mod tests {
             is_loading: false,
             entity_iid: 7,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
             request: Some(request),

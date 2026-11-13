@@ -21,7 +21,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::ListState;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
@@ -574,6 +574,155 @@ impl Field {
     }
 }
 
+/// What a [`Selector`] picks, carrying the ids its submit acts on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectorPurpose {
+    /// A field of the entity named by `Selector::entity_type` / `entity_iid`,
+    /// written to the open edit menu, or straight to the entity without one.
+    Field(SelectorField),
+    JumpToId,
+    ColumnFilter {
+        tab: Tab,
+        column: String,
+    },
+    SwitchRepo,
+    Theme,
+    /// Opened on an empty Description of a creation form.
+    BlankDescriptionTemplate {
+        kind: TemplateKind,
+    },
+    /// The creation form's "Description Template" row.
+    DescriptionTemplate {
+        kind: TemplateKind,
+    },
+    CreateMrFromIssue,
+    RelatedMrs,
+    StackEntries,
+    LinkedIssues,
+    PipelineSelect,
+    CommentChoice {
+        mr_iid: u64,
+    },
+    CommentActions {
+        comment_id: u64,
+        mr_iid: u64,
+    },
+    DraftActions {
+        index: usize,
+    },
+}
+
+impl SelectorPurpose {
+    /// Whether the selector shows a filter box: short fixed lists (comment
+    /// and draft actions, a PR's related MRs, an MR's linked issues) do not.
+    pub fn has_filter_bar(&self) -> bool {
+        !matches!(
+            self,
+            SelectorPurpose::CommentActions { .. }
+                | SelectorPurpose::DraftActions { .. }
+                | SelectorPurpose::RelatedMrs
+                | SelectorPurpose::LinkedIssues
+        )
+    }
+}
+
+/// Which description templates a template picker lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemplateKind {
+    Issue,
+    Mr,
+}
+
+impl TemplateKind {
+    pub fn of(kind: &EditEntityKind) -> Self {
+        match kind {
+            EditEntityKind::CreateMr | EditEntityKind::EditMr | EditEntityKind::BulkEditMrs => {
+                Self::Mr
+            }
+            _ => Self::Issue,
+        }
+    }
+
+    /// The template type `templates::list_templates` reads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Issue => "issue",
+            Self::Mr => "mr",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Issue => "Issue",
+            Self::Mr => "Merge Request",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectorField {
+    Labels,
+    Assignees,
+    Reviewers,
+    Milestone,
+    Confidential,
+    DraftStatus,
+    MrPipeline,
+    SourceBranch,
+    TargetBranch,
+    PipelineBranch,
+    WorkflowFile,
+    Tag,
+    CreateFrom,
+    Project,
+    WorkflowInput(String),
+}
+
+impl SelectorField {
+    pub fn label(&self) -> String {
+        match self {
+            SelectorField::Labels => "Labels".to_string(),
+            SelectorField::Assignees => "Assignees".to_string(),
+            SelectorField::Reviewers => "Reviewers".to_string(),
+            SelectorField::Milestone => "Milestone".to_string(),
+            SelectorField::Confidential => "Confidential".to_string(),
+            SelectorField::DraftStatus => "Status (Draft/Ready)".to_string(),
+            SelectorField::MrPipeline => "Merge Request Pipeline".to_string(),
+            SelectorField::SourceBranch => "Source Branch".to_string(),
+            SelectorField::TargetBranch => "Target Branch".to_string(),
+            SelectorField::PipelineBranch => "Branch / Ref".to_string(),
+            SelectorField::WorkflowFile => "Workflow File".to_string(),
+            SelectorField::Tag => "Tag".to_string(),
+            SelectorField::CreateFrom => "Create From".to_string(),
+            SelectorField::Project => "Project".to_string(),
+            SelectorField::WorkflowInput(name) => format!("Input: {name}"),
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "Labels" => SelectorField::Labels,
+            "Assignees" => SelectorField::Assignees,
+            "Reviewers" => SelectorField::Reviewers,
+            "Milestone" => SelectorField::Milestone,
+            "Confidential" => SelectorField::Confidential,
+            "Status (Draft/Ready)" => SelectorField::DraftStatus,
+            "Merge Request Pipeline" => SelectorField::MrPipeline,
+            "Source Branch" => SelectorField::SourceBranch,
+            "Target Branch" => SelectorField::TargetBranch,
+            "Branch / Ref" => SelectorField::PipelineBranch,
+            "Workflow File" => SelectorField::WorkflowFile,
+            "Tag" => SelectorField::Tag,
+            "Create From" => SelectorField::CreateFrom,
+            "Project" => SelectorField::Project,
+            other => {
+                let name = other.strip_prefix("Input: ")?;
+                SelectorField::WorkflowInput(name.to_string())
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Selector {
     pub title: String,
@@ -585,7 +734,7 @@ pub struct Selector {
     pub is_loading: bool,
     pub entity_iid: u64,
     pub entity_type: String, // "issue", "mr"
-    pub field_type: String,  // "labels", "assignees", "reviewers", "milestone"
+    pub purpose: SelectorPurpose,
     pub multi_select: bool,
     pub state: ListState,
     /// The item fetch this selector started. Its notices are drawn inside
@@ -626,7 +775,7 @@ impl Selector {
             .iter()
             .any(|item| item.to_lowercase() == query.to_lowercase());
         if !exact_match {
-            if self.field_type == "jump_to_id" {
+            if self.purpose == SelectorPurpose::JumpToId {
                 if let Some((kind, id)) = parse_jump_input(query) {
                     let loaded = self.all_items.iter().any(|item| {
                         let parsed = item
@@ -672,7 +821,7 @@ impl Selector {
         items: Vec<String>,
         entity_iid: u64,
         entity_type: String,
-        field_type: &str,
+        purpose: SelectorPurpose,
     ) -> Self {
         Self {
             title,
@@ -684,17 +833,15 @@ impl Selector {
             is_loading: false,
             entity_iid,
             entity_type,
-            field_type: field_type.to_string(),
+            purpose,
             multi_select: false,
             state: ListState::default(),
             request: None,
         }
     }
 
-    /// Actions on one pushed review comment. The `comment_action_select`
-    /// handler reads the comment id from `entity_iid` and parses the MR iid
-    /// back out of `entity_type`. `None` for a note without a REST id (a
-    /// GitHub review summary): nothing can be done with it.
+    /// Actions on one pushed review comment. `None` for a note without a
+    /// REST id (a GitHub review summary): nothing can be done with it.
     pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
         let comment_id = comment.id?;
         let mut actions = Vec::new();
@@ -715,7 +862,7 @@ impl Selector {
             actions,
             comment_id,
             mr_iid.to_string(),
-            "comment_action_select",
+            SelectorPurpose::CommentActions { comment_id, mr_iid },
         ))
     }
 
@@ -726,7 +873,7 @@ impl Selector {
             vec!["Edit Draft".to_string(), "Delete Draft".to_string()],
             draft_idx as u64,
             "draft".to_string(),
-            "comment_action_select",
+            SelectorPurpose::DraftActions { index: draft_idx },
         )
     }
 
@@ -739,7 +886,7 @@ impl Selector {
             items,
             mr_iid,
             "mr".to_string(),
-            "comment_select",
+            SelectorPurpose::CommentChoice { mr_iid },
         )
     }
 
@@ -760,13 +907,6 @@ impl Selector {
             draft_idx + 1,
             crate::utils::format::truncate(&body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
         )
-    }
-
-    /// Whether this selector shows a search/filter bar.
-    pub fn has_filter_bar(&self) -> bool {
-        self.field_type != "comment_action_select"
-            && self.field_type != "related_mrs"
-            && self.field_type != "linked_issues"
     }
 }
 
@@ -2828,6 +2968,7 @@ impl TextBuffer {
     }
 
     /// The value with `cursor` inserted between the characters around the cursor.
+    #[cfg(test)]
     pub fn value_with_cursor(&self, cursor: char) -> String {
         let mut rendered = self.value.clone();
         rendered.insert(self.byte_offset(self.cursor_char_idx), cursor);
@@ -2858,21 +2999,36 @@ impl TextBuffer {
     }
 }
 
+/// A one-line prompt: a form holding a single line input.
 #[derive(Clone, Debug)]
 pub struct TextInput {
     pub title: String,
-    pub buffer: TextBuffer,
+    pub form: crate::form::Form<()>,
     pub action: TextInputAction,
 }
 
 impl TextInput {
     /// Opens the input with the cursor after the last character of `value`.
     pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        let input = crate::form::LineInput {
+            buffer: TextBuffer::new(value),
+        };
         Self {
             title: title.into(),
-            buffer: TextBuffer::new(value),
+            form: crate::form::Form::new(vec![crate::form::Group::LineInput(input)], Vec::new()),
             action,
         }
+    }
+
+    pub fn value(&self) -> &str {
+        self.form
+            .line_input()
+            .map(|input| input.buffer.value())
+            .unwrap_or_default()
+    }
+
+    pub fn buffer_mut(&mut self) -> Option<&mut TextBuffer> {
+        self.form.line_input_mut().map(|input| &mut input.buffer)
     }
 }
 
@@ -2926,6 +3082,8 @@ pub struct DatePicker {
     pub month: u32,
     pub day: u32,
     pub action: DatePickerAction,
+    /// Written by every draw; the calendar is its only group.
+    pub layout: Option<crate::form::FormLayout>,
 }
 
 #[derive(Clone, Debug)]
@@ -2972,6 +3130,7 @@ impl DatePicker {
             month: parsed_date.month(),
             day: parsed_date.day(),
             action,
+            layout: None,
         }
     }
 
@@ -3054,7 +3213,6 @@ pub enum OverlayKind {
     Help,
     Configure,
     SaveMenu,
-    ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
     ReviewSubmit,
@@ -3082,6 +3240,13 @@ pub struct ConfigureOverlay {
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub editing_page_size: bool,
+    /// Written by every draw: the settings list is the form's only group.
+    pub layout: Option<crate::form::FormLayout>,
+    /// Same for the save submenu while it is open.
+    pub save_menu_layout: Option<crate::form::FormLayout>,
+    /// The setting each visible row of the list stands for, top to bottom;
+    /// `None` for headers and spacers.
+    pub visible_rows: Vec<Option<usize>>,
 }
 
 #[derive(Debug)]
@@ -3199,25 +3364,15 @@ impl ConfirmAction {
     }
 }
 
-/// Toggleable option shown inside a [`SubmitDialog`] body.
-///
-/// Used for actions that have additional knobs (merge options such as
-/// "Squash commits" or "Delete source branch"). The user flips these
-/// with `Space` / `Enter` before pressing the Submit button; nothing is
-/// sent to the API until Submit is activated.
-#[derive(Clone, Debug)]
-pub struct SubmitOption {
-    pub label: String,
-    pub checked: bool,
-}
-
-impl SubmitOption {
-    pub fn new(label: impl Into<String>, checked: bool) -> Self {
-        Self {
-            label: label.into(),
-            checked,
-        }
-    }
+/// A control of a [`SubmitDialog`]'s form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogControl {
+    Method(crate::domain::mr::MergeMethod),
+    DeleteSourceBranch,
+    AutoMerge,
+    Submit,
+    Choice(DialogChoice),
+    Cancel,
 }
 
 /// A button between Submit and Cancel in a [`SubmitDialog`].
@@ -3243,208 +3398,156 @@ impl DialogChoice {
 }
 
 /// A modal dialog that gates a mutating API call behind an explicit
-/// Submit button click. Replaces the old two-button YES/NO popup
-/// (issue #315).
-///
-/// Layout:
-///
-/// ```text
-/// ┌─ <title> ─────────────────────┐
-/// │                                │
-/// │ <body, wrapped>                │
-/// │                                │
-/// │ [ ] <option label>             │   ← only if options is non-empty
-/// │ [x] <option label>             │
-/// │                                │
-/// ├────────────────────────────────┤
-/// │ [Submit] [<extra>…]  [Cancel]  │
-/// └────────────────────────────────┘
-/// ```
-///
-/// Cursor layout: index `0` is Submit (leftmost button), `1..=options.len()`
-/// are the options (one per toggle), then one index per extra button, and
-/// `cancel_idx()` is Cancel (rightmost button).
+/// Submit button, drawn through the shared [`crate::form::Form`]: its body
+/// text, for a merge the methods the project allows and the merge toggles,
+/// then Submit, any [`DialogChoice`] buttons and Cancel.
 ///
 /// Keyboard:
-/// - `Tab` / `Shift-Tab` — move vertically through all rows (options + buttons)
-/// - `j` / `Down` / `k` / `Up` — move vertically through options only
-/// - `h` / `Left` / `l` / `Right` (on a button) — move to the neighbouring button
-/// - `Enter` — activate focused (Cancel closes, option toggles, a button runs its action)
-/// - `Space` — toggle the focused option (no-op on buttons)
+/// - `Tab` / `Shift-Tab` — every control, then every button
+/// - `j` / `Down` / `k` / `Up` — between the controls, leaving them for Cancel
+/// - `h` / `Left` / `l` / `Right` (on a button) — the neighbouring button
+/// - `Enter` — press the focused button, or pick / flip the focused control
+/// - `Space` — pick / flip the focused control
 /// - `Esc` — cancel (equivalent to Cancel)
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
     pub project_path: String,
     pub title: String,
-    pub body: String,
-    pub options: Vec<SubmitOption>,
-    pub submit_label: String,
-    /// Buttons between Submit and Cancel, left to right.
-    pub extra_buttons: Vec<DialogChoice>,
-    /// `0` = Submit, `1..=options.len()` = options, then the extra buttons,
-    /// `cancel_idx()` = Cancel.
-    pub cursor_idx: usize,
+    pub form: crate::form::Form<DialogControl>,
+    /// The projects a merge acts on, whose merge methods its form offers.
+    /// Empty for every other action.
+    pub merge_projects: Vec<String>,
+    /// Why the merge methods could not be read; the merge is refused.
+    merge_methods_failure: Option<String>,
 }
 
 impl SubmitDialog {
-    /// Leftmost position: the Submit button (rendered on the left).
-    pub const SUBMIT_IDX: usize = 0;
-
-    /// Outer width of the dialog (including borders/padding).
+    /// Outer width of the dialog, borders included.
     pub const DIALOG_WIDTH: u16 = 64;
-    /// Inner width available for the wrapped body text. Derived from
-    /// `DIALOG_WIDTH` minus the block's borders and horizontal padding.
-    pub const BODY_INNER_WIDTH: usize = 56;
+    /// The methods group sits right below the body text.
+    const METHODS_GROUP: usize = 1;
+    const METHODS_LABEL: &str = "Merge method";
 
-    /// Index of the Cancel button (rendered on the right, after the options
-    /// and the extra buttons).
-    pub fn cancel_idx(&self) -> usize {
-        self.options.len() + self.extra_buttons.len() + 1
-    }
-
-    pub fn is_on_submit(&self) -> bool {
-        self.cursor_idx == Self::SUBMIT_IDX
-    }
-
-    pub fn is_on_cancel(&self) -> bool {
-        self.cursor_idx == self.cancel_idx()
-    }
-
-    pub fn is_on_button(&self) -> bool {
-        self.option_idx().is_none()
-    }
-
-    /// `None` when on a button, `Some(i)` when on the `i`-th option.
-    pub fn option_idx(&self) -> Option<usize> {
-        if self.cursor_idx >= 1 && self.cursor_idx <= self.options.len() {
-            Some(self.cursor_idx - 1)
-        } else {
-            None
+    pub fn body(&self) -> &str {
+        match self.form.groups.first() {
+            Some(crate::form::Group::Info(body)) => body,
+            _ => "",
         }
     }
 
-    /// The extra button under the cursor, if any.
-    pub fn focused_choice(&self) -> Option<DialogChoice> {
-        self.cursor_idx
-            .checked_sub(self.options.len() + 1)
-            .and_then(|i| self.extra_buttons.get(i).copied())
+    /// The focused control, or the focused button.
+    pub fn focused(&self) -> Option<DialogControl> {
+        match self.form.focus()? {
+            crate::form::Focus::Button(index) => self.form.buttons.get(index).map(|b| b.id),
+            crate::form::Focus::Item { group, item } => match self.form.groups.get(group)? {
+                crate::form::Group::Radio(radio) => radio.choices.get(item).map(|c| c.id),
+                crate::form::Group::Toggles(toggles) => toggles.get(item).map(|t| t.id),
+                _ => None,
+            },
+        }
     }
 
-    /// Cursor positions of the buttons, left to right: Submit, the extra
-    /// buttons, Cancel.
-    pub fn button_cursors(&self) -> impl Iterator<Item = usize> + use<> {
-        std::iter::once(Self::SUBMIT_IDX).chain(self.options.len() + 1..=self.cancel_idx())
+    /// The merge method picked in the form; `None` until the project's
+    /// methods are known, and for actions that do not merge.
+    pub fn merge_method(&self) -> Option<crate::domain::mr::MergeMethod> {
+        match self.form.radio_value()? {
+            DialogControl::Method(method) => Some(*method),
+            _ => None,
+        }
     }
 
-    /// Moves to the button left (`step < 0`) or right (`step > 0`) of the
-    /// focused one, stopping at either end. No-op on an option row.
-    pub fn move_between_buttons(&mut self, step: isize) {
-        if !self.is_on_button() {
+    pub fn is_checked(&self, control: DialogControl) -> bool {
+        self.form.is_checked(&control)
+    }
+
+    /// Why Submit cannot merge yet, `None` once a method is picked or when
+    /// the action does not merge.
+    pub fn merge_blocker(&self) -> Option<String> {
+        if self.merge_projects.is_empty() || self.merge_method().is_some() {
+            return None;
+        }
+        Some(match self.form.groups.get(Self::METHODS_GROUP) {
+            Some(crate::form::Group::Warning(reason)) => reason.clone(),
+            _ => "The merge methods are still loading.".to_string(),
+        })
+    }
+
+    /// A merge whose methods are neither known nor known to be unreadable.
+    pub fn is_waiting_for_merge_methods(&self) -> bool {
+        self.merge_methods_failure.is_none() && self.merge_blocker().is_some()
+    }
+
+    /// Redraws the methods group from what the session knows. Toggles and
+    /// focus are kept, so an answer arriving late never undoes an edit.
+    pub fn refresh_merge_methods(
+        &mut self,
+        known: &HashMap<String, crate::domain::mr::MergeMethods>,
+    ) {
+        if self.merge_projects.is_empty() {
             return;
         }
-        let buttons: Vec<usize> = self.button_cursors().collect();
-        let Some(pos) = buttons.iter().position(|&c| c == self.cursor_idx) else {
+        let group = self.merge_methods_group(known);
+        if self.form.groups.get(Self::METHODS_GROUP) != Some(&group) {
+            self.form.replace_group(Self::METHODS_GROUP, group);
+        }
+    }
+
+    /// Records that `project`'s merge methods could not be read.
+    pub fn fail_merge_methods(&mut self, project: &str, error: &str) {
+        if !self.merge_projects.iter().any(|p| p == project) {
             return;
+        }
+        let failure = format!("Could not read the merge methods {project} allows: {error}");
+        self.form.replace_group(
+            Self::METHODS_GROUP,
+            crate::form::Group::Warning(failure.clone()),
+        );
+        self.merge_methods_failure = Some(failure);
+    }
+
+    fn merge_methods_group(
+        &self,
+        known: &HashMap<String, crate::domain::mr::MergeMethods>,
+    ) -> crate::form::Group<DialogControl> {
+        use crate::form::{Choice, Group, Radio};
+        if let Some(failure) = &self.merge_methods_failure {
+            return Group::Warning(failure.clone());
+        }
+        let mut methods = self.merge_projects.iter().map(|project| known.get(project));
+        let Some(Some(first)) = methods.next() else {
+            return Group::Info("Loading the merge methods this project allows…".to_string());
         };
-        let target = pos.saturating_add_signed(step).min(buttons.len() - 1);
-        self.cursor_idx = buttons[target];
-    }
-
-    /// Construct a SubmitDialog that defaults its cursor to Submit (left).
-    /// Used for reversible actions (merge, rebase, submit review).
-    pub fn new(
-        action: ConfirmAction,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self::new_with_project(action, String::new(), title, body, submit_label, options)
-    }
-
-    pub fn new_with_project(
-        action: ConfirmAction,
-        project_path: impl Into<String>,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self {
-            action,
-            project_path: project_path.into(),
-            title: title.into(),
-            body: body.into(),
-            options,
-            submit_label: submit_label.into(),
-            extra_buttons: Vec::new(),
-            cursor_idx: Self::SUBMIT_IDX,
+        let mut shared = Some(first.clone());
+        for next in methods {
+            let Some(next) = next else {
+                return Group::Info("Loading the merge methods these projects allow…".to_string());
+            };
+            shared = shared.and_then(|s| s.intersect(next));
         }
-    }
-
-    /// Construct a SubmitDialog that defaults its cursor to Cancel (right).
-    /// Used for destructive actions where the safer default is opt-in.
-    pub fn new_safe(
-        action: ConfirmAction,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self::new_safe_with_project(action, String::new(), title, body, submit_label, options)
-    }
-
-    pub fn new_safe_with_project(
-        action: ConfirmAction,
-        project_path: impl Into<String>,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        let options_len = options.len();
-        Self {
-            action,
-            project_path: project_path.into(),
-            title: title.into(),
-            body: body.into(),
-            options,
-            submit_label: submit_label.into(),
-            extra_buttons: Vec::new(),
-            cursor_idx: options_len + 1,
-        }
-    }
-
-    pub fn move_next(&mut self) {
-        let max = self.cancel_idx();
-        if self.cursor_idx < max {
-            self.cursor_idx += 1;
-        }
-    }
-
-    pub fn move_prev(&mut self) {
-        if self.cursor_idx > Self::SUBMIT_IDX {
-            self.cursor_idx -= 1;
-        }
-    }
-
-    pub fn toggle_focused_option(&mut self) {
-        if let Some(idx) = self.option_idx() {
-            let label = self.options[idx].label.clone();
-            let is_radio = label.starts_with("Strategy: ");
-            if is_radio {
-                // For radio buttons, only check it and uncheck others in the group
-                for opt in &mut self.options {
-                    if opt.label.starts_with("Strategy: ") {
-                        opt.checked = false;
-                    }
-                }
-                self.options[idx].checked = true;
-            } else {
-                self.options[idx].checked = !self.options[idx].checked;
-            }
-        }
+        let Some(shared) = shared else {
+            return Group::Warning("These projects share no merge method.".to_string());
+        };
+        let previous = self.merge_method();
+        let selected_method = previous
+            .filter(|m| shared.allowed().contains(m))
+            .unwrap_or_else(|| shared.preferred());
+        Group::Radio(Radio {
+            label: Self::METHODS_LABEL.to_string(),
+            selected: shared
+                .allowed()
+                .iter()
+                .position(|&m| m == selected_method)
+                .unwrap_or(0),
+            choices: shared
+                .allowed()
+                .iter()
+                .map(|&method| Choice {
+                    id: DialogControl::Method(method),
+                    label: shared.label(method).to_string(),
+                })
+                .collect(),
+        })
     }
 
     /// Build the dialog for an action whose target carries no project of
@@ -3574,13 +3677,7 @@ impl SubmitDialog {
                 } else {
                     format!("Merging: {source} \u{2192} {target}")
                 };
-                let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                    SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
-                ];
+                let options = merge_toggles();
                 (
                     format!("Merge {mr} #{iid}"),
                     body,
@@ -3618,21 +3715,11 @@ impl SubmitDialog {
                         )
                     })
                     .unwrap_or_default();
-                let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                ];
+                let options = Vec::new();
                 (title, body, "Merge".to_string(), options, false)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
-                let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                    SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
-                ];
+                let options = merge_toggles();
                 (
                     format!("Merge {} {}s", iids.len(), mr),
                     format!("Merging {} {}s", iids.len(), mr_short),
@@ -3792,6 +3879,19 @@ impl SubmitDialog {
                 )
             }
         };
+        let merge_projects: Vec<String> = match &action {
+            ConfirmAction::MergeMr(_) | ConfirmAction::MergeStack(_) => vec![project_path.clone()],
+            ConfirmAction::BulkMergeMrs(items) => {
+                let mut projects: Vec<String> = items
+                    .iter()
+                    .map(|(project, _)| app.scope.project_of(project).to_string())
+                    .collect();
+                projects.sort();
+                projects.dedup();
+                projects
+            }
+            _ => Vec::new(),
+        };
         let extra_buttons = match &action {
             ConfirmAction::SubmitReview(_) => {
                 vec![DialogChoice::KeepDrafts, DialogChoice::DiscardDrafts]
@@ -3799,21 +3899,64 @@ impl SubmitDialog {
             _ => Vec::new(),
         };
 
+        use crate::form::{Button, ButtonRole, Form, Group};
+        let mut groups = vec![Group::Info(body)];
+        if !merge_projects.is_empty() {
+            groups.push(Group::Info(String::new()));
+        }
+        if !options.is_empty() {
+            groups.push(Group::Toggles(options));
+        }
+        let submit = ButtonRole::Submit {
+            is_destructive: action.is_destructive(),
+        };
+        let buttons = std::iter::once(Button {
+            id: DialogControl::Submit,
+            label: submit_label,
+            role: submit,
+        })
+        .chain(extra_buttons.into_iter().map(|choice| Button {
+            id: DialogControl::Choice(choice),
+            label: choice.label().to_string(),
+            role: ButtonRole::Extra {
+                is_destructive: choice.is_destructive(),
+            },
+        }))
+        .chain(std::iter::once(Button {
+            id: DialogControl::Cancel,
+            label: "Cancel".to_string(),
+            role: ButtonRole::Cancel,
+        }))
+        .collect();
+        let mut form = Form::new(groups, buttons);
+        form.focus_button_with(if safe { ButtonRole::Cancel } else { submit });
+
         let mut dialog = Self {
             action: action_clone,
             project_path,
             title,
-            body,
-            options,
-            submit_label,
-            extra_buttons,
-            cursor_idx: Self::SUBMIT_IDX,
+            form,
+            merge_projects,
+            merge_methods_failure: None,
         };
-        if safe {
-            dialog.cursor_idx = dialog.cancel_idx();
-        }
+        dialog.refresh_merge_methods(&app.merge_methods);
         dialog
     }
+}
+
+fn merge_toggles() -> Vec<crate::form::Toggle<DialogControl>> {
+    vec![
+        crate::form::Toggle {
+            id: DialogControl::DeleteSourceBranch,
+            label: "Delete source branch".to_string(),
+            checked: true,
+        },
+        crate::form::Toggle {
+            id: DialogControl::AutoMerge,
+            label: "Auto-merge".to_string(),
+            checked: false,
+        },
+    ]
 }
 
 /// Every key sequence bound in any `[keybindings.<table>]`.
@@ -3963,6 +4106,11 @@ pub struct App {
     /// PR whose stack fetch a key press is waiting on, and what to do once it
     /// lands: the key was pressed before the session knew the stack.
     pub pending_stack_action: Option<((String, u64), StackAction)>,
+    /// The merge methods each project allows, read once per session when a
+    /// merge dialog first needs them.
+    pub merge_methods: HashMap<String, crate::domain::mr::MergeMethods>,
+    /// Projects whose merge methods are being read.
+    pub fetching_merge_methods: HashSet<String>,
     /// PR open in the inspector and when it got there. Its stack is fetched
     /// only once it has stayed selected for the debounce window.
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
@@ -4046,6 +4194,10 @@ pub struct App {
     pub help_selected: usize,
     /// Scroll offset of the help table, kept across frames.
     pub help_table_state: ratatui::widgets::TableState,
+    /// Where the last draw put the help overlay's filter box and table.
+    pub help_layout: Option<crate::form::FormLayout>,
+    /// Where the last draw put the open selector's filter box and list.
+    pub selector_layout: Option<crate::form::FormLayout>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
@@ -4091,7 +4243,6 @@ pub struct App {
         Tab,
         std::collections::HashMap<String, std::collections::HashSet<String>>,
     >,
-    pub column_filter_context: Option<(Tab, String)>,
     pub sidebar_rect: Option<Rect>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
@@ -4161,6 +4312,8 @@ impl Default for App {
             pr_stacks: std::collections::HashMap::new(),
             fetching_pr_stacks: std::collections::HashSet::new(),
             pending_stack_action: None,
+            merge_methods: HashMap::new(),
+            fetching_merge_methods: HashSet::new(),
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
@@ -4201,6 +4354,8 @@ impl Default for App {
             help_search_query: String::new(),
             help_selected: 0,
             help_table_state: ratatui::widgets::TableState::default(),
+            help_layout: None,
+            selector_layout: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             diff_loading: false,
@@ -4241,7 +4396,6 @@ impl Default for App {
             group_list_state: ratatui::widgets::ListState::default(),
             group_items: Vec::new(),
             column_filters: std::collections::HashMap::new(),
-            column_filter_context: None,
             sidebar_rect: None,
             content_rect: None,
             detail_rect: None,
@@ -4632,6 +4786,58 @@ impl App {
         self.push_modal(Modal::Submit(Box::new(dialog)));
     }
 
+    /// Takes the answer to a merge-methods read: remembers a success for the
+    /// session and redraws the open merge dialog either way.
+    pub fn apply_merge_methods(
+        &mut self,
+        project: String,
+        result: Result<crate::domain::mr::MergeMethods, String>,
+    ) {
+        self.fetching_merge_methods.remove(&project);
+        let failure = match result {
+            Ok(methods) => {
+                self.merge_methods.insert(project, methods);
+                None
+            }
+            Err(error) => Some((project, error)),
+        };
+        let App {
+            modal_stack,
+            merge_methods,
+            ..
+        } = self;
+        for modal in modal_stack.iter_mut() {
+            if let Modal::Submit(dialog) = modal {
+                match &failure {
+                    Some((project, error)) => dialog.fail_merge_methods(project, error),
+                    None => dialog.refresh_merge_methods(merge_methods),
+                }
+            }
+        }
+    }
+
+    /// Projects the open merge dialog waits on that nobody is reading yet;
+    /// marks them as being read.
+    pub fn take_merge_methods_to_fetch(&mut self) -> Vec<String> {
+        let Some(dialog) = self.submit_dialog() else {
+            return Vec::new();
+        };
+        if !dialog.is_waiting_for_merge_methods() {
+            return Vec::new();
+        }
+        let missing: Vec<String> = dialog
+            .merge_projects
+            .iter()
+            .filter(|project| {
+                !self.merge_methods.contains_key(*project)
+                    && !self.fetching_merge_methods.contains(*project)
+            })
+            .cloned()
+            .collect();
+        self.fetching_merge_methods.extend(missing.iter().cloned());
+        missing
+    }
+
     pub fn close_submit_dialog(&mut self) {
         self.close_modal_kind(ModalKind::Submit);
     }
@@ -4765,6 +4971,7 @@ impl App {
 
     pub fn reset_on_scope_change(&mut self) {
         self.scope_generation = self.scope_generation.next();
+        self.fetching_merge_methods.clear();
         if self.scope.is_group() {
             for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {
                 self.enabled_columns
@@ -4778,7 +4985,6 @@ impl App {
         self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
-        self.column_filter_context = None;
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.selected_branches.clear();
@@ -6325,18 +6531,18 @@ impl App {
     }
 
     /// Apply the value-filter picker result. Empty selection clears the
-    /// filter for the column held in `column_filter_context`; any non-empty
-    /// selection replaces it. Wraps `column_filter_context.take()` so the
-    /// picker state is dropped on confirmation.
+    /// filter for `col`; any non-empty selection replaces it.
     ///
     /// Extracted from the `main.rs` keypress handler so the reset-on-empty
     /// semantics are unit-testable in isolation. See issue #510: before this
     /// helper, an empty selection silently re-applied the focused value and
     /// there was no in-UI way to clear a column filter.
-    pub fn apply_column_filter_picker(&mut self, selected: std::collections::HashSet<String>) {
-        let Some((tab, col)) = self.column_filter_context.take() else {
-            return;
-        };
+    pub fn apply_column_filter_picker(
+        &mut self,
+        tab: Tab,
+        col: String,
+        selected: std::collections::HashSet<String>,
+    ) {
         if selected.is_empty() {
             self.remove_column_filter(tab, &col);
         } else {
@@ -7987,15 +8193,15 @@ impl App {
             }
             return false;
         }
-        let Some(field_type) = self.selector().map(|s| s.field_type.clone()) else {
+        let Some(purpose) = self.selector().map(|s| s.purpose.clone()) else {
             return false;
         };
-        match field_type.as_str() {
-            "labels" => {
+        match &purpose {
+            SelectorPurpose::Field(SelectorField::Labels) => {
                 self.cached_labels = items.clone();
                 self.project_cache.labels = items.clone();
             }
-            "assignees" | "reviewers" => {
+            SelectorPurpose::Field(SelectorField::Assignees | SelectorField::Reviewers) => {
                 self.cached_members = items.clone();
                 self.project_cache.members = items.clone();
             }
@@ -8004,7 +8210,7 @@ impl App {
         let Some(selector) = self.selector_mut() else {
             return false;
         };
-        if selector.field_type == "project" {
+        if purpose == SelectorPurpose::Field(SelectorField::Project) {
             selector.all_items.extend(items);
             selector.all_items.sort();
             selector.all_items.dedup();
@@ -8017,22 +8223,29 @@ impl App {
 
     /// The open selector's options known without a fetch, if any.
     fn cached_selector_items(&self) -> Option<Vec<String>> {
-        let cached: Vec<String> = match self.selector()?.field_type.as_str() {
-            "labels" => self.cached_labels.clone(),
-            "assignees" | "reviewers" => self.cached_members.clone(),
-            "milestone" => self
+        let cached: Vec<String> = match self.selector()?.purpose {
+            SelectorPurpose::Field(SelectorField::Labels) => self.cached_labels.clone(),
+            SelectorPurpose::Field(SelectorField::Assignees | SelectorField::Reviewers) => {
+                self.cached_members.clone()
+            }
+            SelectorPurpose::Field(SelectorField::Milestone) => self
                 .milestones
                 .items
                 .iter()
                 .map(|m| m.title.clone())
                 .collect(),
-            "source_branch" | "target_branch" | "pipeline_branch" | "create_from" => self
+            SelectorPurpose::Field(
+                SelectorField::SourceBranch
+                | SelectorField::TargetBranch
+                | SelectorField::PipelineBranch
+                | SelectorField::CreateFrom,
+            ) => self
                 .branches
                 .items()
                 .iter()
                 .map(|b| b.name.clone())
                 .collect(),
-            "project" => {
+            SelectorPurpose::Field(SelectorField::Project) => {
                 let mut known: Vec<String> = self
                     .issues
                     .items
@@ -10716,83 +10929,129 @@ mod tests {
         assert_eq!(dp.value_string(), "2026-05-29");
     }
 
-    #[test]
-    fn test_submit_dialog_cursor_and_toggle() {
-        let mut dialog = SubmitDialog::new(
-            ConfirmAction::MergeMr(42),
-            "Merge MR #42",
-            "Merge with the selected options.",
-            "Merge",
-            vec![
-                SubmitOption::new("Squash", true),
-                SubmitOption::new("Delete source branch", true),
-            ],
-        );
+    fn merge_methods(
+        allowed: &[crate::domain::mr::MergeMethod],
+        preferred: crate::domain::mr::MergeMethod,
+    ) -> crate::domain::mr::MergeMethods {
+        crate::domain::mr::MergeMethods::new(allowed, Some(preferred)).unwrap()
+    }
 
-        // Default cursor sits on Submit (leftmost).
-        assert!(dialog.is_on_submit());
-        assert_eq!(dialog.cancel_idx(), 3);
-        assert_eq!(dialog.cursor_idx, 0);
-
-        // Move right/down: Submit -> Squash -> Delete source branch -> Cancel.
-        dialog.move_next();
-        assert_eq!(dialog.option_idx(), Some(0));
-        dialog.move_next();
-        assert_eq!(dialog.option_idx(), Some(1));
-        dialog.move_next();
-        assert!(dialog.is_on_cancel());
-        dialog.move_next();
-        assert!(dialog.is_on_cancel(), "Cancel must clamp at the right");
-
-        // Move left/up: Cancel -> Delete source branch -> Squash -> Submit.
-        dialog.move_prev();
-        assert_eq!(dialog.option_idx(), Some(1));
-        dialog.move_prev();
-        assert_eq!(dialog.option_idx(), Some(0));
-        dialog.move_prev();
-        assert!(dialog.is_on_submit());
-        dialog.move_prev();
-        assert!(dialog.is_on_submit(), "Submit must clamp at the left");
-
-        // Toggle flips state and stays in place.
-        dialog.cursor_idx = 1;
-        assert!(dialog.options[0].checked);
-        dialog.toggle_focused_option();
-        assert!(!dialog.options[0].checked);
-        dialog.toggle_focused_option();
-        assert!(dialog.options[0].checked);
-
-        // Toggling on a button row is a no-op.
-        dialog.cursor_idx = 0;
-        let before = dialog.options[0].checked;
-        dialog.toggle_focused_option();
-        assert_eq!(dialog.options[0].checked, before);
+    fn method_labels(dialog: &SubmitDialog) -> Vec<String> {
+        dialog
+            .form
+            .groups
+            .iter()
+            .find_map(|group| match group {
+                crate::form::Group::Radio(radio) => Some(
+                    radio
+                        .choices
+                        .iter()
+                        .map(|choice| choice.label.clone())
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     #[test]
-    fn test_submit_dialog_build_safe_vs_submit_focus() {
-        let app = App::default();
-        // Destructive action defaults to Cancel.
-        let close = SubmitDialog::build(ConfirmAction::CloseIssue(7), &app);
-        assert!(close.is_on_cancel());
-        assert_eq!(close.options.len(), 0);
-        assert_eq!(close.submit_label, "Close");
+    fn a_merge_dialog_offers_only_the_methods_the_project_allows() {
+        use crate::domain::mr::MergeMethod::{Merge, Rebase};
+        let mut app = App::default();
+        app.merge_methods
+            .insert("g/p".to_string(), merge_methods(&[Merge, Rebase], Rebase));
 
-        // Reversible action defaults to Submit.
-        let merge = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
-        assert!(merge.is_on_submit());
-        assert_eq!(merge.options.len(), 5);
-        assert!(merge.options.iter().any(|o| o.label == "Strategy: Squash"));
-        assert!(
-            merge
-                .options
-                .iter()
-                .any(|o| o.label == "Delete source branch")
+        let dialog =
+            SubmitDialog::build_with_project(ConfirmAction::MergeMr(9), "g/p".to_string(), &app);
+
+        assert_eq!(method_labels(&dialog), ["Merge commit", "Rebase"]);
+        assert_eq!(dialog.merge_method(), Some(Rebase));
+        assert_eq!(dialog.merge_blocker(), None);
+        assert_eq!(dialog.focused(), Some(DialogControl::Submit));
+    }
+
+    #[test]
+    fn merge_methods_arriving_late_keep_the_toggles_the_user_already_flipped() {
+        use crate::domain::mr::MergeMethod::{Merge, Squash};
+        let mut app = App::default();
+        let mut dialog =
+            SubmitDialog::build_with_project(ConfirmAction::MergeMr(9), "g/p".to_string(), &app);
+        assert_eq!(
+            dialog.merge_blocker().as_deref(),
+            Some("The merge methods are still loading.")
+        );
+        assert!(dialog.is_waiting_for_merge_methods());
+        dialog
+            .form
+            .set_focus(crate::form::Focus::Item { group: 2, item: 0 });
+        dialog.form.toggle_focused();
+        app.open_submit_dialog(dialog);
+        assert_eq!(app.take_merge_methods_to_fetch(), ["g/p"]);
+        assert_eq!(app.take_merge_methods_to_fetch(), Vec::<String>::new());
+
+        app.apply_merge_methods(
+            "g/p".to_string(),
+            Ok(merge_methods(&[Merge, Squash], Squash)),
         );
 
+        let dialog = app.submit_dialog().unwrap();
+        assert_eq!(dialog.merge_method(), Some(Squash));
+        assert!(!dialog.is_checked(DialogControl::DeleteSourceBranch));
+        assert_eq!(
+            dialog.form.focus(),
+            Some(crate::form::Focus::Item { group: 2, item: 0 })
+        );
+    }
+
+    #[test]
+    fn a_bulk_merge_offers_the_methods_every_project_shares() {
+        use crate::domain::mr::MergeMethod::{Merge, Rebase, Squash};
+        let mut app = App::default();
+        app.merge_methods
+            .insert("a/one".to_string(), merge_methods(&[Merge, Squash], Merge));
+        app.merge_methods.insert(
+            "b/two".to_string(),
+            merge_methods(&[Squash, Rebase], Rebase),
+        );
+        let items = vec![("a/one".to_string(), 1), ("b/two".to_string(), 2)];
+
+        let dialog = SubmitDialog::build(ConfirmAction::BulkMergeMrs(items), &app);
+
+        assert_eq!(dialog.merge_projects, ["a/one", "b/two"]);
+        assert_eq!(method_labels(&dialog), ["Squash"]);
+        assert_eq!(dialog.merge_method(), Some(Squash));
+    }
+
+    #[test]
+    fn an_unreadable_merge_setting_refuses_the_merge_and_is_not_read_again() {
+        let mut app = App::default();
+        app.open_submit_dialog(SubmitDialog::build_with_project(
+            ConfirmAction::MergeMr(9),
+            "g/p".to_string(),
+            &app,
+        ));
+        assert_eq!(app.take_merge_methods_to_fetch(), ["g/p"]);
+
+        app.apply_merge_methods("g/p".to_string(), Err("HTTP 404".to_string()));
+
+        let dialog = app.submit_dialog().unwrap();
+        assert_eq!(
+            dialog.merge_blocker().as_deref(),
+            Some("Could not read the merge methods g/p allows: HTTP 404")
+        );
+        assert_eq!(app.take_merge_methods_to_fetch(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn destructive_dialogs_focus_cancel_and_reversible_ones_submit() {
+        let app = App::default();
+        let close = SubmitDialog::build(ConfirmAction::CloseIssue(7), &app);
+        assert_eq!(close.focused(), Some(DialogControl::Cancel));
+        assert!(close.merge_projects.is_empty());
+
         let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
-        assert!(rebase.is_on_submit());
-        assert_eq!(rebase.submit_label, "Rebase");
+        assert_eq!(rebase.focused(), Some(DialogControl::Submit));
+        assert_eq!(rebase.form.buttons[0].label, "Rebase");
     }
 
     const RUST_BLOCK_COMMENT_DIFF: &str = "\
@@ -10870,22 +11129,19 @@ diff --git a/src/lib.rs b/src/lib.rs
     fn submit_review_dialog_buttons_run_submit_keep_discard_cancel_and_stop_at_the_ends() {
         let app = App::default();
         let mut dialog = SubmitDialog::build(ConfirmAction::SubmitReview(3), &app);
-        let focused = |d: &SubmitDialog| {
-            if d.is_on_submit() {
-                "Submit"
-            } else if d.is_on_cancel() {
-                "Cancel"
-            } else {
-                d.focused_choice().map_or("option", DialogChoice::label)
-            }
+        let focused = |d: &SubmitDialog| match d.focused() {
+            Some(DialogControl::Submit) => "Submit",
+            Some(DialogControl::Cancel) => "Cancel",
+            Some(DialogControl::Choice(choice)) => choice.label(),
+            _ => "option",
         };
         let mut visited = vec![focused(&dialog)];
         for _ in 0..4 {
-            dialog.move_between_buttons(1);
+            dialog.form.move_between_buttons(1);
             visited.push(focused(&dialog));
         }
         for _ in 0..4 {
-            dialog.move_between_buttons(-1);
+            dialog.form.move_between_buttons(-1);
             visited.push(focused(&dialog));
         }
         assert_eq!(
@@ -11011,7 +11267,7 @@ diff --git a/Makefile b/Makefile
         let app = App::default();
 
         let cancel_pipeline = SubmitDialog::build(ConfirmAction::CancelPipeline(7), &app);
-        assert!(cancel_pipeline.is_on_cancel());
+        assert_eq!(cancel_pipeline.focused(), Some(DialogControl::Cancel));
         assert!(cancel_pipeline.action.is_destructive());
 
         let cancel_jobs = SubmitDialog::build(
@@ -11021,7 +11277,7 @@ diff --git a/Makefile b/Makefile
             },
             &app,
         );
-        assert!(cancel_jobs.is_on_cancel());
+        assert_eq!(cancel_jobs.focused(), Some(DialogControl::Cancel));
         assert!(cancel_jobs.action.is_destructive());
     }
 
@@ -11036,7 +11292,7 @@ diff --git a/Makefile b/Makefile
             is_loading: true,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
             multi_select: true,
             state: ListState::default(),
             request: Some(request),
@@ -11143,7 +11399,7 @@ diff --git a/Makefile b/Makefile
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
             multi_select: true,
             state: ListState::default(),
             request: None,
@@ -11164,28 +11420,48 @@ diff --git a/Makefile b/Makefile
 
     #[test]
     fn test_selector_has_filter_bar() {
-        let make = |field_type: &str| Selector {
-            title: "Test".to_string(),
-            all_items: vec![],
-            selected_items: std::collections::HashSet::new(),
-            cursor_idx: 0,
-            search_query: String::new(),
-            is_filtering: false,
-            is_loading: false,
-            entity_iid: 1,
-            entity_type: "issue".to_string(),
-            field_type: field_type.to_string(),
-            multi_select: false,
-            state: ListState::default(),
-            request: None,
-        };
+        assert!(!SelectorPurpose::LinkedIssues.has_filter_bar());
+        assert!(
+            !SelectorPurpose::CommentActions {
+                comment_id: 1,
+                mr_iid: 1
+            }
+            .has_filter_bar()
+        );
+        assert!(!SelectorPurpose::DraftActions { index: 0 }.has_filter_bar());
+        assert!(!SelectorPurpose::RelatedMrs.has_filter_bar());
+        assert!(SelectorPurpose::Field(SelectorField::Labels).has_filter_bar());
+        assert!(SelectorPurpose::Field(SelectorField::Assignees).has_filter_bar());
+        assert!(SelectorPurpose::Field(SelectorField::Milestone).has_filter_bar());
+    }
 
-        assert!(!make("linked_issues").has_filter_bar());
-        assert!(!make("comment_action_select").has_filter_bar());
-        assert!(!make("related_mrs").has_filter_bar());
-        assert!(make("labels").has_filter_bar());
-        assert!(make("assignees").has_filter_bar());
-        assert!(make("milestone").has_filter_bar());
+    #[test]
+    fn selector_field_label_round_trips() {
+        let fields = [
+            SelectorField::Labels,
+            SelectorField::Assignees,
+            SelectorField::Reviewers,
+            SelectorField::Milestone,
+            SelectorField::Confidential,
+            SelectorField::DraftStatus,
+            SelectorField::MrPipeline,
+            SelectorField::SourceBranch,
+            SelectorField::TargetBranch,
+            SelectorField::PipelineBranch,
+            SelectorField::WorkflowFile,
+            SelectorField::Tag,
+            SelectorField::CreateFrom,
+            SelectorField::Project,
+            SelectorField::WorkflowInput("version".to_string()),
+        ];
+        for field in fields {
+            assert_eq!(
+                SelectorField::from_label(&field.label()),
+                Some(field.clone()),
+                "label {:?} did not round-trip",
+                field.label()
+            );
+        }
     }
 
     #[test]
@@ -11205,7 +11481,7 @@ diff --git a/Makefile b/Makefile
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
             multi_select: true,
             state: ListState::default(),
             request: None,
@@ -13800,7 +14076,7 @@ index 123456..789012 100644
         app.confirm_terminal_rerun().unwrap();
 
         let dialog = app.submit_dialog().cloned().expect("confirmation is open");
-        let crate::app::ConfirmAction::RerunCommand(invocation) = dialog.action else {
+        let crate::app::ConfirmAction::RerunCommand(invocation) = &dialog.action else {
             panic!("expected a rerun confirmation, got {:?}", dialog.action);
         };
         assert_eq!(
@@ -13808,7 +14084,7 @@ index 123456..789012 100644
             "glab api -X DELETE projects/1/repository/branches/x"
         );
         assert_eq!(
-            dialog.body,
+            dialog.body(),
             "Run again: glab api -X DELETE projects/1/repository/branches/x"
         );
     }
@@ -14166,16 +14442,15 @@ index 123456..789012 100644
 
         // Drive the same code path the picker Enter key triggers in
         // `src/main.rs` (now factored through `apply_column_filter_picker`).
-        app.column_filter_context = Some((Tab::MergeRequests, "Project".to_string()));
-        app.apply_column_filter_picker(std::collections::HashSet::new());
+        app.apply_column_filter_picker(
+            Tab::MergeRequests,
+            "Project".to_string(),
+            std::collections::HashSet::new(),
+        );
 
         assert!(
             !app.has_column_filter(Tab::MergeRequests, "Project"),
             "filter for Project column should be cleared after picker reset"
-        );
-        assert!(
-            app.column_filter_context.is_none(),
-            "picker context must be taken"
         );
         let filtered = app.filtered_mrs();
         assert_eq!(
@@ -14204,13 +14479,11 @@ index 123456..789012 100644
         app.mrs.items = vec![issue1, issue2];
 
         // Reopen the picker for `Project`, keep `repo-a` selected, confirm.
-        app.column_filter_context = Some((Tab::MergeRequests, "Project".to_string()));
         let mut selected = std::collections::HashSet::new();
         selected.insert("group/repo-a".to_string());
-        app.apply_column_filter_picker(selected);
+        app.apply_column_filter_picker(Tab::MergeRequests, "Project".to_string(), selected);
 
         assert!(app.has_column_filter(Tab::MergeRequests, "Project"));
-        assert!(app.column_filter_context.is_none());
         let filtered = app.filtered_mrs();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
@@ -14246,17 +14519,19 @@ index 123456..789012 100644
 
         // Seed a Status = SUCCESS filter via the picker helper, narrowing
         // the table to the success row.
-        app.column_filter_context = Some((Tab::Pipelines, "Status".to_string()));
         let mut selected = std::collections::HashSet::new();
         selected.insert("SUCCESS".to_string());
-        app.apply_column_filter_picker(selected);
+        app.apply_column_filter_picker(Tab::Pipelines, "Status".to_string(), selected);
         assert_eq!(app.filtered_pipelines().len(), 1);
 
         // Empty-selection reset — `apply_column_filters` short-circuits on
         // an empty set, so removing the entry (not inserting an empty set)
         // is what restores every row.
-        app.column_filter_context = Some((Tab::Pipelines, "Status".to_string()));
-        app.apply_column_filter_picker(std::collections::HashSet::new());
+        app.apply_column_filter_picker(
+            Tab::Pipelines,
+            "Status".to_string(),
+            std::collections::HashSet::new(),
+        );
 
         assert!(!app.has_column_filter(Tab::Pipelines, "Status"));
         assert_eq!(
@@ -15742,7 +16017,7 @@ index 123456..789012 100644
 
         assert_eq!(dialog.title, "Roll Back 'prod' to abc123");
         assert_eq!(
-            dialog.body,
+            dialog.body(),
             "Re-deploy abc123 (main) from deployment #1 to 'prod'? This re-runs its job 'deploy'."
         );
     }

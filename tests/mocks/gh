@@ -38,6 +38,12 @@ if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"
 fi
 
+# Merge settings the merge dialog reads: every method, squash preselected.
+if [[ "$*" == "repo view --json mergeCommitAllowed"* ]]; then
+    echo '{"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"SQUASH"}'
+    exit 0
+fi
+
 # Match arguments to determine response
 if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     echo "mock github job trace output"

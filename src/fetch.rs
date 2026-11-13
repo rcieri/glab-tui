@@ -742,6 +742,30 @@ pub fn request_pr_stack(
     true
 }
 
+/// Read the merge methods of every project the open merge dialog waits on
+/// and nobody is reading yet. Each answer arrives as
+/// `Event::MergeMethodsFetched`.
+pub fn fetch_missing_merge_methods(
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    for project in app.take_merge_methods_to_fetch() {
+        let client = client.clone();
+        let tx = app.scoped_sender(tx.clone());
+        fx.spawn(async move {
+            let result = client.list_merge_methods(&project).await;
+            let _ = tx.send(Event::MergeMethodsFetched {
+                project,
+                result: result.map_err(|e| e.to_string()),
+            });
+        });
+    }
+}
+
 /// Fetch the stack positions behind the Stack column for `pr_numbers`, in one
 /// query. A failure sends nothing, so the column keeps what it showed: stack
 /// positions decorate the list and nothing acts on them.

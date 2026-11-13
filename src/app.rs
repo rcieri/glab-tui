@@ -3204,6 +3204,8 @@ pub struct SubmitDialog {
     pub project_path: String,
     /// Buttons between Submit and Cancel, left to right.
     pub extra_buttons: Vec<DialogChoice>,
+    /// The merge methods the `Strategy` radio offers, in its order.
+    strategies: Vec<MergeMethod>,
     pub form: Form,
 }
 
@@ -3226,7 +3228,7 @@ impl SubmitDialog {
         let method = self
             .form
             .radio(Self::STRATEGY)
-            .and_then(|radio| MergeMethod::ALL.get(radio.selected).copied())
+            .and_then(|radio| self.strategies.get(radio.selected).copied())
             .unwrap_or(MergeMethod::DEFAULT);
         let is_on = |toggle: MergeToggle| {
             let row = MergeToggle::ALL.iter().position(|&t| t == toggle);
@@ -3265,6 +3267,12 @@ impl SubmitDialog {
         let marker = if kind.is_github() { "#" } else { "!" };
 
         let action_clone = action.clone();
+        let strategies = match &action {
+            ConfirmAction::MergeMr(_)
+            | ConfirmAction::MergeStack(_)
+            | ConfirmAction::BulkMergeMrs(_) => MergeMethod::ALL.to_vec(),
+            _ => Vec::new(),
+        };
         let (title, body, submit_label, options) = match &action {
             ConfirmAction::DeleteMilestone(iid) => (
                 format!("Delete Milestone #{iid}"),
@@ -3357,7 +3365,10 @@ impl SubmitDialog {
                 } else {
                     format!("Merging: {source} \u{2192} {target}")
                 };
-                let options = vec![Self::strategy_group(), Self::merge_options_group()];
+                let options = vec![
+                    Self::strategy_group(&strategies),
+                    Self::merge_options_group(),
+                ];
                 (
                     format!("Merge {mr} #{iid}"),
                     body,
@@ -3394,13 +3405,13 @@ impl SubmitDialog {
                     }
                     None => (String::new(), Vec::new()),
                 };
-                options.push(Self::strategy_group());
+                options.push(Self::strategy_group(&strategies));
                 (title, body, "Merge".to_string(), options)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
                     Self::bulk_merge_items(app, iids, marker),
-                    Self::strategy_group(),
+                    Self::strategy_group(&strategies),
                     Self::merge_options_group(),
                 ];
                 (
@@ -3589,16 +3600,17 @@ impl SubmitDialog {
             action: action_clone,
             project_path,
             extra_buttons,
+            strategies,
             form: if is_destructive { form.danger() } else { form },
         }
     }
 
-    fn strategy_group() -> Group {
-        let choices = MergeMethod::ALL
+    fn strategy_group(strategies: &[MergeMethod]) -> Group {
+        let choices = strategies
             .iter()
             .map(|method| method.label().to_string())
             .collect();
-        let default = MergeMethod::ALL
+        let default = strategies
             .iter()
             .position(|&method| method == MergeMethod::DEFAULT)
             .unwrap_or_default();

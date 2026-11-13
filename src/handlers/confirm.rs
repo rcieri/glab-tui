@@ -68,12 +68,7 @@ fn selected_mr(app: &mut App, build: fn(u64) -> ConfirmAction) {
 }
 
 fn revoke_mr(app: &mut App) {
-    let is_github = app
-        .gitlab_client
-        .as_ref()
-        .map(|c| c.is_github)
-        .unwrap_or(false);
-    if is_github {
+    if app.is_github() {
         app.show_error("Revoking approval isn't supported on GitHub".to_string());
         return;
     }
@@ -81,12 +76,7 @@ fn revoke_mr(app: &mut App) {
 }
 
 fn delete_mr(app: &mut App) {
-    let is_github = app
-        .gitlab_client
-        .as_ref()
-        .map(|c| c.is_github)
-        .unwrap_or(false);
-    if is_github {
+    if app.is_github() {
         app.show_error("GitHub does not support deleting pull requests".to_string());
         return;
     }

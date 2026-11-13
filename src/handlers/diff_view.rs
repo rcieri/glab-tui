@@ -792,9 +792,16 @@ mod tests {
     #[test]
     fn ctrl_search_next_steps_through_matches_instead_of_typing() {
         let mut app = App::default();
-        open_diff(&mut app);
-        app.diff_view.as_mut().unwrap().search_active = true;
+        let mut view = crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1,2 @@\n-old\n+new\n+newer\n".to_string(),
+        );
+        view.focus_on_files = false;
+        view.search_active = true;
+        app.diff_view = Some(view);
         press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.diff_view.as_ref().unwrap().search_matches.len(), 2);
 
         let tx = app.tx.clone();
         handle_key(
@@ -804,6 +811,9 @@ mod tests {
             &mut Effects::default(),
         );
 
-        assert_eq!(app.diff_view.as_ref().unwrap().search_query, "n");
+        let view = app.diff_view.as_ref().unwrap();
+        assert_eq!(view.search_query, "n");
+        assert_eq!(view.search_cursor, 1);
+        assert_eq!(view.cursor_idx, view.search_matches[1]);
     }
 }

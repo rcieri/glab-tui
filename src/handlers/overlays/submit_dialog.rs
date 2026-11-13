@@ -58,7 +58,7 @@ fn apply_form_action(
             let Some(dialog) = app.submit_dialog.take() else {
                 return;
             };
-            if button == SubmitDialog::SUBMIT_BUTTON {
+            if button == SubmitDialog::SUBMIT_BUTTON_INDEX {
                 let merge = dialog.merge_choices();
                 run_submit_action(
                     app,

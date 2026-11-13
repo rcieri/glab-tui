@@ -3208,32 +3208,16 @@ pub struct SubmitDialog {
 }
 
 impl SubmitDialog {
-    /// Leftmost button.
-    pub const SUBMIT_BUTTON: usize = 0;
+    pub const SUBMIT_BUTTON_INDEX: usize = 0;
     const BODY: GroupId = GroupId("body");
     const STRATEGY: GroupId = GroupId("strategy");
     const MERGE_OPTIONS: GroupId = GroupId("merge_options");
 
-    pub fn is_on_submit(&self) -> bool {
-        self.form.focused_button() == Some(Self::SUBMIT_BUTTON)
-    }
-
-    pub fn is_on_cancel(&self) -> bool {
-        self.form.focused_button() == Some(self.form.cancel())
-    }
-
     /// The extra button at form button index `button`, if it is one.
     pub fn choice_at(&self, button: usize) -> Option<DialogChoice> {
         button
-            .checked_sub(Self::SUBMIT_BUTTON + 1)
+            .checked_sub(Self::SUBMIT_BUTTON_INDEX + 1)
             .and_then(|i| self.extra_buttons.get(i).copied())
-    }
-
-    pub fn body(&self) -> &str {
-        match self.form.group(Self::BODY).map(|group| &group.kind) {
-            Some(GroupKind::Note(note)) => &note.text,
-            _ => "",
-        }
     }
 
     /// The merge the dialog's strategy and options ask for. A dialog without
@@ -3647,6 +3631,24 @@ impl SubmitDialog {
             })
             .collect();
         Group::new(GroupKind::ItemList(ItemList { entries }))
+    }
+}
+
+#[cfg(test)]
+impl SubmitDialog {
+    pub(crate) fn is_on_submit(&self) -> bool {
+        self.form.focused_button() == Some(Self::SUBMIT_BUTTON_INDEX)
+    }
+
+    pub(crate) fn is_on_cancel(&self) -> bool {
+        self.form.focused_button() == Some(self.form.cancel())
+    }
+
+    pub(crate) fn body(&self) -> &str {
+        match self.form.group(Self::BODY).map(|group| &group.kind) {
+            Some(GroupKind::Note(note)) => &note.text,
+            _ => "",
+        }
     }
 }
 

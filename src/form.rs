@@ -42,8 +42,8 @@ enum FoldedChildren {
 pub enum FormTone {
     #[default]
     Normal,
-    /// The primary action cannot be undone: the border turns red and the
-    /// focus and `Enter` go to Cancel, so a reflexive `Enter` does nothing.
+    /// Opens on Cancel and makes it the primary, so a reflexive `Enter` runs
+    /// nothing, and frames the form in `danger_border`.
     Danger,
 }
 

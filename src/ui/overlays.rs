@@ -1841,13 +1841,20 @@ command = "true"
             .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
 
-        let text = buffer_text(&terminal);
-        assert!(text.contains("F9"), "remapped key missing: {text:?}");
-        assert_eq!(
-            app.config.keybindings.display(Action::IssuesCreateIssue),
-            "F9",
-            "remapping replaces the default key rather than adding to it"
-        );
+        let buffer = terminal.backend().buffer();
+        let row: String = buffer
+            .content
+            .chunks(buffer.area.width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .find(|row| row.contains("Create new Issue"))
+            .expect("Create new Issue row rendered");
+        let before_label = row.split("Create new Issue").next().unwrap_or_default();
+        let key_cell = before_label
+            .trim_end()
+            .rsplit("  ")
+            .next()
+            .unwrap_or_default();
+        assert_eq!(key_cell.trim(), "F9", "{row:?}");
     }
 
     /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:

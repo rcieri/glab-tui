@@ -4061,7 +4061,12 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let config = Config::load();
+        Self::with_config(Config::default())
+    }
+}
+
+impl App {
+    fn with_config(config: Config) -> Self {
         let key_buffer = crate::keybinding::KeyBuffer::new(key_sequences(&config.keybindings));
         Self {
             theme: config.resolve_theme(),
@@ -6200,7 +6205,7 @@ impl App {
     }
 
     pub fn new() -> Self {
-        let mut app = Self::default();
+        let mut app = Self::with_config(Config::load());
         if let Some(ref active_tab_str) = app.config.active_tab {
             if let Some(tab) = Tab::from_str(active_tab_str) {
                 app.active_tab = tab;
@@ -11674,7 +11679,7 @@ diff --git a/foo.txt b/foo.txt
             username: "tester".to_string(),
         };
 
-        let mut app = App::new();
+        let mut app = App::default();
 
         // 1. Thread 1: unresolved
         let note1 = DiscussionNote {
@@ -11793,16 +11798,8 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_save_layout_and_active_tab_and_group_sorting() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
 
         let mut app = App::new();
         app.active_tab = Tab::MergeRequests;
@@ -11841,15 +11838,6 @@ diff --git a/foo.txt b/foo.txt
             app2.group_ascending.get(&Tab::MergeRequests).copied(),
             Some(true)
         );
-
-        std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            if let Some(old) = old_config {
-                std::env::set_var("GLAB_TUI_CONFIG", old);
-            } else {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
@@ -11890,13 +11878,8 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_app_new_honours_active_tab_config() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
         std::fs::write(
             &config_path,
             r#"active_tab = "milestones"
@@ -11906,27 +11889,12 @@ diff --git a/foo.txt b/foo.txt
 
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Milestones);
-
-        if let Some(prev) = previous {
-            unsafe {
-                std::env::set_var("GLAB_TUI_CONFIG", prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
     fn test_app_new_falls_back_to_issues_for_unknown_active_tab() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
         std::fs::write(
             &config_path,
             r#"active_tab = "this-is-not-a-tab"
@@ -11936,37 +11904,49 @@ diff --git a/foo.txt b/foo.txt
 
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Issues);
+    }
 
-        if let Some(prev) = previous {
-            unsafe {
-                std::env::set_var("GLAB_TUI_CONFIG", prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
+    const REMAPPED_PAGE_KEYS: &str = r#"
+[keybindings.global]
+scroll_page_down = "Ctrl+f"
+scroll_page_up = "Ctrl+b"
+"#;
+
+    #[test]
+    fn app_default_ignores_the_config_file() {
+        let _home = crate::config::isolate_home();
+        std::fs::write(Config::config_path(), REMAPPED_PAGE_KEYS).unwrap();
+
+        let app = App::default();
+
+        let global = &app.config.keybindings.global;
+        assert_eq!(global.scroll_page_down, "PageDown");
+        assert_eq!(global.scroll_page_up, "PageUp");
+    }
+
+    #[test]
+    fn app_new_reads_the_config_file() {
+        let _config = crate::config::isolate_config();
+        std::fs::write(Config::config_path(), REMAPPED_PAGE_KEYS).unwrap();
+
+        let app = App::new();
+
+        let global = &app.config.keybindings.global;
+        assert_eq!(global.scroll_page_down, "Ctrl+f");
+        assert_eq!(global.scroll_page_up, "Ctrl+b");
     }
 
     #[test]
     fn test_app_inline_page_size_defaults() {
-        let app = App::new();
+        let app = App::default();
         assert!(!app.editing_page_size);
         assert_eq!(app.page_size_input, "");
     }
 
     #[test]
     fn test_save_layout_preserves_custom_settings() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
 
         // Write an initial config with custom keybindings
         let initial_toml = r#"
@@ -12005,15 +11985,6 @@ help = "h"
             .unwrap();
         assert_eq!(kb.get("quit").and_then(|v| v.as_str()), Some("ctrl+c"));
         assert_eq!(kb.get("help").and_then(|v| v.as_str()), Some("h"));
-
-        std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            if let Some(old) = old_config {
-                std::env::set_var("GLAB_TUI_CONFIG", old);
-            } else {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
@@ -15206,8 +15177,10 @@ index 123456..789012 100644
     }
 
     fn app_showing_deployments_for(environment: &str) -> App {
-        let mut app = App::new();
-        app.active_tab = Tab::Environments;
+        let mut app = App {
+            active_tab: Tab::Environments,
+            ..Default::default()
+        };
         app.search_query.clear();
         app.column_filters.clear();
         app.enabled_columns

@@ -3789,9 +3789,7 @@ mod tests {
 
     #[test]
     fn gitlab_host_without_origin_remote_falls_back_to_gitlab_com() {
-        // No upstream remote configured in CI/sandbox; assert graceful
-        // fallback rather than a panic.
-        std::env::set_current_dir("/").ok();
+        let _config = crate::config::isolate_config();
         assert_eq!(gitlab_host_or_default(), "gitlab.com");
     }
 

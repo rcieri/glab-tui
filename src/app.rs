@@ -941,7 +941,9 @@ pub fn strip_diff_marker(line: &str) -> &str {
 /// Pairs each run of removed lines with the added lines that follow it, the
 /// first removed line with the first added one and so on, and marks the words
 /// each pair changed. A run ends at any row other than a change or a
-/// missing-newline note.
+/// missing-newline note. Runs of different lengths get no marks: which
+/// removed line an added one replaces is then unknown, and pairing them by
+/// position marks renames that never happened.
 fn mark_changed_words(lines: &mut [DiffLine]) {
     let mut removed: Vec<usize> = Vec::new();
     let mut added: Vec<usize> = Vec::new();
@@ -974,6 +976,9 @@ fn is_missing_newline_note(line: &DiffLine) -> bool {
 }
 
 fn mark_changed_pairs(lines: &mut [DiffLine], removed: &[usize], added: &[usize]) {
+    if removed.len() != added.len() {
+        return;
+    }
     for (&old, &new) in removed.iter().zip(added) {
         if let Some(changed) =
             crate::word_diff::changed_ranges(lines[old].code(), lines[new].code())
@@ -10598,6 +10603,31 @@ diff --git a/src/a.rs b/src/a.rs
                 words("+    let retries = 5;", &["5"]),
                 words("-let unpaired = 1;", &[]),
                 words("+let other = 2;", &[]),
+            ]
+        );
+    }
+
+    #[test]
+    fn uneven_runs_of_removed_and_added_lines_get_no_word_marks() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,4 +1,3 @@
+ fn main() {
+-    let alpha = compute(x, y);
+-    let beta = compute(x, z);
++    let beta = compute(x, w);
+ }
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let unmarked = |content: &str| (content.to_string(), Vec::<String>::new());
+        assert_eq!(
+            changed_words(&view),
+            [
+                unmarked("-    let alpha = compute(x, y);"),
+                unmarked("-    let beta = compute(x, z);"),
+                unmarked("+    let beta = compute(x, w);"),
             ]
         );
     }

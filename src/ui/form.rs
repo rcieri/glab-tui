@@ -25,18 +25,16 @@ use ratatui::{
 use std::ops::Range;
 
 const FORM_WIDTH: u16 = 64;
-/// The border plus one padding column on each side, and the border alone
-/// above and below.
-const CONTENT_MARGIN: Margin = Margin::new(2, 1);
+const BORDER: u16 = 1;
+const PADDING_COLUMNS: u16 = 1;
+const CONTENT_MARGIN: Margin = Margin::new(BORDER + PADDING_COLUMNS, BORDER);
 const BORDER_ROWS: u16 = 2 * CONTENT_MARGIN.vertical;
 const SEPARATOR_ROWS: u16 = 1;
 const BUTTON_ROWS: u16 = 1;
 const FOOTER_ROWS: u16 = 1;
 const CHROME_ROWS: u16 = BORDER_ROWS + SEPARATOR_ROWS + BUTTON_ROWS + FOOTER_ROWS;
-/// The fewest entries a bulk item list keeps once the form is short of room.
-const SHORT_LIST_ROWS: usize = 3;
-/// Columns between two radios drawn on one row.
-const RADIO_GAP: usize = 2;
+const MIN_SHORT_LIST_ENTRIES: usize = 3;
+const RADIO_GAP_COLUMNS: usize = 2;
 const SECTION_INDENT: usize = 2;
 
 /// The steps that shrink a body too tall for the screen, in the order they
@@ -50,7 +48,7 @@ enum Compaction {
     /// Previews fold to their first line and a `+N lines` hint.
     FoldedPreviews,
     /// Item lists keep the entries that still fit, at least
-    /// `SHORT_LIST_ROWS`, and a `N more` row.
+    /// `MIN_SHORT_LIST_ENTRIES`, and a `N more` row.
     ShortLists,
     /// Collapsible sections fold.
     FoldedSections,
@@ -78,7 +76,7 @@ impl Fit {
     fn at(compaction: Compaction) -> Self {
         Self {
             compaction,
-            list_entries: SHORT_LIST_ROWS,
+            list_entries: MIN_SHORT_LIST_ENTRIES,
         }
     }
 }
@@ -595,7 +593,7 @@ fn radio_rows(
         })
         .collect();
     let one_row_width = choices.iter().map(|(span, _)| span.width()).sum::<usize>()
-        + RADIO_GAP * choices.len().saturating_sub(1);
+        + RADIO_GAP_COLUMNS * choices.len().saturating_sub(1);
 
     if one_row_width > width {
         return choices
@@ -618,8 +616,8 @@ fn radio_rows(
     let mut is_focused = false;
     for (row, (span, is_choice_focused)) in choices.into_iter().enumerate() {
         if row > 0 {
-            spans.push(Span::raw(" ".repeat(RADIO_GAP)));
-            column += RADIO_GAP;
+            spans.push(Span::raw(" ".repeat(RADIO_GAP_COLUMNS)));
+            column += RADIO_GAP_COLUMNS;
         }
         let span_width = span.width();
         targets.push(RowTarget {
@@ -1147,11 +1145,23 @@ mod tests {
                 .collect(),
         };
         assert_eq!(
-            rows_text(&item_rows(&list(4), SHORT_LIST_ROWS, &ctx, &styles, 60)),
+            rows_text(&item_rows(
+                &list(4),
+                MIN_SHORT_LIST_ENTRIES,
+                &ctx,
+                &styles,
+                60
+            )),
             ["!1", "!2", "!3", "!4"]
         );
         assert_eq!(
-            rows_text(&item_rows(&list(5), SHORT_LIST_ROWS, &ctx, &styles, 60)),
+            rows_text(&item_rows(
+                &list(5),
+                MIN_SHORT_LIST_ENTRIES,
+                &ctx,
+                &styles,
+                60
+            )),
             ["!1", "!2", "!3", "v 2 more"]
         );
     }
@@ -1184,7 +1194,16 @@ mod tests {
         );
         assert_eq!(
             rows_text(&fitting_body(&form, &ctx, 60, 8)),
-            ["Merging 10 MRs", "!1", "!2", "!3", "!4", "!5", "!6", "v 4 more"]
+            [
+                "Merging 10 MRs",
+                "!1",
+                "!2",
+                "!3",
+                "!4",
+                "!5",
+                "!6",
+                "v 4 more"
+            ]
         );
     }
 

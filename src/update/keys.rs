@@ -228,6 +228,9 @@ pub(super) fn handle_key(
         return;
     }
 
+    // Taken before leave_scope swaps the scope, so the sync below reloads the
+    // group it returns to.
+    let old_scope = app.scope.clone();
     if app
         .config
         .keybindings
@@ -245,7 +248,6 @@ pub(super) fn handle_key(
         }
     }
 
-    let old_scope = app.scope.clone();
     handlers::tabs::handle_active_tab_key(app, key_event, tx, fx);
     handlers::scope::sync_after_scope_change(app, &old_scope, tx, fx);
 }

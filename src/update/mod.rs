@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn only_esc_returns_from_a_project_narrowed_from_its_group() {
+    fn only_esc_returns_from_a_project_narrowed_from_its_group_and_reloads_it() {
         let _home = crate::config::isolate_home();
         let group = crate::scope::Scope::Group("group".to_string());
         let project = crate::scope::Scope::Repository("group/project".to_string());
@@ -212,8 +212,10 @@ mod tests {
         update(&mut app, press(KeyCode::Backspace, KeyModifiers::NONE));
         assert_eq!(app.scope, project);
 
-        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+        let effects = update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.scope, group);
+        assert!(app.loading_tabs.contains(&app.active_tab));
+        assert_eq!(spawned(&effects), 1, "the group's client is built again");
     }
 
     fn app_with_searched_job_trace() -> App {

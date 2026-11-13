@@ -110,6 +110,19 @@ fn runners_tab_lists_filters_and_pauses_the_matching_runner() {
 }
 
 #[test]
+fn runners_tab_opens_the_highlighted_runner_in_the_browser() {
+    let mut session = session_on_tab(4, "Shared Runner 1");
+
+    session.press_keys(b"o");
+    session
+        .wait_for_cli_call(
+            "browser https://gitlab.com/test-owner/test-repo/-/runners/9876",
+            5000,
+        )
+        .expect("o should open the highlighted runner through the browser mock");
+}
+
+#[test]
 fn releases_tab_lists_filters_and_deletes_the_matching_release() {
     let mut session = session_on_tab(5, "Second release");
     assert_lists(

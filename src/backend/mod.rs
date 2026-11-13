@@ -1,4 +1,5 @@
 mod bounded_output;
+pub(crate) mod browser;
 pub mod gh;
 pub mod glab;
 pub(crate) mod logged_command;
@@ -495,7 +496,7 @@ pub trait Backend: Send + Sync {
     async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()>;
     async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()>;
     async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()>;
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()>;
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()>;
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()>;
     async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()>;
     async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()>;
@@ -645,19 +646,19 @@ pub trait Backend: Send + Sync {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()>;
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         start_date: Option<&str>,
         due_date: Option<&str>,
     ) -> Result<()>;
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()>;
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()>;
 
     // ── Notifications ──
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>>;

@@ -3066,17 +3066,17 @@ pub enum StackAction {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64),             // milestone iid
-    DeleteRelease(String),            // release tag_name
-    DeleteBranch(String),             // branch name
-    DeleteIssue(u64),                 // issue iid
-    DeleteMr(u64),                    // mr iid
-    CloseIssue(u64),                  // issue iid
-    CloseMr(u64),                     // mr iid
-    CloseMilestone(u64),              // milestone iid
-    ReopenIssue(u64),                 // issue iid
-    ReopenMr(u64),                    // mr iid
-    ReopenMilestone(u64),             // milestone iid
+    DeleteMilestone(crate::domain::milestones::Milestone),
+    DeleteRelease(String), // release tag_name
+    DeleteBranch(String),  // branch name
+    DeleteIssue(u64),      // issue iid
+    DeleteMr(u64),         // mr iid
+    CloseIssue(u64),       // issue iid
+    CloseMr(u64),          // mr iid
+    CloseMilestone(crate::domain::milestones::Milestone),
+    ReopenIssue(u64), // issue iid
+    ReopenMr(u64),    // mr iid
+    ReopenMilestone(crate::domain::milestones::Milestone),
     MergeMr(u64),                     // mr iid
     MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
@@ -3396,9 +3396,12 @@ impl SubmitDialog {
 
         let action_clone = action.clone();
         let (title, body, submit_label, options, safe) = match &action {
-            ConfirmAction::DeleteMilestone(iid) => (
-                format!("Delete Milestone #{iid}"),
-                format!("Are you sure you want to delete milestone #{iid}?"),
+            ConfirmAction::DeleteMilestone(milestone) => (
+                format!("Delete Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to delete milestone #{}?",
+                    milestone.iid
+                ),
                 "Delete".to_string(),
                 vec![],
                 true,
@@ -3449,9 +3452,12 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::CloseMilestone(iid) => (
-                format!("Close Milestone #{iid}"),
-                format!("Are you sure you want to close milestone #{iid}?"),
+            ConfirmAction::CloseMilestone(milestone) => (
+                format!("Close Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to close milestone #{}?",
+                    milestone.iid
+                ),
                 "Close".to_string(),
                 vec![],
                 true,
@@ -3470,9 +3476,12 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::ReopenMilestone(iid) => (
-                format!("Reopen Milestone #{iid}"),
-                format!("Are you sure you want to reopen milestone #{iid}?"),
+            ConfirmAction::ReopenMilestone(milestone) => (
+                format!("Reopen Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to reopen milestone #{}?",
+                    milestone.iid
+                ),
                 "Reopen".to_string(),
                 vec![],
                 true,
@@ -4546,6 +4555,19 @@ impl App {
             .items
             .iter()
             .position(|m| m.iid == iid && self.scope.project_of(&m.project_path) == project_path)
+    }
+
+    /// Milestone `iid` of `project_path` from `milestones.items`.
+    pub fn listed_milestone(
+        &self,
+        project_path: &str,
+        iid: u64,
+    ) -> anyhow::Result<crate::domain::milestones::Milestone> {
+        self.milestone_index(project_path, iid)
+            .map(|pos| self.milestones.items[pos].clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Milestone {iid} is not listed; refresh the Milestones tab")
+            })
     }
 
     /// An MR/PR as (project path, number), the key of the session's stack
@@ -8755,6 +8777,29 @@ mod tests {
         assert_eq!(milestone_state_display("active"), "ACTIVE");
         assert_eq!(milestone_state_display("closed"), "CLOSED");
         assert_eq!(milestone_state_display(""), "");
+    }
+
+    #[test]
+    fn listed_milestone_finds_the_row_of_its_project_or_reports_it_missing() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..App::default()
+        };
+        let milestone = |id: u64, project: &str| Milestone {
+            id,
+            iid: 3,
+            project_path: project.to_string(),
+            ..Milestone::default()
+        };
+        app.milestones.items = vec![milestone(10, "acme/alpha"), milestone(20, "acme/beta")];
+
+        let found = app.listed_milestone("acme/beta", 3).expect("listed");
+        assert_eq!(found.id, 20);
+        let missing = app.listed_milestone("acme/beta", 4).unwrap_err();
+        assert_eq!(
+            missing.to_string(),
+            "Milestone 4 is not listed; refresh the Milestones tab"
+        );
     }
 
     fn runner(

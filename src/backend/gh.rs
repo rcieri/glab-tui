@@ -1,5 +1,6 @@
 use super::Backend;
 use super::bounded_output::{CapturedStdout, output_bounded};
+use super::browser::open_url;
 use super::logged_command::{ChildOutput, LoggedCommand};
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
@@ -3409,7 +3410,7 @@ impl Backend for GhBackend {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
         let state = if close { "closed" } else { "open" };
@@ -3423,7 +3424,7 @@ impl Backend for GhBackend {
                 "api",
                 "-X",
                 "PATCH",
-                &format!("repos/{project}/milestones/{milestone_iid}"),
+                &format!("repos/{project}/milestones/{}", milestone.iid),
                 "-f",
                 &format!("state={state}"),
             ],
@@ -3436,7 +3437,7 @@ impl Backend for GhBackend {
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         _start_date: Option<&str>,
@@ -3446,7 +3447,7 @@ impl Backend for GhBackend {
             "api".into(),
             "-X".into(),
             "PATCH".into(),
-            format!("repos/{}/milestones/{}", project, milestone_iid),
+            format!("repos/{}/milestones/{}", project, milestone.iid),
             "-f".into(),
             format!("title={}", title),
         ];
@@ -3470,13 +3471,13 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()> {
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_gh(
             &[
                 "api",
                 "-X",
                 "DELETE",
-                &format!("repos/{project}/milestones/{milestone_iid}"),
+                &format!("repos/{project}/milestones/{}", milestone.iid),
             ],
             "Deleting Milestone",
         )
@@ -4018,14 +4019,14 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        let url = format!("https://github.com/{project}/milestone/{id}");
-        open_github_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
+        let url = format!("https://github.com/{project}/milestone/{}", milestone.iid);
+        open_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
         let url = github_runner_url(scope.as_str(), runner_id);
-        open_github_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
     async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
@@ -4037,7 +4038,7 @@ impl Backend for GhBackend {
             project,
             branch.replace('/', "%2F"),
         );
-        open_github_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
     }
 
     async fn open_environment_in_browser(&self, project: &str, _name: &str) -> Result<()> {
@@ -4045,7 +4046,7 @@ impl Backend for GhBackend {
             anyhow::bail!("project path required to open environment in browser");
         }
         let url = format!("https://github.com/{project}/settings/environments");
-        open_github_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
     }
     // ── Raw API ──
 
@@ -4131,34 +4132,6 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
 /// The self-hosted runner's settings page in `repository` (`owner/repo`).
 fn github_runner_url(repository: &str, runner_id: u64) -> String {
     format!("https://github.com/{repository}/settings/actions/runners/{runner_id}")
-}
-
-/// Open `url` in the user's default browser via `git web--browse`. Logs the
-/// command to the Terminal tab so it shows up next to the `gh` commands.
-/// Always returns Ok so a failed browser launch does not break the UI flow;
-/// the underlying `git web--browse` exit code is captured into the terminal
-/// log instead.
-async fn open_github_url(
-    url: &str,
-    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
-    label: &str,
-) -> anyhow::Result<()> {
-    let logged = LoggedCommand::start(label, Invocation::new(Program::Git, &["web--browse", url]));
-    let output = tokio::process::Command::new("git")
-        .args(["web--browse", url])
-        .output()
-        .await;
-    let (status, child_output) = match &output {
-        Ok(out) if out.status.success() => ("Success".to_string(), ChildOutput::from(out)),
-        Ok(out) => {
-            let child_output = ChildOutput::from(out);
-            let reason = logged.failure_reason(&child_output);
-            (format!("Failed: {reason}"), child_output)
-        }
-        Err(error) => (format!("Failed: {error}"), ChildOutput::NOT_STARTED),
-    };
-    logged.finish(tx.as_ref(), status, child_output);
-    Ok(())
 }
 
 /// Why a failed GitHub job failed: its timeout, else the first failed step.

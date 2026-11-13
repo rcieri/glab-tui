@@ -1,5 +1,6 @@
 use super::Backend;
 use super::bounded_output::{CapturedStdout, output_bounded};
+use super::browser::open_url;
 use super::logged_command::{ChildOutput, LoggedCommand};
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
@@ -2935,7 +2936,7 @@ impl Backend for GlabBackend {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
         let action = if close { "close" } else { "reopen" };
@@ -2948,7 +2949,7 @@ impl Backend for GlabBackend {
             &[
                 "milestone",
                 action,
-                &milestone_iid.to_string(),
+                &milestone.iid.to_string(),
                 "-R",
                 project,
             ],
@@ -2961,7 +2962,7 @@ impl Backend for GlabBackend {
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         start_date: Option<&str>,
@@ -2970,7 +2971,7 @@ impl Backend for GlabBackend {
         let mut args: Vec<String> = vec![
             "milestone".into(),
             "update".into(),
-            milestone_iid.to_string(),
+            milestone.iid.to_string(),
             "-R".into(),
             project.to_string(),
             "--title".into(),
@@ -2997,12 +2998,12 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()> {
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_glab(
             &[
                 "milestone",
                 "delete",
-                &milestone_iid.to_string(),
+                &milestone.iid.to_string(),
                 "-R",
                 project,
                 "-y",
@@ -3528,9 +3529,16 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_glab(
-            &["milestone", "view", id, "-w", "-R", project],
+            &[
+                "milestone",
+                "view",
+                &milestone.iid.to_string(),
+                "-w",
+                "-R",
+                project,
+            ],
             "OPENING IN BROWSER",
         )
         .await?;
@@ -3540,7 +3548,7 @@ impl Backend for GlabBackend {
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
         let host = gitlab_host_or_default();
         let url = gitlab_runner_url(&host, scope, runner_id);
-        open_in_web_browser(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
     async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
@@ -3554,7 +3562,7 @@ impl Backend for GlabBackend {
             project,
             url_encode_branch(branch),
         );
-        open_in_web_browser(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
     }
 
     async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()> {
@@ -3568,7 +3576,7 @@ impl Backend for GlabBackend {
             project,
             url_encode_branch(name),
         );
-        open_in_web_browser(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
     }
     // ── Raw API ──
 
@@ -3684,34 +3692,6 @@ fn gitlab_runner_url(host: &str, scope: &Scope, runner_id: u64) -> String {
         Scope::Repository(project) => format!("https://{host}/{project}/-/runners/{runner_id}"),
         Scope::Group(group) => format!("https://{host}/groups/{group}/-/runners/{runner_id}"),
     }
-}
-
-/// Open `url` in the user's default browser via `git web--browse`, which
-/// honours `$BROWSER` and falls back to xdg-open / open / wslview. Logs
-/// the command to the Terminal tab so it shows up next to the `glab`
-/// and `gh` commands. Returns Ok even if the browser helper exits
-/// non-zero — opening a URL should never block the user's flow.
-async fn open_in_web_browser(
-    url: &str,
-    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
-    label: &str,
-) -> Result<()> {
-    let logged = LoggedCommand::start(label, Invocation::new(Program::Git, &["web--browse", url]));
-    let output = tokio::process::Command::new("git")
-        .args(["web--browse", url])
-        .output()
-        .await;
-    let (status, child_output) = match &output {
-        Ok(out) if out.status.success() => ("Success".to_string(), ChildOutput::from(out)),
-        Ok(out) => {
-            let child_output = ChildOutput::from(out);
-            let reason = logged.failure_reason(&child_output);
-            (format!("Failed: {reason}"), child_output)
-        }
-        Err(error) => (format!("Failed: {error}"), ChildOutput::NOT_STARTED),
-    };
-    logged.finish(tx.as_ref(), status, child_output);
-    Ok(())
 }
 
 #[cfg(test)]

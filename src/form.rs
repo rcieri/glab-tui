@@ -1362,6 +1362,25 @@ mod tests {
         assert!(!form.is_loading());
     }
 
+    #[test]
+    fn a_loaded_value_never_replaces_a_choice_the_user_made() {
+        let mut form = merge_form();
+        form.groups[1] = strategy(1).loading();
+        press(&mut form, KeyCode::Tab);
+        press(&mut form, KeyCode::Char('h'));
+        press(&mut form, KeyCode::Char(' '));
+        let applied = form.apply_loaded(STRATEGY, |kind| {
+            if let GroupKind::Radio(radio) = kind {
+                radio.selected = 2;
+            }
+        });
+        assert_eq!(
+            (applied, form.radio(STRATEGY).map(|r| r.selected)),
+            (false, Some(0))
+        );
+        assert!(!form.is_loading());
+    }
+
     fn form_with_advanced() -> Form {
         Form::new(
             "Merge",

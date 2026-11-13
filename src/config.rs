@@ -987,14 +987,30 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
     // ── Diff ──
+    let addition_row = (base.diff_addition_fg, base.diff_addition_bg);
     apply_color(&mut base.diff_addition_fg, &overrides.diff_addition_fg);
     apply_color(&mut base.diff_addition_bg, &overrides.diff_addition_bg);
+    if (base.diff_addition_fg, base.diff_addition_bg) != addition_row {
+        base.diff_addition_emph_bg = blend(
+            base.diff_addition_bg,
+            base.diff_addition_fg,
+            DIFF_EMPHASIS_FG_SHARE,
+        );
+    }
     apply_color(
         &mut base.diff_addition_emph_bg,
         &overrides.diff_addition_emph_bg,
     );
+    let deletion_row = (base.diff_deletion_fg, base.diff_deletion_bg);
     apply_color(&mut base.diff_deletion_fg, &overrides.diff_deletion_fg);
     apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
+    if (base.diff_deletion_fg, base.diff_deletion_bg) != deletion_row {
+        base.diff_deletion_emph_bg = blend(
+            base.diff_deletion_bg,
+            base.diff_deletion_fg,
+            DIFF_EMPHASIS_FG_SHARE,
+        );
+    }
     apply_color(
         &mut base.diff_deletion_emph_bg,
         &overrides.diff_deletion_emph_bg,
@@ -3164,5 +3180,34 @@ diff_deletion_bg = ""
 
         assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(0, 95, 0));
         assert_eq!(theme.diff_deletion_emph_bg, Color::Reset);
+    }
+
+    #[test]
+    fn a_row_color_override_rederives_the_emphasis_unless_it_sets_one() {
+        let config: Config = toml::from_str(
+            r##"
+[theme]
+diff_addition_bg = ""
+diff_deletion_fg = "#ffffff"
+diff_deletion_bg = "#000000"
+"##,
+        )
+        .expect("config parses");
+        let theme = config.resolve_theme();
+        assert_eq!(theme.diff_addition_emph_bg, Color::Reset);
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Rgb(77, 77, 77));
+
+        let config: Config = toml::from_str(
+            r##"
+[theme]
+diff_addition_bg = "#000000"
+diff_addition_emph_bg = "#123456"
+"##,
+        )
+        .expect("config parses");
+        assert_eq!(
+            config.resolve_theme().diff_addition_emph_bg,
+            Color::Rgb(0x12, 0x34, 0x56)
+        );
     }
 }

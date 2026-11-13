@@ -33,7 +33,7 @@ const SEPARATOR_ROWS: u16 = 1;
 const BUTTON_ROWS: u16 = 1;
 const FOOTER_ROWS: u16 = 1;
 const CHROME_ROWS: u16 = BORDER_ROWS + SEPARATOR_ROWS + BUTTON_ROWS + FOOTER_ROWS;
-/// Entries a bulk item list keeps once the form is short of room.
+/// The fewest entries a bulk item list keeps once the form is short of room.
 const SHORT_LIST_ROWS: usize = 3;
 /// Columns between two radios drawn on one row.
 const RADIO_GAP: usize = 2;
@@ -49,7 +49,8 @@ enum Compaction {
     NoSpacers,
     /// Previews fold to their first line and a `+N lines` hint.
     FoldedPreviews,
-    /// Item lists keep their first entries and a `N more` row.
+    /// Item lists keep the entries that still fit, at least
+    /// `SHORT_LIST_ROWS`, and a `N more` row.
     ShortLists,
     /// Collapsible sections fold.
     FoldedSections,
@@ -63,6 +64,23 @@ impl Compaction {
         Self::ShortLists,
         Self::FoldedSections,
     ];
+}
+
+/// How far a body is shrunk: the compaction step, and the entries an item
+/// list keeps once that step cuts lists.
+#[derive(Clone, Copy)]
+struct Fit {
+    compaction: Compaction,
+    list_entries: usize,
+}
+
+impl Fit {
+    fn at(compaction: Compaction) -> Self {
+        Self {
+            compaction,
+            list_entries: SHORT_LIST_ROWS,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -224,12 +242,61 @@ pub(crate) fn render_form(
 fn fitting_body(form: &Form, ctx: &RenderCtx<'_>, width: usize, capacity: usize) -> Vec<BodyRow> {
     let mut rows = Vec::new();
     for compaction in Compaction::ALL {
-        rows = body_rows(form, ctx, width, compaction);
-        if rows.len() <= capacity {
-            break;
+        let fit = Fit::at(compaction);
+        rows = body_rows(form, ctx, width, fit);
+        if rows.len() > capacity {
+            continue;
+        }
+        if compaction >= Compaction::ShortLists {
+            return with_longest_lists(form, ctx, width, capacity, fit, rows);
+        }
+        return rows;
+    }
+    rows
+}
+
+/// Grows the item lists of `rows`, the body at `fit` that fits `capacity`,
+/// by as many entries as the rows left over take. The body only grows with
+/// the entries kept, so a binary search finds the most that still fit.
+fn with_longest_lists(
+    form: &Form,
+    ctx: &RenderCtx<'_>,
+    width: usize,
+    capacity: usize,
+    fit: Fit,
+    mut rows: Vec<BodyRow>,
+) -> Vec<BodyRow> {
+    let (mut fitting, mut too_many) = (fit.list_entries, longest_list(form.groups()) + 1);
+    while fitting + 1 < too_many {
+        let kept = fitting + (too_many - fitting) / 2;
+        let candidate = body_rows(
+            form,
+            ctx,
+            width,
+            Fit {
+                list_entries: kept,
+                ..fit
+            },
+        );
+        if candidate.len() <= capacity {
+            (fitting, rows) = (kept, candidate);
+        } else {
+            too_many = kept;
         }
     }
     rows
+}
+
+fn longest_list(groups: &[Group]) -> usize {
+    groups
+        .iter()
+        .map(|group| match &group.kind {
+            GroupKind::ItemList(list) => list.entries.len(),
+            GroupKind::Collapsible(section) => longest_list(&section.groups),
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// The first row to draw so the focused row stays in a body of `height`
@@ -262,12 +329,8 @@ fn dim_backdrop(buffer: &mut Buffer, screen: Rect, form_area: Rect, color: Color
     }
 }
 
-fn body_rows(
-    form: &Form,
-    ctx: &RenderCtx<'_>,
-    width: usize,
-    compaction: Compaction,
-) -> Vec<BodyRow> {
+fn body_rows(form: &Form, ctx: &RenderCtx<'_>, width: usize, fit: Fit) -> Vec<BodyRow> {
+    let compaction = fit.compaction;
     let styles = Styles::new(&ctx.theme);
     let mut rows = Vec::new();
     for (index, group) in form.groups().iter().enumerate() {
@@ -276,9 +339,7 @@ fn body_rows(
         }
         let path = GroupPath::top(index);
         let GroupKind::Collapsible(section) = &group.kind else {
-            rows.extend(group_rows(
-                form, path, group, ctx, &styles, width, compaction,
-            ));
+            rows.extend(group_rows(form, path, group, ctx, &styles, width, fit));
             continue;
         };
         let has_focus = matches!(form.focus(), Focus::Group(focused) if focused.index == index);
@@ -307,7 +368,7 @@ fn body_rows(
                 ctx,
                 &styles,
                 width.saturating_sub(SECTION_INDENT),
-                compaction,
+                fit,
             );
             rows.extend(child_rows.into_iter().map(indent));
         }
@@ -369,9 +430,10 @@ fn group_rows(
     ctx: &RenderCtx<'_>,
     styles: &Styles,
     width: usize,
-    compaction: Compaction,
+    fit: Fit,
 ) -> Vec<BodyRow> {
     let label = group_label(group, ctx.icons);
+    let compaction = fit.compaction;
     let is_inline = compaction > Compaction::Roomy && label.is_some();
     let prefix = match (&label, is_inline) {
         (Some(label), true) => format!("{label} "),
@@ -398,13 +460,14 @@ fn group_rows(
         GroupKind::Preview(preview) => {
             preview_rows(preview, compaction >= Compaction::FoldedPreviews, styles)
         }
-        GroupKind::ItemList(list) => item_rows(
-            list,
-            compaction >= Compaction::ShortLists,
-            ctx,
-            styles,
-            content_width,
-        ),
+        GroupKind::ItemList(list) => {
+            let kept = if compaction >= Compaction::ShortLists {
+                fit.list_entries
+            } else {
+                list.entries.len()
+            };
+            item_rows(list, kept, ctx, styles, content_width)
+        }
         GroupKind::Note(note) => {
             let (icon, style) = match note.level {
                 NoteLevel::Info => (None, styles.text),
@@ -744,13 +807,13 @@ fn preview_rows(preview: &Preview, is_short_of_room: bool, styles: &Styles) -> V
 
 fn item_rows(
     list: &ItemList,
-    is_short_of_room: bool,
+    kept_entries: usize,
     ctx: &RenderCtx<'_>,
     styles: &Styles,
     width: usize,
 ) -> Vec<BodyRow> {
-    let shown = if is_short_of_room && list.entries.len() > SHORT_LIST_ROWS + 1 {
-        SHORT_LIST_ROWS
+    let shown = if list.entries.len() > kept_entries.saturating_add(1) {
+        kept_entries
     } else {
         list.entries.len()
     };
@@ -964,7 +1027,7 @@ mod tests {
         let icons = Icons::ascii();
         let ctx = ctx(&icons);
         let form = crowded_form();
-        let text = |compaction| rows_text(&body_rows(&form, &ctx, 60, compaction));
+        let text = |compaction| rows_text(&body_rows(&form, &ctx, 60, Fit::at(compaction)));
 
         assert_eq!(
             text(Compaction::Roomy),
@@ -1025,10 +1088,10 @@ mod tests {
         let mut form = crowded_form();
         let tab = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Tab);
         form.handle_key(&tab);
-        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
         assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
         form.handle_key(&tab);
-        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
         assert_eq!(
             rows.iter().position(|row| row.is_focused),
             Some(rows.len() - 1)
@@ -1043,7 +1106,7 @@ mod tests {
         form.handle_key(&crossterm::event::KeyEvent::from(
             crossterm::event::KeyCode::Char('a'),
         ));
-        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
         assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
     }
 
@@ -1056,7 +1119,7 @@ mod tests {
             path: GroupPath::top(2),
             row: 0,
         });
-        let rows = body_rows(&form, &ctx, 60, Compaction::FoldedSections);
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
         assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
     }
 
@@ -1084,11 +1147,11 @@ mod tests {
                 .collect(),
         };
         assert_eq!(
-            rows_text(&item_rows(&list(4), true, &ctx, &styles, 60)),
+            rows_text(&item_rows(&list(4), SHORT_LIST_ROWS, &ctx, &styles, 60)),
             ["!1", "!2", "!3", "!4"]
         );
         assert_eq!(
-            rows_text(&item_rows(&list(5), true, &ctx, &styles, 60)),
+            rows_text(&item_rows(&list(5), SHORT_LIST_ROWS, &ctx, &styles, 60)),
             ["!1", "!2", "!3", "v 2 more"]
         );
     }
@@ -1101,6 +1164,28 @@ mod tests {
         assert_eq!(fitting_body(&form, &ctx, 60, 10).len(), 10);
         assert_eq!(fitting_body(&form, &ctx, 60, 7).len(), 7);
         assert_eq!(fitting_body(&form, &ctx, 60, 3).len(), 6);
+    }
+
+    #[test]
+    fn a_short_list_keeps_as_many_entries_as_the_rows_left_over_hold() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let form = Form::new(
+            "Merge 10 merge requests",
+            vec![
+                Group::note(NoteLevel::Info, "Merging 10 MRs"),
+                Group::new(GroupKind::ItemList(ItemList {
+                    entries: (1..=10)
+                        .map(|i| ListEntry::queued(format!("!{i}")))
+                        .collect(),
+                })),
+            ],
+            ButtonRow::single(Button::new("Cancel", ButtonTone::Neutral)),
+        );
+        assert_eq!(
+            rows_text(&fitting_body(&form, &ctx, 60, 8)),
+            ["Merging 10 MRs", "!1", "!2", "!3", "!4", "!5", "!6", "v 4 more"]
+        );
     }
 
     #[test]
@@ -1148,7 +1233,7 @@ mod tests {
             ButtonRow::single(Button::new("Close", ButtonTone::Neutral)),
         );
         assert_eq!(
-            rows_text(&body_rows(&form, &ctx, 60, Compaction::Roomy)),
+            rows_text(&body_rows(&form, &ctx, 60, Fit::at(Compaction::Roomy))),
             [
                 "Progress 2/3",
                 "+ !1",
@@ -1169,7 +1254,7 @@ mod tests {
             entries: vec![ListEntry::queued("#12: aaaa bbbb cccc dddd eeee [draft]")],
         };
         assert_eq!(
-            rows_text(&item_rows(&queued, false, &ctx, &styles, 15)),
+            rows_text(&item_rows(&queued, 1, &ctx, &styles, 15)),
             ["#12: aaaa bbbb", "cccc dddd eeee", "[draft]"]
         );
         let failed = ItemList {
@@ -1179,7 +1264,7 @@ mod tests {
             }],
         };
         assert_eq!(
-            rows_text(&item_rows(&failed, false, &ctx, &styles, 15)),
+            rows_text(&item_rows(&failed, 1, &ctx, &styles, 15)),
             ["x !2: aa: merge", "  conflict in", "  src"]
         );
     }
@@ -1198,7 +1283,7 @@ mod tests {
             ButtonRow::single(Button::new("Cancel", ButtonTone::Neutral)),
         );
         assert_eq!(
-            rows_text(&body_rows(&form, &ctx, 60, Compaction::Roomy)),
+            rows_text(&body_rows(&form, &ctx, 60, Fit::at(Compaction::Roomy))),
             [
                 "Delete branch".to_string(),
                 "b".repeat(60),
@@ -1270,7 +1355,7 @@ mod tests {
             ButtonRow::single(Button::new("Merge", ButtonTone::Positive)),
         );
         assert_eq!(
-            rows_text(&body_rows(&form, &ctx, 30, Compaction::NoSpacers)),
+            rows_text(&body_rows(&form, &ctx, 30, Fit::at(Compaction::NoSpacers))),
             ["Subject Fix               3/72"]
         );
     }

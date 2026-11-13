@@ -5,8 +5,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 /// Share of unchanged words below which a changed line counts as rewritten
 /// rather than edited. Marking most of a rewritten line shows nothing the
-/// row colour does not already say, so, like git's diff-highlight, such
-/// pairs get no word marks.
+/// row colour does not already say, so such pairs get no word marks.
 const MIN_UNCHANGED_RATIO: f32 = 0.5;
 
 /// Longest line diffed word by word. The word diff is quadratic in the worst

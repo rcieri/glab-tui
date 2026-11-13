@@ -860,6 +860,7 @@ mod tests {
             "csharp",
             "fsharp",
             "f#",
+            "fs",
         ]
         .into_iter()
         .map(|lang| {
@@ -881,6 +882,7 @@ mod tests {
                 ("csharp", Some("C#")),
                 ("fsharp", Some("F#")),
                 ("f#", Some("F#")),
+                ("fs", Some("F#")),
             ]
         );
     }

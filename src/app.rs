@@ -940,9 +940,8 @@ pub fn strip_diff_marker(line: &str) -> &str {
 
 /// Pairs each run of removed lines with the added lines that follow it, the
 /// first removed line with the first added one and so on, and marks the words
-/// each pair changed. A run ends at any row other than a change or the
-/// `\ No newline at end of file` note, which sits between the two halves of
-/// a last-line edit.
+/// each pair changed. A run ends at any row other than a change or a
+/// missing-newline note.
 fn mark_changed_words(lines: &mut [DiffLine]) {
     let mut removed: Vec<usize> = Vec::new();
     let mut added: Vec<usize> = Vec::new();
@@ -957,7 +956,7 @@ fn mark_changed_words(lines: &mut [DiffLine]) {
                 removed.push(idx);
             }
             DiffLineType::Addition => added.push(idx),
-            DiffLineType::Meta if lines[idx].content.starts_with('\\') => {}
+            _ if is_missing_newline_note(&lines[idx]) => {}
             _ => {
                 mark_changed_pairs(lines, &removed, &added);
                 removed.clear();
@@ -966,6 +965,12 @@ fn mark_changed_words(lines: &mut [DiffLine]) {
         }
     }
     mark_changed_pairs(lines, &removed, &added);
+}
+
+/// `\ No newline at end of file`, which git puts between the two halves of a
+/// last-line edit.
+fn is_missing_newline_note(line: &DiffLine) -> bool {
+    line.line_type == DiffLineType::Meta && line.content.starts_with('\\')
 }
 
 fn mark_changed_pairs(lines: &mut [DiffLine], removed: &[usize], added: &[usize]) {

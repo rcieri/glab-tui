@@ -340,7 +340,10 @@ fn body_rows(form: &Form, ctx: &RenderCtx<'_>, width: usize, fit: Fit) -> Vec<Bo
             rows.extend(group_rows(form, path, group, ctx, &styles, width, fit));
             continue;
         };
-        let has_focus = matches!(form.focus(), Focus::Group(focused) if focused.index == index);
+        let has_focus = matches!(
+            form.focus(),
+            Focus::Group(focused) | Focus::Editing(focused) if focused.index == index
+        );
         let is_expanded =
             section.is_expanded && (compaction < Compaction::FoldedSections || has_focus);
         rows.push(section_header(
@@ -440,7 +443,9 @@ fn group_rows(
     let prefix_width = Span::raw(prefix.as_str()).width();
     let content_width = width.saturating_sub(prefix_width);
     let focus_row = match form.focus() {
-        Focus::Group(focused) if focused == path => Some(group.focus_row()),
+        Focus::Group(focused) | Focus::Editing(focused) if focused == path => {
+            Some(group.focus_row())
+        }
         _ => None,
     };
 
@@ -450,8 +455,7 @@ fn group_rows(
         GroupKind::LineInput(input) => vec![line_input_row(
             input,
             path,
-            focus_row.is_some(),
-            form.is_editing(),
+            form.focus(),
             &ctx.theme,
             content_width,
         )],
@@ -681,11 +685,12 @@ fn toggle_rows(
 fn line_input_row(
     input: &LineInput,
     path: GroupPath,
-    is_focused: bool,
-    is_editing: bool,
+    focus: Focus,
     theme: &Theme,
     width: usize,
 ) -> BodyRow {
+    let is_editing = focus == Focus::Editing(path);
+    let is_focused = is_editing || focus == Focus::Group(path);
     let counter = input
         .soft_limit
         .map(|limit| format!(" {}/{limit}", input.char_count()))
@@ -719,7 +724,7 @@ fn line_input_row(
         field_width.saturating_sub(Span::raw(head).width() + cursor_columns),
     );
 
-    let mut spans = if is_editing && is_focused {
+    let mut spans = if is_editing {
         let under_cursor = if under_cursor.is_empty() {
             " "
         } else {
@@ -1330,7 +1335,7 @@ mod tests {
     fn a_wide_text_scrolls_by_display_columns_so_the_counter_stays_in_the_row() {
         let theme = Theme::default();
         let input = LineInput::new("漢".repeat(30), Some(72));
-        let row = line_input_row(&input, GroupPath::top(0), false, false, &theme, 22);
+        let row = line_input_row(&input, GroupPath::top(0), Focus::Button(0), &theme, 22);
         assert_eq!(
             rows_text(std::slice::from_ref(&row)),
             [format!("{}   30/72", "漢".repeat(7))]
@@ -1344,7 +1349,8 @@ mod tests {
         let mut input = LineInput::new("ab\u{1b}[31mcd".into(), None);
         input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
         input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
-        let row = line_input_row(&input, GroupPath::top(0), true, true, &theme, 20);
+        let editing = Focus::Editing(GroupPath::top(0));
+        let row = line_input_row(&input, GroupPath::top(0), editing, &theme, 20);
         let spans: Vec<&str> = row.line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(spans[..3], ["ab", "c", "d"]);
     }
@@ -1356,7 +1362,8 @@ mod tests {
         for _ in 0..5 {
             input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
         }
-        let row = line_input_row(&input, GroupPath::top(0), true, true, &theme, 20);
+        let editing = Focus::Editing(GroupPath::top(0));
+        let row = line_input_row(&input, GroupPath::top(0), editing, &theme, 20);
         let spans: Vec<&str> = row.line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(spans[..3], ["ab", "c", "d"]);
     }

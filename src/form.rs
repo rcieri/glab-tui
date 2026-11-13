@@ -84,6 +84,8 @@ impl ButtonRow {
 pub enum Focus {
     /// The group at this path, on its row `Radio::cursor` / `Toggles::cursor`.
     Group(GroupPath),
+    /// Typing into the line input at this path.
+    Editing(GroupPath),
     Button(usize),
 }
 
@@ -392,7 +394,6 @@ pub struct Form {
     primary: usize,
     cancel: usize,
     focus: Focus,
-    is_editing: bool,
     /// First body row on screen, moved by each draw to keep the focus visible.
     pub scroll: usize,
     pub layout: Option<FormLayout>,
@@ -412,7 +413,6 @@ impl Form {
             primary: 0,
             cancel,
             focus: Focus::Button(0),
-            is_editing: false,
             scroll: 0,
             layout: None,
         }
@@ -452,12 +452,12 @@ impl Form {
     pub fn focused_button(&self) -> Option<usize> {
         match self.focus {
             Focus::Button(button) => Some(button),
-            Focus::Group(_) => None,
+            Focus::Group(_) | Focus::Editing(_) => None,
         }
     }
 
     pub fn is_editing(&self) -> bool {
-        self.is_editing
+        matches!(self.focus, Focus::Editing(_))
     }
 
     pub fn is_loading(&self) -> bool {
@@ -588,7 +588,7 @@ impl Form {
         if is_ctrl && key.code == KeyCode::Char('e') {
             return self.open_editor();
         }
-        if self.is_editing {
+        if self.is_editing() {
             return self.handle_editing_key(key);
         }
         match key.code {
@@ -601,14 +601,14 @@ impl Form {
             KeyCode::Char(' ') => self.press_focused(),
             KeyCode::Enter => match self.focus {
                 Focus::Button(button) => return FormAction::Activate(button),
-                Focus::Group(_) if self.focused_line_input().is_some() => {
+                _ if self.focused_line_input().is_some() => {
                     return FormAction::Activate(self.primary);
                 }
-                Focus::Group(_) => self.press_focused(),
+                _ => self.press_focused(),
             },
             KeyCode::Esc => return FormAction::Cancel,
             KeyCode::Char('e') => return self.open_editor(),
-            KeyCode::Char('i') if self.focused_line_input().is_some() => self.is_editing = true,
+            KeyCode::Char('i') if self.focused_line_input().is_some() => self.start_editing(),
             KeyCode::Char(c) => self.press_section_with_key(c),
             _ => {}
         }
@@ -618,7 +618,7 @@ impl Form {
     fn handle_editing_key(&mut self, key: &KeyEvent) -> FormAction {
         match key.code {
             KeyCode::Enter => return FormAction::Activate(self.primary),
-            KeyCode::Esc => self.is_editing = false,
+            KeyCode::Esc => self.stop_editing(),
             KeyCode::Tab => self.step_stop(1),
             KeyCode::BackTab => self.step_stop(-1),
             KeyCode::Char(_) if crate::keybinding::is_shortcut(key.code, key.modifiers) => {}
@@ -648,7 +648,7 @@ impl Form {
 
     fn focused_line_input(&self) -> Option<GroupPath> {
         match self.focus {
-            Focus::Group(path)
+            Focus::Group(path) | Focus::Editing(path)
                 if matches!(
                     self.group_at(path).map(|g| &g.kind),
                     Some(GroupKind::LineInput(_))
@@ -657,6 +657,19 @@ impl Form {
                 Some(path)
             }
             _ => None,
+        }
+    }
+
+    /// Starts typing into the focused group when it is a line input.
+    fn start_editing(&mut self) {
+        if let Some(path) = self.focused_line_input() {
+            self.focus = Focus::Editing(path);
+        }
+    }
+
+    fn stop_editing(&mut self) {
+        if let Focus::Editing(path) = self.focus {
+            self.focus = Focus::Group(path);
         }
     }
 
@@ -765,15 +778,16 @@ impl Form {
         }
         let count = stops.len() + 1;
         let current = match self.focus {
-            Focus::Group(path) => stops.iter().position(|&p| p == path).unwrap_or(0),
+            Focus::Group(path) | Focus::Editing(path) => {
+                stops.iter().position(|&p| p == path).unwrap_or(0)
+            }
             Focus::Button(_) => stops.len(),
         };
         let next = (current as isize + step).rem_euclid(count as isize) as usize;
-        self.is_editing = false;
         match stops.get(next) {
             Some(&path) => {
                 self.enter_group(path, step);
-                self.is_editing = self.focused_line_input().is_some();
+                self.start_editing();
             }
             None => self.focus = Focus::Button(self.primary),
         }
@@ -785,7 +799,7 @@ impl Form {
     fn step_row(&mut self, step: isize) {
         let stops = self.focus_stops();
         match self.focus {
-            Focus::Group(path) => {
+            Focus::Group(path) | Focus::Editing(path) => {
                 let Some(group) = self.group_at(path) else {
                     return;
                 };
@@ -835,7 +849,7 @@ impl Form {
                 let last = self.buttons.len() - 1;
                 self.focus = Focus::Button(button.saturating_add_signed(step).min(last));
             }
-            Focus::Group(path) => {
+            Focus::Group(path) | Focus::Editing(path) => {
                 if let Some(GroupKind::Radio(radio)) =
                     self.group_at_mut(path).map(|group| &mut group.kind)
                 {
@@ -847,7 +861,7 @@ impl Form {
     }
 
     fn press_focused(&mut self) {
-        let Focus::Group(path) = self.focus else {
+        let (Focus::Group(path) | Focus::Editing(path)) = self.focus else {
             return;
         };
         let Some(group) = self.group_at_mut(path) else {
@@ -865,7 +879,7 @@ impl Form {
                 }
             }
             GroupKind::Collapsible(_) => self.toggle_section(path.index),
-            GroupKind::LineInput(_) => self.is_editing = true,
+            GroupKind::LineInput(_) => self.focus = Focus::Editing(path),
             _ => {}
         }
     }
@@ -885,7 +899,10 @@ impl Form {
     /// short, so a toggle from there would flip between two states drawn
     /// the same.
     fn press_section(&mut self, index: usize) {
-        let has_focus = matches!(self.focus, Focus::Group(path) if path.index == index);
+        let has_focus = matches!(
+            self.focus,
+            Focus::Group(path) | Focus::Editing(path) if path.index == index
+        );
         if has_focus {
             self.toggle_section(index);
             return;
@@ -896,7 +913,6 @@ impl Form {
             section.is_expanded = true;
         }
         self.focus = Focus::Group(GroupPath::top(index));
-        self.is_editing = false;
     }
 
     /// Folds or unfolds the section at `index`. Folding it with the focus
@@ -909,10 +925,9 @@ impl Form {
         };
         section.is_expanded = !section.is_expanded;
         let is_expanded = section.is_expanded;
-        if let Focus::Group(path) = self.focus {
+        if let Focus::Group(path) | Focus::Editing(path) = self.focus {
             if !is_expanded && path.index == index && path.child.is_some() {
                 self.focus = Focus::Group(GroupPath::top(index));
-                self.is_editing = false;
             }
         }
     }
@@ -924,7 +939,6 @@ impl Form {
         match target {
             ClickTarget::Button(button) if button < self.buttons.len() => {
                 self.focus = Focus::Button(button);
-                self.is_editing = false;
                 FormAction::Activate(button)
             }
             ClickTarget::Button(_) => FormAction::None,
@@ -941,7 +955,6 @@ impl Form {
                 }
                 group.set_focus_row(row);
                 self.focus = Focus::Group(path);
-                self.is_editing = false;
                 self.press_focused();
                 FormAction::None
             }
@@ -963,15 +976,15 @@ impl Form {
     /// the footer.
     pub fn key_hints(&self) -> Vec<KeyHint> {
         let primary = self.buttons[self.primary].label.to_lowercase();
-        if self.is_editing {
-            return vec![
-                KeyHint::new("Enter", primary),
-                KeyHint::new("Tab", "next"),
-                KeyHint::new("Esc", "leave field"),
-                KeyHint::new("Ctrl+E", "editor"),
-            ];
-        }
         let mut hints = match self.focus {
+            Focus::Editing(_) => {
+                return vec![
+                    KeyHint::new("Enter", primary),
+                    KeyHint::new("Tab", "next"),
+                    KeyHint::new("Esc", "leave field"),
+                    KeyHint::new("Ctrl+E", "editor"),
+                ];
+            }
             Focus::Button(_) => vec![KeyHint::new("h/l", "button")],
             Focus::Group(path) => match self.group_at(path).map(|g| &g.kind) {
                 Some(GroupKind::Radio(_)) => vec![
@@ -1000,8 +1013,8 @@ impl Form {
         hints.push(KeyHint::new("Tab", "next"));
         let enter = match self.focus {
             Focus::Button(button) => Some(self.buttons[button].label.to_lowercase()),
-            Focus::Group(_) if self.focused_line_input().is_some() => Some(primary),
-            Focus::Group(_) => None,
+            _ if self.focused_line_input().is_some() => Some(primary),
+            _ => None,
         };
         if let Some(enter) = enter {
             hints.push(KeyHint::new("Enter", enter));

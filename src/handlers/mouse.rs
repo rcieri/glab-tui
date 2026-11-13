@@ -380,8 +380,6 @@ fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
     use chrono::Datelike;
     // Columns of a day cell plus the gap after it.
     const DAY_CELL_COLUMNS: u16 = 5;
-    // The arrow and the blank columns around it at each end of the month line.
-    const ARROW_COLUMNS: u16 = 4;
     let Some(dp) = app.date_picker_mut() else {
         return;
     };
@@ -393,9 +391,13 @@ fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
     }
     let offset = col - calendar.x;
     if row == calendar.y {
-        if offset < ARROW_COLUMNS {
+        let [prev, _, next] = crate::ui::date_picker_month_cells(ratatui::layout::Rect {
+            height: 1,
+            ..calendar
+        });
+        if rect_contains(prev, row, col) {
             dp.move_month(-1);
-        } else if offset >= calendar.width.saturating_sub(ARROW_COLUMNS) {
+        } else if rect_contains(next, row, col) {
             dp.move_month(1);
         }
         return;
@@ -439,7 +441,7 @@ fn handle_configure_mouse(
     let Some(list) = c.layout.as_ref().map(|layout| layout.groups[0]) else {
         return;
     };
-    if !rect_contains(list, row, col) {
+    if c.save_menu_open || c.editing_page_size || !rect_contains(list, row, col) {
         return;
     }
     let Some(Some(setting)) = c.visible_rows.get(usize::from(row - list.y)).copied() else {

@@ -156,11 +156,22 @@ impl MergeMethod {
     }
 }
 
+/// What a merge without a method flag does: GitLab projects whose merge
+/// method is fast-forward only fast-forward their target branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlainMerge {
+    MergeCommit,
+    FastForward,
+    /// A merge spanning projects that disagree.
+    Mixed,
+}
+
 /// The merge methods a project accepts and the one a merge preselects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeMethods {
     allowed: Vec<MergeMethod>,
     preferred: MergeMethod,
+    plain_merge: PlainMerge,
 }
 
 impl MergeMethods {
@@ -180,7 +191,18 @@ impl MergeMethods {
                     .then_some(MergeMethod::Squash)
             })
             .or_else(|| allowed.first().copied())?;
-        Some(Self { allowed, preferred })
+        Some(Self {
+            allowed,
+            preferred,
+            plain_merge: PlainMerge::MergeCommit,
+        })
+    }
+
+    pub fn with_plain_merge(self, plain_merge: PlainMerge) -> Self {
+        Self {
+            plain_merge,
+            ..self
+        }
     }
 
     pub fn allowed(&self) -> &[MergeMethod] {
@@ -189,6 +211,15 @@ impl MergeMethods {
 
     pub fn preferred(&self) -> MergeMethod {
         self.preferred
+    }
+
+    /// The name the merge form gives `method` for these projects.
+    pub fn label(&self, method: MergeMethod) -> &'static str {
+        match (method, self.plain_merge) {
+            (MergeMethod::Merge, PlainMerge::FastForward) => "Fast-forward",
+            (MergeMethod::Merge, PlainMerge::Mixed) => "Merge commit or fast-forward",
+            _ => method.label(),
+        }
     }
 
     /// The methods both accept, for a merge spanning several projects.
@@ -200,7 +231,13 @@ impl MergeMethods {
             .copied()
             .filter(|method| other.allowed.contains(method))
             .collect();
+        let plain_merge = if self.plain_merge == other.plain_merge {
+            self.plain_merge
+        } else {
+            PlainMerge::Mixed
+        };
         Self::new(&shared, Some(self.preferred))
+            .map(|methods| methods.with_plain_merge(plain_merge))
     }
 }
 

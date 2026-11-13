@@ -20,11 +20,11 @@ pub fn handle_submit_dialog(
 
     let pressed = match key_event.code {
         KeyCode::Up | KeyCode::Char('k') => {
-            dialog.form.move_vertically(false);
+            dialog.form.move_up();
             None
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            dialog.form.move_vertically(true);
+            dialog.form.move_down();
             None
         }
         KeyCode::Left | KeyCode::Char('h') => {
@@ -36,11 +36,11 @@ pub fn handle_submit_dialog(
             None
         }
         KeyCode::Tab => {
-            dialog.form.focus_next(true);
+            dialog.form.focus_next();
             None
         }
         KeyCode::BackTab => {
-            dialog.form.focus_next(false);
+            dialog.form.focus_previous();
             None
         }
         KeyCode::Char(' ') => {
@@ -518,11 +518,7 @@ fn run_submit_action(
                             && (project_path.is_empty() || m.project_path == *project_path)
                     })
                     .and_then(|m| m.sha.clone());
-                let project = if project_path.is_empty() {
-                    app.scope.as_str().to_string()
-                } else {
-                    project_path.clone()
-                };
+                let project = app.scope.project_of(project_path).to_string();
                 items_with_sha.push((project, *mr_iid, sha));
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)

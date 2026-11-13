@@ -7,13 +7,13 @@ use super::modal::{button_style, clear_area, modal_block};
 use crate::form::{ButtonRole, Focus, Form, FormLayout, Group, Rows};
 use crate::notice::{Notice, NoticeLevel};
 use crate::ui::render_ctx::RenderCtx;
-use crate::utils::format::{sanitize_untrusted, wrap_text};
+use crate::utils::format::{sanitize_untrusted, wrap_ranges, wrap_text};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
 };
 
 /// One axis of a form's outer size.
@@ -57,7 +57,7 @@ pub(crate) fn render_form<F>(
     form: &mut Form<F>,
 ) {
     let width = outer_extent(frame.size.width, screen.width, DEFAULT_WIDTH);
-    let text_width = usize::from(width.saturating_sub(2 + 2 * PADDING_COLUMNS));
+    let text_width = usize::from(text_columns(width));
     let natural: Vec<u16> = form
         .groups
         .iter()
@@ -135,6 +135,12 @@ pub(crate) fn render_form<F>(
     form.layout = Some(layout);
 }
 
+/// Columns a form `width` wide leaves for its content inside the border and
+/// the padding.
+pub(crate) fn text_columns(width: u16) -> u16 {
+    width.saturating_sub(2 + 2 * PADDING_COLUMNS)
+}
+
 fn outer_extent(extent: Extent, available: u16, content: u16) -> u16 {
     let wanted = match extent {
         Extent::Fixed(size) => size,
@@ -165,13 +171,41 @@ fn natural_rows<F>(group: &Group<F>, width: usize) -> u16 {
         }
         Group::Radio(_) => 1,
         Group::Toggles(toggles) => toggles.len(),
-        Group::LineInput(input) => wrap_text(&input.buffer.value_with_cursor('▋'), width)
-            .len()
-            .max(1),
+        Group::LineInput(input) => WrappedInput::new(&input.buffer, width).rows.len(),
         Group::Custom(Rows::Fixed(rows)) => usize::from(*rows),
         Group::Custom(Rows::Percent(_) | Rows::Fill) => 0,
     };
     u16::try_from(rows).unwrap_or(u16::MAX)
+}
+
+const INPUT_CURSOR: char = '▋';
+
+/// A line input as drawn: escape sequences removed, wrapped without
+/// collapsing spaces, and one column kept free for the cursor at the end of
+/// a full row.
+struct WrappedInput {
+    text: String,
+    rows: Vec<std::ops::Range<usize>>,
+    /// Byte offset of the cursor in `text`.
+    cursor: usize,
+}
+
+impl WrappedInput {
+    fn new(buffer: &crate::app::TextBuffer, width: usize) -> Self {
+        let (before, after) = buffer.value().split_at(buffer.cursor_byte_offset());
+        let before = sanitize_untrusted(before);
+        let cursor = before.len();
+        let text = format!("{before}{}", sanitize_untrusted(after));
+        let rows = wrap_ranges(&text, width.saturating_sub(1));
+        Self { text, rows, cursor }
+    }
+
+    fn cursor_row(&self) -> usize {
+        self.rows
+            .iter()
+            .rposition(|row| row.start <= self.cursor)
+            .unwrap_or(0)
+    }
 }
 
 /// One blank row between two groups that both take rows.
@@ -355,25 +389,25 @@ fn draw_group<F>(
             }
         }
         Group::LineInput(input) => {
-            let value = sanitize_untrusted(input.buffer.value()).into_owned();
-            let shown = if is_focused(0) {
-                let mut with_cursor = value;
-                let at = input.buffer.cursor_byte_offset().min(with_cursor.len());
-                if with_cursor.is_char_boundary(at) {
-                    with_cursor.insert(at, '▋');
-                }
-                with_cursor
-            } else {
-                value
-            };
-            let lines: Vec<Line> = wrap_text(&shown, usize::from(rect.width))
-                .into_iter()
-                .map(Line::from)
+            let wrapped = WrappedInput::new(&input.buffer, usize::from(rect.width));
+            let cursor_row = wrapped.cursor_row();
+            let first_visible = (cursor_row + 1).saturating_sub(usize::from(rect.height));
+            let lines: Vec<Line> = wrapped
+                .rows
+                .iter()
+                .enumerate()
+                .skip(first_visible)
+                .take(usize::from(rect.height))
+                .map(|(index, row)| {
+                    let row_text = &wrapped.text[row.clone()];
+                    if !is_focused(0) || index != cursor_row {
+                        return Line::from(row_text.to_string());
+                    }
+                    let (head, tail) = row_text.split_at(wrapped.cursor - row.start);
+                    Line::from(format!("{head}{INPUT_CURSOR}{tail}"))
+                })
                 .collect();
-            f.render_widget(
-                Paragraph::new(lines).style(text).wrap(Wrap { trim: false }),
-                rect,
-            );
+            f.render_widget(Paragraph::new(lines).style(text), rect);
             layout.items.push((
                 Focus::Item {
                     group: index,
@@ -590,5 +624,38 @@ mod tests {
             1 + 1 + 2 + 1 + 3 + 1 + 1 + 1 + 1 + 1 + 1
         );
         assert_eq!(layout.groups[1].y, layout.groups[0].bottom() + 1);
+    }
+
+    #[test]
+    fn a_line_input_keeps_its_spaces_and_wraps_a_long_word_with_the_cursor_shown() {
+        let value = format!("a   b {}", "x".repeat(40));
+        let mut form: Form<Id> = Form::new(
+            vec![Group::LineInput(crate::form::LineInput {
+                buffer: crate::app::TextBuffer::new(value),
+            })],
+            Vec::new(),
+        );
+        form.set_focus(Focus::Item { group: 0, item: 0 });
+        let terminal = draw(&mut form, 60, 24);
+        let input = form.layout.unwrap().groups[0];
+        let rows: Vec<String> = (input.y..input.bottom())
+            .map(|y| {
+                row_text(&terminal, y)
+                    .chars()
+                    .skip(usize::from(input.x))
+                    .take(usize::from(input.width))
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "a   b".to_string(),
+                "x".repeat(35),
+                format!("{}{INPUT_CURSOR}", "x".repeat(5)),
+            ]
+        );
     }
 }

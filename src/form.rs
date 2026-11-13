@@ -151,6 +151,12 @@ impl<F> Default for Form<F> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Next,
+    Previous,
+}
+
 impl<F> Form<F> {
     /// Focus starts on the first stop, a control before a button.
     pub fn new(groups: Vec<Group<F>>, buttons: Vec<Button<F>>) -> Self {
@@ -224,24 +230,42 @@ impl<F> Form<F> {
             .collect()
     }
 
-    /// `Tab` / `BackTab`: every stop in turn, stopping at either end.
-    pub fn focus_next(&mut self, forward: bool) {
+    /// `Tab`: the next stop, staying on the last one.
+    pub fn focus_next(&mut self) {
+        self.step_focus(Direction::Next);
+    }
+
+    /// `BackTab`: the previous stop, staying on the first one.
+    pub fn focus_previous(&mut self) {
+        self.step_focus(Direction::Previous);
+    }
+
+    fn step_focus(&mut self, direction: Direction) {
         let stops: Vec<Focus> = self.stops().collect();
         let Some(current) = self.focus.and_then(|f| stops.iter().position(|&s| s == f)) else {
             self.focus = stops.first().copied();
             return;
         };
-        let target = if forward {
-            (current + 1).min(stops.len() - 1)
-        } else {
-            current.saturating_sub(1)
+        let target = match direction {
+            Direction::Next => (current + 1).min(stops.len() - 1),
+            Direction::Previous => current.saturating_sub(1),
         };
         self.focus = Some(stops[target]);
     }
 
-    /// `j` / `k`: from control to control. Leaving the first or last one, or
-    /// moving off the buttons, lands on Cancel or the first / last control.
-    pub fn move_vertically(&mut self, down: bool) {
+    /// `j`: the control below. Leaving the last one, or moving off the
+    /// buttons, lands on Cancel or the first control.
+    pub fn move_down(&mut self) {
+        self.move_between_controls(Direction::Next);
+    }
+
+    /// `k`: the control above. Leaving the first one lands on Cancel, moving
+    /// off the buttons on the last control.
+    pub fn move_up(&mut self) {
+        self.move_between_controls(Direction::Previous);
+    }
+
+    fn move_between_controls(&mut self, direction: Direction) {
         let items = self.item_stops();
         if items.is_empty() {
             return;
@@ -252,11 +276,11 @@ impl<F> Form<F> {
             .iter()
             .position(|b| b.role == ButtonRole::Cancel)
             .map(Focus::Button);
-        self.focus = match (position, down) {
-            (None, true) => items.first().copied(),
-            (None, false) => items.last().copied(),
-            (Some(i), true) if i + 1 < items.len() => Some(items[i + 1]),
-            (Some(i), false) if i > 0 => Some(items[i - 1]),
+        self.focus = match (position, direction) {
+            (None, Direction::Next) => items.first().copied(),
+            (None, Direction::Previous) => items.last().copied(),
+            (Some(i), Direction::Next) if i + 1 < items.len() => Some(items[i + 1]),
+            (Some(i), Direction::Previous) if i > 0 => Some(items[i - 1]),
             _ => cancel.or(self.focus),
         };
     }
@@ -410,7 +434,7 @@ mod tests {
         let mut form = form();
         let mut visited = vec![form.focus()];
         for _ in 0..5 {
-            form.focus_next(true);
+            form.focus_next();
             visited.push(form.focus());
         }
         assert_eq!(
@@ -458,12 +482,12 @@ mod tests {
     #[test]
     fn leaving_the_controls_with_j_or_k_lands_on_cancel() {
         let mut form = form();
-        form.move_vertically(false);
+        form.move_up();
         assert_eq!(form.focused_button().map(|b| b.id), Some(Id::Cancel));
-        form.move_vertically(true);
+        form.move_down();
         assert_eq!(form.focus(), Some(Focus::Item { group: 1, item: 0 }));
         form.set_focus(Focus::Item { group: 2, item: 0 });
-        form.move_vertically(true);
+        form.move_down();
         assert_eq!(form.focused_button().map(|b| b.id), Some(Id::Cancel));
     }
 

@@ -1916,12 +1916,8 @@ pub fn handle_key(
                     all_items = issues;
                     is_loading = false;
                 } else if field_name == "Description Template" {
-                    let template_type = if entity_type == "new_mr" {
-                        "mr"
-                    } else {
-                        "issue"
-                    };
-                    let templates = list_templates(template_type);
+                    let templates =
+                        list_templates(crate::app::TemplateKind::of(&menu.entity_kind).as_str());
                     let template_names: Vec<String> = std::iter::once("-- (blank)".to_string())
                         .chain(templates.iter().map(|(n, _)| n.clone()))
                         .collect();
@@ -2051,7 +2047,9 @@ pub fn handle_key(
                 let purpose = if field_name == "Create from Issue" {
                     crate::app::SelectorPurpose::CreateMrFromIssue
                 } else if field_name == "Description Template" {
-                    crate::app::SelectorPurpose::DescriptionTemplate
+                    crate::app::SelectorPurpose::DescriptionTemplate {
+                        kind: crate::app::TemplateKind::of(&menu.entity_kind),
+                    }
                 } else {
                     crate::app::SelectorPurpose::Field(
                         field.clone().unwrap_or(crate::app::SelectorField::Labels),
@@ -2130,26 +2128,15 @@ pub fn handle_key(
                 if entity_iid == 0 || entity_type.starts_with("new_") {
                     let raw_val = menu.fields[menu.selected_idx].value.clone();
                     if raw_val.trim().is_empty() {
-                        let template_type = if entity_type == "new_mr" {
-                            "mr"
-                        } else {
-                            "issue"
-                        };
-                        let templates = list_templates(template_type);
+                        let kind = crate::app::TemplateKind::of(&menu.entity_kind);
+                        let templates = list_templates(kind.as_str());
                         if !templates.is_empty() {
                             let template_names: Vec<String> =
                                 std::iter::once("-- (blank)".to_string())
                                     .chain(templates.iter().map(|(n, _)| n.clone()))
                                     .collect();
                             let sel = crate::app::Selector {
-                                title: format!(
-                                    " Select {} Template ",
-                                    if template_type == "mr" {
-                                        "Merge Request"
-                                    } else {
-                                        "Issue"
-                                    }
-                                ),
+                                title: format!(" Select {} Template ", kind.title()),
                                 all_items: template_names,
                                 selected_items: std::collections::HashSet::new(),
                                 cursor_idx: 0,
@@ -2158,7 +2145,9 @@ pub fn handle_key(
                                 is_loading: false,
                                 entity_iid: 0,
                                 entity_type: entity_type.clone(),
-                                purpose: crate::app::SelectorPurpose::IssueTemplate,
+                                purpose: crate::app::SelectorPurpose::BlankDescriptionTemplate {
+                                    kind,
+                                },
                                 multi_select: false,
                                 state: {
                                     let mut s = ListState::default();

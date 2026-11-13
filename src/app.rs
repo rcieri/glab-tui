@@ -587,8 +587,14 @@ pub enum SelectorPurpose {
     },
     SwitchRepo,
     Theme,
-    IssueTemplate,
-    DescriptionTemplate,
+    /// Opened on an empty Description of a creation form.
+    BlankDescriptionTemplate {
+        kind: TemplateKind,
+    },
+    /// The creation form's "Description Template" row.
+    DescriptionTemplate {
+        kind: TemplateKind,
+    },
     CreateMrFromIssue,
     RelatedMrs,
     StackEntries,
@@ -617,6 +623,39 @@ impl SelectorPurpose {
                 | SelectorPurpose::RelatedMrs
                 | SelectorPurpose::LinkedIssues
         )
+    }
+}
+
+/// Which description templates a template picker lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemplateKind {
+    Issue,
+    Mr,
+}
+
+impl TemplateKind {
+    pub fn of(kind: &EditEntityKind) -> Self {
+        match kind {
+            EditEntityKind::CreateMr | EditEntityKind::EditMr | EditEntityKind::BulkEditMrs => {
+                Self::Mr
+            }
+            _ => Self::Issue,
+        }
+    }
+
+    /// The template type `templates::list_templates` reads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Issue => "issue",
+            Self::Mr => "mr",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Issue => "Issue",
+            Self::Mr => "Merge Request",
+        }
     }
 }
 
@@ -2929,6 +2968,7 @@ impl TextBuffer {
     }
 
     /// The value with `cursor` inserted between the characters around the cursor.
+    #[cfg(test)]
     pub fn value_with_cursor(&self, cursor: char) -> String {
         let mut rendered = self.value.clone();
         rendered.insert(self.byte_offset(self.cursor_char_idx), cursor);
@@ -3504,7 +3544,7 @@ impl SubmitDialog {
                 .iter()
                 .map(|&method| Choice {
                     id: DialogControl::Method(method),
-                    label: method.label().to_string(),
+                    label: shared.label(method).to_string(),
                 })
                 .collect(),
         })
@@ -3844,13 +3884,7 @@ impl SubmitDialog {
             ConfirmAction::BulkMergeMrs(items) => {
                 let mut projects: Vec<String> = items
                     .iter()
-                    .map(|(project, _)| {
-                        if project.is_empty() {
-                            app.scope.as_str().to_string()
-                        } else {
-                            project.clone()
-                        }
-                    })
+                    .map(|(project, _)| app.scope.project_of(project).to_string())
                     .collect();
                 projects.sort();
                 projects.dedup();

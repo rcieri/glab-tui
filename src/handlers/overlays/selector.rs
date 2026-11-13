@@ -438,7 +438,7 @@ pub fn handle_key(
                         }
                     }
 
-                    app::SelectorPurpose::IssueTemplate => {
+                    app::SelectorPurpose::BlankDescriptionTemplate { kind } => {
                         let filtered_items = selector.get_filtered_items();
                         let mut selected_val = selector.selected_items.iter().next().cloned();
                         if selected_val.is_none() && !filtered_items.is_empty() {
@@ -447,12 +447,7 @@ pub fn handle_key(
                         let choice = selected_val.unwrap_or_default();
                         let mut desc_val = String::new();
                         if choice != "-- (blank)" {
-                            let template_type = if selector.entity_type == "new_mr" {
-                                "mr"
-                            } else {
-                                "issue"
-                            };
-                            let templates = list_templates(template_type);
+                            let templates = list_templates(kind.as_str());
                             if let Some(content) =
                                 templates.iter().find(|(n, _)| n == &choice).map(|(_, c)| c)
                             {
@@ -560,9 +555,8 @@ pub fn handle_key(
                     app::SelectorPurpose::StackEntries => {
                         // Each line is formatted
                         // "<pos>. #<iid>: <title> (STATE) ... [draft] <nav_prev> (current)".
-                        // Pick the `#iid` token via a `split('#')`
-                        // pass that handles any extra `#` in
-                        // titles without tripping the parse.
+                        // Titles may contain '#', so take the first whitespace
+                        // token shaped "#<iid>".
                         let filtered_items = selector.get_filtered_items();
                         let picked = selector
                             .selected_items
@@ -703,13 +697,8 @@ pub fn handle_key(
                         }
 
                         if let Some(val) = selected_val {
-                            // The list can contain both pushed
-                            // comments (`ID: <n> | …`) and
-                            // drafts (`DRAFT #<n> | …`) when
-                            // the cursor sits at a line that
-                            // carries a mix (#483). Route
-                            // each prefix to its own action
-                            // selector.
+                            // The list mixes pushed comments (`ID: <n> | …`)
+                            // and drafts (`DRAFT #<n> | …`).
                             if let Some(idx_str) = val
                                 .strip_prefix("DRAFT #")
                                 .and_then(|s| s.split('|').next())
@@ -742,7 +731,6 @@ pub fn handle_key(
                                             return;
                                         }
                                     }
-                                    // Edit entity: close menu, writes happen on field-level handlers
                                     app.close_edit_menu();
                                     return;
                                 }
@@ -949,21 +937,16 @@ pub fn handle_key(
                         }
                     }
 
-                    app::SelectorPurpose::DescriptionTemplate => {
+                    app::SelectorPurpose::DescriptionTemplate { kind } => {
                         let filtered_items = selector.get_filtered_items();
                         let mut selected_val = selector.selected_items.iter().next().cloned();
                         if selected_val.is_none() && !filtered_items.is_empty() {
                             selected_val = Some(filtered_items[selector.cursor_idx].clone());
                         }
                         let choice = selected_val.unwrap_or_default();
-                        let template_type = if selector.entity_type == "new_mr" {
-                            "mr"
-                        } else {
-                            "issue"
-                        };
                         let mut desc_val = String::new();
                         if choice != "-- (blank)" {
-                            if let Some(content) = list_templates(template_type)
+                            if let Some(content) = list_templates(kind.as_str())
                                 .iter()
                                 .find(|(n, _)| n == &choice)
                                 .map(|(_, c)| c)
@@ -1323,5 +1306,95 @@ pub fn handle_key(
                 app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{EditEntityKind, EditMenu, Field, Selector, SelectorPurpose, TemplateKind};
+
+    fn new_mr_menu() -> EditMenu {
+        EditMenu {
+            title: "New MR".to_string(),
+            entity_project: "g/p".to_string(),
+            fields: vec![
+                Field::text("Description Template", String::new()),
+                Field::text("Description", String::new()),
+            ],
+            initial_fields: std::collections::HashMap::new(),
+            selected_idx: 0,
+            entity_iid: 0,
+            entity_kind: EditEntityKind::CreateMr,
+            state: ListState::default(),
+            workflow_inputs: vec![],
+            cursor_pos: 0,
+            editing: false,
+            desc_scroll: 0,
+            source_on_forge: false,
+        }
+    }
+
+    /// Both template pickers of a new MR fill the Description from the
+    /// repository's pull request templates, not its issue templates.
+    #[test]
+    fn picking_an_mr_template_fills_the_description_with_it() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        for (dir, body) in [
+            (".github/PULL_REQUEST_TEMPLATE", "PR template"),
+            (".github/ISSUE_TEMPLATE", "issue template"),
+        ] {
+            std::fs::create_dir_all(repo.path().join(dir)).unwrap();
+            std::fs::write(repo.path().join(dir).join("feature.md"), body).unwrap();
+        }
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(repo.path()).unwrap();
+
+        let kind = TemplateKind::of(&EditEntityKind::CreateMr);
+        let descriptions: Vec<Option<String>> = [
+            SelectorPurpose::DescriptionTemplate { kind },
+            SelectorPurpose::BlankDescriptionTemplate { kind },
+        ]
+        .into_iter()
+        .map(|purpose| {
+            let mut app = App::default();
+            app.open_edit_menu(new_mr_menu());
+            app.open_selector(Selector {
+                title: "Template".to_string(),
+                all_items: vec!["-- (blank)".to_string(), "feature".to_string()],
+                selected_items: std::collections::HashSet::new(),
+                cursor_idx: 1,
+                search_query: String::new(),
+                is_filtering: false,
+                is_loading: false,
+                entity_iid: 0,
+                entity_type: String::new(),
+                purpose,
+                multi_select: false,
+                state: ListState::default(),
+                request: None,
+            });
+            let tx = app.tx.clone();
+            let mut fx = Effects::default();
+            let enter = KeyPress::from(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+            handle_key(&mut app, &enter, &tx, &mut fx);
+            app.edit_menu()
+                .and_then(|menu| menu.fields.iter().find(|f| f.label == "Description"))
+                .map(|f| f.value.clone())
+        })
+        .collect();
+
+        std::env::set_current_dir(original_dir).unwrap();
+        assert_eq!(
+            descriptions,
+            vec![
+                Some("PR template".to_string()),
+                Some("PR template".to_string())
+            ]
+        );
     }
 }

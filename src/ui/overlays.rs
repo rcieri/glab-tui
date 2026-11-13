@@ -417,11 +417,10 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 }
 
 const CONFIGURE_WIDTH: u16 = 64;
-const CONFIGURE_HINTS: &str =
-    "j/k move · J/K section · Space toggle · Enter filter / pick · Esc close";
+const CONFIGURE_HINTS: &str = "j/k · J/K section · Space toggle · Enter pick · Esc close";
 const CONFIGURE_PAGE_SIZE_HINTS: &str = "Type digits · Enter save · Esc cancel";
 const SAVE_MENU_WIDTH: u16 = 32;
-const SAVE_MENU_HINTS: &str = "j/k move · Enter pick · Esc back";
+const SAVE_MENU_HINTS: &str = "j/k · Enter pick · Esc back";
 /// The save submenu's choices, top to bottom.
 pub(crate) const SAVE_MENU_CHOICES: [(SaveMenu, &str); 3] = [
     (SaveMenu::Local, "Local Repo"),
@@ -479,11 +478,24 @@ fn render_save_menu(
 }
 
 const TEXT_INPUT_HINTS: &str = "Type to edit · Enter submit · Ctrl+E $EDITOR · Esc cancel";
-const DATE_PICKER_HINTS: &str = "h/l month · j/k day · Enter pick · Esc cancel";
+const DATE_PICKER_HINTS: &str = "hjkl day · [ ] month · Enter · Esc";
 /// Month line, weekday header and six weeks.
 const CALENDAR_ROWS: u16 = 8;
 /// Seven 4-column day cells with one column between them, plus the frame.
 const DATE_PICKER_WIDTH: u16 = 7 * 4 + 6 + 4;
+/// Columns of the previous and next month arrows at each end of the month line.
+const MONTH_ARROW_COLUMNS: u16 = 4;
+
+/// The previous-month arrow, the month and the next-month arrow, in the
+/// date picker's month line; clicks resolve against the same cells.
+pub(crate) fn date_picker_month_cells(month_line: Rect) -> [Rect; 3] {
+    Layout::horizontal([
+        Constraint::Length(MONTH_ARROW_COLUMNS),
+        Constraint::Fill(1),
+        Constraint::Length(MONTH_ARROW_COLUMNS),
+    ])
+    .areas(month_line)
+}
 
 fn render_text_input(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     let Some(text_input) = app.text_input_mut() else {
@@ -555,22 +567,25 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
 
     let [month_area, grid_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(calendar);
-    f.render_widget(
-        Paragraph::new(format!(
-            "{}  {} {}  {}",
-            ctx.icons.nav_prev,
-            month_name(date_picker.month),
-            date_picker.year,
-            ctx.icons.nav_next
-        ))
-        .alignment(Alignment::Center)
-        .style(
-            Style::default()
-                .fg(ctx.theme.header_fg)
-                .add_modifier(Modifier::BOLD),
+    let [prev_area, title_area, next_area] = date_picker_month_cells(month_area);
+    let month_style = Style::default()
+        .fg(ctx.theme.header_fg)
+        .add_modifier(Modifier::BOLD);
+    for (text, area) in [
+        (ctx.icons.nav_prev.clone(), prev_area),
+        (
+            format!("{} {}", month_name(date_picker.month), date_picker.year),
+            title_area,
         ),
-        month_area,
-    );
+        (ctx.icons.nav_next.clone(), next_area),
+    ] {
+        f.render_widget(
+            Paragraph::new(text)
+                .alignment(Alignment::Center)
+                .style(month_style),
+            area,
+        );
+    }
 
     let header = Row::new(
         ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
@@ -2567,6 +2582,63 @@ command = "true"
                 selector.selected_items,
                 std::collections::HashSet::from(["beta".to_string()]),
                 "{purpose:?}"
+            );
+        }
+    }
+
+    /// While the save menu or the page size field owns the keys, a click on
+    /// a Configure row outside the menu neither saves nor commits.
+    #[test]
+    fn a_click_on_a_configure_row_is_ignored_while_a_sub_state_owns_the_keys() {
+        for open_save_menu in [true, false] {
+            let mut app = App::default();
+            app.open_configure();
+            if let Some(c) = app.configure_mut() {
+                c.save_menu_open = open_save_menu;
+                c.save_menu_selection = open_save_menu.then_some(crate::app::SaveMenu::Local);
+                c.editing_page_size = !open_save_menu;
+            }
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            let icons = crate::config::Icons::ascii();
+            let ctx = &crate::ui::render_ctx::RenderCtx {
+                theme: crate::config::Theme::default(),
+                icons: &icons,
+                kind: crate::backend::BackendKind::GitLab,
+            };
+            terminal
+                .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+                .unwrap();
+            let list = app.configure().unwrap().layout.as_ref().unwrap().groups[0];
+            let before = app.configure().unwrap().column_checklist_idx;
+
+            click(&mut app, list.x + 1, list.y);
+
+            let c = app.configure().expect("Configure stays open");
+            assert_eq!(
+                (
+                    c.save_menu_open,
+                    c.editing_page_size,
+                    c.column_checklist_idx
+                ),
+                (open_save_menu, !open_save_menu, before)
+            );
+        }
+    }
+
+    /// The footer is drawn unwrapped on one row, and it is the visible way
+    /// out of the overlay, so a fixed-width overlay's footer fits inside it.
+    #[test]
+    fn every_fixed_width_footer_fits_inside_its_frame() {
+        for (hints, width) in [
+            (CONFIGURE_HINTS, CONFIGURE_WIDTH),
+            (CONFIGURE_PAGE_SIZE_HINTS, CONFIGURE_WIDTH),
+            (SAVE_MENU_HINTS, SAVE_MENU_WIDTH),
+            (DATE_PICKER_HINTS, DATE_PICKER_WIDTH),
+        ] {
+            let columns = usize::from(crate::ui::form::text_columns(width));
+            assert!(
+                Span::raw(hints).width() <= columns,
+                "{hints:?} is wider than {columns} columns"
             );
         }
     }

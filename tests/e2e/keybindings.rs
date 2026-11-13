@@ -119,8 +119,6 @@ next_tab = "zz"
         .expect("`zz` should switch to the MRs tab");
 }
 
-/// The keys a config sets replace the action's defaults: with `next_tab`
-/// moved to `z`, neither `l` nor `Right` (both defaults) switch tabs.
 #[test]
 fn remapped_action_no_longer_answers_to_its_default_keys() {
     let config_toml = r#"

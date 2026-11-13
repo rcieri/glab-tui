@@ -15,7 +15,16 @@ pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
 
     let mut keep_open = true;
     match key_event.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('T') => keep_open = false,
+        _ if [
+            Action::DiffBack,
+            Action::DiffClose,
+            Action::DiffReviewThreads,
+        ]
+        .into_iter()
+        .any(|action| app.config.keybindings.matches(action, key_event)) =>
+        {
+            keep_open = false
+        }
         _ if app
             .config
             .keybindings

@@ -340,6 +340,29 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
+    fn review_threads_close_on_the_remapped_opening_key_only() {
+        let mut app = app_with_review_threads(vec![review_note(1, "first", None)]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::DiffReviewThreads, &["R"]);
+
+        press(&mut app, KeyCode::Char('T'));
+        assert!(
+            app.review_threads.is_some(),
+            "the old default key closed it"
+        );
+
+        handle_review_threads(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT).into(),
+        );
+        assert!(
+            app.review_threads.is_none(),
+            "the remapped key left it open"
+        );
+    }
+
+    #[test]
     fn review_threads_navigation_wraps_around_both_ends() {
         let mut app = app_with_review_threads(vec![
             review_note(1, "first", None),

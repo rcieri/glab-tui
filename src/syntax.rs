@@ -5,9 +5,7 @@ use std::ops::Range;
 use std::sync::LazyLock;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
-/// bat's curated grammars (via `two-face`), a superset of syntect's bundled
-/// set that adds TypeScript, TOML, Dockerfile, Kotlin, Swift, Nix, Zig,
-/// Terraform, Svelte, Vue and more. The newline variant: its grammars match
+/// bat's grammars, via `two-face`. The newline variant: its grammars match
 /// `\n` at line ends, so every line is fed with its newline restored (see
 /// [`LineHighlighter::highlight`]).
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);

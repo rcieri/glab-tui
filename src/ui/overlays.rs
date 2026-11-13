@@ -1404,7 +1404,6 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             (active_categories.contains(&s.category) || s.action == help_label)
                 && !s.key.trim().is_empty()
         })
-        .filter(|s| s.key.split('/').any(|k| !k.trim().is_empty()))
         .collect();
     // The registry lists the global keys first, but the keys of the open
     // view are what the modal is opened for.
@@ -1798,6 +1797,28 @@ command = "true"
         assert!(
             !text_empty.contains("Create new Issue"),
             "empty keybinding shortcut should be filtered from help: {text_empty:?}",
+        );
+    }
+
+    #[test]
+    fn render_help_lists_actions_bound_only_to_slash() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Jobs;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains(Action::GlobalSearch.spec().label), "{text:?}");
+        assert!(
+            text.contains(Action::JobsTraceSearch.spec().label),
+            "{text:?}"
         );
     }
 

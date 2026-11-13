@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
-use crate::keybinding::KeyPress;
+use crate::keybinding::{KeyPress, is_shortcut};
 use crate::keymap::{Action, KeyContext};
 use crate::{app, handlers};
 use crossterm::event::KeyCode;
@@ -93,9 +93,11 @@ pub fn handle_key(
 
     if diff_view.search_active {
         let keys = &app.config.keybindings;
-        if keys.matches(Action::DiffSearchNext, key_event) {
+        let is_typed_text = matches!(key_event.code, KeyCode::Char(_))
+            && !is_shortcut(key_event.code, key_event.modifiers);
+        if !is_typed_text && keys.matches(Action::DiffSearchNext, key_event) {
             step_search(&mut diff_view, true);
-        } else if keys.matches(Action::DiffSearchPrevious, key_event) {
+        } else if !is_typed_text && keys.matches(Action::DiffSearchPrevious, key_event) {
             step_search(&mut diff_view, false);
         } else {
             match key_event.code {
@@ -745,5 +747,35 @@ mod tests {
             assert!(app.diff_view.is_none(), "{key:?} kept the diff open");
             assert!(app.submit_dialog.is_none(), "{key:?}");
         }
+    }
+
+    #[test]
+    fn a_plain_key_bound_to_search_next_still_types_into_the_search() {
+        let mut app = App::default();
+        open_diff(&mut app);
+        app.config.keybindings.set(Action::DiffSearchNext, &["n"]);
+        app.diff_view.as_mut().unwrap().search_active = true;
+
+        press(&mut app, KeyCode::Char('n'));
+
+        assert_eq!(app.diff_view.as_ref().unwrap().search_query, "n");
+    }
+
+    #[test]
+    fn ctrl_search_next_steps_through_matches_instead_of_typing() {
+        let mut app = App::default();
+        open_diff(&mut app);
+        app.diff_view.as_mut().unwrap().search_active = true;
+        press(&mut app, KeyCode::Char('n'));
+
+        let tx = app.tx.clone();
+        handle_key(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL).into(),
+            &tx,
+            &mut Effects::default(),
+        );
+
+        assert_eq!(app.diff_view.as_ref().unwrap().search_query, "n");
     }
 }

@@ -18,15 +18,14 @@ pub fn handle_trace_search_key(app: &mut App, key_event: &KeyPress) {
     }
     if !app.job_trace_search_query.is_empty() {
         let query = app.job_trace_search_query.to_lowercase();
-        if let Some(view) = &app.job_trace {
-            if let Some(line) = view
-                .trace()
+        let line = app.job_trace.as_ref().and_then(|view| {
+            view.trace()
                 .text()
                 .lines()
                 .position(|line| line.to_lowercase().contains(&query))
-            {
-                app.detail_scroll = u16::try_from(line).unwrap_or(u16::MAX);
-            }
+        });
+        if let Some(line) = line {
+            app.scroll_job_trace_to_line(line);
         }
     }
 }

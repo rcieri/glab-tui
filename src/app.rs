@@ -5232,12 +5232,16 @@ impl App {
             return;
         };
         match view.trace().next_failure_line(after) {
-            Some(line) => {
-                self.job_trace_scroll_to_line = Some(line);
-                self.detail_scroll_to_bottom = false;
-            }
+            Some(line) => self.scroll_job_trace_to_line(line),
             None => self.show_notice("No failure line in the job log"),
         }
+    }
+
+    /// Scrolls the shown job log to `line`. A pending jump to the bottom is
+    /// cleared because it would override the target.
+    pub fn scroll_job_trace_to_line(&mut self, line: usize) {
+        self.job_trace_scroll_to_line = Some(line);
+        self.detail_scroll_to_bottom = false;
     }
 
     pub fn selected_branch_name(&self) -> Option<String> {

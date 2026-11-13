@@ -25,8 +25,13 @@ jobs:
           toolchain: "1.88.0"
           components: rustfmt
 
+      - name: Install just
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: just
+
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: just fmt-check
 
   clippy:
     name: Clippy
@@ -45,8 +50,13 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      - name: Install just
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: just
+
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features
+        run: just lint
 
   test:
     name: Test (${{ matrix.os }})
@@ -74,16 +84,15 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      - name: Run unit tests
-        run: cargo test --lib --bin glab-tui --verbose
-
-      - name: Install cargo-nextest
-        if: runner.os != 'Windows'
+      - name: Install just and cargo-nextest
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
-          tool: cargo-nextest
+          tool: ${{ runner.os == 'Windows' && 'just' || 'just,cargo-nextest' }}
+
+      - name: Run unit tests
+        run: just test
 
       - name: Run e2e tests
         if: runner.os != 'Windows'
         timeout-minutes: 25
-        run: cargo nextest run --test e2e --no-fail-fast
+        run: just e2e

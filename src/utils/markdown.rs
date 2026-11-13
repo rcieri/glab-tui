@@ -472,8 +472,6 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
-        // An aliased token (e.g. "shell") is looked up by the grammar it
-        // means; any other token as is.
         let syntax = code_block
             .language
             .as_deref()

@@ -147,13 +147,21 @@ fn cycle<T: Copy + PartialEq>(choices: &[T], current: T, forward: bool) -> T {
     choices[next]
 }
 
+/// `value` moved by `step` and kept within `range`, never moving the wrong
+/// way: a value set outside the range by hand stays put on a step away from
+/// the range.
 fn step_within(value: u16, step: u16, range: std::ops::RangeInclusive<u16>, forward: bool) -> u16 {
     let stepped = if forward {
         value.saturating_add(step)
     } else {
         value.saturating_sub(step)
     };
-    stepped.clamp(*range.start(), *range.end())
+    let clamped = stepped.clamp(*range.start(), *range.end());
+    if forward {
+        clamped.max(value)
+    } else {
+        clamped.min(value)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,21 +245,17 @@ pub fn toggle_tab(layout: &mut LayoutConfig, tab: Tab) -> bool {
 /// shown tabs. Hidden tabs have no position to move. Returns whether it
 /// moved.
 pub fn move_tab(layout: &mut LayoutConfig, tab: Tab, towards_end: bool) -> bool {
-    let shown: Vec<&str> = layout
+    let shown: Vec<Tab> = layout
         .tab_order()
         .into_iter()
         .filter(|(_, shown)| *shown)
-        .map(|(tab, _)| tab.to_str())
+        .map(|(tab, _)| tab)
         .collect();
-    let Some(moved) = crate::column_order::move_column(&shown, tab.to_str(), towards_end) else {
+    let Some(moved) = crate::column_order::move_item(&shown, tab, towards_end) else {
         return false;
     };
-    layout.tabs = Some(
-        moved
-            .iter()
-            .filter_map(|name| Tab::from_str(name))
-            .collect(),
-    );
+    let order: Vec<(Tab, bool)> = moved.into_iter().map(|tab| (tab, true)).collect();
+    layout.set_tab_order(&order);
     true
 }
 
@@ -316,5 +320,18 @@ mod tests {
         layout.terminal_pane_height = 3;
         LayoutSetting::TerminalPaneHeight.step(&mut layout, false);
         assert_eq!(layout.terminal_pane_height, 3);
+    }
+
+    #[test]
+    fn a_number_set_outside_its_range_never_steps_further_away() {
+        let mut layout = LayoutConfig {
+            nav_width: 50,
+            ..LayoutConfig::default()
+        };
+
+        LayoutSetting::NavWidth.step(&mut layout, true);
+        assert_eq!(layout.nav_width, 50);
+        LayoutSetting::NavWidth.step(&mut layout, false);
+        assert_eq!(layout.nav_width, *NAV_WIDTH_RANGE.end());
     }
 }

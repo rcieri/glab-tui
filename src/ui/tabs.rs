@@ -3882,6 +3882,15 @@ mod tests {
         let backend = TestBackend::new(160, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
         app.jobs.items = vec![crate::domain::pipelines::Job {
             id: 1,
             status: "success".to_string(),
@@ -4017,7 +4026,9 @@ mod tests {
 
     #[test]
     fn table_headers_follow_the_saved_column_order() {
-        let ctx = &crate::ui::render_ctx::RenderCtx::for_tests();
+        use crate::backend::BackendKind;
+        use crate::column_order::same_column;
+
         let mut terminal = Terminal::new(TestBackend::new(400, 12)).unwrap();
         let renderers: [(Tab, TabRenderer); 6] = [
             (Tab::Issues, render_tab_issues),
@@ -4027,57 +4038,92 @@ mod tests {
             (Tab::Todos, render_tab_todos),
             (Tab::Milestones, render_tab_milestones),
         ];
-        for (tab, render) in renderers {
-            let mut app = App::default();
-            app.active_tab = tab;
-            let columns = tab.columns(ctx.kind, false);
-            app.enabled_columns
-                .insert(tab, columns.iter().map(|c| c.to_string()).collect());
-            let reversed: Vec<String> = columns.iter().rev().map(|c| c.to_string()).collect();
-            app.column_order.insert(tab, reversed.clone());
-            match tab {
-                Tab::Jobs => {
-                    app.jobs.items = serde_json::from_value(serde_json::json!([
-                        { "id": 1, "status": "success", "stage": "build", "name": "compile" }
-                    ]))
-                    .unwrap();
+        for (kind, other_kind) in [
+            (BackendKind::GitLab, BackendKind::GitHub),
+            (BackendKind::GitHub, BackendKind::GitLab),
+        ] {
+            for (tab, render) in renderers {
+                let mut app = App::default();
+                app.gitlab_client = Some(crate::domain::client::GitlabClient {
+                    is_github: kind.is_github(),
+                    backend: crate::backend::create_backend(kind.is_github()),
+                    tx: None,
+                    page_size: 30,
+                    api_per_page: 30,
+                    show_read_notifications: false,
+                    opened_pipeline: None,
+                });
+                app.active_tab = tab;
+                let columns = tab.columns(kind, false);
+                // Columns enabled under the other host's defaults, as a
+                // config written on that host leaves them.
+                let other_host_only: Vec<&str> = tab
+                    .columns(other_kind, false)
+                    .into_iter()
+                    .filter(|label| !columns.iter().any(|own| same_column(own, label)))
+                    .collect();
+                app.enabled_columns.insert(
+                    tab,
+                    columns
+                        .iter()
+                        .chain(&other_host_only)
+                        .map(|c| c.to_string())
+                        .collect(),
+                );
+                let reversed: Vec<String> = columns.iter().rev().map(|c| c.to_string()).collect();
+                app.column_order.insert(tab, reversed.clone());
+                match tab {
+                    Tab::Jobs => {
+                        app.jobs.items = serde_json::from_value(serde_json::json!([
+                            { "id": 1, "status": "success", "stage": "build", "name": "compile" }
+                        ]))
+                        .unwrap();
+                    }
+                    Tab::Todos => app.todos.items = vec![Default::default()],
+                    Tab::Milestones => app.milestones.items = vec![Default::default()],
+                    _ => {}
                 }
-                Tab::Todos => app.todos.items = vec![Default::default()],
-                Tab::Milestones => app.milestones.items = vec![Default::default()],
-                _ => {}
-            }
 
-            terminal
-                .draw(|f| {
-                    let area = f.area();
-                    render(
-                        f,
-                        ctx,
-                        &mut app,
-                        Rect::new(0, 0, area.width, 6),
-                        Rect::new(0, 6, area.width, 6),
-                        Block::default(),
+                let icons = std::sync::Arc::clone(&app.icons);
+                let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+                terminal
+                    .draw(|f| {
+                        let area = f.area();
+                        render(
+                            f,
+                            ctx,
+                            &mut app,
+                            Rect::new(0, 0, area.width, 6),
+                            Rect::new(0, 6, area.width, 6),
+                            Block::default(),
+                        );
+                    })
+                    .unwrap();
+
+                let header = buffer_rows(&terminal)
+                    .into_iter()
+                    .find(|row| row.contains("ID "))
+                    .map(|row| format!(" {row}"))
+                    .unwrap_or_else(|| panic!("{kind:?} {tab:?}: no header row"));
+                let positions: Vec<usize> = reversed
+                    .iter()
+                    .map(|label| {
+                        header
+                            .find(&format!(" {label} "))
+                            .unwrap_or_else(|| panic!("{kind:?} {tab:?}: no {label} in {header:?}"))
+                    })
+                    .collect();
+                assert!(
+                    positions.windows(2).all(|pair| pair[0] < pair[1]),
+                    "{kind:?} {tab:?}: {header:?}"
+                );
+                for label in other_host_only {
+                    assert!(
+                        !header.contains(&format!(" {label} ")),
+                        "{kind:?} {tab:?}: {label} drawn in {header:?}"
                     );
-                })
-                .unwrap();
-
-            let header = buffer_rows(&terminal)
-                .into_iter()
-                .find(|row| row.contains("ID "))
-                .map(|row| format!(" {row}"))
-                .unwrap_or_else(|| panic!("{tab:?}: no header row"));
-            let positions: Vec<usize> = reversed
-                .iter()
-                .map(|label| {
-                    header
-                        .find(&format!(" {label} "))
-                        .unwrap_or_else(|| panic!("{tab:?}: no {label} in {header:?}"))
-                })
-                .collect();
-            assert!(
-                positions.windows(2).all(|pair| pair[0] < pair[1]),
-                "{tab:?}: {header:?}"
-            );
+                }
+            }
         }
     }
 

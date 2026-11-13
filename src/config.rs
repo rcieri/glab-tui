@@ -1,6 +1,6 @@
 mod layout;
 
-pub use layout::{LayoutConfig, PaneSize, PreviewPlacement, parse_tab_name};
+pub use layout::{LayoutConfig, PaneSize, PreviewPlacement};
 
 use crate::utils::private_fs;
 use ratatui::style::Color;
@@ -2189,7 +2189,8 @@ cycle_status_filter = "s"
 # Tabs, panes and their sizes. The Configure View (`Tab`) edits all of these
 # and its Save View button writes them here.
 # [layout]
-# Tabs to show, in order. A tab left out is hidden; unset shows every tab.
+# Tabs to show, in order. A tab left out is hidden; unset or empty shows every
+# tab, and a name that is no tab is skipped (reported in the Terminal tab).
 # Names: issues, mrs, pipelines, jobs, runners, releases, todos, milestones,
 # branches, environments, terminal.
 # tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
@@ -2263,11 +2264,13 @@ cycle_status_filter = "s"
         let default_toml = Self::generate_default_toml();
         let mut merged_value: toml::Value = toml::from_str(&default_toml)
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+        let mut unknown_tabs = Vec::new();
 
         let path = Self::config_path();
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
                 normalize_config_file(&mut global_val);
+                unknown_tabs.extend(layout::unknown_tab_names(&global_val));
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
@@ -2298,6 +2301,7 @@ cycle_status_filter = "s"
                             toml::from_str::<toml::Value>(&workspace_contents)
                         {
                             normalize_config_file(&mut workspace_val);
+                            unknown_tabs.extend(layout::unknown_tab_names(&workspace_val));
                             merge_toml_values(&mut merged_value, workspace_val);
                         }
                     }
@@ -2305,13 +2309,12 @@ cycle_status_filter = "s"
             }
         }
 
-        match Config::deserialize(merged_value) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!("Error deserializing merged config: {e}. Using defaults.");
-                Config::default()
-            }
-        }
+        let mut config = Config::deserialize(merged_value).unwrap_or_else(|e| {
+            eprintln!("Error deserializing merged config: {e}. Using defaults.");
+            Config::default()
+        });
+        config.layout.unknown_tabs = unknown_tabs;
+        config
     }
 
     pub fn save(&self) {
@@ -2966,6 +2969,26 @@ page_size = 250
         assert!(!written.contains_key("ui"));
         let reloaded = Config::load();
         assert_eq!(reloaded.layout, config.layout);
+    }
+
+    #[test]
+    fn an_unknown_tab_name_is_left_out_without_resetting_the_config() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        private_fs::write(
+            &Config::config_path(),
+            "theme_preset = \"nord\"\n[layout]\ntabs = [\"mrs\", \"pipeline\"]\n",
+        )
+        .unwrap();
+
+        let config = Config::load();
+        assert_eq!(config.theme_preset.as_deref(), Some("nord"));
+        assert_eq!(
+            config.layout.tabs,
+            Some(vec![crate::app::Tab::MergeRequests])
+        );
+        assert_eq!(config.layout.unknown_tabs, vec!["pipeline".to_string()]);
     }
 
     #[test]

@@ -142,6 +142,10 @@ pub struct LayoutConfig {
     pub terminal_pane_height: u16,
     /// The terminal pane hides while the terminal is shorter.
     pub terminal_pane_min_height: u16,
+    /// Names in `tabs` that name no tab. `Config::load` drops them instead
+    /// of failing the whole config, and the app reports them at startup.
+    #[serde(skip)]
+    pub unknown_tabs: Vec<String>,
 }
 
 pub const DEFAULT_NAV_WIDTH: u16 = 22;
@@ -164,15 +168,17 @@ impl Default for LayoutConfig {
             terminal_pane_visible: true,
             terminal_pane_height: DEFAULT_TERMINAL_PANE_HEIGHT,
             terminal_pane_min_height: DEFAULT_TERMINAL_PANE_MIN_HEIGHT,
+            unknown_tabs: Vec::new(),
         }
     }
 }
 
 impl LayoutConfig {
     /// Every tab in display order with whether it is shown: the listed tabs
-    /// first, in list order, then the hidden ones in the built-in order.
+    /// first, in list order, then the hidden ones in the built-in order. No
+    /// list, or an empty one, shows every tab.
     pub fn tab_order(&self) -> Vec<(Tab, bool)> {
-        let Some(listed) = &self.tabs else {
+        let Some(listed) = self.tabs.as_ref().filter(|tabs| !tabs.is_empty()) else {
             return Tab::ALL.iter().map(|&tab| (tab, true)).collect();
         };
         let mut order: Vec<(Tab, bool)> = Vec::with_capacity(Tab::ALL.len());
@@ -189,38 +195,63 @@ impl LayoutConfig {
         order
     }
 
-    /// Stores `order` as the tab list, keeping only the shown tabs.
+    /// Stores `order` as the tab list, keeping only the shown tabs. Every
+    /// tab shown in the built-in order stores no list, so a tab added in a
+    /// later release shows up instead of starting hidden.
     pub fn set_tab_order(&mut self, order: &[(Tab, bool)]) {
-        self.tabs = Some(
-            order
-                .iter()
-                .filter(|(_, shown)| *shown)
-                .map(|(tab, _)| *tab)
-                .collect(),
-        );
+        let shown: Vec<Tab> = order
+            .iter()
+            .filter(|(_, shown)| *shown)
+            .map(|(tab, _)| *tab)
+            .collect();
+        self.tabs = (shown != Tab::ALL).then_some(shown);
     }
 
     /// The keys of `self` whose values differ from `base`, as a TOML table.
+    /// Showing every tab over a `base` that hides some writes the full list,
+    /// since leaving `tabs` out would keep the base's list.
     pub fn diff_from(&self, base: &LayoutConfig) -> toml::Table {
         let (Ok(toml::Value::Table(mine)), Ok(toml::Value::Table(theirs))) =
             (toml::Value::try_from(self), toml::Value::try_from(base))
         else {
             return toml::Table::new();
         };
-        mine.into_iter()
+        let mut diff: toml::Table = mine
+            .into_iter()
             .filter(|(key, value)| theirs.get(key) != Some(value))
-            .collect()
+            .collect();
+        if self.tab_order() != base.tab_order() && self.tabs.is_none() {
+            let every_tab = Tab::ALL
+                .iter()
+                .map(|tab| toml::Value::String(tab.to_str().to_string()))
+                .collect();
+            diff.insert("tabs".to_string(), toml::Value::Array(every_tab));
+        }
+        diff
     }
 }
 
 /// Reads a tab name the way `--tab` and `active_tab` do, also accepting the
 /// sidebar title (`Merge Requests`, `Notifications`).
-pub fn parse_tab_name(name: &str) -> Option<Tab> {
+fn parse_tab_name(name: &str) -> Option<Tab> {
     let trimmed = name.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
     Tab::from_str(trimmed).or_else(|| {
         let joined: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
         Tab::from_str(&joined)
     })
+}
+
+/// The names in one parsed config file's `layout.tabs` that name no tab.
+pub(super) fn unknown_tab_names(file: &toml::Value) -> Vec<String> {
+    file.get("layout")
+        .and_then(|layout| layout.get("tabs"))
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .filter(|name| parse_tab_name(name).is_none())
+        .map(str::to_string)
+        .collect()
 }
 
 mod tab_names {
@@ -238,21 +269,19 @@ mod tab_names {
         }
     }
 
+    /// Skips names that name no tab: a typo in the tab list would otherwise
+    /// fail the whole config, and a later Save View would write the
+    /// defaults it fell back to over the user's file.
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<Tab>>, D::Error> {
         let names = Vec::<String>::deserialize(deserializer)?;
-        names
-            .iter()
-            .map(|name| {
-                parse_tab_name(name).ok_or_else(|| {
-                    serde::de::Error::custom(format!(
-                        "unknown tab {name:?} in layout.tabs; use issues, mrs, pipelines, jobs, runners, releases, todos, milestones, branches, environments or terminal"
-                    ))
-                })
-            })
-            .collect::<Result<Vec<Tab>, _>>()
-            .map(Some)
+        Ok(Some(
+            names
+                .iter()
+                .filter_map(|name| parse_tab_name(name))
+                .collect(),
+        ))
     }
 }
 
@@ -357,12 +386,40 @@ mod tests {
     }
 
     #[test]
-    fn unknown_tab_name_is_rejected_with_the_name() {
-        let error = toml::from_str::<LayoutConfig>(r#"tabs = ["issues", "wiki"]"#).unwrap_err();
-        assert!(
-            error.to_string().contains("unknown tab \"wiki\""),
-            "{error}"
-        );
+    fn unknown_tab_names_are_left_out_and_reported() {
+        let file: toml::Value = toml::from_str("[layout]\ntabs = [\"issues\", \"wiki\"]").unwrap();
+
+        assert_eq!(unknown_tab_names(&file), vec!["wiki".to_string()]);
+        let layout = toml::from_str::<LayoutConfig>(r#"tabs = ["issues", "wiki"]"#).unwrap();
+        assert_eq!(layout.tabs, Some(vec![Tab::Issues]));
+    }
+
+    #[test]
+    fn an_empty_tab_list_shows_every_tab() {
+        let layout = toml::from_str::<LayoutConfig>("tabs = []").unwrap();
+
+        assert!(layout.tab_order().iter().all(|(_, shown)| *shown));
+    }
+
+    #[test]
+    fn showing_every_tab_in_the_built_in_order_stores_no_list() {
+        let mut layout = LayoutConfig::default();
+        let every_tab: Vec<(Tab, bool)> = Tab::ALL.iter().map(|&tab| (tab, true)).collect();
+
+        layout.set_tab_order(&every_tab);
+        assert_eq!(layout.tabs, None);
+    }
+
+    #[test]
+    fn showing_every_tab_over_a_base_that_hides_some_writes_the_full_list() {
+        let base = toml::from_str::<LayoutConfig>(r#"tabs = ["issues"]"#).unwrap();
+
+        let diff = LayoutConfig::default().diff_from(&base);
+        let every_tab: Vec<toml::Value> = Tab::ALL
+            .iter()
+            .map(|tab| toml::Value::String(tab.to_str().to_string()))
+            .collect();
+        assert_eq!(diff.get("tabs"), Some(&toml::Value::Array(every_tab)));
     }
 
     #[test]

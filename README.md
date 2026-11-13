@@ -346,7 +346,8 @@ The `[layout]` section decides which tabs show and in what order, and where the 
 ```toml
 [layout]
 # Tabs to show, in order: the sidebar, the next_tab / prev_tab keys and the
-# sidebar clicks all follow it. A tab left out is hidden; unset shows every tab.
+# sidebar clicks all follow it. A tab left out is hidden; unset or empty shows
+# every tab. A name that is no tab is skipped and reported in the Terminal tab.
 tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
 nav_visible = true             # navigation sidebar, toggled with Alt+n (toggle_nav)
 nav_width = 22
@@ -360,7 +361,7 @@ terminal_pane_height = 6
 terminal_pane_min_height = 18  # the terminal pane hides on shorter terminals
 ```
 
-Each tab remembers whether its preview was open, so switching away and back restores it.
+Each tab remembers whether its preview was open, so switching away and back restores it. Whatever the sizes, the list keeps at least 30 columns and 5 rows: the sidebar, preview and terminal pane shrink first.
 
 **Deprecated keys.** `disabled_tabs = [...]` and the `[ui]` keys `sidebar_visible`, `sidebar_width` and `terminal_pane_visible` are still read for this release and will be removed in the next minor release. They apply to the file they are written in, and only where that file's `[layout]` does not set the same thing: `disabled_tabs` becomes a `tabs` list of every other tab, and the `[ui]` keys map to `nav_visible`, `nav_width` and `terminal_pane_visible`. A repo-local `disabled_tabs` therefore still overrides a global `layout.tabs`. Saving from the Configure View writes `[layout]` and removes the deprecated keys from the file it saves to. Toggling the sidebar or terminal pane with their keys changes only the running session until you save.
 
@@ -516,7 +517,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 1. Press **`Tab`** (or **`,`**) to open the **Configure View** popup.
 2. The **COLUMNS** section lists every available column for the active tab, in display order. Use `j`/`k` (or arrows) to move through the popup, and `Tab` / `Shift+Tab` to jump to the next / previous section.
    - **`Space`** toggles whether a column is shown in the table.
-   - **`J`** / **`K`** move the focused column right / left in the table. **Save View** keeps the order: `columns = [...]` lists the shown columns in display order, and a column the list leaves out follows the listed ones.
+   - **`J`** / **`K`** move the focused column right / left in the table. **Save View** keeps the order: `columns = [...]` lists the shown columns in display order, and a column the list leaves out follows the listed ones. A list in alphabetical order, which is how earlier versions saved every list, is read as carrying no order, so those tables keep the built-in order.
    - **`Enter`** opens a **value-based filter** for that column: a searchable multi-select of the distinct values currently loaded. For example, on the Issues tab, `Enter` on the `State` column lets you filter to just `opened` issues — or on the `Labels` column, to specific labels.
 3. Inside the filter selector: `Space` toggles values on/off, `/` or `f` fuzzy-searches the values, `Enter` applies the filter, `Esc` cancels. Selecting multiple values is supported (e.g. `opened` **and** `closed`).
 4. Applied filters are shown as a count next to the column, e.g. `[x] State (1)`. Re-open the column, uncheck every value, and press `Enter` to clear the filter for that column; uncheck only some to widen it.

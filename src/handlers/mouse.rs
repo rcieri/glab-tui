@@ -506,7 +506,15 @@ fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16
 }
 
 /// Mouse click on a Configure View row: focus it and act on it like `Space`.
+/// Ignored while the save menu is open or the page size is being typed, as
+/// keys are.
 fn handle_configure_mouse(app: &mut App, row: u16, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    if app
+        .configure()
+        .is_none_or(|c| c.save_menu_open || c.editing_page_size)
+    {
+        return;
+    }
     let Some(idx) = app.configure().and_then(|c| {
         c.row_hits
             .iter()

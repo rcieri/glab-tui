@@ -20,6 +20,11 @@ pub const AUTO_PREVIEW_SMALL_WIDTH: u16 = 30;
 /// `preview_height = "auto"`: a bottom preview takes this share of the list
 /// column.
 pub const AUTO_PREVIEW_HEIGHT_PERCENTAGE: u16 = 50;
+/// The list keeps at least this many columns and rows: the solver shrinks
+/// the navigation, preview and terminal panes first, whatever sizes
+/// `[layout]` asks for.
+pub const MIN_LIST_WIDTH: u16 = 30;
+pub const MIN_LIST_HEIGHT: u16 = 5;
 
 /// The pane settings of `[layout]`, everything but the tab list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,7 +182,7 @@ impl LayoutPlan {
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Length(nav_width),
-                Constraint::Min(0),
+                Constraint::Min(MIN_LIST_WIDTH),
                 right_constraint,
             ])
             .split(workspace_area);
@@ -193,7 +198,10 @@ impl LayoutPlan {
         };
         let term_split = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(term_height)])
+            .constraints([
+                Constraint::Min(MIN_LIST_HEIGHT),
+                Constraint::Length(term_height),
+            ])
             .split(list_column);
         let bottom_constraint = if shows_preview && slot == PreviewSlot::Bottom {
             preview_height_constraint(panes.preview_height)
@@ -202,7 +210,7 @@ impl LayoutPlan {
         };
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), bottom_constraint])
+            .constraints([Constraint::Min(MIN_LIST_HEIGHT), bottom_constraint])
             .split(term_split[0]);
 
         let detail_rect = match slot {
@@ -485,5 +493,21 @@ mod tests {
         inputs.panes.terminal_pane_min_height = 12;
 
         assert_eq!(LayoutPlan::compute(inputs).term_area.height, 4);
+    }
+
+    #[test]
+    fn oversized_panes_shrink_before_the_list_does() {
+        let mut wide = base_inputs(90, 30);
+        wide.panes.nav_width = 40;
+        wide.panes.preview_width = PaneSize::Percent(60);
+        assert_eq!(LayoutPlan::compute(wide).content_area.width, MIN_LIST_WIDTH);
+
+        let mut tall = base_inputs(100, 20);
+        tall.panes.terminal_pane_height = 20;
+        tall.panes.preview = PreviewPlacement::Off;
+        assert_eq!(
+            LayoutPlan::compute(tall).content_area.height,
+            MIN_LIST_HEIGHT
+        );
     }
 }

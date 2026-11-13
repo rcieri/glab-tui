@@ -1036,9 +1036,7 @@ fn configure_row_item(
             icons.radio_off.clone()
         }
     };
-    // A setting row: its label in `label_color`, its value after it, both in
-    // the focus colors while focused.
-    let setting = |label: String, value: String, label_color, style: Style| {
+    let setting_row = |label: String, value: String, label_color, style: Style| {
         let line = if is_active {
             Line::from(Span::styled(format!("{label}{value} "), style))
         } else {
@@ -1117,16 +1115,16 @@ fn configure_row_item(
                 ListItem::new(Line::from(Span::styled(format!("{label}{value} "), style)))
                     .style(style)
             } else {
-                setting(label, value, t.header_fg, style)
+                setting_row(label, value, t.header_fg, style)
             }
         }
-        ConfigureRow::PrefetchTabs => setting(
+        ConfigureRow::PrefetchTabs => setting_row(
             format!(" {} Prefetch Tabs  ", icons.label_fetching),
             format!("[ {} ]", app.config.prefetch_tabs),
             t.header_fg,
             plain_style,
         ),
-        ConfigureRow::Theme => setting(
+        ConfigureRow::Theme => setting_row(
             format!(" {} Theme          ", icons.label_theme),
             format!(
                 "[ {} ]",
@@ -1149,7 +1147,7 @@ fn configure_row_item(
             ))
             .style(style)
         }
-        ConfigureRow::Layout(layout_setting) => setting(
+        ConfigureRow::Layout(layout_setting) => setting_row(
             format!("  {:<21}", layout_setting.label()),
             format!("[ {} ]", layout_setting.value(&app.config.layout)),
             t.header_fg,

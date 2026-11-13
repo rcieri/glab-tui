@@ -36,6 +36,21 @@ fn tab_list_orders_the_sidebar_and_the_tab_keys() {
         .expect("l from Issues lands on Todos, the next listed tab");
 }
 
+/// A typo in `[layout] tabs` leaves that name out and raises a toast, while
+/// the rest of the list still applies.
+#[test]
+fn unknown_tab_name_is_reported_and_the_rest_of_the_list_applies() {
+    let config = "[layout]\ntabs = [\"mrs\", \"pipeline\"]\n";
+    let mut session = TestSession::with_config(false, 24, 120, Some(config));
+    session
+        .wait_for_screen_contains("1 unknown tab name(s) in layout.tabs", 5000)
+        .expect("the unknown name is reported");
+
+    let screen = session.emulator.get_text();
+    assert!(screen.contains("MRS"), "{screen}");
+    assert!(!screen.contains("ISSUES"), "{screen}");
+}
+
 /// `toggle_nav` (`Alt+n`) hides the sidebar and shows it again.
 #[test]
 fn alt_n_toggles_the_navigation_sidebar() {

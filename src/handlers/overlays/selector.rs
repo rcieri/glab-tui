@@ -320,6 +320,7 @@ pub fn handle_key(
                                 app.apply_config();
                                 app.land_on_available_tab();
                                 app.load_custom_commands();
+                                app.report_unknown_tabs();
                                 crate::config::reload_command_timeout();
 
                                 if let Ok(context) = domain::client::get_project_context() {

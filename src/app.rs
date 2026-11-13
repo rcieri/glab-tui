@@ -6091,6 +6091,28 @@ impl App {
         }
     }
 
+    /// Logs each `layout.tabs` name that names no tab, which `Config::load`
+    /// left out, as a failed Terminal-tab entry, with one toast.
+    pub fn report_unknown_tabs(&mut self) {
+        let unknown = std::mem::take(&mut self.config.layout.unknown_tabs);
+        if unknown.is_empty() {
+            return;
+        }
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        for name in &unknown {
+            self.terminal_commands.push(TerminalCommand {
+                timestamp: timestamp.clone(),
+                command: format!("layout.tabs: {name:?}"),
+                status: "Failed: no tab has this name, so it was left out".to_string(),
+                ..Default::default()
+            });
+        }
+        self.raise_error_toast(format!(
+            "{} unknown tab name(s) in layout.tabs; see the Terminal tab",
+            unknown.len()
+        ));
+    }
+
     pub fn kind(&self) -> BackendKind {
         self.gitlab_client
             .as_ref()
@@ -6240,32 +6262,20 @@ impl App {
         }
     }
 
+    /// Whether `tab`'s table draws `col`: a column this host and scope have,
+    /// enabled under its own name or the other host's name for it.
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
-        if col == "Project" && tab != Tab::Todos && !self.scope.is_group() {
+        let same_column = crate::column_order::same_column;
+        if !tab
+            .columns(self.kind(), self.scope.is_group())
+            .iter()
+            .any(|label| same_column(label, col))
+        {
             return false;
         }
-        if self.is_github() {
-            if tab == Tab::Issues && col == "Due Date" {
-                return false;
-            }
-            if tab == Tab::Milestones && col == "Start Date" {
-                return false;
-            }
-        }
-        if let Some(set) = self.enabled_columns.get(&tab) {
-            if tab == Tab::Issues && matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
-                return set.contains("PRs")
-                    || set.contains("MRs")
-                    || set.contains("Related PRs")
-                    || set.contains("Related MRs");
-            }
-            if tab == Tab::MergeRequests && matches!(col, "Closes" | "Linked Issues") {
-                return set.contains("Closes") || set.contains("Linked Issues");
-            }
-            set.contains(col)
-        } else {
-            true
-        }
+        self.enabled_columns
+            .get(&tab)
+            .is_none_or(|set| set.iter().any(|name| same_column(name, col)))
     }
 
     /// The tab's sort column and whether it is ascending.
@@ -6599,6 +6609,7 @@ impl App {
         app.apply_config();
         app.land_on_available_tab();
         app.load_custom_commands();
+        app.report_unknown_tabs();
         app
     }
 
@@ -6636,7 +6647,13 @@ impl App {
             if let Some(cols) = &pane.columns {
                 let col_set: std::collections::HashSet<String> = cols.iter().cloned().collect();
                 self.enabled_columns.insert(tab, col_set);
-                self.column_order.insert(tab, cols.clone());
+                // Every list saved before columns could be reordered was
+                // sorted alphabetically, so a sorted list carries no order.
+                if cols.is_sorted() {
+                    self.column_order.remove(&tab);
+                } else {
+                    self.column_order.insert(tab, cols.clone());
+                }
             }
             if let Some(col) = &pane.group_by_column {
                 self.group_by_column.insert(tab, Some(col.clone()));
@@ -9138,22 +9155,35 @@ impl App {
     }
 
     /// The tab's enabled columns in display order, as `columns = [...]`
-    /// stores them. Enabled names this host has no column for (`MRs` on
-    /// GitHub) follow, alphabetically.
+    /// stores them, each under the name it was enabled with (`MRs` on
+    /// GitHub). A column this host or scope lacks keeps its stored place.
+    /// Enabled names that are in no order follow, alphabetically.
     fn saved_columns(&self, tab: Tab) -> Option<Vec<String>> {
         let enabled = self.enabled_columns.get(&tab)?;
-        let display = self.ordered_columns(tab);
-        let mut names: Vec<&String> = enabled.iter().collect();
-        names.sort_by_key(|name| {
-            (
-                display
-                    .iter()
-                    .position(|label| label == name)
-                    .unwrap_or(usize::MAX),
-                (*name).clone(),
-            )
-        });
-        Some(names.into_iter().cloned().collect())
+        let same_column = crate::column_order::same_column;
+        let mut saved: Vec<String> = self
+            .stored_column_order(tab, &self.ordered_columns(tab))
+            .iter()
+            .filter_map(|label| enabled.iter().find(|name| same_column(name, label)))
+            .cloned()
+            .collect();
+        let mut unordered: Vec<&String> = enabled
+            .iter()
+            .filter(|name| !saved.contains(name))
+            .collect();
+        unordered.sort();
+        saved.extend(unordered.into_iter().cloned());
+        Some(saved)
+    }
+
+    /// `display`, an order of `tab`'s current columns, as the order to store:
+    /// merged with the stored order so columns this host or scope lacks keep
+    /// their place.
+    fn stored_column_order(&self, tab: Tab, display: &[&str]) -> Vec<String> {
+        match self.column_order.get(&tab) {
+            Some(stored) => crate::column_order::merge_order(display, stored),
+            None => display.iter().map(|label| label.to_string()).collect(),
+        }
     }
 
     /// Every column of `tab` in display order, shown or not.
@@ -9181,11 +9211,12 @@ impl App {
     /// Moves `column` one place right (`towards_end`) or left in `tab`'s
     /// display order. Returns whether it moved.
     pub fn move_column(&mut self, tab: Tab, column: &str, towards_end: bool) -> bool {
-        let Some(order) =
-            crate::column_order::move_column(&self.ordered_columns(tab), column, towards_end)
+        let Some(moved) =
+            crate::column_order::move_item(&self.ordered_columns(tab), column, towards_end)
         else {
             return false;
         };
+        let order = self.stored_column_order(tab, &moved);
         self.column_order.insert(tab, order);
         true
     }
@@ -14704,6 +14735,60 @@ index 123456..789012 100644
             ["Title", "ID", "State"]
         );
         assert_eq!(reloaded.column_permutation(Tab::Issues), vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn a_sorted_column_list_saved_by_an_older_version_keeps_the_built_in_order() {
+        let mut app = App::default();
+        app.config.issues.columns = Some(["Author", "ID", "Title"].map(String::from).to_vec());
+        app.apply_config();
+
+        assert_eq!(app.column_permutation(Tab::Issues), vec![0, 1, 2]);
+        assert_eq!(
+            app.saved_columns(Tab::Issues).unwrap(),
+            ["ID", "Title", "Author"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_keeps_the_place_of_a_column_this_scope_lacks() {
+        let mut app = App::default();
+        app.config.issues.columns = Some(
+            ["Project", "Title", "ID", "State"]
+                .map(String::from)
+                .to_vec(),
+        );
+        app.apply_config();
+        assert!(app.move_column(Tab::Issues, "State", false));
+
+        assert_eq!(
+            app.saved_columns(Tab::Issues).unwrap(),
+            ["Project", "Title", "State", "ID"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_on_github_keeps_a_gitlab_column_name_in_its_place() {
+        let mut app = App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        };
+        app.config.issues.columns = Some(["Title", "MRs", "ID"].map(String::from).to_vec());
+        app.apply_config();
+
+        assert!(app.is_column_visible(Tab::Issues, "PRs"));
+        assert_eq!(
+            app.saved_columns(Tab::Issues).unwrap(),
+            ["Title", "MRs", "ID"].map(String::from)
+        );
     }
 
     fn nav_pipe(id: u64) -> crate::domain::pipelines::Pipeline {

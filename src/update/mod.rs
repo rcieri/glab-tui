@@ -65,7 +65,7 @@ mod tests {
     }
 
     fn with_open_diff(mut app: App) -> App {
-        app.diff_view = Some(crate::app::DiffView::new(
+        app.open_diff_view(crate::app::DiffView::new(
             4,
             "group/project".to_string(),
             String::new(),
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn ctrl_e_in_a_text_input_hands_its_value_to_the_editor_and_takes_the_result_back() {
         let mut app = App::default();
-        app.text_input = Some(TextInput::new(
+        app.open_text_input(TextInput::new(
             " Page Size ",
             "30".to_string(),
             TextInputAction::EditPageSize,
@@ -163,10 +163,7 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            app.text_input.as_ref().map(|ti| ti.buffer.value()),
-            Some("50")
-        );
+        assert_eq!(app.text_input().map(|ti| ti.buffer.value()), Some("50"));
     }
 
     #[test]
@@ -309,7 +306,7 @@ mod tests {
                 parents: Vec::new(),
             }));
         }
-        app.selector = Some(crate::app::Selector {
+        app.open_selector(crate::app::Selector {
             title: " Select Pipeline ".to_string(),
             all_items: vec!["#9 — main".to_string()],
             selected_items: Default::default(),
@@ -536,5 +533,47 @@ mod tests {
         app.open_pipeline_in_jobs_tab(2001);
 
         assert_eq!(app.jobs_breadcrumb(), "#1002 › #2001");
+    }
+
+    #[test]
+    fn ctrl_s_while_review_threads_is_open_does_not_open_repo_switcher() {
+        let mut app = app_with_client();
+        app.open_review_threads(crate::app::ReviewThreadsOverview::new(
+            &[],
+            &crate::app::DiffView::new(1, "p".to_string(), String::new()),
+        ));
+        assert!(app.review_threads().is_some());
+
+        let effects = update(&mut app, press(KeyCode::Char('s'), KeyModifiers::CONTROL));
+
+        assert!(effects.is_empty());
+        assert!(app.selector().is_none());
+        assert!(app.review_threads().is_some());
+    }
+
+    #[test]
+    fn mouse_click_outside_modal_rect_does_not_fall_through_to_table() {
+        use crossterm::event::MouseEventKind;
+        let mut app = app_with_client();
+        app.active_tab = Tab::Issues;
+        app.issues.items = vec![
+            serde_json::from_str(r#"{"iid": 1, "title": "Test Issue", "state": "opened", "updated_at": "2026-01-01T00:00:00Z", "author": {"username": "user"}}"#).unwrap(),
+        ];
+        app.issues.state.select(Some(0));
+        app.content_rect = Some(ratatui::layout::Rect::new(0, 5, 80, 20));
+
+        app.open_configure();
+        assert!(app.has_modal());
+
+        let click_event = Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        update(&mut app, click_event);
+
+        assert_eq!(app.issues.state.selected(), Some(0));
     }
 }

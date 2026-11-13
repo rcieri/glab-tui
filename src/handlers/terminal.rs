@@ -38,7 +38,7 @@ pub fn handle_tab_key(app: &mut App, key_event: &KeyPress) -> bool {
 /// such as the repo switcher, reads its keys later in the main loop, so the
 /// inspector leaves them alone.
 pub fn handle_inspector_key(app: &mut App, key_event: &KeyPress) -> bool {
-    if app.selector.is_some() || app.text_input.is_some() {
+    if app.selector().is_some() || app.text_input().is_some() {
         return false;
     }
     let Some(mut inspector) = app.terminal_inspector else {
@@ -128,7 +128,7 @@ mod tests {
         let mut app = App::default();
         app.start_command("Creating branch: x from main".to_string());
         app.open_terminal_inspector().unwrap();
-        app.selector = Some(crate::app::Selector::draft_actions(0));
+        app.open_selector(crate::app::Selector::draft_actions(0));
 
         for code in [KeyCode::Char('j'), KeyCode::Enter, KeyCode::Esc] {
             let key = KeyEvent::new(code, KeyModifiers::NONE).into();

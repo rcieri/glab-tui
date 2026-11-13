@@ -14,7 +14,7 @@ pub fn handle_submit_dialog(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
-    let Some(mut dialog) = app.submit_dialog.take() else {
+    let Some(mut dialog) = app.pop_submit_dialog() else {
         return false;
     };
 
@@ -95,7 +95,7 @@ pub fn handle_submit_dialog(
     } else if !cancel {
         // Either the user navigated or toggled an option — keep the
         // dialog open.
-        app.submit_dialog = Some(dialog);
+        app.push_modal(crate::app::Modal::Submit(Box::new(dialog)));
     }
 
     true
@@ -128,7 +128,7 @@ fn run_dialog_choice(
             app.show_notice(format!("Discarded {drafts}"));
         }
     }
-    app.diff_view = None;
+    app.close_diff_view();
 }
 
 fn merge_options_from(

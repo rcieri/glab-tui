@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
             }
             app.switch_repo_paths = switch_repo_paths;
             app.switch_repo_groups = std::collections::HashSet::new();
-            app.selector = Some(crate::app::Selector {
+            app.open_selector(crate::app::Selector {
                 title: " No Repo Detected — Select a Repository ".to_string(),
                 all_items: switchable.iter().map(|e| e.display.clone()).collect(),
                 selected_items: std::collections::HashSet::new(),

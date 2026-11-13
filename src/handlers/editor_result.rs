@@ -19,19 +19,19 @@ pub fn apply(
     };
     match purpose {
         EditPurpose::TextInput => {
-            if let Some(text_input) = &mut app.text_input {
+            if let Some(text_input) = app.text_input_mut() {
                 text_input.buffer.set_value(text);
             }
         }
         EditPurpose::ReviewSummary => {
-            if let Some(overlay) = &mut app.review_submit {
+            if let Some(overlay) = app.review_submit_mut() {
                 overlay.summary.set_value(text);
                 overlay.clear_outcome();
                 overlay.focus = crate::review_submit::ReviewSubmitFocus::Summary;
             }
         }
         EditPurpose::MenuDescription => {
-            let description = app.edit_menu.as_mut().and_then(|menu| {
+            let description = app.edit_menu_mut().and_then(|menu| {
                 menu.fields.iter_mut().find(|f| {
                     (f.label == "Description" || f.label == "Release Notes")
                         && f.kind == FieldType::Text
@@ -46,10 +46,8 @@ pub fn apply(
                 return;
             };
             draft.body = text;
-            if let Some((project, mr_iid)) = app
-                .diff_view
-                .as_ref()
-                .map(|d| (d.project_path.clone(), d.mr_iid))
+            if let Some((project, mr_iid)) =
+                app.diff_view().map(|d| (d.project_path.clone(), d.mr_iid))
             {
                 app.persist_draft_comments(&project, mr_iid);
             }

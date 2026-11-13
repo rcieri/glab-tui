@@ -86,7 +86,7 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(mut menu) = app.edit_menu.take() else {
+    let Some(mut menu) = app.pop_edit_menu() else {
         return;
     };
     let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
@@ -102,7 +102,7 @@ pub fn handle_key(
         match key_event.code {
             KeyCode::Esc | KeyCode::Enter => {
                 menu.editing = false;
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::Left => {
                 if menu.selected_idx < menu.fields.len()
@@ -118,7 +118,7 @@ pub fn handle_key(
                         }
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::Right => {
                 if menu.selected_idx < menu.fields.len()
@@ -135,7 +135,7 @@ pub fn handle_key(
                         }
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::Home => {
                 if menu.selected_idx < menu.fields.len()
@@ -143,7 +143,7 @@ pub fn handle_key(
                 {
                     menu.cursor_pos = 0;
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::End => {
                 if menu.selected_idx < menu.fields.len()
@@ -151,7 +151,7 @@ pub fn handle_key(
                 {
                     menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::Backspace => {
                 if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
@@ -163,7 +163,7 @@ pub fn handle_key(
                         menu.cursor_pos = byte_idx;
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::Delete => {
                 if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
@@ -172,7 +172,7 @@ pub fn handle_key(
                         f.value.remove(menu.cursor_pos);
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             KeyCode::Char(c) if key_event.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' => {
                 let field_name = if menu.selected_idx < menu.fields.len() {
@@ -189,14 +189,14 @@ pub fn handle_key(
                     } else {
                         String::new()
                     };
-                    app.edit_menu = Some(menu);
+                    app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                     fx.suspend(ForegroundJob::Edit {
                         text: desc,
                         file_suffix: ".md".to_string(),
                         purpose: EditPurpose::MenuDescription,
                     });
                 } else {
-                    app.edit_menu = Some(menu);
+                    app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                 }
             }
             KeyCode::Char(c) => {
@@ -208,11 +208,11 @@ pub fn handle_key(
                         menu.cursor_pos += c.len_utf8();
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
             _ => {
                 // Disable all navigation buttons in edit mode
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
         }
         return;
@@ -255,16 +255,16 @@ pub fn handle_key(
             if menu.selected_idx < menu.fields.len() {
                 menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
         // J/K: scroll description pane
         KeyCode::Char('J') => {
             menu.desc_scroll = menu.desc_scroll.saturating_add(1);
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
         KeyCode::Char('K') => {
             menu.desc_scroll = menu.desc_scroll.saturating_sub(1);
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
         KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
             let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
@@ -295,7 +295,7 @@ pub fn handle_key(
             if menu.selected_idx < menu.fields.len() {
                 menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
         _ if is_submit_edit || key_event.code == KeyCode::Enter => {
             if is_submit_edit {
@@ -311,7 +311,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                             return;
                         }
                     };
@@ -361,7 +361,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -401,7 +401,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                             return;
                         }
                     };
@@ -464,7 +464,7 @@ pub fn handle_key(
                     };
                     let source_on_forge = menu.source_on_forge;
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -582,13 +582,13 @@ pub fn handle_key(
                     };
 
                     if update.is_empty() {
-                        app.edit_menu = None;
+                        app.close_edit_menu();
                         return;
                     }
 
                     let selected: Vec<(String, u64)> =
                         app.selected_issues.iter().cloned().collect();
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     app.selected_issues.clear();
                     let client = app.gitlab_client.clone().unwrap();
                     let project = app.scope.as_str().to_string();
@@ -672,12 +672,12 @@ pub fn handle_key(
                     };
 
                     if update.is_empty() {
-                        app.edit_menu = None;
+                        app.close_edit_menu();
                         return;
                     }
 
                     let selected: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     app.selected_mrs.clear();
                     let client = app.gitlab_client.clone().unwrap();
                     let project = app.scope.as_str().to_string();
@@ -706,7 +706,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                             return;
                         }
                     };
@@ -738,7 +738,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -778,7 +778,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                             return;
                         }
                     };
@@ -836,7 +836,7 @@ pub fn handle_key(
                     };
                     let mr_flag = mr.to_lowercase() == "yes";
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -871,7 +871,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                             return;
                         }
                     };
@@ -897,7 +897,7 @@ pub fn handle_key(
                         .unwrap_or_default();
 
                     if !tag.is_empty() {
-                        app.edit_menu = None;
+                        app.close_edit_menu();
                         let Some(client) = app.gitlab_client.clone() else {
                             app.show_error("Backend not initialized".to_string());
                             return;
@@ -928,7 +928,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                             return;
                         }
                     };
@@ -945,7 +945,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -1013,7 +1013,7 @@ pub fn handle_key(
                         .unwrap_or_default();
 
                     if !tag.is_empty() {
-                        app.edit_menu = None;
+                        app.close_edit_menu();
                         if !menu.initial_fields.is_empty()
                             && tag == initial_tag
                             && name == initial_name
@@ -1111,7 +1111,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let new_milestone = if milestone.is_empty() || milestone == "--" {
                         None
                     } else {
@@ -1254,7 +1254,7 @@ pub fn handle_key(
                         },
                     };
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let new_milestone = if milestone.is_empty() || milestone == "--" {
                         None
                     } else {
@@ -1480,7 +1480,7 @@ pub fn handle_key(
                         },
                     };
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let new_milestone = if milestone.is_empty() || milestone == "--" {
                         None
                     } else {
@@ -1566,7 +1566,7 @@ pub fn handle_key(
                         .map(|s| s.trim())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     if !menu.initial_fields.is_empty()
                         && title == initial_title
                         && description == initial_desc
@@ -1629,12 +1629,12 @@ pub fn handle_key(
                 if f.kind == crate::app::FieldType::ReadOnly
                     || f.kind == crate::app::FieldType::Section
                 {
-                    app.edit_menu = Some(menu);
+                    app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                     return;
                 }
             } else if menu.selected_idx != menu.fields.len() + 1 {
                 // Spacer row between fields and submit.
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                 return;
             }
 
@@ -1656,7 +1656,7 @@ pub fn handle_key(
                         menu.cursor_pos = f.value.len();
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                 return;
             }
 
@@ -2051,7 +2051,7 @@ pub fn handle_key(
 
                 let request =
                     (is_loading && app.gitlab_client.is_some()).then(|| app.next_request_tag());
-                app.selector = Some(crate::app::Selector {
+                let sel = crate::app::Selector {
                     title: format!("Select {field_name}"),
                     all_items,
                     selected_items: current_set,
@@ -2073,9 +2073,10 @@ pub fn handle_key(
                         s
                     },
                     request,
-                });
+                };
 
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.open_selector(sel);
 
                 if let (Some(request), Some(client)) = (request, &app.gitlab_client) {
                     let client = client.clone();
@@ -2132,7 +2133,7 @@ pub fn handle_key(
                             } else {
                                 "issue_template_selector"
                             };
-                            app.selector = Some(crate::app::Selector {
+                            let sel = crate::app::Selector {
                                 title: format!(
                                     " Select {} Template ",
                                     if template_type == "mr" {
@@ -2161,14 +2162,15 @@ pub fn handle_key(
                                     s
                                 },
                                 request: None,
-                            });
-                            app.edit_menu = Some(menu);
+                            };
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.open_selector(sel);
                             return;
                         }
                     }
                 }
                 // Otherwise inline editing handles Description — Enter does nothing
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                 return;
             }
 
@@ -2208,12 +2210,13 @@ pub fn handle_key(
                         field_idx: menu.selected_idx,
                     }
                 };
-                app.date_picker = Some(crate::app::DatePicker::new(
+                let dp = crate::app::DatePicker::new(
                     format!(" Select {field_name}"),
                     &current_val,
                     action,
-                ));
-                app.edit_menu = Some(menu);
+                );
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.open_date_picker(dp);
                 return;
             }
 
@@ -2272,13 +2275,11 @@ pub fn handle_key(
                     field_idx: menu.selected_idx,
                 };
 
-                app.text_input = Some(crate::app::TextInput::new(
-                    format!("Edit {field_name}"),
-                    current_val,
-                    action,
-                ));
+                let ti =
+                    crate::app::TextInput::new(format!("Edit {field_name}"), current_val, action);
 
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.open_text_input(ti);
             }
         }
         KeyCode::Backspace => {
@@ -2305,7 +2306,7 @@ pub fn handle_key(
                     }
                 }
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
         KeyCode::Char(c) if key_event.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' => {
             let field_name = if menu.selected_idx < menu.fields.len() {
@@ -2322,14 +2323,14 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
                 fx.suspend(ForegroundJob::Edit {
                     text: desc,
                     file_suffix: ".md".to_string(),
                     purpose: EditPurpose::MenuDescription,
                 });
             } else {
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
             }
         }
         KeyCode::Char(c) => {
@@ -2352,10 +2353,10 @@ pub fn handle_key(
                     }
                 }
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
         _ => {
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
         }
     }
 }

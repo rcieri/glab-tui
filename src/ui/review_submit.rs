@@ -29,7 +29,13 @@ const MAX_STATUS_ROWS: usize = 4;
 const CUT_ERROR_HINT: &str = "Full error in the Terminal tab";
 
 pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
-    let Some(mut overlay) = app.review_submit.take() else {
+    let Some((draft_count, verdict, state)) = app.review_submit().map(|o| {
+        let count = match o.verdict {
+            ReviewVerdict::KeepAsDraft => app.all_draft_count(),
+            _ => app.draft_comments.len(),
+        };
+        (count, o.verdict, o.state.clone())
+    }) else {
         return;
     };
     let theme = ctx.theme;
@@ -40,15 +46,11 @@ pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut
             .min(size.width)
             .saturating_sub(2 * CONTENT_MARGIN.horizontal),
     );
-    let draft_count = match overlay.verdict {
-        ReviewVerdict::KeepAsDraft => app.all_draft_count(),
-        _ => app.draft_comments.len(),
-    };
     let notes = wrap_text(
-        &draft_note(overlay.verdict, draft_count, kind.is_gitlab()),
+        &draft_note(verdict, draft_count, kind.is_gitlab()),
         text_width,
     );
-    let status = status_lines(&overlay.state, text_width, icons, &theme);
+    let status = status_lines(&state, text_width, icons, &theme);
     let status_rows = if status.is_empty() {
         0
     } else {
@@ -61,6 +63,10 @@ pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut
     let height = 2 + content_rows + summary_box_rows + status_rows + footer_rows;
     let area = centered_rect_fixed(DIALOG_WIDTH, height, size);
     app.overlay_stack.push((OverlayKind::ReviewSubmit, area));
+
+    let Some(overlay) = app.review_submit_mut() else {
+        return;
+    };
 
     clear_area(f, ctx, area);
     f.render_widget(
@@ -121,10 +127,10 @@ pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut
         verdict_header,
     );
     f.render_widget(
-        Paragraph::new(verdict_lines(&overlay, icons, &theme)),
+        Paragraph::new(verdict_lines(overlay, icons, &theme)),
         verdicts_area,
     );
-    render_summary(f, &overlay, summary_area, &theme);
+    render_summary(f, overlay, summary_area, &theme);
     f.render_widget(
         Paragraph::new(status),
         Rect {
@@ -145,8 +151,8 @@ pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut
         Constraint::Ratio(1, 2),
     ])
     .areas(buttons_area);
-    render_buttons(f, &overlay, (submit_button, cancel_button), icons, &theme);
-    f.render_widget(Paragraph::new(key_hints(&overlay)).style(muted), hints_area);
+    render_buttons(f, overlay, (submit_button, cancel_button), icons, &theme);
+    f.render_widget(Paragraph::new(key_hints(overlay)).style(muted), hints_area);
 
     overlay.layout = Some(ReviewSubmitLayout {
         verdicts: verdicts_area,
@@ -154,7 +160,6 @@ pub(crate) fn render_review_submit(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut
         submit_button,
         cancel_button,
     });
-    app.review_submit = Some(overlay);
 }
 
 /// `draft_count` is the drafts the verdict acts on: the ones a review posts,
@@ -456,7 +461,7 @@ mod tests {
         let mut app = App::default();
         let mut overlay = ReviewSubmit::new(7, "acme/widget".to_string());
         overlay.state = state;
-        app.review_submit = Some(overlay);
+        app.open_review_submit(overlay);
         app
     }
 
@@ -465,7 +470,7 @@ mod tests {
         let mut app = app_with_overlay(SubmissionState::Failed(
             "HTTP 422: Review body is required when no draft comments are pending".to_string(),
         ));
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.verdict = ReviewVerdict::Approve;
         }
 
@@ -536,7 +541,7 @@ mod tests {
 
     fn app_with_summary(summary: &str) -> App {
         let mut app = app_with_overlay(SubmissionState::Editing);
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.summary.set_value(summary.to_string());
             overlay.focus = ReviewSubmitFocus::Summary;
         }
@@ -550,7 +555,7 @@ mod tests {
         assert!(rows.iter().any(|row| row == "five"), "{rows:#?}");
         assert!(!rows.iter().any(|row| row == "one"), "{rows:#?}");
 
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             for _ in 0.."one\ntwo\nthree\nfour\nfive".len() {
                 overlay.summary.move_cursor_left();
             }
@@ -564,7 +569,7 @@ mod tests {
     #[test]
     fn the_summary_box_keeps_runs_of_spaces() {
         let mut app = app_with_summary("- a\n  - b   c");
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.focus = ReviewSubmitFocus::Verdicts;
         }
 
@@ -584,7 +589,7 @@ mod tests {
             log_row,
             drafts: Vec::new(),
         };
-        app.review_submit = Some(overlay);
+        app.open_review_submit(overlay);
 
         let screen = render(&mut app);
 
@@ -610,8 +615,7 @@ mod tests {
         );
         assert!(screen.contains("Submit Merge Request Review"), "{screen}");
         assert!(
-            app.review_submit
-                .as_ref()
+            app.review_submit()
                 .and_then(|overlay| overlay.layout)
                 .is_some(),
             "the drawn layout is kept for mouse clicks"
@@ -629,7 +633,7 @@ mod tests {
             end_old_line_num: None,
             body: "moved".to_string(),
         }];
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.verdict = ReviewVerdict::KeepAsDraft;
         }
 
@@ -641,7 +645,7 @@ mod tests {
             "{rows:#?}"
         );
 
-        if let Some(overlay) = app.review_submit.as_mut() {
+        if let Some(overlay) = app.review_submit_mut() {
             overlay.verdict = ReviewVerdict::Comment;
         }
         let rows = row_texts(&render(&mut app));

@@ -14,37 +14,54 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    if app.save_menu_open {
+    let (save_menu_open, editing_page_size, column_checklist_idx) = match app.configure() {
+        Some(c) => (
+            c.save_menu_open,
+            c.editing_page_size,
+            c.column_checklist_idx,
+        ),
+        None => return,
+    };
+
+    if save_menu_open {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char(',') => {
-                app.save_menu_open = false;
+                if let Some(c) = app.configure_mut() {
+                    c.save_menu_open = false;
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                app.save_menu_selection = match app.save_menu_selection {
-                    Some(SaveMenu::Local) => Some(SaveMenu::Global),
-                    Some(SaveMenu::Global) => Some(SaveMenu::Cancel),
-                    Some(SaveMenu::Cancel) => Some(SaveMenu::Local),
-                    None => Some(SaveMenu::Local),
-                };
+                if let Some(c) = app.configure_mut() {
+                    c.save_menu_selection = match c.save_menu_selection {
+                        Some(SaveMenu::Local) => Some(SaveMenu::Global),
+                        Some(SaveMenu::Global) => Some(SaveMenu::Cancel),
+                        Some(SaveMenu::Cancel) => Some(SaveMenu::Local),
+                        None => Some(SaveMenu::Local),
+                    };
+                }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                app.save_menu_selection = match app.save_menu_selection {
-                    Some(SaveMenu::Local) => Some(SaveMenu::Cancel),
-                    Some(SaveMenu::Global) => Some(SaveMenu::Local),
-                    Some(SaveMenu::Cancel) => Some(SaveMenu::Global),
-                    None => Some(SaveMenu::Local),
-                };
+                if let Some(c) = app.configure_mut() {
+                    c.save_menu_selection = match c.save_menu_selection {
+                        Some(SaveMenu::Local) => Some(SaveMenu::Cancel),
+                        Some(SaveMenu::Global) => Some(SaveMenu::Local),
+                        Some(SaveMenu::Cancel) => Some(SaveMenu::Global),
+                        None => Some(SaveMenu::Local),
+                    };
+                }
             }
             KeyCode::Enter => {
-                if let Some(sel) = app.save_menu_selection {
+                let selection = app.configure().and_then(|c| c.save_menu_selection);
+                if let Some(sel) = selection {
                     match sel {
                         SaveMenu::Local | SaveMenu::Global => {
                             app.save_layout(sel);
-                            app.save_menu_open = false;
-                            app.focus_column_checklist = false;
+                            app.close_configure();
                         }
                         SaveMenu::Cancel => {
-                            app.save_menu_open = false;
+                            if let Some(c) = app.configure_mut() {
+                                c.save_menu_open = false;
+                            }
                         }
                     }
                 }
@@ -54,7 +71,7 @@ pub fn handle_key(
         return;
     }
 
-    if app.editing_page_size {
+    if editing_page_size {
         match key_event.code {
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 app.page_size_input.push(c);
@@ -83,10 +100,14 @@ pub fn handle_key(
                         }
                     }
                 }
-                app.editing_page_size = false;
+                if let Some(c) = app.configure_mut() {
+                    c.editing_page_size = false;
+                }
             }
             KeyCode::Esc => {
-                app.editing_page_size = false;
+                if let Some(c) = app.configure_mut() {
+                    c.editing_page_size = false;
+                }
             }
             _ => {}
         }
@@ -106,49 +127,59 @@ pub fn handle_key(
     let max_idx = save_idx; // Save button is the last row
 
     match key_event.code {
-        KeyCode::Char(c) if c.is_ascii_digit() && app.column_checklist_idx == page_size_idx => {
-            app.editing_page_size = true;
+        KeyCode::Char(c) if c.is_ascii_digit() && column_checklist_idx == page_size_idx => {
+            if let Some(c_cfg) = app.configure_mut() {
+                c_cfg.editing_page_size = true;
+            }
             app.page_size_input = c.to_string();
         }
         KeyCode::Esc | KeyCode::Char(',') => {
-            app.focus_column_checklist = false;
+            app.close_configure();
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if app.column_checklist_idx < max_idx {
-                app.column_checklist_idx += 1;
-            } else {
-                app.column_checklist_idx = 0;
+            if let Some(c) = app.configure_mut() {
+                if c.column_checklist_idx < max_idx {
+                    c.column_checklist_idx += 1;
+                } else {
+                    c.column_checklist_idx = 0;
+                }
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if app.column_checklist_idx > 0 {
-                app.column_checklist_idx -= 1;
-            } else {
-                app.column_checklist_idx = max_idx;
+            if let Some(c) = app.configure_mut() {
+                if c.column_checklist_idx > 0 {
+                    c.column_checklist_idx -= 1;
+                } else {
+                    c.column_checklist_idx = max_idx;
+                }
             }
         }
         KeyCode::Char('J') => {
-            app.column_checklist_idx = match app.column_checklist_idx {
-                idx if idx < cols_end => cols_end,
-                idx if idx < group_end => group_end,
-                idx if idx < order_end => page_size_idx,
-                idx if idx == page_size_idx => prefetch_idx,
-                idx if idx == prefetch_idx => theme_idx,
-                _ => 0,
-            };
+            if let Some(c) = app.configure_mut() {
+                c.column_checklist_idx = match c.column_checklist_idx {
+                    idx if idx < cols_end => cols_end,
+                    idx if idx < group_end => group_end,
+                    idx if idx < order_end => page_size_idx,
+                    idx if idx == page_size_idx => prefetch_idx,
+                    idx if idx == prefetch_idx => theme_idx,
+                    _ => 0,
+                };
+            }
         }
         KeyCode::Char('K') => {
-            app.column_checklist_idx = match app.column_checklist_idx {
-                idx if idx == save_idx => theme_idx,
-                idx if idx == theme_idx => prefetch_idx,
-                idx if idx == prefetch_idx => page_size_idx,
-                idx if idx == page_size_idx => order_end,
-                idx if idx >= group_end => 0,
-                _ => order_end,
-            };
+            if let Some(c) = app.configure_mut() {
+                c.column_checklist_idx = match c.column_checklist_idx {
+                    idx if idx == save_idx => theme_idx,
+                    idx if idx == theme_idx => prefetch_idx,
+                    idx if idx == prefetch_idx => page_size_idx,
+                    idx if idx == page_size_idx => order_end,
+                    idx if idx >= group_end => 0,
+                    _ => order_end,
+                };
+            }
         }
         KeyCode::Char(' ') => {
-            let idx = app.column_checklist_idx;
+            let idx = column_checklist_idx;
             if idx < cols_end {
                 if let Some(col_name) = cols.get(idx) {
                     let col_str = col_name.to_string();
@@ -178,14 +209,16 @@ pub fn handle_key(
                 app.group_ascending.insert(app.active_tab, idx == group_end);
                 app.update_filter_selection();
             } else if idx == page_size_idx {
-                app.editing_page_size = true;
+                if let Some(c) = app.configure_mut() {
+                    c.editing_page_size = true;
+                }
                 app.page_size_input = app.page_size.to_string();
             } else if idx == prefetch_idx {
                 app.config.prefetch_tabs = !app.config.prefetch_tabs;
             } else if idx == theme_idx {
                 let theme_list = crate::config::all_theme_presets();
                 if !theme_list.is_empty() {
-                    app.selector = Some(crate::app::Selector {
+                    app.open_selector(crate::app::Selector {
                         title: " Select Theme ".to_string(),
                         all_items: theme_list,
                         selected_items: std::collections::HashSet::new(),
@@ -219,7 +252,7 @@ pub fn handle_key(
             }
         }
         KeyCode::Enter => {
-            let idx = app.column_checklist_idx;
+            let idx = column_checklist_idx;
             if idx < cols_end {
                 if let Some(col_name) = cols.get(idx) {
                     let col_str = col_name.to_string();
@@ -231,7 +264,7 @@ pub fn handle_key(
                         .cloned()
                         .unwrap_or_default();
                     app.column_filter_context = Some((app.active_tab, col_str.clone()));
-                    app.selector = Some(crate::app::Selector {
+                    app.open_selector(crate::app::Selector {
                         title: format!("Filter by {col_name}"),
                         all_items: all_values,
                         selected_items: selected,
@@ -290,14 +323,16 @@ pub fn handle_key(
                     );
                 }
             } else if idx == page_size_idx {
-                app.editing_page_size = true;
+                if let Some(c) = app.configure_mut() {
+                    c.editing_page_size = true;
+                }
                 app.page_size_input = app.page_size.to_string();
             } else if idx == prefetch_idx {
                 app.config.prefetch_tabs = !app.config.prefetch_tabs;
             } else if idx == theme_idx {
                 let theme_list = crate::config::all_theme_presets();
                 if !theme_list.is_empty() {
-                    app.selector = Some(crate::app::Selector {
+                    app.open_selector(crate::app::Selector {
                         title: " Select Theme ".to_string(),
                         all_items: theme_list,
                         selected_items: std::collections::HashSet::new(),
@@ -318,8 +353,10 @@ pub fn handle_key(
                     });
                 }
             } else if idx == save_idx {
-                app.save_menu_open = true;
-                app.save_menu_selection = Some(SaveMenu::Local);
+                if let Some(c) = app.configure_mut() {
+                    c.save_menu_open = true;
+                    c.save_menu_selection = Some(SaveMenu::Local);
+                }
             }
         }
         _ => {}

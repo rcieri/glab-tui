@@ -1409,7 +1409,7 @@ mod tests {
     #[test]
     fn a_folded_section_hides_its_groups_from_tab_until_its_key_unfolds_it() {
         let mut form = form_with_advanced();
-        assert_eq!(form.focus_stops().len(), 2);
+        assert_eq!(form.focus_stops(), [GroupPath::top(0), GroupPath::top(1)]);
         press(&mut form, KeyCode::Char('a'));
         assert_eq!(
             form.focus_stops(),
@@ -1449,7 +1449,18 @@ mod tests {
         assert_eq!(form.focus(), Focus::Button(0));
         press(&mut form, KeyCode::Char('a'));
         assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
-        assert_eq!(form.focus_stops().len(), 3, "the section stays open");
+        assert_eq!(
+            form.focus_stops(),
+            [
+                GroupPath::top(0),
+                GroupPath::top(1),
+                GroupPath {
+                    index: 1,
+                    child: Some(0)
+                }
+            ],
+            "the section stays open"
+        );
     }
 
     #[test]

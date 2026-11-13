@@ -177,6 +177,16 @@ mod tests {
     }
 
     #[test]
+    fn q_in_the_diff_view_closes_the_diff_instead_of_quitting() {
+        let mut app = with_open_diff(App::default());
+
+        let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
+
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Quit)));
+        assert!(app.diff_view.is_none());
+    }
+
+    #[test]
     fn only_esc_returns_from_a_project_narrowed_from_its_group() {
         let _home = crate::config::isolate_home();
         let group = crate::scope::Scope::Group("group".to_string());

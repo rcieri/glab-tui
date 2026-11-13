@@ -353,7 +353,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_mode_indicator(f, ctx, app, banner[1]);
 
     // Middle: Sidebar | Main Area | Preview Area
-    let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
+    let can_zoom = app.active_tab != Tab::Pipelines;
 
     let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
         Constraint::Length(app.config.ui.sidebar_width)
@@ -1942,6 +1942,25 @@ mod tests {
             "row {y} is outside the selector {selector_area:?}"
         );
         assert_eq!(app.toast_notice(), None);
+    }
+
+    #[test]
+    fn the_pipelines_tab_does_not_zoom_its_preview() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let mut app = App::default();
+        app.jobs.items = vec![
+            serde_json::from_value(serde_json::json!({
+                "id": 70, "status": "running", "stage": "test", "name": "job-70"
+            }))
+            .expect("job fixture"),
+        ];
+        app.active_tab = Tab::Pipelines;
+        app.detail_visible = true;
+        app.details_zoomed = true;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        assert!(app.content_rect.is_some_and(|rect| rect.width > 0));
     }
 
     #[test]

@@ -5162,13 +5162,11 @@ impl App {
         next
     }
 
-    /// The job a fetched log is shown for: the selected job of the Jobs tab,
-    /// or of the job list behind the Pipelines tab.
+    /// The job a fetched log is shown for: the selected job of the Jobs tab.
     pub fn trace_job_id(&self) -> Option<u64> {
         let idx = self.jobs.state.selected()?;
         match self.active_tab {
             Tab::Jobs => self.filtered_jobs().get(idx).map(|job| job.id()),
-            Tab::Pipelines => self.jobs.items.get(idx).map(|job| job.id()),
             _ => None,
         }
     }

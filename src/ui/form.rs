@@ -33,6 +33,7 @@ const SEPARATOR_ROWS: u16 = 1;
 const BUTTON_ROWS: u16 = 1;
 const FOOTER_ROWS: u16 = 1;
 const CHROME_ROWS: u16 = BORDER_ROWS + SEPARATOR_ROWS + BUTTON_ROWS + FOOTER_ROWS;
+const SCREEN_MARGIN_ROWS: u16 = 2;
 const MIN_SHORT_LIST_ENTRIES: usize = 3;
 const RADIO_GAP_COLUMNS: usize = 2;
 const SECTION_INDENT: usize = 2;
@@ -144,7 +145,7 @@ pub(crate) fn render_form(
     let text_width = usize::from(width.saturating_sub(2 * CONTENT_MARGIN.horizontal));
     let max_height = size
         .height
-        .saturating_sub(2)
+        .saturating_sub(SCREEN_MARGIN_ROWS)
         .max(CHROME_ROWS)
         .min(size.height);
     let body_capacity = usize::from(max_height.saturating_sub(CHROME_ROWS));

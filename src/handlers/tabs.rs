@@ -3672,8 +3672,6 @@ pub(crate) mod tests {
         assert_eq!(app.detail_scroll, 5);
     }
 
-    /// Remapping `scroll_down` replaces its default key: the old `J`
-    /// no longer scrolls once another key is bound.
     #[tokio::test]
     async fn remapped_scroll_down_stops_the_old_default_key() {
         let mut app = App::default();
@@ -3953,8 +3951,6 @@ pub(crate) mod tests {
         assert_eq!(app.pipelines.items[0].status, "running");
     }
 
-    /// Remapping `pipelines.retry` replaces its default key: the old `r`
-    /// no longer retries once another key is bound.
     #[tokio::test]
     async fn remapped_pipeline_retry_stops_the_old_default_key_and_fires_the_new_one() {
         let mut app = App::default();

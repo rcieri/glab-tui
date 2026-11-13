@@ -716,8 +716,6 @@ command = "echo {{.PrNumber}}"
         assert!(commands.find(Tab::Pipelines, &key('L')).is_none());
     }
 
-    /// Built-in keys match their exact spelling, so a modified spelling of a
-    /// list key is free for a custom binding.
     #[test]
     fn modified_spelling_of_a_list_key_runs_the_custom_binding() {
         let config = config_with(

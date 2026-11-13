@@ -4414,6 +4414,8 @@ impl App {
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.job_trace_follow = false;
+        self.job_trace_poll_in_flight = false;
         self.pending_issue_select = None;
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;
@@ -9471,6 +9473,20 @@ mod tests {
         assert_eq!(issues6[0].iid, 3);
 
         assert!(app.milestone_issues(7).is_none());
+    }
+
+    #[test]
+    fn reset_on_scope_change_ends_job_trace_follow() {
+        let mut app = App {
+            job_trace_follow: true,
+            job_trace_poll_in_flight: true,
+            ..App::default()
+        };
+
+        app.reset_on_scope_change();
+
+        assert!(!app.job_trace_follow);
+        assert!(!app.job_trace_poll_in_flight);
     }
 
     #[tokio::test]

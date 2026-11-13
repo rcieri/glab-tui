@@ -7918,10 +7918,10 @@ impl App {
     /// Feeds a keypress from the terminal into `key_buffer`; what it resolves
     /// to comes out of `key_buffer.pop_ready()`.
     pub fn receive_key(&mut self, event: crossterm::event::KeyEvent) {
-        let is_quit = event.code == crossterm::event::KeyCode::Char('c')
-            && event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL);
+        let is_quit = self.config.keybindings.matches(
+            crate::keymap::Action::GlobalForceQuit,
+            &crate::keybinding::KeyPress::Key(event),
+        );
         if is_quit || self.is_capturing_text() {
             self.key_buffer.pass_through(event);
         } else {
@@ -14081,6 +14081,30 @@ index 123456..789012 100644
         assert_eq!(
             resolved(&mut app),
             vec![crate::keybinding::KeyPress::Key(ctrl_c)]
+        );
+    }
+
+    #[test]
+    fn remapped_force_quit_quits_while_a_sequence_is_waiting() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalForceQuit, &["Ctrl+q"]);
+        app.apply_config();
+        let ctrl_q = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        app.receive_key(typed('g'));
+        app.receive_key(ctrl_q);
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(ctrl_q)]
         );
     }
 

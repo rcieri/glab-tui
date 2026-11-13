@@ -28,9 +28,10 @@ pub(super) fn handle_key(
             .as_ref()
             .is_some_and(|o| o.is_submitting())
         {
-            app.show_notice(
-                "A review is being posted: press Ctrl+C again once it finishes".to_string(),
-            );
+            app.show_notice(format!(
+                "A review is being posted: press {} again once it finishes",
+                app.config.keybindings.display(Action::GlobalForceQuit)
+            ));
             return;
         }
         fx.quit();

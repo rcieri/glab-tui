@@ -994,6 +994,62 @@ command = "true"
         assert_eq!(commands.in_diff().count(), 0);
     }
 
+    /// Whether a `[[diff]]` command bound to `key` runs when `key` is pressed
+    /// in a freshly opened diff.
+    fn diff_command_runs(key: &str) -> bool {
+        let mut app = crate::app::App::default();
+        // An empty diff stops a diff command at "the cursor is not on a file",
+        // which logs it without starting a shell.
+        app.diff_view = Some(crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            String::new(),
+        ));
+        app.custom_commands = CustomCommands {
+            commands: vec![CustomCommand {
+                pane: CommandPane::Diff,
+                key: key.to_string(),
+                name: None,
+                command: "true".to_string(),
+                background: false,
+                shadowed_on: Vec::new(),
+            }],
+        };
+        let press = KeyPress::Key(binding_key_event(key).expect("bindable key"));
+
+        crate::update::update(&mut app, crate::event::Event::KeyPress(press));
+
+        app.terminal_commands.iter().any(|entry| {
+            entry
+                .command
+                .starts_with(crate::app::CUSTOM_COMMAND_LOG_PREFIX)
+        })
+    }
+
+    #[test]
+    fn diff_shadow_report_matches_what_the_key_router_lets_through() {
+        let _home = crate::config::isolate_home();
+        assert!(
+            diff_command_runs("Alt+z"),
+            "a free key must reach the command"
+        );
+        let config = Config::default();
+        for action in
+            Action::in_context(KeyContext::Global).chain(Action::in_context(KeyContext::DiffView))
+        {
+            for key in action.spec().defaults {
+                let press = KeyPress::Key(binding_key_event(key).expect("bindable default"));
+                let is_reported = diff_view_action(&config, &press).is_some();
+                assert_eq!(
+                    diff_command_runs(key),
+                    !is_reported,
+                    "{} default {key:?}: the shadow report disagrees with the key router",
+                    action.config_key()
+                );
+            }
+        }
+    }
+
     #[test]
     fn diff_binding_on_review_threads_key_is_dropped() {
         let config = config_with("[[diff]]\nkey = \"T\"\ncommand = \"true\"\n");

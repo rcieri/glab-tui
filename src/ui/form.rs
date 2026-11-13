@@ -994,6 +994,15 @@ mod tests {
             .collect()
     }
 
+    fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        buffer
+            .content
+            .chunks(usize::from(buffer.area.width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
     fn crowded_form() -> Form {
         Form::new(
             "Merge 5 merge requests",
@@ -1397,12 +1406,7 @@ mod tests {
                 render_form(f, &ctx, &mut form, "Merge", f.area());
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        let rows: Vec<String> = buffer
-            .content
-            .chunks(usize::from(buffer.area.width))
-            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
-            .collect();
+        let rows = buffer_rows(&terminal);
         assert!(rows[1].contains(" Merge "), "{rows:#?}");
         assert!(
             rows[5].contains("[ Merge ]") && rows[5].contains("[ Cancel ]"),
@@ -1422,13 +1426,11 @@ mod tests {
                 render_form(f, &ctx, &mut form, "Delete Branch 'a\u{9b}31mb'", f.area());
             })
             .unwrap();
-        let screen: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
-        assert!(screen.contains(" Delete Branch 'ab' "), "{screen}");
+        let rows = buffer_rows(&terminal);
+        assert_eq!(
+            rows[1],
+            format!("┌ Delete Branch 'ab' {}┐", "─".repeat(38)),
+            "{rows:#?}"
+        );
     }
 }

@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn a_line_past_the_size_limit_is_not_diffed() {
-        let old = "x".repeat(MAX_LINE_BYTES + 1);
+        let old = "x ".repeat(MAX_LINE_BYTES / 2 + 1);
         let new = format!("{old}y");
         assert_eq!(changed_ranges(&old, &new), None);
     }

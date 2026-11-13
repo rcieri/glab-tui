@@ -787,7 +787,7 @@ impl Form {
         self.is_editing = false;
         match stops.get(next) {
             Some(&path) => {
-                self.focus = Focus::Group(path);
+                self.enter_group(path, step);
                 self.is_editing = self.focused_line_input().is_some();
             }
             None => self.focus = Focus::Button(self.primary),
@@ -1073,6 +1073,18 @@ mod tests {
         );
         press(&mut form, KeyCode::BackTab);
         assert_eq!(form.focus(), Focus::Button(0));
+    }
+
+    #[test]
+    fn tab_back_onto_a_radio_lands_on_its_selected_choice() {
+        let mut form = merge_form();
+        press(&mut form, KeyCode::Tab);
+        press(&mut form, KeyCode::Char('l'));
+        press(&mut form, KeyCode::Tab);
+        press(&mut form, KeyCode::BackTab);
+        assert_eq!(form.radio(STRATEGY).map(|r| r.cursor), Some(1));
+        press(&mut form, KeyCode::Char(' '));
+        assert_eq!(form.radio(STRATEGY).map(|r| r.selected), Some(1));
     }
 
     #[test]

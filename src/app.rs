@@ -3196,14 +3196,15 @@ impl MergeToggle {
 
 /// A [`Form`] that gates a mutating API call behind an explicit Submit
 /// button: the body text, any choices the action takes (merge strategy and
-/// options) and the buttons Submit, then [`Self::extra_buttons`], then
-/// Cancel. Destructive actions open in the form's danger tone, on Cancel.
+/// options) and the buttons Submit, then any extra choices the action
+/// offers, then Cancel. Destructive actions open in the form's danger tone,
+/// on Cancel.
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
     pub project_path: String,
     /// Buttons between Submit and Cancel, left to right.
-    pub extra_buttons: Vec<DialogChoice>,
+    extra_buttons: Vec<DialogChoice>,
     /// The merge methods the `Strategy` radio offers, in its order.
     strategies: Vec<MergeMethod>,
     pub form: Form,

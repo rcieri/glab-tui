@@ -45,6 +45,8 @@ pub(super) fn handle_key(
         && app.text_input.is_none()
         && app.edit_menu.is_none()
         && app.selector.is_none()
+        && app.submit_dialog.is_none()
+        && app.date_picker.is_none()
         && !app.show_help
         && app.review_threads.is_none()
         && app.review_submit.is_none()

@@ -187,6 +187,20 @@ mod tests {
     }
 
     #[test]
+    fn q_on_a_confirmation_dialog_keeps_it_open_instead_of_quitting() {
+        let mut app = App::default();
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::MarkAllTodosRead,
+            &app,
+        ));
+
+        let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
+
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Quit)));
+        assert!(app.submit_dialog.is_some());
+    }
+
+    #[test]
     fn only_esc_returns_from_a_project_narrowed_from_its_group() {
         let _home = crate::config::isolate_home();
         let group = crate::scope::Scope::Group("group".to_string());

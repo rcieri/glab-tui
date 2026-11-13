@@ -175,4 +175,50 @@ mod tests {
 
         assert!(matches!(effects.as_slice(), [Effect::Quit]));
     }
+
+    #[test]
+    fn only_esc_returns_from_a_project_narrowed_from_its_group() {
+        let _home = crate::config::isolate_home();
+        let group = crate::scope::Scope::Group("group".to_string());
+        let project = crate::scope::Scope::Repository("group/project".to_string());
+        let mut app = App::default();
+        app.scope = group.clone();
+        app.drill_into("group/project".to_string());
+
+        update(&mut app, press(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(app.scope, project);
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.scope, group);
+    }
+
+    fn app_with_searched_job_trace() -> App {
+        let mut app = App::default();
+        app.active_tab = Tab::Jobs;
+        app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(
+            crate::domain::job_trace::JobTrace::from_read(b"error: boom\n", false),
+        ));
+        app.job_trace_search_query = "boom".to_string();
+        app
+    }
+
+    #[test]
+    fn esc_clears_the_job_trace_search_and_keeps_the_trace() {
+        let mut app = app_with_searched_job_trace();
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(app.job_trace.is_some());
+        assert_eq!(app.job_trace_search_query, "");
+    }
+
+    #[test]
+    fn backspace_closes_the_job_trace_without_leaving_its_search_behind() {
+        let mut app = app_with_searched_job_trace();
+
+        update(&mut app, press(KeyCode::Backspace, KeyModifiers::NONE));
+
+        assert!(app.job_trace.is_none());
+        assert_eq!(app.job_trace_search_query, "");
+    }
 }

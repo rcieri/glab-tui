@@ -2857,6 +2857,9 @@ pub fn handle_active_tab_key(
                     // table filtered.
                     app.clear_search_query();
                 }
+                if app.job_trace.is_none() {
+                    app.job_trace_search_query.clear();
+                }
             }
             _ if app
                 .config

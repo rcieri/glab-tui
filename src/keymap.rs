@@ -203,6 +203,7 @@ registry! {
     GlobalScrollHalfPageUp => ActionSpec::new(Global, "scroll_half_page_up", &["Ctrl+u"], "Scroll description pane (or the list when it is hidden) up by half a page");
     GlobalScrollToEnd => ActionSpec::new(Global, "scroll_to_end", &["End"], "Jump to the last line of the description pane");
     GlobalScrollTop => ActionSpec::new(Global, "scroll_top", &["Home"], "Jump to the top of the description pane");
+    GlobalLeaveScope => ActionSpec::new(Global, "leave_scope", &["Esc"], "Return from a project narrowed with G to its group");
     EditMenuSubmit => ActionSpec::new(EditMenu, "submit_edit", &["Ctrl+x"], "Submit active edit form");
 
     ListNextRow => ActionSpec::new(ListView, "next_row", &["j", "Down"], "Select the next row (scroll a zoomed pane)");
@@ -278,6 +279,7 @@ registry! {
     JobsViewTrace => ActionSpec::new(JOBS, "view_trace", &["Enter"], "View job trace (toggle zoom)");
     JobsToggleTraceWrap => ActionSpec::new(JOBS, "toggle_trace_wrap", &["w"], "Toggle trace word wrap / clipped view");
     JobsTraceSearch => ActionSpec::new(JOBS, "trace_search", &["/"], "Search within job trace");
+    JobsClearTraceSearch => ActionSpec::new(JOBS, "clear_trace_search", &["Esc"], "Clear the job trace search");
     JobsToggleTraceFollow => ActionSpec::new(JOBS, "toggle_trace_follow", &["f"], "Toggle trace auto-follow mode");
     JobsJumpToFailure => ActionSpec::new(JOBS, "jump_to_failure", &["E"], "Jump to the next failure line in the job trace");
     JobsCopyUrl => ActionSpec::new(JOBS, "copy_url", &["y"], "Copy job web URL");

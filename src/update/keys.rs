@@ -100,7 +100,10 @@ pub(super) fn handle_key(
     }
     if app.active_tab == crate::app::Tab::Jobs
         && app.job_trace.is_some()
-        && app.config.keybindings.matches(Action::ListBack, key_event)
+        && app
+            .config
+            .keybindings
+            .matches(Action::JobsClearTraceSearch, key_event)
         && !app.job_trace_search_query.is_empty()
     {
         app.job_trace_search_query.clear();
@@ -223,7 +226,10 @@ pub(super) fn handle_key(
         return;
     }
 
-    if app.config.keybindings.matches(Action::ListBack, key_event)
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalLeaveScope, key_event)
         && !app.focus_column_checklist
         && app.text_input.is_none()
         && app.edit_menu.is_none()

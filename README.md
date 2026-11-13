@@ -544,6 +544,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `Home` / `End` | Select the first / last row (with the detail pane closed) | `list.first_row` / `list.last_row` |
 | `Enter` | Open details, zoom, then edit | `list.open` |
 | `Esc` / `Backspace` | Go back: clear the selection, close details, leave a pipeline, clear the filter | `list.back` |
+| `Esc` | Return from a project narrowed with `G` to its group | `leave_scope` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 | `Home` | Jump to the top of the description panel | `scroll_top` |
@@ -729,6 +730,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `w` | Toggle trace word wrap | `toggle_trace_wrap` |
 | `f` | Follow the trace of a running job: every 5 seconds, append what the log gained (GitLab asks only for the new bytes) | `toggle_trace_follow` |
 | `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
+| `Esc` | Clear the job trace search (before going back) | `clear_trace_search` |
 | `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | `list.back` |
 | `j` / `↓` | (in trace view) scroll down | `list.next_row` |
 | `k` / `↑` | (in trace view) scroll up | `list.previous_row` |

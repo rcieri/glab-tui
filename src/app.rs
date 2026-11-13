@@ -3630,16 +3630,25 @@ impl SubmitDialog {
     }
 
     /// The items of a bulk merge, by title when the row is listed, else by
-    /// reference alone.
+    /// reference alone. The reference names the project in group scope,
+    /// where the same iid recurs across projects, and for an unlisted row.
     fn bulk_merge_items(app: &App, items: &[(String, u64)], marker: &str) -> Group {
         let entries = items
             .iter()
             .map(|(project_path, iid)| {
-                let label = match app.mr_index(project_path, *iid) {
-                    Some(i) => format!("{marker}{iid}: {}", app.mrs.items[i].title),
-                    None => format!("{project_path}{marker}{iid}"),
+                let title = app
+                    .mr_index(project_path, *iid)
+                    .map(|i| &app.mrs.items[i].title);
+                let project = if app.scope.is_group() || title.is_none() {
+                    project_path.as_str()
+                } else {
+                    ""
                 };
-                ListEntry::queued(label)
+                let reference = format!("{project}{marker}{iid}");
+                ListEntry::queued(match title {
+                    Some(title) => format!("{reference}: {title}"),
+                    None => reference,
+                })
             })
             .collect();
         Group::new(GroupKind::ItemList(ItemList { entries }))
@@ -13550,6 +13559,37 @@ index 123456..789012 100644
         let filtered = app.filtered_mrs();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn bulk_merge_items_name_their_project_in_group_scope() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..App::default()
+        };
+        let mut in_a = mr_fixture(12, "opened", "a", false, "Fix A");
+        in_a.project_path = "acme/a".to_string();
+        let mut in_b = mr_fixture(12, "opened", "b", false, "Fix B");
+        in_b.project_path = "acme/b".to_string();
+        app.mrs.items = vec![in_a, in_b];
+        let items = vec![
+            ("acme/a".to_string(), 12),
+            ("acme/b".to_string(), 12),
+            ("acme/c".to_string(), 7),
+        ];
+
+        let dialog = SubmitDialog::build(ConfirmAction::BulkMergeMrs(items), &app);
+        let labels: Vec<&str> = dialog
+            .form
+            .groups()
+            .iter()
+            .find_map(|group| match &group.kind {
+                GroupKind::ItemList(list) => Some(&list.entries),
+                _ => None,
+            })
+            .map(|entries| entries.iter().map(|e| e.label.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(labels, ["acme/a!12: Fix A", "acme/b!12: Fix B", "acme/c!7"]);
     }
 
     #[test]

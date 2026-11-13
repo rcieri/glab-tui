@@ -2,8 +2,9 @@
 //! view, a selector or a confirmation dialog is one [`Action`] row here, with
 //! the context it acts in, its config name, its default keys, its help label
 //! and whether it destroys something. Handlers, the help modal and the
-//! custom-command shadow report all read this one table, so a key cannot be
-//! handled somewhere the registry does not list.
+//! custom-command shadow report all read this one table. The review threads
+//! and submit-review overlays, the configure popup, the date picker,
+//! edit-menu navigation and the help list still match literal keys.
 //!
 //! `[keybindings.<table>] <field> = "key"` (or a list of keys) replaces an
 //! action's default keys in its context: the old keys stop triggering it.

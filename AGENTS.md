@@ -280,7 +280,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
   // or
   match app.config.keybindings.resolve(KeyContext::DiffView, key_event) { Some(Action::DiffX) => ..., ... }
   ```
-* Never match `KeyCode::Char('x')` (or any other literal key) for a user-facing action, not even next to the binding: remapping an action must replace its default keys, and a literal check keeps the old key alive. Only text-entry modes (the search bar, a filtering selector, the diff search, inline editing) read typed keys directly. The help modal, the custom-command shadow report and the key sequences all read the registry, so a new row shows up in each of them by itself.
+* Never match `KeyCode::Char('x')` (or any other literal key) for a user-facing action, not even next to the binding: remapping an action must replace its default keys, and a literal check keeps the old key alive. Only text-entry modes (the search bar, a filtering selector, the diff search, the job trace search, inline editing) read typed keys directly. The overlays the registry does not cover yet (the review threads and submit-review overlays, the configure popup, the date picker, edit-menu navigation and the help list) still match literal keys. The help modal, the custom-command shadow report and the key sequences all read the registry, so a new row shows up in each of them by itself.
 * A row marked `destructive` is never dispatched by its tab arm: `handle_active_tab_key` routes it to [src/handlers/confirm.rs](src/handlers/confirm.rs), which builds the `SubmitDialog` for it, so it always asks first.
 
 ### Custom Keybindings (`[[custom_keybindings.<pane>]]`)

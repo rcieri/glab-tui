@@ -110,6 +110,19 @@ fn runners_tab_lists_filters_and_pauses_the_matching_runner() {
 }
 
 #[test]
+fn runners_tab_opens_the_highlighted_runner_in_the_browser() {
+    let mut session = session_on_tab(4, "Shared Runner 1");
+
+    session.press_keys(b"o");
+    session
+        .wait_for_cli_call(
+            "browser https://gitlab.com/test-owner/test-repo/-/runners/9876",
+            5000,
+        )
+        .expect("o should open the highlighted runner through the browser mock");
+}
+
+#[test]
 fn releases_tab_lists_filters_and_deletes_the_matching_release() {
     let mut session = session_on_tab(5, "Second release");
     assert_lists(
@@ -150,7 +163,18 @@ fn todos_tab_lists_filters_and_marks_the_matching_todo_done() {
         .expect("a merge request todo should open the MRs tab");
 }
 
+/// Listing and filtering without the close step, which the next test adds.
 #[test]
+fn milestones_tab_lists_and_filters_milestones() {
+    let mut session = session_on_tab(7, "v1.0 Milestone");
+    assert_lists(&mut session, &["v1.0 Milestone", "v2.0 Roadmap"]);
+
+    search(&mut session, "Roadmap");
+    assert_hides(&session, "v1.0 Milestone");
+}
+
+#[test]
+#[ignore = "#705: `glab milestone close` does not exist"]
 fn milestones_tab_lists_filters_and_closes_the_matching_milestone() {
     let mut session = session_on_tab(7, "v1.0 Milestone");
     assert_lists(&mut session, &["v1.0 Milestone", "v2.0 Roadmap"]);

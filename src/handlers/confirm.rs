@@ -4,6 +4,7 @@
 //! dispatch, so remapping a destructive action can never skip its dialog.
 
 use crate::app::{App, ConfirmAction, SubmitDialog};
+use crate::domain::milestones::Milestone;
 use crate::handlers::tabs::NO_DEPLOYMENT_SELECTED;
 use crate::keymap::Action;
 
@@ -135,7 +136,7 @@ fn delete_release(app: &mut App) {
     ));
 }
 
-fn selected_milestone(app: &mut App, build: fn(u64) -> ConfirmAction) {
+fn selected_milestone(app: &mut App, build: fn(Milestone) -> ConfirmAction) {
     let Some(selected_idx) = app.milestones.state.selected() else {
         return;
     };
@@ -143,10 +144,10 @@ fn selected_milestone(app: &mut App, build: fn(u64) -> ConfirmAction) {
     let Some(milestone) = filtered.get(selected_idx) else {
         return;
     };
-    let milestone_iid = milestone.iid;
+    let milestone = (*milestone).clone();
     let project_path = app.scope.project_of(&milestone.project_path).to_string();
     app.submit_dialog = Some(SubmitDialog::build_with_project(
-        build(milestone_iid),
+        build(milestone),
         project_path,
         app,
     ));

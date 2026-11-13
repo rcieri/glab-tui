@@ -2582,13 +2582,14 @@ pub fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
-                        let project_path = app.scope.as_str().to_string();
-                        let mid_str = milestone.iid.to_string();
+                        let project_path =
+                            app.scope.project_of(&milestone.project_path).to_string();
+                        let milestone = (*milestone).clone();
                         let tx2 = tx.clone();
 
                         fx.spawn(async move {
                             let result = client
-                                .open_milestone_in_browser(&project_path, &mid_str)
+                                .open_milestone_in_browser(&project_path, &milestone)
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Milestones,
@@ -2834,6 +2835,7 @@ pub fn handle_active_tab_key(
                     if app.job_trace.is_some() {
                         app.job_trace = None;
                     } else {
+                        app.close_opened_pipeline();
                         app.active_tab = crate::app::Tab::Pipelines;
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
@@ -3465,14 +3467,12 @@ pub fn apply_opened_pipeline(
             if !is_still_listed {
                 return;
             }
-            let has_jobs = !jobs.is_empty();
-            app.jobs.items = jobs;
-            app.active_pipeline_project = app.pipeline_project(pipeline_id).map(str::to_owned);
-            app.active_pipeline_id = Some(pipeline_id);
-            app.jobs.state.select(Some(0));
-            app.detail_scroll = 0;
-            app.job_trace = None;
-            if has_jobs || opening == PipelineOpening::Descend {
+            if !jobs.is_empty() || opening == PipelineOpening::Descend {
+                app.jobs.items = jobs;
+                app.open_pipeline_in_jobs_tab(pipeline_id);
+                app.jobs.state.select(Some(0));
+                app.detail_scroll = 0;
+                app.job_trace = None;
                 app.active_tab = crate::app::Tab::Jobs;
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
@@ -3965,6 +3965,7 @@ pub(crate) mod tests {
             page_size: 100,
             api_per_page: 100,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.active_tab = crate::app::Tab::Pipelines;
         app.pipelines.items = vec![listed_pipeline(42)];
@@ -4481,14 +4482,15 @@ pub(crate) mod tests {
         let mut app = App::default();
         app.scope = crate::scope::Scope::Group("acme".to_string());
         app.active_tab = crate::app::Tab::Milestones;
-        let milestone = |project: &str| Milestone {
+        let milestone = |id: u64, project: &str| Milestone {
+            id,
             iid: 3,
             title: format!("{project} v1"),
             state: "active".to_string(),
             project_path: project.to_string(),
             ..Milestone::default()
         };
-        app.milestones.items = vec![milestone("acme/alpha"), milestone("acme/beta")];
+        app.milestones.items = vec![milestone(10, "acme/alpha"), milestone(20, "acme/beta")];
         app.milestones.state.select(Some(1));
 
         dispatch(
@@ -4499,7 +4501,7 @@ pub(crate) mod tests {
         let dialog = app.submit_dialog.expect("close opens a confirm dialog");
         assert!(matches!(
             dialog.action,
-            crate::app::ConfirmAction::CloseMilestone(3)
+            crate::app::ConfirmAction::CloseMilestone(ref milestone) if milestone.id == 20
         ));
         assert_eq!(dialog.project_path, "acme/beta");
     }

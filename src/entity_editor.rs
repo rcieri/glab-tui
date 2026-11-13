@@ -1199,7 +1199,7 @@ pub fn apply_field_text_change(
                 let res = crate::domain::milestones::update_milestone(
                     &client,
                     &project_path,
-                    iid,
+                    &milestone,
                     &title,
                     &description,
                     start_date.as_deref(),

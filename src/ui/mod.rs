@@ -134,8 +134,9 @@ fn render_mode_indicator(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Re
     f.render_widget(indicator, area);
 }
 
-/// Render a diff line's content: syntax colors, fuzzy search matches and, with
-/// an `emphasis_bg`, the words its paired line changed set on that background.
+/// Render a diff line's content: syntax colors, fuzzy search matches and,
+/// with an `emphasis_bg`, that background on the words that differ from its
+/// paired line.
 fn render_diff_line_content(
     line: &DiffLine,
     base_style: Style,

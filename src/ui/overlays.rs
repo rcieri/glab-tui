@@ -2552,9 +2552,7 @@ command = "true"
         );
     }
 
-    /// The merge dialog for the fixture MR: a body line, the strategy radio,
-    /// the option toggles and both buttons. Drawn with the ASCII icon set,
-    /// the one the snapshots are written in.
+    /// The merge dialog for the fixture MR.
     fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
         render_dialog(crate::app::ConfirmAction::MergeMr(2), width, height)
     }
@@ -2570,6 +2568,7 @@ command = "true"
         )
     }
 
+    /// Drawn with the ASCII icon set, the one the snapshots are written in.
     fn render_dialog(
         action: crate::app::ConfirmAction,
         width: u16,

@@ -874,7 +874,7 @@ Logs every `glab` / `gh` command the TUI executes and the `git` calls its backen
 | `Y` | Copy the highlighted entry's output (stdout, then stderr), or its error when it printed nothing | `copy_output` |
 | `C` | Clear the log | `clear_log` |
 
-In the inspector, `j`/`k`, `g`/`G` and the `[keybindings.global]` scroll keys (`J`/`K`, Home/End, PageUp/PageDown, `Ctrl+d`/`Ctrl+u`) scroll, and `Esc`, `q` or the `inspect_command` keys (`Enter`, `P`) close it.
+In the inspector, the `[keybindings.list]` row keys (`next_row` / `previous_row`: `j`/`k`, `Down`/`Up`; `first_row` / `last_row`) and the `[keybindings.global]` scroll keys (`J`/`K`, Home/End, PageUp/PageDown, `Ctrl+d`/`Ctrl+u`) scroll, and the `list.back` keys (`Esc`, `Backspace`), the `quit` key (`q`) or the `inspect_command` keys (`Enter`, `P`) close it.
 
 ---
 

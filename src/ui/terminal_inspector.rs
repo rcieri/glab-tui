@@ -68,7 +68,10 @@ pub(crate) fn render_terminal_inspector(
 
 fn key_hints(keys: &Keymap) -> String {
     format!(
-        " Esc close · j/k scroll · {} copy command · {} copy output · {} re-run",
+        " {} close · {} scroll down · {} scroll up · {} copy command · {} copy output · {} re-run",
+        keys.display(Action::ListBack),
+        keys.display(Action::ListNextRow),
+        keys.display(Action::ListPreviousRow),
         keys.display(Action::TerminalCopyCommand),
         keys.display(Action::TerminalCopyOutput),
         keys.display(Action::TerminalRerunCommand)

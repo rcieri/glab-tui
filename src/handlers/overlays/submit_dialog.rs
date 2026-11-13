@@ -27,15 +27,15 @@ pub fn handle_submit_dialog(
 /// recorded.
 pub fn click_submit_dialog(
     app: &mut App,
-    column: u16,
     row: u16,
+    col: u16,
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
     let Some(dialog) = app.submit_dialog.as_mut() else {
         return;
     };
-    let action = dialog.form.click_at(column, row);
+    let action = dialog.form.click_at(col, row);
     apply_form_action(app, action, tx, fx);
 }
 

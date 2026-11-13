@@ -170,7 +170,7 @@ pub fn handle_mouse_event(
                 match kind {
                     OverlayKind::ConfirmPopup => {
                         crate::handlers::overlays::submit_dialog::click_submit_dialog(
-                            app, col, row, tx, fx,
+                            app, row, col, tx, fx,
                         );
                         return;
                     }

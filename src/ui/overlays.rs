@@ -1641,7 +1641,9 @@ mod tests {
         );
         assert!(text.contains("Approve selected MR"));
         assert!(text.contains("Open selected MR in browser"));
-        assert!(text.contains("View related pipelines for selected MR"));
+        assert!(text.contains("View related Pipelines for selected MR"));
+        assert!(text.contains("Merge selected MR (configure squash/delete)"));
+        assert!(!text.contains("stacked PR"), "{text:?}");
         assert!(text.contains("Delete selected MR"));
     }
 
@@ -1680,7 +1682,10 @@ mod tests {
         );
         assert!(text.contains("Approve selected PR"));
         assert!(text.contains("Open selected PR in browser"));
-        assert!(text.contains("View related pipelines for selected PR"));
+        assert!(text.contains("View related Actions for selected PR"));
+        assert!(
+            text.contains("Merge selected PR (a stacked PR merges with the open PRs below it)")
+        );
         assert!(text.contains("Create new Pull Request"));
         assert!(!text.contains("Delete selected PR"), "{text:?}");
     }

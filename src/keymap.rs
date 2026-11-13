@@ -89,9 +89,12 @@ pub struct ActionSpec {
     /// The key under `[keybindings.<context table>]`.
     pub field: &'static str,
     pub defaults: &'static [&'static str],
-    /// Help text. `{mr}` reads `MR` or `PR` and `{merge_request}` reads
-    /// `Merge Request` or `Pull Request`, after the host.
+    /// Help text. `{mr}` reads `MR` or `PR`, `{merge_request}` reads
+    /// `Merge Request` or `Pull Request` and `{pipelines}` reads `Pipelines`
+    /// or `Actions`, after the host.
     pub label: &'static str,
+    /// The help text on GitHub when it differs beyond the host's terms.
+    pub github_label: Option<&'static str>,
     /// Destroys or reverts something on the forge: the key only ever opens a
     /// confirmation (see `handlers::confirm`).
     pub destructive: bool,
@@ -110,6 +113,7 @@ impl ActionSpec {
             field,
             defaults,
             label,
+            github_label: None,
             destructive: false,
             support: Support::Both,
         }
@@ -126,11 +130,23 @@ impl ActionSpec {
         Self { support, ..self }
     }
 
-    /// `label` with the host's own terms.
+    const fn on_github(self, label: &'static str) -> Self {
+        Self {
+            github_label: Some(label),
+            ..self
+        }
+    }
+
+    /// The help text for `kind`, with the host's own terms.
     pub fn label_for(&self, kind: crate::backend::BackendKind) -> String {
-        self.label
+        let label = match self.github_label {
+            Some(label) if kind.is_github() => label,
+            _ => self.label,
+        };
+        label
             .replace("{merge_request}", kind.term("mr"))
             .replace("{mr}", kind.term("mr_short"))
+            .replace("{pipelines}", kind.term("pipeline_plural"))
     }
 }
 
@@ -216,10 +232,10 @@ registry! {
     MrsApproveMr => ActionSpec::new(MRS, "approve_mr", &["a"], "Approve selected {mr}");
     MrsRevokeMr => ActionSpec::new(MRS, "revoke_mr", &["A"], "Revoke your approval").destructive().only(Support::GitLab);
     MrsRebaseMr => ActionSpec::new(MRS, "rebase_mr", &["R"], "Rebase source branch onto target");
-    MrsMergeMr => ActionSpec::new(MRS, "merge_mr", &["m"], "Merge selected {mr} (a stacked PR merges with the open PRs below it on GitHub)");
+    MrsMergeMr => ActionSpec::new(MRS, "merge_mr", &["m"], "Merge selected {mr} (configure squash/delete)").on_github("Merge selected {mr} (a stacked PR merges with the open PRs below it)");
     MrsToggleDraft => ActionSpec::new(MRS, "toggle_draft", &["s"], "Toggle Draft / Ready status");
     MrsViewDiff => ActionSpec::new(MRS, "view_diff", &["D"], "View {merge_request} diff changes");
-    MrsViewRelatedPipelines => ActionSpec::new(MRS, "view_related_pipelines", &["P"], "View related pipelines for selected {mr}");
+    MrsViewRelatedPipelines => ActionSpec::new(MRS, "view_related_pipelines", &["P"], "View related {pipelines} for selected {mr}");
     MrsEditEntity => ActionSpec::new(MRS, "edit_entity", &["e"], "Open parameter edit menu (bulk edit with a selection)");
     MrsCloseEntity => ActionSpec::new(MRS, "close_entity", &["c"], "Close selected {mr}").destructive();
     MrsReopenEntity => ActionSpec::new(MRS, "reopen_entity", &["r"], "Reopen selected {mr}").destructive();
@@ -274,7 +290,7 @@ registry! {
     RunnersResume => ActionSpec::new(RUNNERS, "resume", &["r"], "Resume runner").only(Support::GitLab);
     RunnersEditDescription => ActionSpec::new(RUNNERS, "edit_description", &["e"], "Edit runner description text").only(Support::GitLab);
     RunnersOpenInBrowser => ActionSpec::new(RUNNERS, "open_in_browser", &["o"], "Open runner in browser");
-    RunnersCycleStatus => ActionSpec::new(RUNNERS, "cycle_status", &["s"], "Cycle the status filter: Online, Paused (GitLab only), Offline, All");
+    RunnersCycleStatus => ActionSpec::new(RUNNERS, "cycle_status", &["s"], "Cycle the status filter: Online, Paused, Offline, All").on_github("Cycle the status filter: Online, Offline, All");
     RunnersCopyUrl => ActionSpec::new(RUNNERS, "copy_url", &["y"], "Copy runner URL");
     RunnersCopyId => ActionSpec::new(RUNNERS, "copy_id", &["Y"], "Copy runner ID");
 
@@ -641,6 +657,21 @@ mod tests {
         assert_eq!(
             Action::MrsCloseEntity.spec().label_for(BackendKind::GitLab),
             "Close selected MR"
+        );
+        assert_eq!(
+            Action::MrsViewRelatedPipelines
+                .spec()
+                .label_for(BackendKind::GitHub),
+            "View related Actions for selected PR"
+        );
+        let cycle = Action::RunnersCycleStatus.spec();
+        assert_eq!(
+            cycle.label_for(BackendKind::GitLab),
+            "Cycle the status filter: Online, Paused, Offline, All"
+        );
+        assert_eq!(
+            cycle.label_for(BackendKind::GitHub),
+            "Cycle the status filter: Online, Offline, All"
         );
     }
 }

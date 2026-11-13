@@ -68,7 +68,11 @@ fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
     assert!(!help.contains("Pause runner"), "{help}");
     assert!(!help.contains("Resume runner"), "{help}");
     assert!(!help.contains("Edit runner description text"), "{help}");
-    assert!(help.contains("Cycle the status filter"), "{help}");
+    assert!(
+        help.contains("Cycle the status filter: Online, Offline, All"),
+        "{help}"
+    );
+    assert!(!help.contains("Online, Paused, Offline"), "{help}");
 }
 
 /// The preview carries each runner's routing metadata from the GraphQL

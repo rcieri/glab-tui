@@ -64,6 +64,21 @@ fn step_search(diff_view: &mut crate::app::DiffView, forward: bool) {
     diff_view.update_selected_file_from_cursor();
 }
 
+/// Asks to submit the pending review drafts, or closes the diff when there
+/// are none.
+fn leave_diff_view(app: &mut App, diff_view: crate::app::DiffView) {
+    if app.draft_comments.is_empty() {
+        app.diff_view = None;
+        return;
+    }
+    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+        crate::app::ConfirmAction::SubmitReview(diff_view.mr_iid),
+        diff_view.project_path.clone(),
+        app,
+    ));
+    app.diff_view = Some(diff_view);
+}
+
 /// Keys while the MR/PR diff view is open.
 pub fn handle_key(
     app: &mut App,
@@ -151,14 +166,8 @@ pub fn handle_key(
                 diff_view.focus_on_files = true;
             } else if !diff_view.file_tree_visible {
                 diff_view.file_tree_visible = true;
-            } else if !app.draft_comments.is_empty() {
-                app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                    crate::app::ConfirmAction::SubmitReview(diff_view.mr_iid),
-                    diff_view.project_path.clone(),
-                    app,
-                ));
             } else {
-                app.diff_view = None;
+                leave_diff_view(app, diff_view);
                 return;
             }
             app.diff_view = Some(diff_view);
@@ -167,14 +176,8 @@ pub fn handle_key(
             if in_selection {
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
-            } else if !app.draft_comments.is_empty() {
-                app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                    crate::app::ConfirmAction::SubmitReview(diff_view.mr_iid),
-                    diff_view.project_path.clone(),
-                    app,
-                ));
             } else {
-                app.diff_view = None;
+                leave_diff_view(app, diff_view);
                 return;
             }
             app.diff_view = Some(diff_view);
@@ -698,5 +701,49 @@ mod tests {
             app.diff_view.as_ref().unwrap().side_by_side,
             "the new key must trigger the remapped action"
         );
+    }
+
+    fn pending_draft() -> crate::domain::review::DraftComment {
+        crate::domain::review::DraftComment {
+            file_path: "b".to_string(),
+            line_num: Some(1),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "nit".to_string(),
+        }
+    }
+
+    #[test]
+    fn closing_the_diff_with_drafts_asks_to_submit_them() {
+        for (key, focus_on_files) in [(KeyCode::Char('q'), false), (KeyCode::Esc, true)] {
+            let mut app = App::default();
+            open_diff(&mut app);
+            app.diff_view.as_mut().unwrap().focus_on_files = focus_on_files;
+            app.draft_comments = vec![pending_draft()];
+
+            press(&mut app, key);
+
+            assert!(app.diff_view.is_some(), "{key:?} closed the diff");
+            let dialog = app.submit_dialog.as_ref().expect("submit review dialog");
+            assert!(
+                matches!(dialog.action, crate::app::ConfirmAction::SubmitReview(1)),
+                "{key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closing_the_diff_without_drafts_leaves_it() {
+        for (key, focus_on_files) in [(KeyCode::Char('q'), false), (KeyCode::Esc, true)] {
+            let mut app = App::default();
+            open_diff(&mut app);
+            app.diff_view.as_mut().unwrap().focus_on_files = focus_on_files;
+
+            press(&mut app, key);
+
+            assert!(app.diff_view.is_none(), "{key:?} kept the diff open");
+            assert!(app.submit_dialog.is_none(), "{key:?}");
+        }
     }
 }

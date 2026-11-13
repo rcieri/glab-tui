@@ -161,7 +161,7 @@ pub(crate) fn render_form(
     };
     f.render_widget(
         Block::default()
-            .title(format!(" {title} "))
+            .title(format!(" {} ", sanitize_untrusted(title)))
             .title_style(
                 Style::default()
                     .fg(ctx.theme.header_fg)
@@ -1402,5 +1402,26 @@ mod tests {
             "{rows:#?}"
         );
         assert!(rows[6].contains("Enter merge"), "{rows:#?}");
+    }
+
+    #[test]
+    fn control_sequences_in_the_title_are_stripped() {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let mut form = crowded_form();
+        let mut terminal = Terminal::new(TestBackend::new(60, 9)).unwrap();
+        terminal
+            .draw(|f| {
+                render_form(f, &ctx, &mut form, "Delete Branch 'a\u{9b}31mb'", f.area());
+            })
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains(" Delete Branch 'ab' "), "{screen}");
     }
 }

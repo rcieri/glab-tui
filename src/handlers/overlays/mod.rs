@@ -234,6 +234,30 @@ mod tests {
         app.date_picker = None;
     }
 
+    #[test]
+    fn only_a_function_key_bound_to_help_opens_it_over_a_text_field() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalHelp, &["Enter", "F2"]);
+        app.text_input = Some(crate::app::TextInput::new(
+            " Page Size ",
+            "30".to_string(),
+            crate::app::TextInputAction::EditPageSize,
+        ));
+
+        assert!(!handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE).into(),
+        ));
+        assert!(!app.show_help);
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE).into(),
+        ));
+        assert!(app.show_help);
+    }
+
     const REVIEW_DIFF: &str = "\
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs

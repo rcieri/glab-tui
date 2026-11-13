@@ -17,8 +17,8 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyPress) -> bool {
         return false;
     }
 
-    let types_a_character = matches!(key_event.code, KeyCode::Char(_));
-    if app.is_capturing_text() && types_a_character {
+    let reaches_over_text = matches!(key_event.code, KeyCode::F(_));
+    if app.is_capturing_text() && !reaches_over_text {
         return false;
     }
 

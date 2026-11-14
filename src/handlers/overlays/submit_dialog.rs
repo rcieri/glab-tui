@@ -107,7 +107,7 @@ fn run_dialog_choice(
     app.close_diff_view();
 }
 
-/// The merge the dialog's form describes, `None` until a method is picked.
+/// The merge the dialog's form describes.
 struct MergeChoice {
     method: crate::domain::mr::MergeMethod,
     delete_branch: bool,

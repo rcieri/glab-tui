@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - **No refetch after read-only commands**: Opening an issue, MR/PR, pipeline, job, runner, release, milestone, branch, environment or todo in the browser, or downloading a job artifact, no longer refetches the active tab and the open diff. Only commands that change something on the forge do (#595).
 - **Idle preview prefetch**: The jobs of the highlighted pipeline or MR and the issues of the highlighted milestone are looked up when the highlight, the list or the cache changes, instead of on every tick, so an idle Pipelines, MRs or Milestones tab no longer filters its list four times a second (#595).
 - **Diff comment actions in group scope**: Posting, replying to, resolving, editing and deleting a comment in an MR/PR diff now act on the diff's own project instead of the first listed MR with the same number or the group path (#595).
+- **GitHub approval state without required reviews**: On a GitHub repository whose branch requires no reviews, `reviewDecision` is null, so the Approval and Workflow columns never showed a PR as approved or returned with changes requested. They now follow the PR's latest reviews: approved when someone approved and nobody requested changes, changes requested when any latest review did (#761).
 
 ## [0.9.4] - 2026-10-29
 

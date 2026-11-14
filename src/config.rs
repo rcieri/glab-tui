@@ -2187,7 +2187,7 @@ rerun_command = "r"
 cycle_status_filter = "s"
 
 # Tabs, panes and their sizes. The Configure View (`Tab`) edits all of these
-# and its Save View button writes them here.
+# except the *_min_* thresholds, and its Save View button writes them here.
 # [layout]
 # Tabs to show, in order. A tab left out is hidden; unset or empty shows every
 # tab, and a name that is no tab is skipped (reported in the Terminal tab).

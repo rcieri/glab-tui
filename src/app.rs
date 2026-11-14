@@ -6845,8 +6845,10 @@ impl App {
         if tabs.is_empty() {
             return;
         }
-        let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
-        let next_index = (current_index + 1) % tabs.len();
+        let next_index = tabs
+            .iter()
+            .position(|t| t == &self.active_tab)
+            .map_or(0, |current| (current + 1) % tabs.len());
         self.switch_to_tab(tabs[next_index]);
     }
 
@@ -14710,6 +14712,16 @@ index 123456..789012 100644
         assert!(!app.detail_visible);
         app.next_tab();
         assert!(app.detail_visible);
+    }
+
+    #[test]
+    fn next_tab_from_a_hidden_tab_lands_on_the_first_shown_tab() {
+        let mut app = App::default();
+        app.config.layout.tabs = Some(vec![Tab::MergeRequests, Tab::Issues, Tab::Todos]);
+        app.set_active_tab(Tab::Jobs);
+
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::MergeRequests);
     }
 
     #[test]

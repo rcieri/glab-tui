@@ -2228,7 +2228,22 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Column Config",
             key: s("j / k / ↓ / ↑"),
-            action: "Navigate columns & group-by options",
+            action: "Navigate rows",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("Tab / Shift+Tab"),
+            action: "Jump to the next / previous section",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("J / K"),
+            action: "Move the focused column or tab",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("h / l"),
+            action: "Step a LAYOUT setting",
         },
         Shortcut {
             category: "Column Config",

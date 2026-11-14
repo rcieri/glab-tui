@@ -4049,8 +4049,6 @@ mod tests {
                 });
                 app.active_tab = tab;
                 let columns = tab.columns(kind, false);
-                // Columns enabled under the other host's defaults, as a
-                // config written on that host leaves them.
                 let other_host_only: Vec<&str> = tab
                     .columns(other_kind, false)
                     .into_iter()

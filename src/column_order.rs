@@ -18,6 +18,25 @@ pub fn same_column(a: &str, b: &str) -> bool {
             .any(|names| names.contains(&a) && names.contains(&b))
 }
 
+/// The columns a table draws, in built-in order. Renderers resolve it once
+/// per frame and check every cell against it.
+pub struct ShownColumns(Vec<&'static str>);
+
+impl ShownColumns {
+    pub fn new(labels: Vec<&'static str>) -> Self {
+        Self(labels)
+    }
+
+    /// Whether `column`, under either host's name for it, is drawn.
+    pub fn contains(&self, column: &str) -> bool {
+        self.0.iter().any(|label| same_column(label, column))
+    }
+
+    pub fn labels(&self) -> &[&'static str] {
+        &self.0
+    }
+}
+
 fn rank(order: &[String], label: &str) -> Option<usize> {
     order.iter().position(|name| same_column(name, label))
 }

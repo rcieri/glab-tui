@@ -166,6 +166,7 @@ pub(crate) fn render_tab_issues(
         );
 
         let permutation = app.column_permutation(Tab::Issues);
+        let shown = app.shown_columns(Tab::Issues);
         let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
             let is_selected = app.issues.state.selected() == Some(idx);
             let is_checked = app
@@ -200,7 +201,7 @@ pub(crate) fn render_tab_issues(
                 )
             };
             let mut cells = Vec::new();
-            if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
+            if app.scope.is_group() && shown.contains("Project") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&i.project_path, 35),
                     &app.search_query,
@@ -211,7 +212,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "ID") {
+            if shown.contains("ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &format!("#{}", i.iid),
                     &app.search_query,
@@ -222,7 +223,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "State") {
+            if shown.contains("State") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &state_text,
                     &app.search_query,
@@ -233,7 +234,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Title") {
+            if shown.contains("Title") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&i.title, 100),
                     &app.search_query,
@@ -244,7 +245,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Assignees") {
+            if shown.contains("Assignees") {
                 let assignees_str = if i.assignees.is_empty() {
                     "—".to_string()
                 } else {
@@ -264,7 +265,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Labels") {
+            if shown.contains("Labels") {
                 cells.push(super::helpers::render_labels_cell(
                     &i.labels,
                     &app.label_colors,
@@ -275,7 +276,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Milestone") {
+            if shown.contains("Milestone") {
                 let milestone_str = i
                     .milestone
                     .as_ref()
@@ -291,10 +292,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            let show_related_mrs = app.is_column_visible(
-                Tab::Issues,
-                if ctx.kind.is_github() { "PRs" } else { "MRs" },
-            );
+            let show_related_mrs = shown.contains(if ctx.kind.is_github() { "PRs" } else { "MRs" });
             if show_related_mrs {
                 let related_str = match &i.related_mrs {
                     None if app.fetching_related_mrs.contains(&i.iid) => "…".to_string(),
@@ -347,7 +345,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Due Date") {
+            if shown.contains("Due Date") {
                 let due_str = i.due_date.as_deref().unwrap_or("—");
                 cells.push(super::helpers::render_fuzzy_cell(
                     due_str,
@@ -359,7 +357,7 @@ pub(crate) fn render_tab_issues(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Author") {
+            if shown.contains("Author") {
                 let author_str = format!("@{}", i.author.username);
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&author_str, 15),
@@ -399,50 +397,47 @@ pub(crate) fn render_tab_issues(
         let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
-        if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
+        if app.scope.is_group() && shown.contains("Project") {
             header_cells.push(header("Project"));
             widths.push(col_w(content_area.width, 30));
         }
 
-        if app.is_column_visible(Tab::Issues, "ID") {
+        if shown.contains("ID") {
             header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::Issues, "State") {
+        if shown.contains("State") {
             header_cells.push(Cell::from(
                 header_line("State").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(10));
         }
-        if app.is_column_visible(Tab::Issues, "Title") {
+        if shown.contains("Title") {
             header_cells.push(header("Title"));
             widths.push(Constraint::Fill(1));
         }
-        if app.is_column_visible(Tab::Issues, "Assignees") {
+        if shown.contains("Assignees") {
             header_cells.push(header("Assignees"));
             widths.push(col_w(content_area.width, 22));
         }
-        if app.is_column_visible(Tab::Issues, "Labels") {
+        if shown.contains("Labels") {
             header_cells.push(header("Labels"));
             widths.push(col_w(content_area.width, 26));
         }
-        if app.is_column_visible(Tab::Issues, "Milestone") {
+        if shown.contains("Milestone") {
             header_cells.push(header("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
-        let show_related_mrs = app.is_column_visible(
-            Tab::Issues,
-            if ctx.kind.is_github() { "PRs" } else { "MRs" },
-        );
+        let show_related_mrs = shown.contains(if ctx.kind.is_github() { "PRs" } else { "MRs" });
         if show_related_mrs {
             header_cells.push(header(if ctx.kind.is_github() { "PRs" } else { "MRs" }));
             widths.push(col_w(content_area.width, 16));
         }
-        if app.is_column_visible(Tab::Issues, "Due Date") {
+        if shown.contains("Due Date") {
             header_cells.push(header("Due Date"));
             widths.push(col_w(content_area.width, 20));
         }
-        if app.is_column_visible(Tab::Issues, "Author") {
+        if shown.contains("Author") {
             header_cells.push(header("Author"));
             widths.push(col_w(content_area.width, 18));
         }
@@ -558,6 +553,7 @@ pub(crate) fn render_tab_merge_requests(
         );
 
         let permutation = app.column_permutation(Tab::MergeRequests);
+        let shown = app.shown_columns(Tab::MergeRequests);
         let rows = filtered_mrs.iter().enumerate().map(|(idx, m)| {
             let is_selected = app.mrs.state.selected() == Some(idx);
             let is_checked = app.selected_mrs.contains(&(m.project_path.clone(), m.iid));
@@ -649,7 +645,7 @@ pub(crate) fn render_tab_merge_requests(
             );
 
             let mut cells = Vec::new();
-            if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
+            if app.scope.is_group() && shown.contains("Project") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&m.project_path, 35),
                     &app.search_query,
@@ -660,7 +656,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "ID") {
+            if shown.contains("ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &format!("!{}", m.iid),
                     &app.search_query,
@@ -671,7 +667,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "State") {
+            if shown.contains("State") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &state_text,
                     &app.search_query,
@@ -682,7 +678,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Status") {
+            if shown.contains("Status") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &status_styled,
                     &app.search_query,
@@ -693,7 +689,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
+            if shown.contains("Mergeable") {
                 let (text, tone) =
                     crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref(), ctx.icons);
                 let style = {
@@ -744,7 +740,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Approval") {
+            if shown.contains("Approval") {
                 let (text, tone) = crate::domain::mr_state::approval_cell(
                     m.approval.as_ref(),
                     ctx.kind.is_github(),
@@ -798,7 +794,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Title") {
+            if shown.contains("Title") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&clean_title, 100),
                     &app.search_query,
@@ -809,7 +805,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Assignees") {
+            if shown.contains("Assignees") {
                 let assignees_str = if m.assignees.is_empty() {
                     "—".to_string()
                 } else {
@@ -829,7 +825,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
+            if shown.contains("Reviewers") {
                 let reviewers_str = if m.reviewers.is_empty() {
                     "—".to_string()
                 } else {
@@ -849,7 +845,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Workflow") {
+            if shown.contains("Workflow") {
                 let text = crate::domain::mr_state::workflow_cell(m.workflow, ctx.icons);
                 let (color, bg_color) = {
                     let t = &theme;
@@ -886,7 +882,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Labels") {
+            if shown.contains("Labels") {
                 cells.push(super::helpers::render_labels_cell(
                     &m.labels,
                     &app.label_colors,
@@ -898,10 +894,7 @@ pub(crate) fn render_tab_merge_requests(
                 ));
             }
             let is_github = ctx.kind.is_github();
-            if app.is_column_visible(
-                Tab::MergeRequests,
-                if is_github { "Action" } else { "Pipeline" },
-            ) {
+            if shown.contains(if is_github { "Action" } else { "Pipeline" }) {
                 let resolved_pipe = m.head_pipeline.as_ref().or_else(|| {
                     if is_github {
                         app.pipelines
@@ -997,7 +990,7 @@ pub(crate) fn render_tab_merge_requests(
                     ));
                 }
             }
-            if app.is_column_visible(Tab::MergeRequests, "Stack") {
+            if shown.contains("Stack") {
                 let stack_str = if let Some(ref s) = m.stack {
                     format!("#{} {}/{}", s.number, s.position, s.size)
                 } else {
@@ -1017,7 +1010,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Milestone") {
+            if shown.contains("Milestone") {
                 let mr_milestone_str = m
                     .milestone
                     .as_ref()
@@ -1033,7 +1026,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            let show_closes = app.is_column_visible(Tab::MergeRequests, "Closes");
+            let show_closes = shown.contains("Closes");
             if show_closes {
                 let linked_str = match &m.related_issues {
                     None if app.fetching_mr_related_issues.contains(&m.iid) => "…".to_string(),
@@ -1084,7 +1077,7 @@ pub(crate) fn render_tab_merge_requests(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Author") {
+            if shown.contains("Author") {
                 let author_str = format!("@{}", m.author.username);
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&author_str, 15),
@@ -1124,87 +1117,84 @@ pub(crate) fn render_tab_merge_requests(
         let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
-        if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
+        if app.scope.is_group() && shown.contains("Project") {
             header_cells.push(header("Project"));
             widths.push(col_w(content_area.width, 30));
         }
 
-        if app.is_column_visible(Tab::MergeRequests, "ID") {
+        if shown.contains("ID") {
             header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::MergeRequests, "State") {
+        if shown.contains("State") {
             header_cells.push(Cell::from(
                 header_line("State").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(10));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Status") {
+        if shown.contains("Status") {
             header_cells.push(Cell::from(
                 header_line("Status").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
+        if shown.contains("Mergeable") {
             header_cells.push(Cell::from(
                 header_line("Mergeable").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 13));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Approval") {
+        if shown.contains("Approval") {
             header_cells.push(Cell::from(
                 header_line("Approval").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 12));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Title") {
+        if shown.contains("Title") {
             header_cells.push(header("Title"));
             widths.push(Constraint::Fill(1));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Assignees") {
+        if shown.contains("Assignees") {
             header_cells.push(header("Assignees"));
             widths.push(col_w(content_area.width, 22));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
+        if shown.contains("Reviewers") {
             header_cells.push(header("Reviewers"));
             widths.push(col_w(content_area.width, 22));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Workflow") {
+        if shown.contains("Workflow") {
             header_cells.push(Cell::from(
                 header_line("Workflow").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 13));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Labels") {
+        if shown.contains("Labels") {
             header_cells.push(header("Labels"));
             widths.push(col_w(content_area.width, 26));
         }
         let is_github = ctx.kind.is_github();
-        if app.is_column_visible(
-            Tab::MergeRequests,
-            if is_github { "Action" } else { "Pipeline" },
-        ) {
+        if shown.contains(if is_github { "Action" } else { "Pipeline" }) {
             header_cells.push(Cell::from(
                 header_line(if is_github { "Action" } else { "Pipeline" })
                     .alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Stack") {
+        if shown.contains("Stack") {
             header_cells.push(Cell::from(
                 header_line("Stack").alignment(Alignment::Center),
             ));
             widths.push(col_w(content_area.width, 14));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Milestone") {
+        if shown.contains("Milestone") {
             header_cells.push(header("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Closes") {
+        if shown.contains("Closes") {
             header_cells.push(header("Closes"));
             widths.push(col_w(content_area.width, 16));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Author") {
+        if shown.contains("Author") {
             header_cells.push(header("Author"));
             widths.push(col_w(content_area.width, 18));
         }
@@ -1369,6 +1359,7 @@ pub(crate) fn render_tab_pipelines(
         filtered_pipelines.extend(pending_rows.iter());
 
         let permutation = app.column_permutation(Tab::Pipelines);
+        let shown = app.shown_columns(Tab::Pipelines);
         let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {
             let is_row_highlighted = app.pipelines.state.selected() == Some(idx);
             let (status_text, status_color, bg_color) = match p.status() {
@@ -1425,7 +1416,7 @@ pub(crate) fn render_tab_pipelines(
                 bg_color
             };
             let mut row_cells = Vec::new();
-            if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
+            if app.scope.is_group() && shown.contains("Project") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&p.project_path, 35),
                     &app.search_query,
@@ -1436,7 +1427,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "ID") {
+            if shown.contains("ID") {
                 // A trigger that has not spawned has no pipeline to identify.
                 let id_text = if p.id() == 0 {
                     "—".to_string()
@@ -1453,7 +1444,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Status") {
+            if shown.contains("Status") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &status_text,
                     &app.search_query,
@@ -1467,7 +1458,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Stages") {
+            if shown.contains("Stages") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &stages_dots,
                     &app.search_query,
@@ -1478,7 +1469,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Source") {
+            if shown.contains("Source") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(p.source().unwrap_or_default(), 18),
                     &app.search_query,
@@ -1489,7 +1480,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Name") {
+            if shown.contains("Name") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(p.name(), 30),
                     &app.search_query,
@@ -1500,7 +1491,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Event") {
+            if shown.contains("Event") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(p.event(), 15),
                     &app.search_query,
@@ -1511,7 +1502,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "SHA") {
+            if shown.contains("SHA") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(p.head_sha(), 8),
                     &app.search_query,
@@ -1522,7 +1513,7 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Actor") {
+            if shown.contains("Actor") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(p.actor_login(), 20),
                     &app.search_query,
@@ -1533,14 +1524,14 @@ pub(crate) fn render_tab_pipelines(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Pipelines, "Created") {
+            if shown.contains("Created") {
                 let created_str = p.created_at().map(time_ago).unwrap_or_default();
                 row_cells.push(Cell::from(Span::styled(
                     truncate(&created_str, 15),
                     Style::default().fg(theme.yellow),
                 )));
             }
-            if app.is_column_visible(Tab::Pipelines, "Duration") {
+            if shown.contains("Duration") {
                 let duration = p
                     .duration_seconds()
                     .map(|d| format!("{}m {}s", d / 60, d % 60))
@@ -1550,7 +1541,7 @@ pub(crate) fn render_tab_pipelines(
                     Style::default().fg(theme.text_normal),
                 )));
             }
-            if app.is_column_visible(Tab::Pipelines, "Ref") {
+            if shown.contains("Ref") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&format_ref(p.ref_branch()), 100),
                     &app.search_query,
@@ -1589,54 +1580,54 @@ pub(crate) fn render_tab_pipelines(
         let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
-        if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
+        if app.scope.is_group() && shown.contains("Project") {
             header_cells.push(header("Project"));
             widths.push(col_w(content_area.width, 30));
         }
 
-        if app.is_column_visible(Tab::Pipelines, "ID") {
+        if shown.contains("ID") {
             header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::Pipelines, "Status") {
+        if shown.contains("Status") {
             header_cells.push(Cell::from(
                 header_line("Status").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
-        if app.is_column_visible(Tab::Pipelines, "Stages") {
+        if shown.contains("Stages") {
             header_cells.push(header("Stages"));
             widths.push(Constraint::Length(14));
         }
-        if app.is_column_visible(Tab::Pipelines, "Source") {
+        if shown.contains("Source") {
             header_cells.push(header("Source"));
             widths.push(Constraint::Length(16));
         }
-        if app.is_column_visible(Tab::Pipelines, "Name") {
+        if shown.contains("Name") {
             header_cells.push(header("Name"));
             widths.push(Constraint::Length(22));
         }
-        if app.is_column_visible(Tab::Pipelines, "Event") {
+        if shown.contains("Event") {
             header_cells.push(header("Event"));
             widths.push(Constraint::Length(14));
         }
-        if app.is_column_visible(Tab::Pipelines, "SHA") {
+        if shown.contains("SHA") {
             header_cells.push(header("SHA"));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::Pipelines, "Actor") {
+        if shown.contains("Actor") {
             header_cells.push(header("Actor"));
             widths.push(Constraint::Length(18));
         }
-        if app.is_column_visible(Tab::Pipelines, "Created") {
+        if shown.contains("Created") {
             header_cells.push(header("Created"));
             widths.push(Constraint::Length(15));
         }
-        if app.is_column_visible(Tab::Pipelines, "Duration") {
+        if shown.contains("Duration") {
             header_cells.push(header("Duration"));
             widths.push(Constraint::Length(14));
         }
-        if app.is_column_visible(Tab::Pipelines, "Ref") {
+        if shown.contains("Ref") {
             header_cells.push(header("Ref"));
             widths.push(Constraint::Fill(1));
         }
@@ -1736,6 +1727,7 @@ pub(crate) fn render_tab_jobs(
         );
 
         let permutation = app.column_permutation(Tab::Jobs);
+        let shown = app.shown_columns(Tab::Jobs);
         let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
             let (matrix_display, status_text_display, status_color_display, status_bg_display) = {
                 let (status_text, status_color, bg_color) = match j.status() {
@@ -1805,7 +1797,7 @@ pub(crate) fn render_tab_jobs(
             let status_text = status_text_display;
             let status_color = status_color_display;
             let mut row_cells = Vec::new();
-            if app.is_column_visible(Tab::Jobs, "ID") {
+            if shown.contains("ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &format!("#{}", j.id()),
                     &app.search_query,
@@ -1816,7 +1808,7 @@ pub(crate) fn render_tab_jobs(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Jobs, "Stage") {
+            if shown.contains("Stage") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     j.stage(),
                     &app.search_query,
@@ -1827,7 +1819,7 @@ pub(crate) fn render_tab_jobs(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Jobs, "Status") {
+            if shown.contains("Status") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &status_text,
                     &app.search_query,
@@ -1841,7 +1833,7 @@ pub(crate) fn render_tab_jobs(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Jobs, "Name") {
+            if shown.contains("Name") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     j.name(),
                     &app.search_query,
@@ -1852,7 +1844,7 @@ pub(crate) fn render_tab_jobs(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Jobs, "Matrix") {
+            if shown.contains("Matrix") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &matrix_str,
                     &app.search_query,
@@ -1863,7 +1855,7 @@ pub(crate) fn render_tab_jobs(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Jobs, "Runner") {
+            if shown.contains("Runner") {
                 let runner_str = j.runner().unwrap_or("-");
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(runner_str, 20),
@@ -1875,7 +1867,7 @@ pub(crate) fn render_tab_jobs(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Jobs, "Needs") {
+            if shown.contains("Needs") {
                 let needs_str = if j.needs().is_empty() {
                     "-".to_string()
                 } else {
@@ -1886,7 +1878,7 @@ pub(crate) fn render_tab_jobs(
                     Style::default().fg(theme.text_muted),
                 )));
             }
-            if app.is_column_visible(Tab::Jobs, "Duration") {
+            if shown.contains("Duration") {
                 let dur_str = match j.duration_seconds() {
                     Some(d) => format!("{}m {}s", d / 60, d % 60),
                     None => "-".to_string(),
@@ -1924,37 +1916,37 @@ pub(crate) fn render_tab_jobs(
         let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
-        if app.is_column_visible(Tab::Jobs, "ID") {
+        if shown.contains("ID") {
             header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::Jobs, "Stage") {
+        if shown.contains("Stage") {
             header_cells.push(header("Stage"));
             widths.push(Constraint::Length(14));
         }
-        if app.is_column_visible(Tab::Jobs, "Status") {
+        if shown.contains("Status") {
             header_cells.push(Cell::from(
                 header_line("Status").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
         }
-        if app.is_column_visible(Tab::Jobs, "Name") {
+        if shown.contains("Name") {
             header_cells.push(header("Name"));
             widths.push(Constraint::Fill(1));
         }
-        if app.is_column_visible(Tab::Jobs, "Matrix") {
+        if shown.contains("Matrix") {
             header_cells.push(header("Matrix"));
             widths.push(Constraint::Length(20));
         }
-        if app.is_column_visible(Tab::Jobs, "Runner") {
+        if shown.contains("Runner") {
             header_cells.push(header("Runner"));
             widths.push(Constraint::Length(18));
         }
-        if app.is_column_visible(Tab::Jobs, "Needs") {
+        if shown.contains("Needs") {
             header_cells.push(header("Needs"));
             widths.push(Constraint::Length(14));
         }
-        if app.is_column_visible(Tab::Jobs, "Duration") {
+        if shown.contains("Duration") {
             header_cells.push(header("Duration"));
             widths.push(Constraint::Length(14));
         }
@@ -2350,6 +2342,7 @@ pub(crate) fn render_tab_todos(
             |n, col| App::todo_filter_values(n, col, kind),
         );
         let permutation = app.column_permutation(Tab::Todos);
+        let shown = app.shown_columns(Tab::Todos);
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
             let is_checked = app.selected_todos.contains(&n.id);
@@ -2390,10 +2383,10 @@ pub(crate) fn render_tab_todos(
                     Style::default()
                 },
             ))];
-            if app.is_column_visible(Tab::Todos, "State") {
+            if shown.contains("State") {
                 row_cells.push(badge_cell("State", &n.state));
             }
-            if app.is_column_visible(Tab::Todos, "Project") {
+            if shown.contains("Project") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &n.project_path,
                     &app.search_query,
@@ -2404,10 +2397,10 @@ pub(crate) fn render_tab_todos(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Todos, "Type") {
+            if shown.contains("Type") {
                 row_cells.push(badge_cell("Type", n.type_label(kind)));
             }
-            if app.is_column_visible(Tab::Todos, "ID") {
+            if shown.contains("ID") {
                 let reference = n.reference(kind).unwrap_or_else(|| "—".to_string());
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &reference,
@@ -2419,7 +2412,7 @@ pub(crate) fn render_tab_todos(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Todos, "Title") {
+            if shown.contains("Title") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&n.title, 80),
                     &app.search_query,
@@ -2430,7 +2423,7 @@ pub(crate) fn render_tab_todos(
                     &ctx.theme,
                 ));
             }
-            if app.is_column_visible(Tab::Todos, "Updated") {
+            if shown.contains("Updated") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &time_ago(&n.updated_at),
                     &app.search_query,
@@ -2457,29 +2450,29 @@ pub(crate) fn render_tab_todos(
         let header_line = |name: &str| Line::from(sort_header_label(name, sort, icons));
         let header = |name: &str| Cell::from(header_line(name));
 
-        if app.is_column_visible(Tab::Todos, "State") {
+        if shown.contains("State") {
             header_cells.push(Cell::from(
                 header_line("State").alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::Todos, "Project") {
+        if shown.contains("Project") {
             header_cells.push(header("Project"));
             widths.push(Constraint::Length(24));
         }
-        if app.is_column_visible(Tab::Todos, "Type") {
+        if shown.contains("Type") {
             header_cells.push(Cell::from(header_line("Type").alignment(Alignment::Center)));
             widths.push(Constraint::Length(14));
         }
-        if app.is_column_visible(Tab::Todos, "ID") {
+        if shown.contains("ID") {
             header_cells.push(header("ID"));
             widths.push(Constraint::Length(8));
         }
-        if app.is_column_visible(Tab::Todos, "Title") {
+        if shown.contains("Title") {
             header_cells.push(header("Title"));
             widths.push(Constraint::Fill(1));
         }
-        if app.is_column_visible(Tab::Todos, "Updated") {
+        if shown.contains("Updated") {
             header_cells.push(header("Updated"));
             widths.push(Constraint::Length(16));
         }
@@ -2594,9 +2587,10 @@ pub(crate) fn render_tab_milestones(
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
         let cols = app.ordered_columns(Tab::Milestones);
+        let shown = app.shown_columns(Tab::Milestones);
         let sort = app.sort_for(Tab::Milestones);
         for col in &cols {
-            if app.is_column_visible(Tab::Milestones, col) {
+            if shown.contains(col) {
                 header_cells.push(Cell::from(sort_header_label(col, sort, icons)));
                 match *col {
                     "ID" => widths.push(Constraint::Length(8)),
@@ -2614,7 +2608,7 @@ pub(crate) fn render_tab_milestones(
             let mut cells = Vec::new();
             let is_selected = app.milestones.state.selected() == Some(idx);
             for col in &cols {
-                if app.is_column_visible(Tab::Milestones, col) {
+                if shown.contains(col) {
                     match *col {
                         "ID" => {
                             cells.push(super::helpers::render_fuzzy_cell(

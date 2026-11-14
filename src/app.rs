@@ -6267,20 +6267,27 @@ impl App {
         }
     }
 
-    /// Whether `tab`'s table draws `col`: a column this host and scope have,
-    /// enabled under its own name or the other host's name for it.
+    /// Whether `tab`'s table draws `col`. Renderers check every cell against
+    /// one `shown_columns` instead.
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
-        let same_column = crate::column_order::same_column;
-        if !tab
+        self.shown_columns(tab).contains(col)
+    }
+
+    /// The columns `tab`'s table draws: the ones this host and scope have,
+    /// enabled under their own name or the other host's name for them.
+    pub fn shown_columns(&self, tab: Tab) -> crate::column_order::ShownColumns {
+        let enabled = self.enabled_columns.get(&tab);
+        let labels = tab
             .columns(self.kind(), self.scope.is_group())
-            .iter()
-            .any(|label| same_column(label, col))
-        {
-            return false;
-        }
-        self.enabled_columns
-            .get(&tab)
-            .is_none_or(|set| set.iter().any(|name| same_column(name, col)))
+            .into_iter()
+            .filter(|col| {
+                enabled.is_none_or(|set| {
+                    set.iter()
+                        .any(|name| crate::column_order::same_column(name, col))
+                })
+            })
+            .collect();
+        crate::column_order::ShownColumns::new(labels)
     }
 
     /// The tab's sort column and whether it is ascending.
@@ -6294,12 +6301,7 @@ impl App {
     pub fn cycle_sort_column(&mut self, forward: bool) {
         let tab = self.active_tab;
         let mut options: Vec<Option<&str>> = vec![None];
-        options.extend(
-            tab.columns(self.kind(), self.scope.is_group())
-                .into_iter()
-                .filter(|col| self.is_column_visible(tab, col))
-                .map(Some),
-        );
+        options.extend(self.shown_columns(tab).labels().iter().copied().map(Some));
         if options.len() == 1 {
             return;
         }
@@ -9214,13 +9216,8 @@ impl App {
     /// For a table drawing `tab`'s shown columns in built-in order, where
     /// each goes in display order (see `column_order::permute`).
     pub fn column_permutation(&self, tab: Tab) -> Vec<usize> {
-        let visible: Vec<&str> = tab
-            .columns(self.kind(), self.scope.is_group())
-            .into_iter()
-            .filter(|col| self.is_column_visible(tab, col))
-            .collect();
         crate::column_order::display_permutation(
-            &visible,
+            self.shown_columns(tab).labels(),
             self.column_order.get(&tab).map(Vec::as_slice),
         )
     }

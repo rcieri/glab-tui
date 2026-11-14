@@ -86,6 +86,15 @@ impl LayoutSetting {
         }
     }
 
+    /// The longest label, so every setting's value starts in one column.
+    pub fn label_width() -> usize {
+        Self::ALL
+            .iter()
+            .map(|setting| setting.label().len())
+            .max()
+            .unwrap_or(0)
+    }
+
     pub fn value(self, layout: &LayoutConfig) -> String {
         let shown = |is_shown: bool| if is_shown { "shown" } else { "hidden" }.to_string();
         match self {

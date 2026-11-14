@@ -1148,7 +1148,11 @@ fn configure_row_item(
             .style(style)
         }
         ConfigureRow::Layout(layout_setting) => setting_row(
-            format!("  {:<21}", layout_setting.label()),
+            format!(
+                "  {:<width$} ",
+                layout_setting.label(),
+                width = crate::configure_view::LayoutSetting::label_width()
+            ),
             format!("[ {} ]", layout_setting.value(&app.config.layout)),
             t.header_fg,
             plain_style,

@@ -3514,14 +3514,19 @@ impl SubmitDialog {
         if let Some(failure) = &self.merge_methods_failure {
             return Group::Warning(failure.clone());
         }
+        let loading = if self.merge_projects.len() == 1 {
+            "Loading the merge methods this project allows…"
+        } else {
+            "Loading the merge methods these projects allow…"
+        };
         let mut methods = self.merge_projects.iter().map(|project| known.get(project));
         let Some(Some(first)) = methods.next() else {
-            return Group::Info("Loading the merge methods this project allows…".to_string());
+            return Group::Info(loading.to_string());
         };
         let mut shared = Some(first.clone());
         for next in methods {
             let Some(next) = next else {
-                return Group::Info("Loading the merge methods these projects allow…".to_string());
+                return Group::Info(loading.to_string());
             };
             shared = shared.and_then(|s| s.intersect(next));
         }

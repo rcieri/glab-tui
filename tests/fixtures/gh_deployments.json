@@ -4,7 +4,7 @@
     "sha": "f00dcafe00000000000000000000000000000000",
     "ref": "main",
     "environment": "production",
-    "description": "",
+    "description": null,
     "created_at": "2026-07-06T10:00:00Z",
     "updated_at": "2026-07-06T10:05:00Z",
     "creator": {

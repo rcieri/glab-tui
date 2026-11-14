@@ -3803,7 +3803,7 @@ impl Backend for GhBackend {
             #[serde(rename = "ref")]
             ref_name: String,
             #[serde(default)]
-            description: String,
+            description: Option<String>,
             environment: Option<String>,
             created_at: String,
             updated_at: String,
@@ -3835,7 +3835,7 @@ impl Backend for GhBackend {
                         external_url: None,
                     }),
                 deployable: None,
-                description: d.description,
+                description: d.description.unwrap_or_default(),
                 user: d
                     .creator
                     .map(|c| crate::domain::deployments::DeploymentUser { username: c.login }),

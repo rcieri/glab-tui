@@ -11,8 +11,9 @@
 //! note `Hotfix rollout for the login outage`.
 //!
 //! On GitHub the mock `gh` serves `tests/fixtures/gh_environments.json` and
-//! `tests/fixtures/gh_deployments.json` (deployment 100, then 99), and the
-//! newest status of deployment 100 is `failure` while 99's is `success`.
+//! `tests/fixtures/gh_deployments.json` (deployment 100, whose description
+//! is `null` as on most GitHub deployments, then 99), and the newest status
+//! of deployment 100 is `failure` while 99's is `success`.
 
 use crate::TestSession;
 
@@ -84,6 +85,19 @@ fn focused_deployments_select_an_older_deployment_and_show_its_details() {
         screen.contains(DEPLOYMENT_SHA),
         "the deployments of production stay listed:\n{screen}"
     );
+}
+
+#[test]
+fn github_lists_deployments_without_a_description() {
+    let mut session =
+        TestSession::with_config(true, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .expect("Enter lists the deployments, the one with a null description first");
 }
 
 #[test]

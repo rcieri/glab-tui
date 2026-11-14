@@ -2652,4 +2652,27 @@ command = "true"
         let terminal = render_bulk_merge_dialog(80, 24);
         assert_snapshot("form_bulk_merge_80x24", &snapshot_text(&terminal));
     }
+
+    #[test]
+    fn a_long_bulk_branch_delete_lists_the_branches_that_fit_and_counts_the_rest() {
+        const BRANCHES: usize = 60;
+        let names = (1..=BRANCHES).map(|n| format!("branch-{n}")).collect();
+        let terminal = render_dialog(crate::app::ConfirmAction::BulkDeleteBranches(names), 80, 24);
+        let text = snapshot_text(&terminal);
+        let rows: Vec<&str> = text
+            .lines()
+            .map(|line| line.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+            .collect();
+        assert!(rows.contains(&"Are you sure you want to delete 60 selected branches?"));
+        let shown: Vec<&str> = rows
+            .iter()
+            .copied()
+            .filter(|row| row.starts_with("branch-"))
+            .collect();
+        let expected: Vec<String> = (1..=shown.len()).map(|n| format!("branch-{n}")).collect();
+        assert_eq!(shown, expected);
+        assert!(shown.len() >= 3, "only {} branches shown", shown.len());
+        let more = format!("v {} more", BRANCHES - shown.len());
+        assert!(rows.contains(&more.as_str()), "no `{more}` row in\n{text}");
+    }
 }

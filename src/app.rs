@@ -3296,12 +3296,17 @@ impl SubmitDialog {
             ConfirmAction::BulkDeleteBranches(branch_names) => (
                 format!("Delete {} Branches", branch_names.len()),
                 format!(
-                    "Are you sure you want to delete {} selected branches?\n{}",
-                    branch_names.len(),
-                    branch_names.join(", ")
+                    "Are you sure you want to delete {} selected branches?",
+                    branch_names.len()
                 ),
                 "Delete All".to_string(),
-                vec![],
+                vec![Group::new(GroupKind::ItemList(ItemList {
+                    entries: branch_names
+                        .iter()
+                        .cloned()
+                        .map(ListEntry::queued)
+                        .collect(),
+                }))],
             ),
             ConfirmAction::CloseIssue(iid) => (
                 format!("Close Issue #{iid}"),

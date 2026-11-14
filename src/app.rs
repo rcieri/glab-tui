@@ -76,6 +76,17 @@ pub enum Tab {
     Terminal,
 }
 
+/// `labels` without the columns `kind` has no data for: GitHub lists
+/// environments without their last deployment.
+fn environment_columns(mut labels: Vec<&'static str>, kind: BackendKind) -> Vec<&'static str> {
+    if kind.is_github() {
+        let unavailable =
+            crate::ui::list_tab::ColumnDef::label(EnvironmentColumn::DeploymentStatus);
+        labels.retain(|label| *label != unavailable);
+    }
+    labels
+}
+
 impl Tab {
     pub const ALL: [Tab; 11] = [
         Tab::Issues,
@@ -269,7 +280,7 @@ impl Tab {
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Branches => column_labels::<BranchColumn>(),
-            Tab::Environments => column_labels::<EnvironmentColumn>(),
+            Tab::Environments => environment_columns(column_labels::<EnvironmentColumn>(), kind),
             Tab::Terminal => vec![],
         }
     }
@@ -329,7 +340,9 @@ impl Tab {
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Branches => default_column_labels::<BranchColumn>(),
-            Tab::Environments => default_column_labels::<EnvironmentColumn>(),
+            Tab::Environments => {
+                environment_columns(default_column_labels::<EnvironmentColumn>(), kind)
+            }
             Tab::Terminal => vec![],
         }
     }
@@ -5942,6 +5955,21 @@ impl App {
     /// every tab, and rebuilding a hidden view with it would move that tab's
     /// cursor off a row the search hides.
     pub fn sync_list_views(&mut self) {
+        if self.list_navigation(self.active_tab).is_none() {
+            return;
+        }
+        let offered = self.active_tab.columns(self.kind(), self.scope.is_group());
+        // A saved or default column the host offers no data for is not drawn.
+        let offered_enabled: Option<HashSet<String>> = self
+            .enabled_columns
+            .get(&self.active_tab)
+            .filter(|set| set.iter().any(|col| !offered.contains(&col.as_str())))
+            .map(|set| {
+                set.iter()
+                    .filter(|col| offered.contains(&col.as_str()))
+                    .cloned()
+                    .collect()
+            });
         let Self {
             active_tab,
             ref mut runners,
@@ -5957,7 +5985,9 @@ impl App {
         } = *self;
         let inputs = |tab: Tab| ViewInputs {
             query: search_query,
-            enabled_columns: enabled_columns.get(&tab),
+            enabled_columns: offered_enabled
+                .as_ref()
+                .or_else(|| enabled_columns.get(&tab)),
             column_filters: column_filters.get(&tab),
             sort: group_by_column
                 .get(&tab)

@@ -3331,50 +3331,24 @@ impl Backend for GlabBackend {
             state: String,
             #[serde(default)]
             external_url: Option<String>,
-            #[serde(default)]
-            last_deployment: Option<GiDeploy>,
-        }
-        #[derive(Deserialize)]
-        struct GiDeploy {
-            id: u64,
-            iid: u64,
-            #[serde(rename = "ref")]
-            ref_name: String,
-            sha: String,
-            status: String,
-            created_at: String,
-            updated_at: String,
-            #[serde(default)]
-            environment: Option<crate::domain::deployments::EnvironmentInfo>,
-            #[serde(default)]
-            deployable: Option<crate::domain::deployments::Deployable>,
-            #[serde(default)]
-            description: String,
-            #[serde(default)]
-            user: Option<crate::domain::deployments::DeploymentUser>,
         }
         let envs: Vec<GiEnv> = serde_json::from_str(&raw)?;
+        // GitLab's environment list carries no `last_deployment`, so it is
+        // read from the project's newest deployments. An environment whose
+        // deployments are not among them has none, and so has every
+        // environment when that call fails.
+        let deployments = self
+            .list_deployments(scope, page_size.clamp(1, GITLAB_MAX_PER_PAGE), None)
+            .await
+            .unwrap_or_default();
         Ok(envs
             .into_iter()
             .map(|e| Environment {
+                last_deployment: newest_deployment_of(&deployments, &e.name),
                 id: e.id,
                 name: e.name,
                 state: e.state,
                 external_url: e.external_url,
-                last_deployment: e.last_deployment.map(|d| Deployment {
-                    id: d.id,
-                    iid: d.iid,
-                    ref_name: d.ref_name,
-                    tag: d.deployable.as_ref().is_some_and(|job| job.tag),
-                    sha: d.sha,
-                    status: d.status,
-                    created_at: d.created_at,
-                    updated_at: d.updated_at,
-                    environment: d.environment,
-                    deployable: d.deployable,
-                    description: d.description,
-                    user: d.user,
-                }),
             })
             .collect())
     }
@@ -3726,6 +3700,16 @@ const DEFAULT_GITLAB_HOST: &str = "gitlab.com";
 /// `glab runner list --per-page <page_size>` call it follows.
 const RUNNER_DETAILS_QUERY_MAX: usize = 100;
 
+/// The newest of `deployments` made to the environment `name`, whatever its
+/// status.
+fn newest_deployment_of(deployments: &[Deployment], name: &str) -> Option<Deployment> {
+    deployments
+        .iter()
+        .filter(|d| d.environment.as_ref().is_some_and(|env| env.name == name))
+        .max_by_key(|d| d.id)
+        .cloned()
+}
+
 /// Resolve the GitLab host (e.g. `gitlab.com`, `gitlab.example.com`) by
 /// reading `git remote get-url origin` and stripping the path, falling back
 /// to `DEFAULT_GITLAB_HOST` when there is no remote to read. Used to
@@ -3756,6 +3740,33 @@ fn gitlab_runner_url(host: &str, scope: &Scope, runner_id: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deployment_to(id: u64, environment: &str, status: &str) -> Deployment {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "iid": id,
+            "ref_name": "main",
+            "tag": false,
+            "sha": "f00dcafe",
+            "status": status,
+            "created_at": "2026-07-06T10:00:00Z",
+            "updated_at": "2026-07-06T10:05:00Z",
+            "environment": {"name": environment},
+        }))
+        .expect("a valid deployment")
+    }
+
+    #[test]
+    fn last_deployment_is_the_newest_of_its_environment_whatever_its_status() {
+        let deployments = [
+            deployment_to(7, "production", "success"),
+            deployment_to(9, "staging", "success"),
+            deployment_to(8, "production", "failed"),
+        ];
+        let last = newest_deployment_of(&deployments, "production").map(|d| (d.id, d.status));
+        assert_eq!(last, Some((8, "failed".to_string())));
+        assert!(newest_deployment_of(&deployments, "review/x").is_none());
+    }
 
     fn gitlab_todo(action: &str, body: &str, description: Option<&str>) -> serde_json::Value {
         serde_json::json!({

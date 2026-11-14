@@ -66,6 +66,10 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/runner_details_graphql.json"
         exit 0
     fi
+    if [[ "$2" == "graphql" && "$*" == *"pipelines(ids:"* ]]; then
+        cat "$FIXTURES_DIR/pipeline_details_graphql.json"
+        exit 0
+    fi
     if [[ "$2" == "graphql" && "$*" == *"mergeRequests(iids:"* ]]; then
         # Approval and mergeability stay unknown.
         echo '{"data": {"currentUser": {"username": "test-user"}, "project": {"mergeRequests": {"nodes": []}}}}'

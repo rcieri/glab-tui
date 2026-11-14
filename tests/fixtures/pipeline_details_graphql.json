@@ -1,0 +1,3 @@
+{"data":{"project":{"p0":{"nodes":[
+  {"id":"gid://gitlab/Ci::Pipeline/12345","duration":125,"user":{"username":"grace","name":"Grace Hopper"}}
+]}}}}

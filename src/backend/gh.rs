@@ -355,32 +355,65 @@ where
     }
 }
 
-/// Splits `latestReviews` into (every review's author, approving authors
-/// only, whether any latest review requested changes).
+/// Review summary for a GitHub pull request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LatestReviews {
+    /// Authors of every review (approvals, rejections, and comments).
+    pub authors: Vec<String>,
+    /// Authors whose latest opinionated review is `APPROVED`.
+    pub approvers: Vec<String>,
+    /// True when any reviewer's latest opinionated review is `CHANGES_REQUESTED`.
+    pub has_changes_requested: bool,
+}
+
+/// Summarizes PR reviews into unique reviewers, current approvers, and
+/// whether any reviewer currently requests changes.
 ///
-/// Two author lists because they answer different questions: `you_reviewed`
-/// must be true for any review including a rejection, while `approved_by`
-/// must not credit someone who only commented.
-fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, Vec<String>, bool) {
-    let all_authors: Vec<String> = latest_reviews
-        .iter()
-        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
-        .collect();
-    let review_state_is = |r: &&serde_json::Value, state: &str| {
-        r.get("state")
-            .and_then(|s| s.as_str())
-            .map(|s| s.eq_ignore_ascii_case(state))
-            .unwrap_or(false)
-    };
-    let approved_authors: Vec<String> = latest_reviews
-        .iter()
-        .filter(|r| review_state_is(r, "APPROVED"))
-        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
-        .collect();
-    let has_changes_requested = latest_reviews
-        .iter()
-        .any(|r| review_state_is(&r, "CHANGES_REQUESTED"));
-    (all_authors, approved_authors, has_changes_requested)
+/// Keeps each author's newest opinionated review (`APPROVED`, `CHANGES_REQUESTED`,
+/// or `DISMISSED`). A later `COMMENTED` review does not clear an earlier
+/// approval or change request.
+pub fn split_review_authors(reviews: &[serde_json::Value]) -> LatestReviews {
+    let mut all_authors = Vec::new();
+    let mut latest_opinion: std::collections::BTreeMap<String, &str> =
+        std::collections::BTreeMap::new();
+
+    for r in reviews {
+        let Some(author) = r
+            .get("author")
+            .and_then(|a| a.get("login"))
+            .and_then(|l| l.as_str())
+        else {
+            continue;
+        };
+        if !all_authors.iter().any(|a: &String| a == author) {
+            all_authors.push(author.to_string());
+        }
+        if let Some(state) = r.get("state").and_then(|s| s.as_str()) {
+            if state.eq_ignore_ascii_case("APPROVED") {
+                latest_opinion.insert(author.to_string(), "APPROVED");
+            } else if state.eq_ignore_ascii_case("CHANGES_REQUESTED") {
+                latest_opinion.insert(author.to_string(), "CHANGES_REQUESTED");
+            } else if state.eq_ignore_ascii_case("DISMISSED") {
+                latest_opinion.insert(author.to_string(), "DISMISSED");
+            }
+        }
+    }
+
+    let mut approvers = Vec::new();
+    let mut has_changes_requested = false;
+    for (author, state) in latest_opinion {
+        if state == "APPROVED" {
+            approvers.push(author);
+        } else if state == "CHANGES_REQUESTED" {
+            has_changes_requested = true;
+        }
+    }
+
+    LatestReviews {
+        authors: all_authors,
+        approvers,
+        has_changes_requested,
+    }
 }
 
 /// Map GitHub's PR `state` JSON field onto the host-neutral state string.
@@ -429,22 +462,17 @@ pub fn gh_state_from_fields(
     review_decision: Option<&str>,
     mergeable: Option<&str>,
     merge_state_status: Option<&str>,
-    latest_review_authors: Vec<String>,
+    reviews: &LatestReviews,
     current_user: Option<&str>,
-    approved_authors: &[String],
-    has_changes_requested: bool,
 ) -> (
     Option<crate::domain::mr_state::ApprovalState>,
     Option<crate::domain::mr_state::MergeabilityState>,
 ) {
     use crate::domain::mr_state::{ApprovalState, MergeabilityState};
 
-    // `reviewDecision` is null when the branch requires no reviews, so
-    // `approved`/`changes_requested` would otherwise always read false on
-    // such branches no matter what `latestReviews` says. Only then do the
-    // reviews themselves decide: approved needs at least one approval and
-    // no rejection, since a later `CHANGES_REQUESTED` review supersedes an
-    // earlier approval.
+    // `reviewDecision` is null when the branch requires no reviews. The latest
+    // reviews then decide the way GitHub would: one reviewer requesting
+    // changes outweighs every approval.
     let decision = review_decision.filter(|d| !d.is_empty());
     let (approved, changes_requested) = match decision {
         Some(d) => (
@@ -452,23 +480,23 @@ pub fn gh_state_from_fields(
             d.eq_ignore_ascii_case("CHANGES_REQUESTED"),
         ),
         None => (
-            !approved_authors.is_empty() && !has_changes_requested,
-            has_changes_requested,
+            !reviews.approvers.is_empty() && !reviews.has_changes_requested,
+            reviews.has_changes_requested,
         ),
     };
 
     let you_reviewed = current_user
-        .map(|me| latest_review_authors.iter().any(|a| a == me))
+        .map(|me| reviews.authors.iter().any(|a| a == me))
         .unwrap_or(false);
 
-    // `approved_authors` (unlike `latest_review_authors`, which includes
+    // `reviews.approvers` (unlike `reviews.authors`, which includes
     // rejections and comments) is the approvals-only list, so this is the
     // one place the workflow cascade's `you_approved` input can be derived
     // correctly. Without it, this stayed hard-coded `false` and the cascade
     // could never reach `ApprovedByYou` on GitHub — see the regression this
     // guards in the tests below.
     let you_approved = current_user
-        .map(|me| approved_authors.iter().any(|a| a == me))
+        .map(|me| reviews.approvers.iter().any(|a| a == me))
         .unwrap_or(false);
 
     let approval = ApprovalState {
@@ -477,7 +505,7 @@ pub fn gh_state_from_fields(
         approvals_left: None,
         approvals_required: None,
         approved_by: if approved {
-            latest_review_authors
+            reviews.approvers.clone()
         } else {
             Vec::new()
         },
@@ -1886,7 +1914,7 @@ impl Backend for GhBackend {
                             "pr",
                             "list",
                             "--json",
-                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests,url,closingIssuesReferences",
+                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,reviews,latestReviews,mergeable,mergeStateStatus,reviewRequests,url,closingIssuesReferences",
                             "-R",
                             project,
                             "--state",
@@ -1923,6 +1951,8 @@ impl Backend for GhBackend {
                     milestone: Option<GhMs>,
                     #[serde(rename = "reviewDecision", default)]
                     review_decision: Option<String>,
+                    #[serde(default)]
+                    reviews: Vec<serde_json::Value>,
                     #[serde(rename = "latestReviews", default)]
                     latest_reviews: Vec<serde_json::Value>,
                     #[serde(default)]
@@ -1977,21 +2007,19 @@ impl Backend for GhBackend {
                             .into_iter()
                             .map(|a| crate::domain::mr::Assignee { username: a.login })
                             .collect();
-                        let (latest_review_authors, approved_authors, has_changes_requested) =
-                            split_review_authors(&gp.latest_reviews);
+                        let raw_reviews = if !gp.reviews.is_empty() {
+                            &gp.reviews
+                        } else {
+                            &gp.latest_reviews
+                        };
+                        let reviews_summary = split_review_authors(raw_reviews);
                         let (approval, mergeability) = gh_state_from_fields(
                             gp.review_decision.as_deref(),
                             gp.mergeable.as_deref(),
                             gp.merge_state_status.as_deref(),
-                            latest_review_authors,
+                            &reviews_summary,
                             me,
-                            &approved_authors,
-                            has_changes_requested,
                         );
-                        let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
-                            approved_by: approved_authors,
-                            ..a
-                        });
                         let reviewers: Vec<crate::domain::mr::Reviewer> = gp
                             .review_requests
                             .iter()
@@ -4799,18 +4827,46 @@ mod tests {
             serde_json::json!({"author": {"login": "commenter"}, "state": "COMMENTED"}),
         ];
 
-        let (all_authors, approved_authors, has_changes_requested) = split_review_authors(&reviews);
+        let summary = split_review_authors(&reviews);
 
         assert_eq!(
-            all_authors,
+            summary.authors,
             vec![
                 "approver".to_string(),
                 "rejecter".to_string(),
                 "commenter".to_string(),
             ]
         );
-        assert_eq!(approved_authors, vec!["approver".to_string()]);
-        assert!(has_changes_requested);
+        assert_eq!(summary.approvers, vec!["approver".to_string()]);
+        assert!(summary.has_changes_requested);
+    }
+
+    #[test]
+    fn split_review_authors_tracks_latest_opinion_per_author() {
+        let reviews = vec![
+            // user1 requested changes, then later approved
+            serde_json::json!({"author": {"login": "user1"}, "state": "CHANGES_REQUESTED"}),
+            serde_json::json!({"author": {"login": "user1"}, "state": "APPROVED"}),
+            // user2 approved, then requested changes, then commented
+            serde_json::json!({"author": {"login": "user2"}, "state": "APPROVED"}),
+            serde_json::json!({"author": {"login": "user2"}, "state": "CHANGES_REQUESTED"}),
+            serde_json::json!({"author": {"login": "user2"}, "state": "COMMENTED"}),
+            // user3 approved, then dismissed
+            serde_json::json!({"author": {"login": "user3"}, "state": "APPROVED"}),
+            serde_json::json!({"author": {"login": "user3"}, "state": "DISMISSED"}),
+        ];
+
+        let summary = split_review_authors(&reviews);
+        assert_eq!(summary.approvers, vec!["user1".to_string()]);
+        assert!(summary.has_changes_requested);
+        assert_eq!(
+            summary.authors,
+            vec![
+                "user1".to_string(),
+                "user2".to_string(),
+                "user3".to_string()
+            ]
+        );
     }
 
     #[tokio::test]
@@ -4887,10 +4943,8 @@ mod tests {
             Some("REVIEW_REQUIRED"),
             Some("MERGEABLE"),
             Some("BLOCKED"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         let m = merge.unwrap();
         assert!(!m.conflicts);
@@ -4904,10 +4958,8 @@ mod tests {
             None,
             Some("CONFLICTING"),
             Some("DIRTY"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         assert!(merge.unwrap().conflicts);
     }
@@ -4918,10 +4970,8 @@ mod tests {
             None,
             Some("MERGEABLE"),
             Some("BEHIND"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         assert!(merge.unwrap().needs_rebase);
     }
@@ -4933,10 +4983,8 @@ mod tests {
             None,
             Some("UNKNOWN"),
             Some("UNKNOWN"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         let m = merge.unwrap();
         assert!(m.computing);
@@ -4945,7 +4993,7 @@ mod tests {
 
     #[test]
     fn absent_mergeable_is_computing() {
-        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None, &[], false);
+        let (_, merge) = gh_state_from_fields(None, None, None, &LatestReviews::default(), None);
         assert!(merge.unwrap().computing);
     }
 
@@ -4955,10 +5003,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: false,
+            },
             None,
-            &[],
-            false,
         );
         let a = approval.unwrap();
         assert!(a.approved);
@@ -4972,10 +5022,8 @@ mod tests {
             Some("CHANGES_REQUESTED"),
             Some("MERGEABLE"),
             Some("BLOCKED"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         assert!(approval.unwrap().changes_requested);
     }
@@ -4987,10 +5035,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             None,
-            &[],
-            false,
         );
         let a = approval.unwrap();
         assert_eq!(a.approvals_required, None);
@@ -5006,10 +5056,8 @@ mod tests {
             None,
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         let a = approval.unwrap();
         assert!(!a.approved);
@@ -5022,10 +5070,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &[],
-            false,
         );
         let a = approval.unwrap();
         assert_eq!(a.current_user.as_deref(), Some("octocat"));
@@ -5037,10 +5087,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &[],
-            false,
         );
         assert!(approval.unwrap().you_reviewed);
     }
@@ -5051,10 +5103,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["someone.else".to_string()],
+            &LatestReviews {
+                authors: vec!["someone.else".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &[],
-            false,
         );
         assert!(!approval.unwrap().you_reviewed);
     }
@@ -5065,10 +5119,8 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
-            false,
         );
         assert_eq!(approval.unwrap().current_user, None);
     }
@@ -5084,10 +5136,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &["octocat".to_string()],
-            false,
         );
         assert!(approval.unwrap().you_approved);
     }
@@ -5098,10 +5152,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["someone.else".to_string()],
+            &LatestReviews {
+                authors: vec!["someone.else".to_string()],
+                approvers: vec!["someone.else".to_string()],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &["someone.else".to_string()],
-            false,
         );
         assert!(!approval.unwrap().you_approved);
     }
@@ -5114,10 +5170,12 @@ mod tests {
             None,
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: false,
+            },
             None,
-            &["octocat".to_string()],
-            false,
         );
         let a = approval.unwrap();
         assert!(a.approved);
@@ -5130,10 +5188,12 @@ mod tests {
             None,
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: true,
+            },
             None,
-            &[],
-            true,
         );
         let a = approval.unwrap();
         assert!(!a.approved);
@@ -5142,15 +5202,17 @@ mod tests {
 
     #[test]
     fn null_review_decision_with_both_signals_is_not_approved() {
-        // A later `CHANGES_REQUESTED` review supersedes an earlier approval.
+        // One reviewer requesting changes outweighs another reviewer's approval.
         let (approval, _) = gh_state_from_fields(
             None,
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string(), "critic".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string(), "critic".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: true,
+            },
             None,
-            &["octocat".to_string()],
-            true,
         );
         assert!(!approval.unwrap().approved);
     }

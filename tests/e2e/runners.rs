@@ -65,16 +65,14 @@ fn test_github_runners_tab_does_not_offer_pause_resume_or_edit() {
         .wait_for_screen_contains("Open runner in browser", 3_000)
         .unwrap();
     let help = session.emulator.get_text();
-    assert!(!help.contains("Pause / Resume runner"), "{help}");
+    assert!(!help.contains("Pause runner"), "{help}");
+    assert!(!help.contains("Resume runner"), "{help}");
     assert!(!help.contains("Edit runner description text"), "{help}");
     assert!(
-        help.contains("Cycle status filter (Online, Offline, All)"),
+        help.contains("Cycle the status filter: Online, Offline, All"),
         "{help}"
     );
-    assert!(
-        !help.contains("Cycle status filter (Online, Paused, Offline, All)"),
-        "{help}"
-    );
+    assert!(!help.contains("Online, Paused, Offline"), "{help}");
 }
 
 /// The preview carries each runner's routing metadata from the GraphQL

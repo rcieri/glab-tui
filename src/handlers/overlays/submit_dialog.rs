@@ -6,19 +6,32 @@ use crate::handlers::tabs::{
     OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
     spawn_cancel_jobs,
 };
-use crossterm::event::KeyEvent;
+use crate::keybinding::KeyPress;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn handle_submit_dialog(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
     let Some(dialog) = app.submit_dialog.as_mut() else {
         return false;
     };
-    let action = dialog.form.handle_key(key_event);
+    if dialog.form.is_editing() {
+        let action = dialog.form.handle_key(key_event);
+        apply_form_action(app, action, tx, fx);
+        return true;
+    }
+
+    let action = match app
+        .config
+        .keybindings
+        .resolve(crate::keymap::KeyContext::Dialog, key_event)
+    {
+        Some(action) => dialog.form.handle_action(action),
+        None => dialog.form.handle_unbound_key(key_event),
+    };
     apply_form_action(app, action, tx, fx);
     true
 }

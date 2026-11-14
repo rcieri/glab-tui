@@ -581,6 +581,76 @@ impl Form {
             .collect()
     }
 
+    pub fn handle_action(&mut self, action: crate::keymap::Action) -> FormAction {
+        use crate::keymap::Action;
+        match action {
+            Action::DialogCancel => FormAction::Cancel,
+            Action::DialogNext => {
+                self.step_stop(1);
+                FormAction::None
+            }
+            Action::DialogPrevious => {
+                self.step_stop(-1);
+                FormAction::None
+            }
+            Action::DialogNextField => {
+                self.step_row(1);
+                FormAction::None
+            }
+            Action::DialogPreviousField => {
+                self.step_row(-1);
+                FormAction::None
+            }
+            Action::DialogNextButton => {
+                self.step_across(1);
+                FormAction::None
+            }
+            Action::DialogPreviousButton => {
+                self.step_across(-1);
+                FormAction::None
+            }
+            Action::DialogToggleOption => {
+                self.press_focused();
+                FormAction::None
+            }
+            Action::DialogActivate => match self.focus {
+                Focus::Button(button) => FormAction::Activate(button),
+                _ if self.focused_line_input().is_some() => FormAction::Activate(self.primary),
+                _ => {
+                    self.press_focused();
+                    FormAction::None
+                }
+            },
+            Action::DialogSubmit => {
+                if self.focus == Focus::Button(self.primary) {
+                    FormAction::Activate(self.primary)
+                } else {
+                    FormAction::None
+                }
+            }
+            _ => FormAction::None,
+        }
+    }
+
+    pub fn handle_unbound_key(&mut self, key: &KeyEvent) -> FormAction {
+        let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if is_ctrl && key.code == KeyCode::Char('e') {
+            return self.open_editor();
+        }
+        match key.code {
+            KeyCode::Char('e') => self.open_editor(),
+            KeyCode::Char('i') if self.focused_line_input().is_some() => {
+                self.start_editing();
+                FormAction::None
+            }
+            KeyCode::Char(c) => {
+                self.press_section_with_key(c);
+                FormAction::None
+            }
+            _ => FormAction::None,
+        }
+    }
+
     pub fn handle_key(&mut self, key: &KeyEvent) -> FormAction {
         let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if is_ctrl && key.code == KeyCode::Char('e') {

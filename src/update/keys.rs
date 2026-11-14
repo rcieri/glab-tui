@@ -6,8 +6,8 @@ use crate::handlers::overlays::{
     handle_submit_dialog, handle_switch_repo,
 };
 use crate::handlers::{self, refresh::handle_refresh};
-use crate::keybinding::{KeyPress, keybinding_matches};
-use crossterm::event::{KeyCode, KeyModifiers};
+use crate::keybinding::KeyPress;
+use crate::keymap::Action;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Routes a resolved keypress: overlays first, then the global keys, then
@@ -18,25 +18,35 @@ pub(super) fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalForceQuit, key_event)
+    {
         if app
             .review_submit
             .as_ref()
             .is_some_and(|o| o.is_submitting())
         {
-            app.show_notice(
-                "A review is being posted: press Ctrl+C again once it finishes".to_string(),
-            );
+            app.show_notice(format!(
+                "A review is being posted: press {} again once it finishes",
+                app.config.keybindings.display(Action::GlobalForceQuit)
+            ));
             return;
         }
         fx.quit();
         return;
     }
 
-    if keybinding_matches(&app.config.keybindings.global.quit, key_event)
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalQuit, key_event)
         && app.text_input.is_none()
         && app.edit_menu.is_none()
         && app.selector.is_none()
+        && app.submit_dialog.is_none()
+        && app.date_picker.is_none()
         && !app.show_help
         && app.review_threads.is_none()
         && app.review_submit.is_none()
@@ -44,11 +54,7 @@ pub(super) fn handle_key(
         && !app.focus_column_checklist
         && !app.is_typing_search
         && !app.job_trace_searching
-        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
-        && !app
-            .submit_dialog
-            .as_ref()
-            .is_some_and(|d| d.form.is_editing())
+        && app.diff_view.is_none()
     {
         fx.quit();
         return;
@@ -96,7 +102,10 @@ pub(super) fn handle_key(
     }
     if app.active_tab == crate::app::Tab::Jobs
         && app.job_trace.is_some()
-        && key_event.code == KeyCode::Esc
+        && app
+            .config
+            .keybindings
+            .matches(Action::JobsClearTraceSearch, key_event)
         && !app.job_trace_search_query.is_empty()
     {
         app.job_trace_search_query.clear();
@@ -105,7 +114,10 @@ pub(super) fn handle_key(
 
     if app.active_tab == crate::app::Tab::Jobs
         && app.job_trace.is_some()
-        && keybinding_matches(&app.config.keybindings.jobs.trace_search, key_event)
+        && app
+            .config
+            .keybindings
+            .matches(Action::JobsTraceSearch, key_event)
     {
         app.job_trace_search_query.clear();
         app.job_trace_searching = true;
@@ -116,7 +128,10 @@ pub(super) fn handle_key(
         handlers::search::handle_search_bar_key(app, key_event);
         return;
     }
-    if keybinding_matches(&app.config.keybindings.global.search, key_event)
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalSearch, key_event)
         && !app.is_typing_search
         && app.text_input.is_none()
         && app.edit_menu.is_none()
@@ -127,7 +142,10 @@ pub(super) fn handle_key(
         return;
     }
 
-    if keybinding_matches(&app.config.keybindings.global.jump_to_id, key_event)
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalJumpToId, key_event)
         && !app.is_typing_search
         && app.text_input.is_none()
         && app.edit_menu.is_none()
@@ -169,22 +187,36 @@ pub(super) fn handle_key(
         && app.selector.is_none()
         && !app.focus_column_checklist
     {
-        let keys = &app.config.keybindings.global;
-        if keybinding_matches(&keys.sort_next, key_event) {
+        if app
+            .config
+            .keybindings
+            .matches(Action::GlobalSortNext, key_event)
+        {
             app.cycle_sort_column(true);
             return;
         }
-        if keybinding_matches(&keys.sort_prev, key_event) {
+        if app
+            .config
+            .keybindings
+            .matches(Action::GlobalSortPrev, key_event)
+        {
             app.cycle_sort_column(false);
             return;
         }
-        if keybinding_matches(&keys.sort_reverse, key_event) {
+        if app
+            .config
+            .keybindings
+            .matches(Action::GlobalSortReverse, key_event)
+        {
             app.reverse_sort_order();
             return;
         }
     }
 
-    if keybinding_matches(&app.config.keybindings.global.configure, key_event)
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalConfigure, key_event)
         && !app.focus_column_checklist
         && app.text_input.is_none()
         && app.edit_menu.is_none()
@@ -196,13 +228,13 @@ pub(super) fn handle_key(
         return;
     }
 
-    if key_event.code == KeyCode::Char(',') && !app.focus_column_checklist {
-        app.focus_column_checklist = true;
-        app.column_checklist_idx = 0;
-        return;
-    }
-
-    if key_event.code == KeyCode::Esc
+    // Taken before leave_scope swaps the scope, so the sync below reloads the
+    // group it returns to.
+    let old_scope = app.scope.clone();
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalLeaveScope, key_event)
         && !app.focus_column_checklist
         && app.text_input.is_none()
         && app.edit_menu.is_none()
@@ -216,7 +248,6 @@ pub(super) fn handle_key(
         }
     }
 
-    let old_scope = app.scope.clone();
     handlers::tabs::handle_active_tab_key(app, key_event, tx, fx);
     handlers::scope::sync_after_scope_change(app, &old_scope, tx, fx);
 }

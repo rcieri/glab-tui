@@ -409,7 +409,7 @@ fn test_ctrl_c_does_not_quit_while_the_review_is_posted() {
     session.send_input(b"\x03");
     session
         .wait_for_screen_contains(
-            "A review is being posted: press Ctrl+C again once it finishes",
+            "A review is being posted: press Ctrl+c again once it finishes",
             5000,
         )
         .expect("Ctrl+C must not quit while the review is posted");

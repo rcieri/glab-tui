@@ -3,7 +3,6 @@ use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
 use crate::git_helpers::get_workflow_files;
 use crate::keybinding::KeyPress;
-use crate::keybinding::keybinding_matches;
 use crate::templates::list_templates;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::widgets::ListState;
@@ -89,14 +88,10 @@ pub fn handle_key(
     let Some(mut menu) = app.edit_menu.take() else {
         return;
     };
-    let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(
-            key_event.code,
-            KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('\x18')
-        ))
-        || key_event.code == KeyCode::Char('\x18');
-    let is_submit_edit =
-        keybinding_matches(&app.config.keybindings.global.submit_edit, key_event) || is_ctrl_x;
+    let is_submit_edit = app
+        .config
+        .keybindings
+        .matches(crate::keymap::Action::EditMenuSubmit, key_event);
 
     if !is_submit_edit && menu.editing {
         match key_event.code {

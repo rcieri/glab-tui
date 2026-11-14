@@ -455,7 +455,7 @@ pub fn spawn_refresh_active_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if tab.is_fetchable_in(scope) {
+    if tab.is_fetchable_in(scope, client.kind()) {
         fx.spawn(refresh_tab(client.clone(), scope.clone(), states, tab, tx));
     }
 }
@@ -470,7 +470,7 @@ pub async fn refresh_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if !tab.is_fetchable_in(&scope) {
+    if !tab.is_fetchable_in(&scope, client.kind()) {
         return;
     }
     client.tx = None; // suppress terminal log for background fetches
@@ -940,6 +940,9 @@ fn prefetch_pipeline_jobs(
     fx: &mut Effects,
 ) {
     if let Some(client) = &app.gitlab_client {
+        if !app::Tab::Pipelines.is_fetchable_in(&app.scope, client.kind()) {
+            return;
+        }
         if let Some(idx) = app.pipelines.state.selected() {
             let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
             if let Some(pipe_id) = pipe_id {

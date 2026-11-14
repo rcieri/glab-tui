@@ -69,25 +69,50 @@ fn closing_an_mr_in_group_scope_targets_the_selected_rows_project() {
 }
 
 #[test]
-fn own_jobs_key_in_group_scope_fetches_from_the_rows_project() {
+fn gitlab_group_scope_pipelines_tab_shows_placeholder_and_requests_no_pipelines() {
     let mut session = TestSession::launch_with_args(
         Sandbox::new(false).unwrap(),
         30,
         140,
-        &["-g", "test-group"],
+        &["-g", "test-group", "--tab", "pipelines"],
         &[],
     );
     session
-        .wait_for_screen_contains("Issues", 5000)
-        .expect("app starts");
-    session.send_input(b"ll");
+        .wait_for_screen_contains("Pipelines tab is not available in group scope", 8000)
+        .expect("the tab shows the group-scope placeholder");
+    session.settle(1500);
+
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Group-level pipelines not supported")
+            && !screen.contains("Failed to fetch pipelines"),
+        "no error toast: {screen}"
+    );
+    let calls = session.get_cli_calls();
+    assert!(
+        !calls
+            .lines()
+            .any(|l| l.contains("ci list") || l.contains("/pipelines")),
+        "no pipeline is requested; calls:\n{calls}"
+    );
+}
+
+#[test]
+fn own_jobs_key_in_github_org_scope_fetches_from_the_runs_repository() {
+    let mut session = TestSession::launch_with_args(
+        Sandbox::new(true).unwrap(),
+        30,
+        140,
+        &["-g", "acme", "--tab", "pipelines"],
+        &[],
+    );
     session
-        .wait_for_screen_contains("7002", 5000)
-        .expect("the group pipeline is listed");
-    // Highlighting a pipeline already fetches its jobs for the preview, so
-    // only the calls made after Alt+j count.
+        .wait_for_screen_contains("12345", 5000)
+        .expect("the org's run is listed");
+    // Highlighting a run already fetches its jobs for the preview, so only
+    // the calls made after Alt+j count.
     session.settle(1000);
-    let row_project_jobs = "projects/test-group%2Fbeta/pipelines/7002/jobs";
+    let row_project_jobs = "run view 12345 --json jobs --jq .jobs -R acme/project-b";
     let before = session.get_cli_calls().matches(row_project_jobs).count();
 
     session.send_input(b"\x1bj"); // Alt+j
@@ -97,11 +122,13 @@ fn own_jobs_key_in_group_scope_fetches_from_the_rows_project() {
     let after = calls.matches(row_project_jobs).count();
     assert!(
         after > before,
-        "Alt+j fetches jobs from the pipeline's project (before {before}, after {after}); calls:\n{calls}"
+        "Alt+j fetches jobs from the run's repository (before {before}, after {after}); calls:\n{calls}"
     );
     assert!(
-        !calls.contains("projects/test-group/pipelines/7002/jobs"),
-        "the group path is not a project; calls:\n{calls}"
+        !calls
+            .lines()
+            .any(|l| l.contains("--jq .jobs") && l.ends_with("-R acme")),
+        "the org is not a repository; calls:\n{calls}"
     );
 }
 

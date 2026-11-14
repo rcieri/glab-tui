@@ -114,12 +114,12 @@ impl Tab {
         }
     }
 
-    /// Whether this tab's list can be fetched in `scope`. Runners are listed
-    /// per repository only, so in group scope the fetch could only fail on
-    /// every refresh.
-    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope) -> bool {
+    /// Whether this tab's list can be fetched in `scope` on `kind`.
+    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope, kind: BackendKind) -> bool {
         match self {
             Tab::Runners => scope.is_repository(),
+            // GitLab has no group pipelines endpoint.
+            Tab::Pipelines => scope.is_repository() || kind.is_github(),
             _ => true,
         }
     }
@@ -8814,6 +8814,16 @@ mod tests {
     use super::*;
     use crate::domain::issues::{Author, Issue};
     use crate::domain::milestones::Milestone;
+
+    #[test]
+    fn pipelines_are_not_fetched_in_gitlab_group_scope() {
+        let group = crate::scope::Scope::Group("acme".to_string());
+        let repo = crate::scope::Scope::Repository("acme/app".to_string());
+        assert!(!Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitLab));
+        assert!(Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitHub));
+        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitLab));
+        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitHub));
+    }
 
     #[test]
     fn milestone_state_display_uppercases_known_states() {

@@ -502,8 +502,8 @@ pub trait Backend: Send + Sync {
 
     // ── Pipelines ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
-    /// items each HTTP call asks for.  For `Scope::Group` aggregates across all projects
-    /// in the group/org.
+    /// items each HTTP call asks for. For `Scope::Group`, GitHub aggregates across the
+    /// org's repositories and GitLab returns `Err`.
     async fn list_pipelines(
         &self,
         scope: &Scope,

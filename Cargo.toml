@@ -31,7 +31,10 @@ anyhow = "1.0.86"
 chrono = "0.4.45"
 tempfile = "3.10"
 fuzzy-matcher = "0.3.7"
-syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+syntect = { version = "5", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+similar = { version = "3.2", default-features = false }
+unicode-segmentation = "1.13"
 async-trait = "0.1.89"
 clap = { version = "4", features = ["derive"] }
 serde-saphyr = { version = "1.1", default-features = false, features = ["deserialize"] }

@@ -3,7 +3,6 @@ use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
 use crate::git_helpers::get_workflow_files;
 use crate::keybinding::KeyPress;
-use crate::keybinding::keybinding_matches;
 use crate::templates::list_templates;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::widgets::ListState;
@@ -89,14 +88,10 @@ pub fn handle_key(
     let Some(mut menu) = app.pop_edit_menu() else {
         return;
     };
-    let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(
-            key_event.code,
-            KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('\x18')
-        ))
-        || key_event.code == KeyCode::Char('\x18');
-    let is_submit_edit =
-        keybinding_matches(&app.config.keybindings.global.submit_edit, key_event) || is_ctrl_x;
+    let is_submit_edit = app
+        .config
+        .keybindings
+        .matches(crate::keymap::Action::EditMenuSubmit, key_event);
 
     if !is_submit_edit && menu.editing {
         match key_event.code {
@@ -1582,6 +1577,14 @@ pub fn handle_key(
                     } else {
                         app.scope.as_str().to_string()
                     };
+                    let milestone = match app.listed_milestone(&project, entity_iid) {
+                        Ok(milestone) => milestone,
+                        Err(e) => {
+                            app.show_error(e.to_string());
+                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            return;
+                        }
+                    };
                     let tx = tx.clone();
                     let tab = app.active_tab;
                     fx.spawn(async move {
@@ -1601,7 +1604,7 @@ pub fn handle_key(
                                 Some(due_date.as_str())
                             };
                         match client
-                            .update_milestone(&project, entity_iid, &title, &description, sd, dd)
+                            .update_milestone(&project, &milestone, &title, &description, sd, dd)
                             .await
                         {
                             Ok(_) => {
@@ -2378,5 +2381,56 @@ mod tests {
                 ("debug".to_string(), "bool(false)".to_string())
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn submitting_an_unlisted_milestone_keeps_the_typed_fields() {
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.push_modal(crate::app::Modal::EditMenu(Box::new(
+            crate::app::EditMenu {
+                title: "Edit Milestone %3".to_string(),
+                entity_project: "acme/alpha".to_string(),
+                fields: vec![
+                    crate::app::Field::text("Title", "Typed title".to_string()),
+                    crate::app::Field::text("Description", "Typed description".to_string()),
+                ],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 3,
+                entity_kind: crate::app::EditEntityKind::EditMilestone,
+                state: ratatui::widgets::ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            },
+        )));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+        let ctrl_x = KeyPress::from(crossterm::event::KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::CONTROL,
+        ));
+
+        handle_key(&mut app, &ctrl_x, &tx, &mut fx);
+
+        let menu = app.edit_menu().expect("edit menu still open");
+        let values: Vec<&str> = menu.fields.iter().map(|f| f.value.as_str()).collect();
+        assert_eq!(values, vec!["Typed title", "Typed description"]);
+        assert_eq!(
+            app.toast_notice().map(|n| n.text()),
+            Some("Milestone 3 is not listed; refresh the Milestones tab")
+        );
+        assert!(fx.into_vec().is_empty(), "no update may be sent");
     }
 }

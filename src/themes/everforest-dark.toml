@@ -29,7 +29,15 @@ label_palette_6 = "#fa7850"
 label_palette_7 = "#28c8c8"
 label_palette_8 = "#b4e628"
 label_palette_9 = "#dca0ff"
+diff_addition_emph_bg = "#4e5b39"
+diff_deletion_emph_bg = "#6e3b3b"
 diff_gutter_bg = "#2d353b"
 diff_sep = "#859289"
 
 badge_group_bg = "#00bcd4"
+
+# ── Forms ──
+accent = "#d699b6"
+key_hint = "#dbbc7f"
+danger_border = "#e67e80"
+backdrop_dim = "#859289"

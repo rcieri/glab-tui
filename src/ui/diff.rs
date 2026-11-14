@@ -422,6 +422,7 @@ mod tests {
             old_line_num: Some(1),
             new_line_num: None,
             syntax_highlighted: None,
+            changed_ranges: Vec::new(),
             fuzzy_indices: None,
         }];
         let prefix = "prefix";

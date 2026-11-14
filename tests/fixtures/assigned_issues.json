@@ -1,0 +1,4 @@
+[
+  {"iid": 7, "title": "Assigned to test-user", "state": "opened", "updated_at": "2026-07-06T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [{"username": "test-user"}], "web_url": ""}
+]

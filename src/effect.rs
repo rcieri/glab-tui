@@ -126,6 +126,8 @@ pub enum EditPurpose {
     DiffComment { draft: DraftComment },
     /// A code suggestion on the open diff, anchored like `draft`.
     DiffSuggestion { draft: DraftComment },
+    /// The line input at `path` in the open confirmation dialog's form.
+    DialogField { path: crate::form::GroupPath },
 }
 
 impl ForegroundJob {

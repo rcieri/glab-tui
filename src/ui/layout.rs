@@ -2,6 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::Tab;
 use crate::config::{LayoutConfig, PaneSize, PreviewPlacement};
+use crate::ui::compaction::{self, PreviewPlacement as Placement};
 
 pub const MIN_TERMINAL_WIDTH: u16 = 54;
 pub const MIN_TERMINAL_HEIGHT: u16 = 10;
@@ -12,11 +13,10 @@ pub const BANNER_MODE_WIDTH: u16 = 12;
 pub const AUTO_PREVIEW_LARGE_WIDTH_THRESHOLD: u16 = 150;
 /// `preview_width = "auto"`: wider terminals than this (up to the large
 /// threshold) give the preview `AUTO_PREVIEW_MEDIUM_WIDTH` columns, narrower
-/// ones `AUTO_PREVIEW_SMALL_WIDTH`.
+/// ones `compaction::MIN_PREVIEW_COLUMNS`.
 pub const AUTO_PREVIEW_MEDIUM_WIDTH_THRESHOLD: u16 = 100;
 pub const AUTO_PREVIEW_LARGE_PERCENTAGE: u16 = 35;
 pub const AUTO_PREVIEW_MEDIUM_WIDTH: u16 = 45;
-pub const AUTO_PREVIEW_SMALL_WIDTH: u16 = 30;
 /// `preview_height = "auto"`: a bottom preview takes this share of the list
 /// column.
 pub const AUTO_PREVIEW_HEIGHT_PERCENTAGE: u16 = 50;
@@ -74,14 +74,6 @@ pub struct LayoutState {
     pub details_zoomed: bool,
     pub can_zoom: bool,
     pub edit_zoomed: bool,
-}
-
-/// Where the preview ends up for the current terminal size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PreviewSlot {
-    Right,
-    Bottom,
-    Hidden,
 }
 
 /// The computed geometry for all top-level UI regions.
@@ -166,28 +158,6 @@ impl LayoutPlan {
         } else {
             0
         };
-        let slot = if state.active_tab == Tab::Terminal {
-            PreviewSlot::Hidden
-        } else {
-            preview_slot(panes, size.width)
-        };
-        let shows_preview = state.detail_visible && state.active_tab != Tab::Terminal;
-
-        let right_constraint = if shows_preview && slot == PreviewSlot::Right {
-            preview_width_constraint(panes.preview_width, size.width)
-        } else {
-            Constraint::Length(0)
-        };
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(nav_width),
-                Constraint::Min(MIN_LIST_WIDTH),
-                right_constraint,
-            ])
-            .split(workspace_area);
-        let list_column = columns[1];
-
         let term_height = if state.active_tab != Tab::Terminal
             && panes.terminal_pane_visible
             && size.height >= panes.terminal_pane_min_height
@@ -196,14 +166,39 @@ impl LayoutPlan {
         } else {
             0
         };
+        let placement = if state.detail_visible && state.active_tab != Tab::Terminal {
+            place_preview(panes, workspace_area, term_height)
+        } else {
+            Placement::Hidden
+        };
+
+        let beside_columns = match placement {
+            Placement::Beside { columns } => columns,
+            Placement::Below { .. } | Placement::Hidden => 0,
+        };
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(nav_width),
+                Constraint::Min(MIN_LIST_WIDTH),
+                Constraint::Length(beside_columns),
+            ])
+            .split(workspace_area);
+
+        let terminal_rows = match placement {
+            Placement::Below {
+                terminal_log: false,
+            } => 0,
+            _ => term_height,
+        };
         let term_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(MIN_LIST_HEIGHT),
-                Constraint::Length(term_height),
+                Constraint::Length(terminal_rows),
             ])
-            .split(list_column);
-        let bottom_constraint = if shows_preview && slot == PreviewSlot::Bottom {
+            .split(columns[1]);
+        let bottom_constraint = if matches!(placement, Placement::Below { .. }) {
             preview_height_constraint(panes.preview_height)
         } else {
             Constraint::Length(0)
@@ -213,13 +208,12 @@ impl LayoutPlan {
             .constraints([Constraint::Min(MIN_LIST_HEIGHT), bottom_constraint])
             .split(term_split[0]);
 
-        let detail_rect = match slot {
-            _ if !state.detail_visible => Rect::default(),
-            PreviewSlot::Right => columns[2],
-            PreviewSlot::Bottom => rows[1],
-            PreviewSlot::Hidden => Rect::new(columns[2].x, columns[2].y, 0, columns[2].height),
+        let detail_rect = match placement {
+            Placement::Beside { .. } => columns[2],
+            Placement::Below { .. } => rows[1],
+            Placement::Hidden => Rect::default(),
         };
-        let term_area = if term_height > 0 {
+        let term_area = if terminal_rows > 0 {
             term_split[1]
         } else {
             Rect::default()
@@ -265,27 +259,47 @@ impl LayoutPlan {
     }
 }
 
-fn preview_slot(panes: PaneSettings, terminal_width: u16) -> PreviewSlot {
-    let is_wide = terminal_width >= panes.preview_min_width;
+/// Where the preview goes in `workspace` for the configured placement. The
+/// room beside the list is measured as if the sidebar were shown, so leaving
+/// it out on a narrow terminal never moves the preview back beside the list.
+fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Placement {
+    let nav_width = if panes.nav_visible {
+        panes.nav_width
+    } else {
+        0
+    };
+    let room = Rect {
+        width: workspace.width.saturating_sub(nav_width),
+        ..workspace
+    };
+    let is_wide = workspace.width >= panes.preview_min_width;
+    let columns = preview_columns(panes.preview_width, workspace.width);
     match panes.preview {
-        PreviewPlacement::Right if is_wide => PreviewSlot::Right,
-        PreviewPlacement::Auto if is_wide => PreviewSlot::Right,
-        PreviewPlacement::Auto | PreviewPlacement::Bottom => PreviewSlot::Bottom,
-        PreviewPlacement::Right | PreviewPlacement::Off => PreviewSlot::Hidden,
+        PreviewPlacement::Right if is_wide => {
+            compaction::place_preview_beside(room, columns, terminal_rows)
+        }
+        PreviewPlacement::Auto if is_wide => {
+            compaction::place_preview(room, columns, terminal_rows)
+        }
+        PreviewPlacement::Auto | PreviewPlacement::Bottom => {
+            compaction::place_preview_below(room, terminal_rows)
+        }
+        PreviewPlacement::Right | PreviewPlacement::Off => Placement::Hidden,
     }
 }
 
-fn preview_width_constraint(width: PaneSize, terminal_width: u16) -> Constraint {
-    match width {
-        PaneSize::Cells(cells) => Constraint::Length(cells),
-        PaneSize::Percent(percent) => Constraint::Percentage(percent),
-        PaneSize::Auto if terminal_width > AUTO_PREVIEW_LARGE_WIDTH_THRESHOLD => {
-            Constraint::Percentage(AUTO_PREVIEW_LARGE_PERCENTAGE)
+/// Columns the preview asks for beside the list in a workspace `width` wide,
+/// before compaction narrows it to keep the list readable.
+fn preview_columns(size: PaneSize, width: u16) -> u16 {
+    let share = |percent: u16| (u32::from(width) * u32::from(percent) / 100) as u16;
+    match size {
+        PaneSize::Cells(cells) => cells,
+        PaneSize::Percent(percent) => share(percent),
+        PaneSize::Auto if width > AUTO_PREVIEW_LARGE_WIDTH_THRESHOLD => {
+            share(AUTO_PREVIEW_LARGE_PERCENTAGE)
         }
-        PaneSize::Auto if terminal_width > AUTO_PREVIEW_MEDIUM_WIDTH_THRESHOLD => {
-            Constraint::Length(AUTO_PREVIEW_MEDIUM_WIDTH)
-        }
-        PaneSize::Auto => Constraint::Length(AUTO_PREVIEW_SMALL_WIDTH),
+        PaneSize::Auto if width > AUTO_PREVIEW_MEDIUM_WIDTH_THRESHOLD => AUTO_PREVIEW_MEDIUM_WIDTH,
+        PaneSize::Auto => compaction::MIN_PREVIEW_COLUMNS,
     }
 }
 
@@ -375,9 +389,16 @@ mod tests {
         let plan = LayoutPlan::compute(inputs);
         assert_eq!(plan.detail_rect_opt(), None);
 
-        assert!(!LayoutPlan::compute(base_inputs(89, 30)).has_detail());
+        let plan_89 = LayoutPlan::compute(base_inputs(89, 30));
+        assert!(plan_89.has_detail());
+        assert_eq!(plan_89.detail_rect.y, plan_89.content_area.bottom());
+
         assert_eq!(
             LayoutPlan::compute(base_inputs(95, 30)).detail_rect.width,
+            30
+        );
+        assert_eq!(
+            LayoutPlan::compute(base_inputs(101, 30)).detail_rect.width,
             30
         );
         assert_eq!(
@@ -499,7 +520,9 @@ mod tests {
     fn oversized_panes_shrink_before_the_list_does() {
         let mut wide = base_inputs(90, 30);
         wide.panes.nav_width = 40;
-        wide.panes.preview_width = PaneSize::Percent(60);
+        wide.panes.preview = PreviewPlacement::Off;
+        wide.size.width = 60;
+        wide.panes.nav_min_width = 60;
         assert_eq!(LayoutPlan::compute(wide).content_area.width, MIN_LIST_WIDTH);
 
         let mut tall = base_inputs(100, 20);

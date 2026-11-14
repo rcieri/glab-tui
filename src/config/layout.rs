@@ -8,14 +8,17 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PreviewPlacement {
-    /// Right of the list, hidden while the workspace is narrower than
-    /// `preview_min_width`.
-    #[default]
+    /// Right of the list, narrowed to keep the list readable, and hidden
+    /// while the workspace is narrower than `preview_min_width` or the list
+    /// would still be too narrow.
     Right,
-    /// Below the list, at any width.
+    /// Below the list. The terminal pane gives way first, then the preview,
+    /// on terminals too short for both.
     Bottom,
-    /// Right of the list, moving below it while the workspace is narrower
-    /// than `preview_min_width`.
+    /// Right of the list, narrowed to keep the list readable, moving below
+    /// it while the workspace is narrower than `preview_min_width` or the
+    /// list would still be too narrow.
+    #[default]
     Auto,
     /// Never beside the list. A zoomed preview or an edit form still fills
     /// the workspace.
@@ -24,9 +27,9 @@ pub enum PreviewPlacement {
 
 impl PreviewPlacement {
     pub const ALL: [PreviewPlacement; 4] = [
+        PreviewPlacement::Auto,
         PreviewPlacement::Right,
         PreviewPlacement::Bottom,
-        PreviewPlacement::Auto,
         PreviewPlacement::Off,
     ];
 

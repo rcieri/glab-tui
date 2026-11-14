@@ -420,9 +420,9 @@ mod tests {
         focus_row(&mut app, ConfigureRow::Layout(LayoutSetting::Preview));
 
         press(&mut app, KeyCode::Char('l'));
-        assert_eq!(app.config.layout.preview, PreviewPlacement::Bottom);
-        press(&mut app, KeyCode::Char('h'));
         assert_eq!(app.config.layout.preview, PreviewPlacement::Right);
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.config.layout.preview, PreviewPlacement::Auto);
     }
 
     #[test]

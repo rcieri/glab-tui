@@ -351,7 +351,7 @@ mod tests {
         LayoutSetting::Preview.step(&mut layout, false);
         assert_eq!(layout.preview, PreviewPlacement::Off);
         LayoutSetting::Preview.step(&mut layout, true);
-        assert_eq!(layout.preview, PreviewPlacement::Right);
+        assert_eq!(layout.preview, PreviewPlacement::Auto);
 
         layout.preview_width = PaneSize::Cells(44);
         LayoutSetting::PreviewWidth.step(&mut layout, true);

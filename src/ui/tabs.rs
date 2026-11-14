@@ -98,7 +98,7 @@ fn group_scope_unavailable<'a>(
         icons.label_details,
         tab_name,
         app.scope.as_str(),
-        app.config.keybindings.global.switch_repo,
+        app.config.keybindings.display(crate::keymap::Action::GlobalSwitchRepo),
     ))
     .alignment(Alignment::Center)
     .block(main_block)
@@ -1285,6 +1285,12 @@ pub(crate) fn render_tab_pipelines(
     }
     let icons = ctx.icons;
     let is_github = ctx.kind.is_github();
+    if !Tab::Pipelines.is_fetchable_in(&app.scope, ctx.kind) {
+        let [list, preview] = group_scope_unavailable(app, theme, icons, "Pipelines", main_block);
+        f.render_widget(list, content_area);
+        f.render_widget(preview, detail_rect);
+        return;
+    }
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(if is_github {
@@ -2916,7 +2922,7 @@ pub(crate) fn render_tab_environments(
         if has_deployments {
             render_environment_deployments(f, ctx, app, detail_rect);
         } else {
-            let keys = &app.config.keybindings.environments;
+            let keys = &app.config.keybindings;
             let is_github = ctx.kind.is_github();
             let doc = app
                 .environments
@@ -3360,6 +3366,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         // 3 closed of 5 total — the case that triggered the panic.
         app.milestone_progress_cache.insert(7, (3, 5));
@@ -3403,6 +3410,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         app.milestone_progress_cache.insert(9, (4, 4));
         app.milestones.state.select(Some(0));
@@ -3443,6 +3451,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         app.milestones.state.select(Some(0));
         app.selected_milestone_iid = Some(5);
@@ -3489,6 +3498,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         }];
         app.milestones.state.select(Some(0));
         app.selected_milestone_iid = Some(6);
@@ -3834,6 +3844,31 @@ mod tests {
         assert_eq!(
             buffer_row(&terminal, 11),
             format!("│{:<98}│", "ERROR: Job failed: exit code 1")
+        );
+    }
+
+    #[test]
+    fn trace_search_scrolls_a_wrapped_trace_to_the_match_row() {
+        let mut log = format!("{}\nok\nneedle in the log\n", "x".repeat(250));
+        log.push_str(&"after\n".repeat(50));
+        let trace = crate::domain::job_trace::JobTrace::from_read(log.as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.job_trace_wrap = true;
+        app.job_trace_searching = true;
+
+        for c in "needle".chars() {
+            let press = crate::keybinding::KeyPress::from(crossterm::event::KeyEvent::from(
+                crossterm::event::KeyCode::Char(c),
+            ));
+            crate::handlers::search::handle_trace_search_key(&mut app, &press);
+        }
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        // At 98 cells the first line takes rows 0-2 and "ok" row 3.
+        assert_eq!(app.detail_scroll, 4);
+        assert_eq!(
+            buffer_row(&terminal, 11),
+            format!("│{:<98}│", "needle in the log")
         );
     }
 

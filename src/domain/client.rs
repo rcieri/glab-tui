@@ -1,5 +1,6 @@
 use crate::backend::{Backend, BackendKind, IssueUpdate, MergeOptions, MrUpdate, NewIssue, NewMr};
 use crate::config::Config;
+use crate::domain::milestones::Milestone;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -540,21 +541,14 @@ impl GitlabClient {
     pub async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         start_date: Option<&str>,
         due_date: Option<&str>,
     ) -> Result<()> {
         self.backend
-            .update_milestone(
-                project,
-                milestone_iid,
-                title,
-                description,
-                start_date,
-                due_date,
-            )
+            .update_milestone(project, milestone, title, description, start_date, due_date)
             .await
     }
     pub async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
@@ -564,11 +558,17 @@ impl GitlabClient {
     pub async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
         self.backend.open_pipeline_in_browser(project, id).await
     }
-    pub async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        self.backend.open_job_in_browser(project, id).await
+    pub async fn open_job_url(&self, url: &str) -> Result<()> {
+        crate::backend::browser::open_url(url, self.tx.clone(), "OPENING JOB IN BROWSER").await
     }
-    pub async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        self.backend.open_milestone_in_browser(project, id).await
+    pub async fn open_milestone_in_browser(
+        &self,
+        project: &str,
+        milestone: &Milestone,
+    ) -> Result<()> {
+        self.backend
+            .open_milestone_in_browser(project, milestone)
+            .await
     }
     pub async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
         self.backend.open_runner_in_browser(scope, runner_id).await

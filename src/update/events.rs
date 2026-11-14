@@ -23,6 +23,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             // moved to another level.
             if app.current_parent_id() == Some(parent_id) {
                 let cursor = app.pipelines.state.selected();
+                app.drop_jobs_of_changed_children(&level.children);
                 app.pipelines.items = level.children;
                 app.pending_triggers = level.pending;
                 let selected = if app.pipelines.items.is_empty() {
@@ -37,18 +38,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.fetching_pipelines.remove(&id);
             app.pipeline_jobs.insert(id, jobs.clone());
 
-            let mut is_active = false;
             if app.active_tab == app::Tab::Jobs && app.active_pipeline_id == Some(id) {
-                is_active = true;
-            } else if app.active_tab == app::Tab::Pipelines {
-                if let Some(idx) = app.pipelines.state.selected() {
-                    if app.filtered_pipelines().get(idx).map(|p| p.id()) == Some(id) {
-                        is_active = true;
-                    }
-                }
-            }
-
-            if is_active {
                 app.jobs.items = jobs;
                 app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
             }
@@ -92,7 +82,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 });
                 if same_run.is_none() {
                     app.detail_scroll = 0;
-                    app.job_trace = None;
+                    app.close_job_trace();
                 }
                 app.jobs
                     .state
@@ -102,7 +92,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.active_pipeline_id = Some(pipeline_id);
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
-                app.job_trace = None;
+                app.close_job_trace();
             }
         }
         Event::JobTraceFetched(job_id, result) => {
@@ -609,6 +599,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                         start_date: None,
                         created_at: String::new(),
                         project_path: project.clone(),
+                        web_url: None,
                     })
                     .collect();
                 cache_updated = true;

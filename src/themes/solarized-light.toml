@@ -23,8 +23,10 @@ purple_bg = "#f7dce8"
 # ── Diff ──
 diff_addition_fg = "#859900"
 diff_addition_bg = "#e3eccb"
+diff_addition_emph_bg = "#c7d38e"
 diff_deletion_fg = "#dc322f"
 diff_deletion_bg = "#fae0de"
+diff_deletion_emph_bg = "#f1acaa"
 diff_gutter_bg = "#eee8d5"
 diff_sep = "#93a1a1"
 
@@ -57,3 +59,9 @@ label_palette_6 = "#cb4b16"
 label_palette_7 = "#2aa198"
 label_palette_8 = "#073642"
 label_palette_9 = "#657b83"
+
+# ── Forms ──
+accent = "#d33682"
+key_hint = "#8a6800"
+danger_border = "#dc322f"
+backdrop_dim = "#93a1a1"

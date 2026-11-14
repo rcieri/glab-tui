@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn editor_command_string_falls_back_when_editor_is_empty() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let prev_editor = std::env::var("EDITOR").ok();
         let prev_visual = std::env::var("VISUAL").ok();
 

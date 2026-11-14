@@ -226,17 +226,29 @@ pub fn configure_rows(app: &App) -> Vec<ConfigureRow> {
 }
 
 /// Shows or hides `tab`. The last shown tab cannot be hidden: returns false
-/// and changes nothing.
+/// and changes nothing. A tab shown again goes after the last shown tab that
+/// precedes it in the built-in order, so hiding and showing a tab of the
+/// default order stores no tab list.
 pub fn toggle_tab(layout: &mut LayoutConfig, tab: Tab) -> bool {
     let mut order = layout.tab_order();
     let shown_count = order.iter().filter(|(_, shown)| *shown).count();
-    let Some(entry) = order.iter_mut().find(|(t, _)| *t == tab) else {
+    let Some(index) = order.iter().position(|(t, _)| *t == tab) else {
         return false;
     };
-    if entry.1 && shown_count == 1 {
-        return false;
+    if order[index].1 {
+        if shown_count == 1 {
+            return false;
+        }
+        order[index].1 = false;
+    } else {
+        order.remove(index);
+        let built_in_rank = |t: Tab| Tab::ALL.iter().position(|all| *all == t);
+        let insert_at = order
+            .iter()
+            .rposition(|&(t, shown)| shown && built_in_rank(t) < built_in_rank(tab))
+            .map_or(0, |pos| pos + 1);
+        order.insert(insert_at, (tab, true));
     }
-    entry.1 = !entry.1;
     layout.set_tab_order(&order);
     true
 }
@@ -271,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn toggling_a_tab_hides_it_and_shows_it_again_at_the_end() {
+    fn toggling_a_tab_hides_it_and_shows_it_again_in_its_built_in_place() {
         let mut layout = layout_with(&[Tab::Issues, Tab::MergeRequests, Tab::Pipelines]);
 
         assert!(toggle_tab(&mut layout, Tab::Issues));
@@ -279,7 +291,29 @@ mod tests {
         assert!(toggle_tab(&mut layout, Tab::Issues));
         assert_eq!(
             layout.tabs,
-            Some(vec![Tab::MergeRequests, Tab::Pipelines, Tab::Issues])
+            Some(vec![Tab::Issues, Tab::MergeRequests, Tab::Pipelines])
+        );
+    }
+
+    #[test]
+    fn hiding_and_showing_a_tab_of_the_default_order_stores_no_tab_list() {
+        for tab in Tab::ALL {
+            let mut layout = LayoutConfig::default();
+
+            assert!(toggle_tab(&mut layout, tab));
+            assert!(toggle_tab(&mut layout, tab));
+            assert_eq!(layout.tabs, None, "{tab:?}");
+        }
+    }
+
+    #[test]
+    fn a_tab_shown_again_follows_the_last_shown_tab_before_it_in_built_in_order() {
+        let mut layout = layout_with(&[Tab::Terminal, Tab::MergeRequests]);
+
+        assert!(toggle_tab(&mut layout, Tab::Pipelines));
+        assert_eq!(
+            layout.tabs,
+            Some(vec![Tab::Terminal, Tab::MergeRequests, Tab::Pipelines])
         );
     }
 

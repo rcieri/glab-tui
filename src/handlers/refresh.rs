@@ -2,8 +2,8 @@ use crate::app::App;
 use crate::effect::Effects;
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
-use crate::keybinding::{KeyPress, keybinding_matches};
-use crossterm::event::KeyCode;
+use crate::keybinding::KeyPress;
+use crate::keymap::Action;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -13,16 +13,10 @@ pub fn handle_refresh(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
-    let is_refresh = key_event.code == KeyCode::F(5)
-        || (key_event.code == KeyCode::Char('r')
-            && key_event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL))
-        || (key_event.code == KeyCode::Char('R')
-            && key_event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL))
-        || keybinding_matches(&app.config.keybindings.global.refresh, key_event);
+    let is_refresh = app
+        .config
+        .keybindings
+        .matches(Action::GlobalRefresh, key_event);
 
     if is_refresh
         && app.text_input.is_none()

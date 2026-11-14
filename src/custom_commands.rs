@@ -5,45 +5,7 @@
 use crate::app::Tab;
 use crate::config::{Config, CustomKeybinding};
 use crate::keybinding::{KeyPress, binding_key_event, keybinding_matches};
-use crossterm::event::KeyEvent;
-
-/// Keys the list view handles in code whatever the config says, so a custom
-/// binding on one of them never fires. These check the exact modifiers.
-const LIST_VIEW_EXACT_KEYS: &[(&str, &str)] = &[
-    ("Ctrl+c", "quit"),
-    ("Ctrl+s", "switch repository"),
-    ("Ctrl+r", "refresh"),
-    ("u", "check for updates"),
-    ("f", "search"),
-];
-
-/// Hard-wired list-view keys matched on the key code alone, so any modified
-/// spelling (`Ctrl+q`, `Alt+j`) is taken too.
-const LIST_VIEW_CODE_KEYS: &[(&str, &str)] = &[
-    ("q", "quit / close details"),
-    ("?", "help"),
-    ("F1", "help"),
-    ("F5", "refresh"),
-    (",", "configure columns"),
-    ("Esc", "back"),
-    ("Backspace", "back"),
-    ("Enter", "open details"),
-    ("l", "next tab"),
-    ("Right", "next tab"),
-    ("h", "previous tab"),
-    ("Left", "previous tab"),
-    ("j", "next row"),
-    ("Down", "next row"),
-    ("k", "previous row"),
-    ("Up", "previous row"),
-    ("Home", "first row"),
-    ("End", "last row"),
-    ("J", "scroll details"),
-    ("K", "scroll details"),
-];
-
-/// Global bindings that act only inside an overlay, never on the list view.
-const OVERLAY_ONLY_GLOBAL_ACTIONS: &[&str] = &["submit_edit"];
+use crate::keymap::{Action, DIFF_VIEW_GLOBAL_ACTIONS, KeyContext, tab_table};
 
 /// Characters a POSIX shell, bash or zsh acts on in an unquoted word: quoting,
 /// substitution, separators, redirection, globbing, brace and tilde expansion,
@@ -57,172 +19,26 @@ const SHELL_SIGNIFICANT_CHARACTERS: &[char] = &[
 
 const ENVIRONMENT_PREFIX: &str = "GLAB_TUI_";
 
-/// Keys hard-wired in a tab's handler next to their configurable binding,
-/// matched on the key code alone.
-fn tab_hardwired_keys(tab: Tab) -> &'static [(&'static str, &'static str)] {
-    match tab {
-        Tab::Issues => &[("M", "jump to related MRs")],
-        Tab::MergeRequests => &[
-            ("A", "revoke approval"),
-            ("R", "rebase"),
-            ("D", "view diff"),
-            ("P", "view related pipelines"),
-        ],
-        Tab::Pipelines => &[
-            ("Space", "select pipeline"),
-            ("r", "retry"),
-            ("W", "open workflow"),
-        ],
-        Tab::Jobs => &[("S", "start job")],
-        Tab::Terminal => &[("P", "inspect command")],
-        _ => &[],
-    }
-}
-
-/// Hard-wired tab keys that check the exact modifiers.
-fn tab_hardwired_exact_keys(tab: Tab) -> &'static [(&'static str, &'static str)] {
-    match tab {
-        Tab::Pipelines => &[("d", "cancel")],
-        _ => &[],
-    }
-}
-
-/// Whether `event` has the key code `binding` names, whatever its modifiers.
-fn same_key_code(binding: &str, event: &KeyEvent) -> bool {
-    binding_key_event(binding).is_some_and(|bound| bound.code == event.code)
-}
-
-/// The `[keybindings.<table>]` a tab's handler reads, with its bindings.
-fn tab_keybindings(config: &Config, tab: Tab) -> (&'static str, Option<toml::Value>) {
-    let keybindings = &config.keybindings;
-    let (table, bindings) = match tab {
-        Tab::Issues => ("issues", toml::Value::try_from(&keybindings.issues)),
-        Tab::MergeRequests => ("mrs", toml::Value::try_from(&keybindings.mrs)),
-        Tab::Pipelines => ("pipelines", toml::Value::try_from(&keybindings.pipelines)),
-        Tab::Jobs => ("jobs", toml::Value::try_from(&keybindings.jobs)),
-        Tab::Runners => ("runners", toml::Value::try_from(&keybindings.runners)),
-        Tab::Releases => ("releases", toml::Value::try_from(&keybindings.releases)),
-        Tab::Todos => ("todos", toml::Value::try_from(&keybindings.todos)),
-        Tab::Milestones => ("milestones", toml::Value::try_from(&keybindings.milestones)),
-        Tab::Branches => ("branches", toml::Value::try_from(&keybindings.branches)),
-        Tab::Environments => (
-            "environments",
-            toml::Value::try_from(&keybindings.environments),
-        ),
-        Tab::Terminal => ("terminal", toml::Value::try_from(&keybindings.terminal)),
-    };
-    (table, bindings.ok())
-}
-
-/// Name of the first `field = "binding"` in `bindings` that `event` triggers.
-fn matching_field<'a>(
-    bindings: &'a toml::Value,
-    event: &KeyPress,
-    ignored: &[&str],
-) -> Option<&'a str> {
-    bindings.as_table()?.iter().find_map(|(field, binding)| {
-        let is_match = !ignored.contains(&field.as_str())
-            && binding
-                .as_str()
-                .is_some_and(|binding| keybinding_matches(binding, event));
-        is_match.then_some(field.as_str())
-    })
-}
-
 /// The built-in action that takes `event` on `tab`'s list view before any
 /// custom binding is consulted.
-fn builtin_action(config: &Config, tab: Tab, event: &KeyPress) -> Option<String> {
-    if let Some(global) = toml::Value::try_from(&config.keybindings.global).ok()
-        && let Some(field) = matching_field(&global, event, OVERLAY_ONLY_GLOBAL_ACTIONS)
-    {
-        return Some(format!("keybindings.global.{field}"));
-    }
-    let (table, bindings) = tab_keybindings(config, tab);
-    if let Some(field) = bindings
-        .as_ref()
-        .and_then(|bindings| matching_field(bindings, event, &[]))
-    {
-        return Some(format!("keybindings.{table}.{field}"));
-    }
-    let exact = LIST_VIEW_EXACT_KEYS
-        .iter()
-        .chain(tab_hardwired_exact_keys(tab))
-        .find(|(binding, _)| keybinding_matches(binding, event));
-    let by_code = || {
-        LIST_VIEW_CODE_KEYS
-            .iter()
-            .chain(tab_hardwired_keys(tab))
-            .find(|(binding, _)| same_key_code(binding, event))
-    };
-    exact
-        .or_else(by_code)
-        .map(|(binding, action)| format!("the built-in \"{binding}\" ({action})"))
+fn builtin_action(config: &Config, tab: Tab, event: &KeyPress) -> Option<Action> {
+    [
+        KeyContext::Global,
+        KeyContext::Tab(tab),
+        KeyContext::ListView,
+    ]
+    .into_iter()
+    .find_map(|context| config.keybindings.resolve(context, event))
 }
 
 /// The built-in action that takes `event` in the diff view before any custom
-/// binding. The diff view matches plain key codes regardless of modifiers,
-/// so `Ctrl` plus a diff-view key is taken just like the plain key.
-fn diff_view_action(config: &Config, event: &KeyPress) -> Option<String> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    let global = &config.keybindings.global;
-    for (field, binding) in [
-        ("quit", &global.quit),
-        ("help", &global.help),
-        ("refresh", &global.refresh),
-        ("switch_repo", &global.switch_repo),
-        ("scroll_half_page_down", &global.scroll_half_page_down),
-        ("scroll_half_page_up", &global.scroll_half_page_up),
-    ] {
-        if keybinding_matches(binding, event) {
-            return Some(format!("keybindings.global.{field}"));
-        }
-    }
-    if let Some(diff) = toml::Value::try_from(&config.keybindings.diff).ok()
-        && let Some(field) = matching_field(&diff, event, &[])
-    {
-        return Some(format!("keybindings.diff.{field}"));
-    }
-    if let Some((binding, action)) = ["Ctrl+c", "Ctrl+s", "Ctrl+r", "F1", "F5"]
-        .into_iter()
-        .zip(["quit", "switch repository", "refresh", "help", "refresh"])
-        .find(|(binding, _)| keybinding_matches(binding, event))
-    {
-        return Some(format!("the built-in \"{binding}\" ({action})"));
-    }
-    let action = match event.code {
-        KeyCode::Char('n') if event.modifiers.contains(KeyModifiers::CONTROL) => "next match",
-        KeyCode::Char('N') => "previous match",
-        KeyCode::Char('q') | KeyCode::Esc => "back",
-        KeyCode::Tab => "switch focus",
-        KeyCode::Char('h' | 'l' | 'j' | 'k' | 'J' | 'K')
-        | KeyCode::Left
-        | KeyCode::Right
-        | KeyCode::Up
-        | KeyCode::Down => "navigate",
-        KeyCode::Enter | KeyCode::Char(' ') => "open",
-        KeyCode::Char('z' | 'Z') => "fold files",
-        KeyCode::Char('m' | 'M') => "reviewed marks",
-        KeyCode::Char('[' | ']') => "previous / next hunk",
-        KeyCode::Char('d') => "toggle side-by-side",
-        KeyCode::Char('/' | 'f') => "search",
-        KeyCode::Char('v' | 'V') => "select lines",
-        KeyCode::Char('a' | 'c' | 'C' | 'r' | 'e') => "comments",
-        KeyCode::Char('T') => "review threads",
-        _ => return None,
-    };
-    Some(format!(
-        "the diff view's \"{}\" ({action})",
-        key_label(event)
-    ))
-}
-
-fn key_label(event: &KeyEvent) -> String {
-    use crossterm::event::KeyCode;
-    match event.code {
-        KeyCode::Char(' ') => "Space".to_string(),
-        KeyCode::Char(c) => c.to_string(),
-        code => format!("{code:?}"),
-    }
+/// binding.
+fn diff_view_action(config: &Config, event: &KeyPress) -> Option<Action> {
+    DIFF_VIEW_GLOBAL_ACTIONS
+        .iter()
+        .copied()
+        .find(|action| config.keybindings.matches(*action, event))
+        .or_else(|| config.keybindings.resolve(KeyContext::DiffView, event))
 }
 
 /// The pane a custom keybinding table belongs to.
@@ -353,7 +169,7 @@ impl CustomCommand {
     }
 }
 
-/// A custom keybinding entry that is ignored or only partly usable.
+/// A keybinding entry in the config that is ignored or only partly usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigProblem {
     /// Which entry: its table, position and key.
@@ -482,7 +298,10 @@ fn validate(
     };
     if pane == CommandPane::Diff {
         return match diff_view_action(config, &event) {
-            Some(action) => Err(format!("never runs: {action} takes the key first")),
+            Some(action) => Err(format!(
+                "never runs: {} takes the key first",
+                action.config_key()
+            )),
             None => Ok((command, None)),
         };
     }
@@ -491,7 +310,7 @@ fn validate(
         .into_iter()
         .filter(|tab| pane.applies_to(*tab))
         .collect();
-    let mut builtin_shadows: Vec<(Tab, String)> = Vec::new();
+    let mut builtin_shadows: Vec<(Tab, Action)> = Vec::new();
     let mut shadowed_on: Vec<Tab> = Vec::new();
     for tab in &tabs {
         if let Some(action) = builtin_action(config, *tab, &event) {
@@ -504,10 +323,11 @@ fn validate(
         }
     }
 
-    let mut actions: Vec<&str> = Vec::new();
+    let mut actions: Vec<String> = Vec::new();
     for (_, action) in &builtin_shadows {
-        if !actions.contains(&action.as_str()) {
-            actions.push(action);
+        let config_key = action.config_key();
+        if !actions.contains(&config_key) {
+            actions.push(config_key);
         }
     }
     let shadow_problem = if builtin_shadows.len() == tabs.len() {
@@ -520,7 +340,7 @@ fn validate(
     } else {
         let shadowed_tables: Vec<&str> = builtin_shadows
             .iter()
-            .map(|(tab, _)| tab_keybindings(config, *tab).0)
+            .map(|(tab, _)| tab_table(*tab))
             .collect();
         Some(format!(
             "does not run on the {} tab(s): {} takes the key first",
@@ -835,7 +655,7 @@ key = "g"
 command = "lazygit"
 "#,
         );
-        config.keybindings.global.jump_to_id = "Ctrl+j".to_string();
+        config.keybindings.set(Action::GlobalJumpToId, &["Ctrl+j"]);
 
         let (commands, problems) = CustomCommands::load(&config);
         assert_eq!(problems, vec![]);
@@ -860,7 +680,7 @@ command = "true"
         assert_eq!(
             reasons,
             vec![
-                "never runs: the built-in \"j\" (next row) takes the key first",
+                "never runs: keybindings.list.next_row takes the key first",
                 "never runs: keybindings.mrs.view_diff takes the key first",
             ]
         );
@@ -896,10 +716,8 @@ command = "echo {{.PrNumber}}"
         assert!(commands.find(Tab::Pipelines, &key('L')).is_none());
     }
 
-    /// The list view matches these keys by key code alone, so `Ctrl+q`
-    /// quits and `Alt+r` retries a pipeline instead of running the command.
     #[test]
-    fn modified_spelling_of_a_code_matched_list_key_is_reported() {
+    fn modified_spelling_of_a_list_key_runs_the_custom_binding() {
         let config = config_with(
             r#"
 [[universal]]
@@ -911,31 +729,20 @@ command = "true"
 [[universal]]
 key = "Alt+r"
 command = "true"
-[[universal]]
-key = "Ctrl+t"
-command = "true"
 "#,
         );
         let (commands, problems) = CustomCommands::load(&config);
 
-        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
-        assert_eq!(
-            reasons,
-            vec![
-                "never runs: the built-in \"q\" (quit / close details) takes the key first",
-                "never runs: the built-in \"k\" (previous row) takes the key first",
-                "does not run on the pipelines tab(s): the built-in \"r\" (retry) takes the key first",
-            ]
-        );
-        assert_eq!(
-            commands
-                .find(
-                    Tab::Issues,
-                    &KeyPress::Key(binding_key_event("Ctrl+t").unwrap())
-                )
-                .map(|command| command.key.as_str()),
-            Some("Ctrl+t")
-        );
+        assert_eq!(problems, vec![]);
+        for binding in ["Ctrl+q", "Alt+k", "Alt+r"] {
+            let press = KeyPress::Key(binding_key_event(binding).expect("bindable"));
+            assert_eq!(
+                commands
+                    .find(Tab::Pipelines, &press)
+                    .map(|command| command.key.as_str()),
+                Some(binding)
+            );
+        }
     }
 
     #[test]
@@ -1104,10 +911,8 @@ command = "true"
         );
     }
 
-    /// The diff view matches key codes whatever the modifiers, so a
-    /// `Ctrl+d` custom key would toggle side-by-side instead of running.
     #[test]
-    fn diff_binding_on_a_diff_view_key_is_dropped_even_with_a_modifier() {
+    fn diff_binding_on_a_diff_view_key_is_dropped_but_a_modified_spelling_runs() {
         let config = config_with(
             r#"
 [[diff]]
@@ -1126,58 +931,54 @@ command = "true"
         let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
         assert_eq!(
             reasons,
-            vec![
-                "never runs: the diff view's \"d\" (toggle side-by-side) takes the key first",
-                "never runs: the diff view's \"d\" (toggle side-by-side) takes the key first",
-            ]
+            vec!["never runs: keybindings.diff.toggle_side_by_side takes the key first"]
         );
         assert_eq!(
             commands
                 .in_diff()
                 .map(|c| c.key.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Ctrl+o"]
+            vec!["Alt+d", "Ctrl+o"]
         );
     }
 
     #[test]
-    fn diff_binding_on_a_layout_key_runs_once_the_layout_key_is_remapped() {
-        let bindings = r#"
-[[diff]]
-key = "0"
-command = "true"
-[[diff]]
-key = "Alt+1"
-command = "true"
-"#;
-        let config = config_with(bindings);
+    fn every_builtin_key_of_a_pane_is_reported_when_a_custom_binding_claims_it() {
+        for (pane, context) in [
+            ("issues", KeyContext::Tab(Tab::Issues)),
+            ("mrs", KeyContext::Tab(Tab::MergeRequests)),
+            ("pipelines", KeyContext::Tab(Tab::Pipelines)),
+            ("jobs", KeyContext::Tab(Tab::Jobs)),
+            ("branches", KeyContext::Tab(Tab::Branches)),
+            ("diff", KeyContext::DiffView),
+        ] {
+            for action in Action::in_context(context) {
+                for key in action.spec().defaults {
+                    let config = config_with(&format!(
+                        "[[{pane}]]\nkey = \"{key}\"\ncommand = \"true\"\n"
+                    ));
+                    let (_, problems) = CustomCommands::load(&config);
+                    assert_eq!(
+                        problems.len(),
+                        1,
+                        "custom {pane} key {key:?} must be reported as taken by {}",
+                        action.config_key()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn remapping_a_diff_action_frees_its_key_for_a_custom_binding() {
+        let mut config = config_with("[[diff]]\nkey = \"d\"\ncommand = \"true\"\n");
+        config
+            .keybindings
+            .set(Action::DiffToggleSideBySide, &["Alt+s"]);
+
         let (commands, problems) = CustomCommands::load(&config);
-
-        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
-        assert_eq!(
-            reasons,
-            vec!["never runs: keybindings.diff.layout_auto takes the key first"]
-        );
-        assert_eq!(
-            commands
-                .in_diff()
-                .map(|c| c.key.as_str())
-                .collect::<Vec<_>>(),
-            vec!["Alt+1"]
-        );
-
-        let mut config = config_with(bindings);
-        config.keybindings.diff.layout_auto = "=".to_string();
-        let (commands, problems) = CustomCommands::load(&config);
-
-        assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(
-            commands
-                .in_diff()
-                .map(|c| c.key.as_str())
-                .collect::<Vec<_>>(),
-            vec!["0", "Alt+1"]
-        );
+        assert_eq!(problems, vec![]);
+        assert!(commands.find_in_diff(&key('d')).is_some());
     }
 
     #[test]
@@ -1193,6 +994,62 @@ command = "true"
         assert_eq!(commands.in_diff().count(), 0);
     }
 
+    /// Whether a `[[diff]]` command bound to `key` runs when `key` is pressed
+    /// in a freshly opened diff.
+    fn diff_command_runs(key: &str) -> bool {
+        let mut app = crate::app::App::default();
+        // An empty diff stops a diff command at "the cursor is not on a file",
+        // which logs it without starting a shell.
+        app.diff_view = Some(crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            String::new(),
+        ));
+        app.custom_commands = CustomCommands {
+            commands: vec![CustomCommand {
+                pane: CommandPane::Diff,
+                key: key.to_string(),
+                name: None,
+                command: "true".to_string(),
+                background: false,
+                shadowed_on: Vec::new(),
+            }],
+        };
+        let press = KeyPress::Key(binding_key_event(key).expect("bindable key"));
+
+        crate::update::update(&mut app, crate::event::Event::KeyPress(press));
+
+        app.terminal_commands.iter().any(|entry| {
+            entry
+                .command
+                .starts_with(crate::app::CUSTOM_COMMAND_LOG_PREFIX)
+        })
+    }
+
+    #[test]
+    fn diff_shadow_report_matches_what_the_key_router_lets_through() {
+        let _home = crate::config::isolate_home();
+        assert!(
+            diff_command_runs("Alt+z"),
+            "a free key must reach the command"
+        );
+        let config = Config::default();
+        for action in
+            Action::in_context(KeyContext::Global).chain(Action::in_context(KeyContext::DiffView))
+        {
+            for key in action.spec().defaults {
+                let press = KeyPress::Key(binding_key_event(key).expect("bindable default"));
+                let is_reported = diff_view_action(&config, &press).is_some();
+                assert_eq!(
+                    diff_command_runs(key),
+                    !is_reported,
+                    "{} default {key:?}: the shadow report disagrees with the key router",
+                    action.config_key()
+                );
+            }
+        }
+    }
+
     #[test]
     fn diff_binding_on_review_threads_key_is_dropped() {
         let config = config_with("[[diff]]\nkey = \"T\"\ncommand = \"true\"\n");
@@ -1201,7 +1058,7 @@ command = "true"
         let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
         assert_eq!(
             reasons,
-            vec!["never runs: the diff view's \"T\" (review threads) takes the key first"]
+            vec!["never runs: keybindings.diff.review_threads takes the key first"]
         );
         assert_eq!(commands.in_diff().count(), 0);
     }

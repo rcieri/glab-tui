@@ -98,7 +98,7 @@ fn group_scope_unavailable<'a>(
         icons.label_details,
         tab_name,
         app.scope.as_str(),
-        app.config.keybindings.global.switch_repo,
+        app.config.keybindings.display(crate::keymap::Action::GlobalSwitchRepo),
     ))
     .alignment(Alignment::Center)
     .block(main_block)
@@ -2920,7 +2920,7 @@ pub(crate) fn render_tab_environments(
         if has_deployments {
             render_environment_deployments(f, ctx, app, detail_rect);
         } else {
-            let keys = &app.config.keybindings.environments;
+            let keys = &app.config.keybindings;
             let is_github = ctx.kind.is_github();
             let doc = app
                 .environments

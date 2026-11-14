@@ -4,17 +4,17 @@
 
 
                             ┌ + Merge Merge Request #2 ────────────────────────────────────┐
+                            │ Merging: feature/pagination → main                           │
                             │                                                              │
+                            │ Strategy                                                     │
+                            │ o Merge commit  * Squash  o Rebase                           │
                             │                                                              │
-                            │              Merging: feature/pagination → main              │
-                            │                                                              │
-                            │                   ( ) Merge commit                           │
-                            │                   (x) Squash                                 │
-                            │                   ( ) Rebase                                 │
-                            │                   [x] Delete source branch                   │
-                            │                   [ ] Auto-merge                             │
-                            │──────────────────────────────────────────────────────────────│
-                            │            + Merge                       - Cancel            │
+                            │ Options                                                      │
+                            │ + Delete source branch                                       │
+                            │ - Auto-merge                                                 │
+                            │ ──────────────────────────────────────────────────────────── │
+                            │           [ Merge ]                     [ Cancel ]           │
+                            │ h/l button  Tab next  Enter merge  Esc cancel                │
                             └──────────────────────────────────────────────────────────────┘
 
 

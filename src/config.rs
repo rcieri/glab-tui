@@ -186,8 +186,12 @@ pub struct Theme {
     // ── Diff ──
     pub diff_addition_fg: Color,
     pub diff_addition_bg: Color,
+    /// Background of the words an added line changed, over `diff_addition_bg`.
+    pub diff_addition_emph_bg: Color,
     pub diff_deletion_fg: Color,
     pub diff_deletion_bg: Color,
+    /// Background of the words a removed line changed, over `diff_deletion_bg`.
+    pub diff_deletion_emph_bg: Color,
     pub diff_gutter_bg: Color,
     pub diff_sep: Color,
     pub diff_search_bg: Color,
@@ -196,6 +200,11 @@ pub struct Theme {
     pub comment_draft_bg: Color,
     // ── Modals ──
     pub modal_border: Color,
+    // ── Forms ──
+    pub accent: Color,
+    pub key_hint: Color,
+    pub danger_border: Color,
+    pub backdrop_dim: Color,
     // ── Pipelines ──
     pub pipeline_success: Color,
     pub pipeline_failed: Color,
@@ -642,6 +651,25 @@ fn color_to_hex(c: Color) -> String {
     }
 }
 
+const DIFF_EMPHASIS_FG_SHARE: f32 = 0.3;
+
+/// Background of the words a diff row changed, derived from the row's colours.
+fn diff_emphasis_bg(row_fg: Color, row_bg: Color) -> Color {
+    blend(row_bg, row_fg, DIFF_EMPHASIS_FG_SHARE)
+}
+
+/// Mixes `share` of `toward` into `base`. Anything but two RGB colours (a
+/// `Reset` background, say) leaves `base` unchanged.
+fn blend(base: Color, toward: Color, share: f32) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(to_r, to_g, to_b)) = (base, toward) else {
+        return base;
+    };
+    let mix = |from: u8, to: u8| {
+        (f32::from(from) + (f32::from(to) - f32::from(from)) * share).round() as u8
+    };
+    Color::Rgb(mix(r, to_r), mix(g, to_g), mix(b, to_b))
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ThemeToml {
     bg: String,
@@ -669,9 +697,13 @@ struct ThemeToml {
     #[serde(default)]
     diff_addition_bg: Option<String>,
     #[serde(default)]
+    diff_addition_emph_bg: Option<String>,
+    #[serde(default)]
     diff_deletion_fg: Option<String>,
     #[serde(default)]
     diff_deletion_bg: Option<String>,
+    #[serde(default)]
+    diff_deletion_emph_bg: Option<String>,
     #[serde(default)]
     diff_gutter_bg: Option<String>,
     #[serde(default)]
@@ -686,6 +718,15 @@ struct ThemeToml {
     // ── Modals ──
     #[serde(default)]
     modal_border: Option<String>,
+    // ── Forms ──
+    #[serde(default)]
+    accent: Option<String>,
+    #[serde(default)]
+    key_hint: Option<String>,
+    #[serde(default)]
+    danger_border: Option<String>,
+    #[serde(default)]
+    backdrop_dim: Option<String>,
     // ── Pipelines ──
     #[serde(default)]
     pipeline_success: Option<String>,
@@ -752,6 +793,10 @@ impl ThemeToml {
                 .and_then(|s| parse_color(s))
                 .unwrap_or(fallback)
         };
+        let diff_addition_fg = hex_or(&self.diff_addition_fg, green);
+        let diff_addition_bg = hex_or(&self.diff_addition_bg, green_bg);
+        let diff_deletion_fg = hex_or(&self.diff_deletion_fg, red);
+        let diff_deletion_bg = hex_or(&self.diff_deletion_bg, red_bg);
 
         Some(Theme {
             bg,
@@ -773,16 +818,28 @@ impl ThemeToml {
             yellow_bg,
             purple,
             purple_bg,
-            diff_addition_fg: hex_or(&self.diff_addition_fg, green),
-            diff_addition_bg: hex_or(&self.diff_addition_bg, green_bg),
-            diff_deletion_fg: hex_or(&self.diff_deletion_fg, red),
-            diff_deletion_bg: hex_or(&self.diff_deletion_bg, red_bg),
+            diff_addition_fg,
+            diff_addition_bg,
+            diff_addition_emph_bg: hex_or(
+                &self.diff_addition_emph_bg,
+                diff_emphasis_bg(diff_addition_fg, diff_addition_bg),
+            ),
+            diff_deletion_fg,
+            diff_deletion_bg,
+            diff_deletion_emph_bg: hex_or(
+                &self.diff_deletion_emph_bg,
+                diff_emphasis_bg(diff_deletion_fg, diff_deletion_bg),
+            ),
             diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
             diff_sep: hex_or(&self.diff_sep, text_muted),
             diff_search_bg: hex_or(&self.diff_search_bg, yellow_bg),
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
             comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
             modal_border: hex_or(&self.modal_border, border_focused),
+            accent: hex_or(&self.accent, purple),
+            key_hint: hex_or(&self.key_hint, yellow),
+            danger_border: hex_or(&self.danger_border, red),
+            backdrop_dim: hex_or(&self.backdrop_dim, text_muted),
             pipeline_success: hex_or(&self.pipeline_success, green),
             pipeline_failed: hex_or(&self.pipeline_failed, red),
             pipeline_running: hex_or(&self.pipeline_running, blue),
@@ -1052,10 +1109,26 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
     // ── Diff ──
+    let addition_row = (base.diff_addition_fg, base.diff_addition_bg);
     apply_color(&mut base.diff_addition_fg, &overrides.diff_addition_fg);
     apply_color(&mut base.diff_addition_bg, &overrides.diff_addition_bg);
+    if (base.diff_addition_fg, base.diff_addition_bg) != addition_row {
+        base.diff_addition_emph_bg = diff_emphasis_bg(base.diff_addition_fg, base.diff_addition_bg);
+    }
+    apply_color(
+        &mut base.diff_addition_emph_bg,
+        &overrides.diff_addition_emph_bg,
+    );
+    let deletion_row = (base.diff_deletion_fg, base.diff_deletion_bg);
     apply_color(&mut base.diff_deletion_fg, &overrides.diff_deletion_fg);
     apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
+    if (base.diff_deletion_fg, base.diff_deletion_bg) != deletion_row {
+        base.diff_deletion_emph_bg = diff_emphasis_bg(base.diff_deletion_fg, base.diff_deletion_bg);
+    }
+    apply_color(
+        &mut base.diff_deletion_emph_bg,
+        &overrides.diff_deletion_emph_bg,
+    );
     apply_color(&mut base.diff_gutter_bg, &overrides.diff_gutter_bg);
     apply_color(&mut base.diff_sep, &overrides.diff_sep);
     apply_color(&mut base.diff_search_bg, &overrides.diff_search_bg);
@@ -1064,6 +1137,11 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
     // ── Modals ──
     apply_color(&mut base.modal_border, &overrides.modal_border);
+    // ── Forms ──
+    apply_color(&mut base.accent, &overrides.accent);
+    apply_color(&mut base.key_hint, &overrides.key_hint);
+    apply_color(&mut base.danger_border, &overrides.danger_border);
+    apply_color(&mut base.backdrop_dim, &overrides.backdrop_dim);
     // ── Pipelines ──
     apply_color(&mut base.pipeline_success, &overrides.pipeline_success);
     apply_color(&mut base.pipeline_failed, &overrides.pipeline_failed);
@@ -1111,8 +1189,10 @@ pub struct ThemeOverrides {
     // ── Diff ──
     diff_addition_fg: Option<String>,
     diff_addition_bg: Option<String>,
+    diff_addition_emph_bg: Option<String>,
     diff_deletion_fg: Option<String>,
     diff_deletion_bg: Option<String>,
+    diff_deletion_emph_bg: Option<String>,
     diff_gutter_bg: Option<String>,
     diff_sep: Option<String>,
     diff_search_bg: Option<String>,
@@ -1121,6 +1201,11 @@ pub struct ThemeOverrides {
     comment_draft_bg: Option<String>,
     // ── Modals ──
     modal_border: Option<String>,
+    // ── Forms ──
+    accent: Option<String>,
+    key_hint: Option<String>,
+    danger_border: Option<String>,
+    backdrop_dim: Option<String>,
     // ── Pipelines ──
     pipeline_success: Option<String>,
     pipeline_failed: Option<String>,
@@ -1141,388 +1226,6 @@ pub struct ThemeOverrides {
     label_palette_7: Option<String>,
     label_palette_8: Option<String>,
     label_palette_9: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingGlobal {
-    #[serde(default)]
-    pub quit: String,
-    #[serde(default)]
-    pub help: String,
-    #[serde(default)]
-    pub search: String,
-    #[serde(default)]
-    pub refresh: String,
-    #[serde(default)]
-    pub configure: String,
-    #[serde(default)]
-    pub next_tab: String,
-    #[serde(default)]
-    pub prev_tab: String,
-    #[serde(default)]
-    pub scroll_down: String,
-    #[serde(default)]
-    pub scroll_up: String,
-    #[serde(default = "def_scroll_page_down")]
-    pub scroll_page_down: String,
-    #[serde(default = "def_scroll_page_up")]
-    pub scroll_page_up: String,
-    #[serde(default = "def_scroll_half_page_down")]
-    pub scroll_half_page_down: String,
-    #[serde(default = "def_scroll_half_page_up")]
-    pub scroll_half_page_up: String,
-    #[serde(default = "def_scroll_to_end")]
-    pub scroll_to_end: String,
-    #[serde(default = "def_scroll_top")]
-    pub scroll_top: String,
-    #[serde(default = "def_switch_repo")]
-    pub switch_repo: String,
-    #[serde(default = "def_jump_to_id")]
-    pub jump_to_id: String,
-    #[serde(default = "def_submit_edit")]
-    pub submit_edit: String,
-    #[serde(default = "def_sort_next")]
-    pub sort_next: String,
-    #[serde(default = "def_sort_prev")]
-    pub sort_prev: String,
-    #[serde(default = "def_sort_reverse")]
-    pub sort_reverse: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingIssues {
-    #[serde(default)]
-    pub create_issue: String,
-    #[serde(default)]
-    pub edit_entity: String,
-    #[serde(default)]
-    pub close_entity: String,
-    #[serde(default)]
-    pub reopen_entity: String,
-    #[serde(default = "def_delete_entity")]
-    pub delete_entity: String,
-    #[serde(default)]
-    pub select_issue: String,
-    #[serde(default)]
-    pub create_mr: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_copy_reference")]
-    pub copy_reference: String,
-    #[serde(default)]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-    #[serde(default = "def_drill_into_scope")]
-    pub drill_into_scope: String,
-    #[serde(default = "def_jump_related_mrs")]
-    pub jump_related_mrs: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingMrs {
-    #[serde(default)]
-    pub create_mr: String,
-    #[serde(default)]
-    pub approve_mr: String,
-    #[serde(default = "def_revoke_mr")]
-    pub revoke_mr: String,
-    #[serde(default = "def_rebase_mr")]
-    pub rebase_mr: String,
-    #[serde(default)]
-    pub merge_mr: String,
-    #[serde(default)]
-    pub toggle_draft: String,
-    #[serde(default)]
-    pub view_diff: String,
-    #[serde(default)]
-    pub view_related_pipelines: String,
-    #[serde(default)]
-    pub edit_entity: String,
-    #[serde(default)]
-    pub close_entity: String,
-    #[serde(default)]
-    pub reopen_entity: String,
-    #[serde(default = "def_delete_entity")]
-    pub delete_entity: String,
-    #[serde(default)]
-    pub select_mr: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default)]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-    #[serde(default = "def_drill_into_scope")]
-    pub drill_into_scope: String,
-    #[serde(default = "def_copy_reference")]
-    pub copy_reference: String,
-    /// Open a selector listing the PRs in a stacked GitHub PR, then jump to
-    /// the chosen one. Fetches the stack first when the session lacks it.
-    #[serde(default = "def_view_stack")]
-    pub view_stack: String,
-    #[serde(default = "def_jump_linked_issues")]
-    pub jump_linked_issues: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingPipelines {
-    #[serde(default)]
-    pub trigger_pipeline: String,
-    #[serde(default = "def_run_new")]
-    pub run_new: String,
-    /// Show the selected pipeline's own jobs, skipping the descent into its
-    /// downstream pipelines.
-    #[serde(default = "def_enter_jobs")]
-    pub enter_jobs: String,
-    #[serde(default)]
-    pub retry: String,
-    /// Rerun only the failed jobs of the selected pipeline(s).
-    #[serde(default = "def_retry_failed")]
-    pub retry_failed: String,
-    #[serde(default)]
-    pub cancel: String,
-    #[serde(default)]
-    pub open_workflow: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_copy_pipeline_sha")]
-    pub copy_sha: String,
-    #[serde(default = "def_copy_url")]
-    pub copy_url: String,
-    /// Copy the pipeline id as `#123`.
-    #[serde(default = "def_copy_id")]
-    pub copy_id: String,
-    /// Step the Status filter through All, Running, Failed and Success.
-    #[serde(default = "def_cycle_status_filter")]
-    pub cycle_status_filter: String,
-    /// Show or hide the inspector pane, which Enter opens on the other tabs.
-    /// Here Enter descends into the pipeline instead.
-    #[serde(default = "def_toggle_preview")]
-    pub toggle_preview: String,
-    #[serde(default = "def_select_pipeline")]
-    pub select_pipeline: String,
-    #[serde(default = "def_selection_toggle")]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingReleases {
-    #[serde(default)]
-    pub create_release: String,
-    #[serde(default)]
-    pub edit_release: String,
-    #[serde(default)]
-    pub delete_release: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingMilestones {
-    #[serde(default)]
-    pub create_milestone: String,
-    #[serde(default)]
-    pub edit_milestone: String,
-    #[serde(default)]
-    pub close_milestone: String,
-    #[serde(default)]
-    pub reopen_milestone: String,
-    #[serde(default)]
-    pub delete_milestone: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingJobs {
-    #[serde(default)]
-    pub enter_pipeline: String,
-    #[serde(default)]
-    pub select_job: String,
-    #[serde(default)]
-    pub retry: String,
-    #[serde(default)]
-    pub start_job: String,
-    #[serde(default)]
-    pub select_stage: String,
-    #[serde(default)]
-    pub cancel: String,
-    #[serde(default)]
-    pub download_artifact: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-    #[serde(default)]
-    pub view_trace_editor: String,
-    #[serde(default)]
-    pub view_trace: String,
-    #[serde(default)]
-    pub toggle_trace_wrap: String,
-    #[serde(default)]
-    pub trace_search: String,
-    #[serde(default)]
-    pub toggle_trace_follow: String,
-    #[serde(default = "def_jump_to_failure")]
-    pub jump_to_failure: String,
-    #[serde(default = "def_copy_job_url")]
-    pub copy_url: String,
-    #[serde(default = "def_copy_job_id")]
-    pub copy_id: String,
-    #[serde(default = "def_copy_job_sha")]
-    pub copy_sha: String,
-    #[serde(default = "def_selection_toggle")]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingRunners {
-    #[serde(default)]
-    pub pause: String,
-    #[serde(default)]
-    pub resume: String,
-    #[serde(default)]
-    pub edit_description: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_cycle_runner_status")]
-    pub cycle_status: String,
-    #[serde(default = "def_copy_runner_url")]
-    pub copy_url: String,
-    #[serde(default = "def_copy_runner_id")]
-    pub copy_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingTodos {
-    #[serde(default)]
-    pub mark_as_read: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-    #[serde(default = "def_mark_as_done")]
-    pub mark_as_done: String,
-    #[serde(default = "def_mark_all_as_read")]
-    pub mark_all_as_read: String,
-    #[serde(default = "def_unsubscribe")]
-    pub unsubscribe: String,
-    #[serde(default = "def_toggle_show_read")]
-    pub toggle_show_read: String,
-    #[serde(default = "def_select_todo")]
-    pub select_todo: String,
-    #[serde(default = "def_selection_toggle")]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-    #[serde(default = "def_copy_todo_url")]
-    pub copy_url: String,
-    #[serde(default = "def_copy_todo_reference")]
-    pub copy_reference: String,
-    /// Shows or hides the inspector, which `Enter` cannot open on this tab
-    /// because it opens the todo's target.
-    #[serde(default = "def_toggle_todo_preview")]
-    pub toggle_preview: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingBranches {
-    #[serde(default)]
-    pub create_branch: String,
-    #[serde(default)]
-    pub delete_branch: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_copy_branch")]
-    pub copy_branch: String,
-    #[serde(default = "def_checkout_branch")]
-    pub checkout_branch: String,
-    #[serde(default = "def_create_mr_branch")]
-    pub create_mr: String,
-    #[serde(default = "def_select_branch")]
-    pub select_branch: String,
-    #[serde(default = "def_selection_toggle")]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingEnvironments {
-    #[serde(default)]
-    pub view_deployments: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_focus_deployments")]
-    pub focus_deployments: String,
-    #[serde(default = "def_rollback_deployment")]
-    pub rollback_deployment: String,
-    #[serde(default = "def_stop_environment")]
-    pub stop_environment: String,
-    #[serde(default = "def_copy_environment_url")]
-    pub copy_url: String,
-    #[serde(default = "def_view_deployment_log")]
-    pub view_deployment_log: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingTerminal {
-    #[serde(default)]
-    pub toggle_wrap: String,
-    #[serde(default = "def_clear_terminal_log")]
-    pub clear_log: String,
-    #[serde(default = "def_copy_terminal_command")]
-    pub copy_command: String,
-    #[serde(default = "def_copy_terminal_output")]
-    pub copy_output: String,
-    #[serde(default = "def_inspect_terminal_command")]
-    pub inspect_command: String,
-    #[serde(default = "def_rerun_terminal_command")]
-    pub rerun_command: String,
-    #[serde(default = "def_cycle_terminal_status_filter")]
-    pub cycle_status_filter: String,
-}
-
-/// The MR/PR diff view's layout keys. Its other keys are still hard-wired.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingDiff {
-    #[serde(default = "def_layout_side_by_side")]
-    pub layout_side_by_side: String,
-    #[serde(default = "def_layout_unified")]
-    pub layout_unified: String,
-    #[serde(default = "def_layout_auto")]
-    pub layout_auto: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct KeybindingConfig {
-    #[serde(default)]
-    pub global: KeybindingGlobal,
-    #[serde(default)]
-    pub issues: KeybindingIssues,
-    #[serde(default)]
-    pub mrs: KeybindingMrs,
-    #[serde(default)]
-    pub pipelines: KeybindingPipelines,
-    #[serde(default)]
-    pub releases: KeybindingReleases,
-    #[serde(default)]
-    pub milestones: KeybindingMilestones,
-    #[serde(default)]
-    pub jobs: KeybindingJobs,
-    #[serde(default)]
-    pub runners: KeybindingRunners,
-    #[serde(default)]
-    pub todos: KeybindingTodos,
-    #[serde(default)]
-    pub branches: KeybindingBranches,
-    #[serde(default)]
-    pub environments: KeybindingEnvironments,
-    #[serde(default)]
-    pub terminal: KeybindingTerminal,
-    #[serde(default)]
-    pub diff: KeybindingDiff,
 }
 
 /// A user-defined shell command bound to a key, in the gh-dash shape.
@@ -1560,373 +1263,6 @@ pub struct CustomKeybindingConfig {
     /// Panes that take no custom keybindings, kept only to report them.
     #[serde(flatten, skip_serializing)]
     pub unsupported_panes: std::collections::BTreeMap<String, toml::Value>,
-}
-
-macro_rules! keybind_defaults {
-    ( $( $name:ident = $val:expr ),+ $(,)? ) => {
-        $(
-            fn $name() -> String { $val.to_string() }
-        )+
-    };
-}
-
-keybind_defaults! {
-    def_quit = "q",
-    def_help = "?",
-    def_search = "/",
-    def_refresh = "Ctrl+r",
-    def_configure = "Tab",
-    def_next_tab = "l",
-    def_prev_tab = "h",
-    def_scroll_down = "J",
-    def_scroll_up = "K",
-    def_scroll_page_down = "PageDown",
-    def_scroll_page_up = "PageUp",
-    def_scroll_half_page_down = "Ctrl+d",
-    def_scroll_half_page_up = "Ctrl+u",
-    def_scroll_to_end = "End",
-    def_scroll_top = "Home",
-    def_create_issue = "n",
-    def_select_issue = "Space",
-    def_create_mr_issue = "m",
-    def_copy_reference = "y",
-    def_edit_entity = "e",
-    def_close_entity = "c",
-    def_reopen_entity = "r",
-    def_delete_entity = "d",
-    def_create_mr = "n",
-    def_select_mr = "Space",
-    def_selection_toggle = "v",
-    def_select_all = "Ctrl+a",
-    def_approve_mr = "a",
-    def_revoke_mr = "A",
-    def_rebase_mr = "R",
-    def_merge_mr = "m",
-    def_toggle_draft = "s",
-    def_view_diff = "D",
-    def_view_related_pipelines = "P",
-    def_view_stack = "Y",
-    def_jump_related_mrs = "M",
-    def_jump_linked_issues = "I",
-    def_trigger_pipeline = "p",
-    def_select_pipeline = "Space",
-    def_retry = "r",
-    def_cancel = "d",
-    def_open_workflow = "W",
-    def_create_release = "n",
-    def_edit_release = "e",
-    def_delete_release = "d",
-    def_create_milestone = "n",
-    def_edit_milestone = "e",
-    def_close_milestone = "c",
-    def_reopen_milestone = "r",
-    def_delete_milestone = "d",
-    def_open_in_browser = "o",
-    def_run_new = "n",
-    def_enter_pipeline = "p",
-    def_enter_jobs = "Alt+j",
-    def_select_job = "Space",
-    def_retry_job = "r",
-    def_start_job = "S",
-    def_select_stage = "s",
-    def_cancel_job = "c",
-    def_download_artifact_job = "d",
-    def_open_in_browser_job = "o",
-    def_view_trace_editor = "e",
-    def_view_trace = "Enter",
-    def_toggle_trace_wrap = "w",
-    def_trace_search = "/",
-    def_toggle_trace_follow = "f",
-    def_jump_to_failure = "E",
-    def_copy_job_url = "y",
-    def_copy_job_id = "Y",
-    def_copy_job_sha = "Alt+y",
-    def_pause_runner = "p",
-    def_resume_runner = "r",
-    def_edit_description = "e",
-    def_cycle_runner_status = "s",
-    def_copy_runner_url = "y",
-    def_copy_runner_id = "Y",
-    def_mark_as_read = "Enter",
-    def_open_in_browser_todo = "o",
-    def_mark_as_done = "d",
-    def_mark_all_as_read = "A",
-    def_unsubscribe = "U",
-    def_toggle_show_read = "r",
-    def_select_todo = "Space",
-    def_copy_todo_url = "y",
-    def_copy_todo_reference = "Y",
-    def_toggle_todo_preview = "p",
-    def_create_branch = "n",
-    def_delete_branch = "d",
-    def_checkout_branch = "C",
-    def_create_mr_branch = "m",
-    def_select_branch = "Space",
-    def_view_deployments = "Enter",
-    def_focus_deployments = "Tab",
-    def_rollback_deployment = "R",
-    def_stop_environment = "d",
-    def_copy_environment_url = "y",
-    def_view_deployment_log = "e",
-    def_toggle_terminal_wrap = "w",
-    def_clear_terminal_log = "C",
-    def_copy_terminal_command = "y",
-    def_copy_terminal_output = "Y",
-    def_inspect_terminal_command = "Enter",
-    def_rerun_terminal_command = "r",
-    def_cycle_terminal_status_filter = "s",
-    def_drill_into_scope = "G",
-    def_switch_repo = "Ctrl+s",
-    def_jump_to_id = "g",
-    def_sort_next = ">",
-    def_sort_prev = "<",
-    def_sort_reverse = "=",
-    def_submit_edit = "Ctrl+x",
-    def_copy_branch = "y",
-    def_retry_failed = "R",
-    def_copy_pipeline_sha = "C",
-    def_copy_url = "y",
-    def_copy_id = "Y",
-    def_cycle_status_filter = "s",
-    def_toggle_preview = "i",
-    def_layout_side_by_side = "1",
-    def_layout_unified = "2",
-    def_layout_auto = "0",
-}
-
-impl Default for KeybindingGlobal {
-    fn default() -> Self {
-        Self {
-            quit: def_quit(),
-            help: def_help(),
-            search: def_search(),
-            refresh: def_refresh(),
-            configure: def_configure(),
-            next_tab: def_next_tab(),
-            prev_tab: def_prev_tab(),
-            scroll_down: def_scroll_down(),
-            scroll_up: def_scroll_up(),
-            scroll_page_down: def_scroll_page_down(),
-            scroll_page_up: def_scroll_page_up(),
-            scroll_half_page_down: def_scroll_half_page_down(),
-            scroll_half_page_up: def_scroll_half_page_up(),
-            scroll_to_end: def_scroll_to_end(),
-            scroll_top: def_scroll_top(),
-            switch_repo: def_switch_repo(),
-            jump_to_id: def_jump_to_id(),
-            submit_edit: def_submit_edit(),
-            sort_next: def_sort_next(),
-            sort_prev: def_sort_prev(),
-            sort_reverse: def_sort_reverse(),
-        }
-    }
-}
-
-impl Default for KeybindingIssues {
-    fn default() -> Self {
-        Self {
-            create_issue: def_create_issue(),
-            edit_entity: def_edit_entity(),
-            close_entity: def_close_entity(),
-            reopen_entity: def_reopen_entity(),
-            delete_entity: def_delete_entity(),
-            select_issue: def_select_issue(),
-            create_mr: def_create_mr_issue(),
-            open_in_browser: def_open_in_browser(),
-            copy_reference: def_copy_reference(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-            drill_into_scope: def_drill_into_scope(),
-            jump_related_mrs: def_jump_related_mrs(),
-        }
-    }
-}
-
-impl Default for KeybindingMrs {
-    fn default() -> Self {
-        Self {
-            create_mr: def_create_mr(),
-            approve_mr: def_approve_mr(),
-            revoke_mr: def_revoke_mr(),
-            rebase_mr: def_rebase_mr(),
-            merge_mr: def_merge_mr(),
-            toggle_draft: def_toggle_draft(),
-            view_diff: def_view_diff(),
-            view_related_pipelines: def_view_related_pipelines(),
-            edit_entity: def_edit_entity(),
-            close_entity: def_close_entity(),
-            reopen_entity: def_reopen_entity(),
-            delete_entity: def_delete_entity(),
-            select_mr: def_select_mr(),
-            open_in_browser: def_open_in_browser(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-            drill_into_scope: def_drill_into_scope(),
-            copy_reference: def_copy_reference(),
-            view_stack: def_view_stack(),
-            jump_linked_issues: def_jump_linked_issues(),
-        }
-    }
-}
-
-impl Default for KeybindingPipelines {
-    fn default() -> Self {
-        Self {
-            trigger_pipeline: def_trigger_pipeline(),
-            run_new: def_run_new(),
-            enter_jobs: def_enter_jobs(),
-            retry: def_retry(),
-            retry_failed: def_retry_failed(),
-            cancel: def_cancel(),
-            open_workflow: def_open_workflow(),
-            open_in_browser: def_open_in_browser(),
-            copy_sha: def_copy_pipeline_sha(),
-            copy_url: def_copy_url(),
-            copy_id: def_copy_id(),
-            cycle_status_filter: def_cycle_status_filter(),
-            toggle_preview: def_toggle_preview(),
-            select_pipeline: def_select_pipeline(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-        }
-    }
-}
-
-impl Default for KeybindingReleases {
-    fn default() -> Self {
-        Self {
-            create_release: def_create_release(),
-            edit_release: def_edit_release(),
-            delete_release: def_delete_release(),
-            open_in_browser: def_open_in_browser(),
-        }
-    }
-}
-
-impl Default for KeybindingMilestones {
-    fn default() -> Self {
-        Self {
-            create_milestone: def_create_milestone(),
-            edit_milestone: def_edit_milestone(),
-            close_milestone: def_close_milestone(),
-            reopen_milestone: def_reopen_milestone(),
-            delete_milestone: def_delete_milestone(),
-            open_in_browser: def_open_in_browser(),
-        }
-    }
-}
-
-impl Default for KeybindingJobs {
-    fn default() -> Self {
-        Self {
-            enter_pipeline: def_enter_pipeline(),
-            select_job: def_select_job(),
-            retry: def_retry_job(),
-            start_job: def_start_job(),
-            select_stage: def_select_stage(),
-            cancel: def_cancel_job(),
-            download_artifact: def_download_artifact_job(),
-            open_in_browser: def_open_in_browser_job(),
-            view_trace_editor: def_view_trace_editor(),
-            view_trace: def_view_trace(),
-            toggle_trace_wrap: def_toggle_trace_wrap(),
-            trace_search: def_trace_search(),
-            toggle_trace_follow: def_toggle_trace_follow(),
-            jump_to_failure: def_jump_to_failure(),
-            copy_url: def_copy_job_url(),
-            copy_id: def_copy_job_id(),
-            copy_sha: def_copy_job_sha(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-        }
-    }
-}
-
-impl Default for KeybindingRunners {
-    fn default() -> Self {
-        Self {
-            pause: def_pause_runner(),
-            resume: def_resume_runner(),
-            edit_description: def_edit_description(),
-            open_in_browser: def_open_in_browser(),
-            cycle_status: def_cycle_runner_status(),
-            copy_url: def_copy_runner_url(),
-            copy_id: def_copy_runner_id(),
-        }
-    }
-}
-
-impl Default for KeybindingTodos {
-    fn default() -> Self {
-        Self {
-            mark_as_read: def_mark_as_read(),
-            open_in_browser: def_open_in_browser_todo(),
-            mark_as_done: def_mark_as_done(),
-            mark_all_as_read: def_mark_all_as_read(),
-            unsubscribe: def_unsubscribe(),
-            toggle_show_read: def_toggle_show_read(),
-            select_todo: def_select_todo(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-            copy_url: def_copy_todo_url(),
-            copy_reference: def_copy_todo_reference(),
-            toggle_preview: def_toggle_todo_preview(),
-        }
-    }
-}
-
-impl Default for KeybindingBranches {
-    fn default() -> Self {
-        Self {
-            create_branch: def_create_branch(),
-            delete_branch: def_delete_branch(),
-            open_in_browser: def_open_in_browser(),
-            copy_branch: def_copy_branch(),
-            checkout_branch: def_checkout_branch(),
-            create_mr: def_create_mr_branch(),
-            select_branch: def_select_branch(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-        }
-    }
-}
-
-impl Default for KeybindingEnvironments {
-    fn default() -> Self {
-        Self {
-            view_deployments: def_view_deployments(),
-            open_in_browser: def_open_in_browser(),
-            focus_deployments: def_focus_deployments(),
-            rollback_deployment: def_rollback_deployment(),
-            stop_environment: def_stop_environment(),
-            copy_url: def_copy_environment_url(),
-            view_deployment_log: def_view_deployment_log(),
-        }
-    }
-}
-
-impl Default for KeybindingTerminal {
-    fn default() -> Self {
-        Self {
-            toggle_wrap: def_toggle_terminal_wrap(),
-            clear_log: def_clear_terminal_log(),
-            copy_command: def_copy_terminal_command(),
-            copy_output: def_copy_terminal_output(),
-            inspect_command: def_inspect_terminal_command(),
-            rerun_command: def_rerun_terminal_command(),
-            cycle_status_filter: def_cycle_terminal_status_filter(),
-        }
-    }
-}
-
-impl Default for KeybindingDiff {
-    fn default() -> Self {
-        Self {
-            layout_side_by_side: def_layout_side_by_side(),
-            layout_unified: def_layout_unified(),
-            layout_auto: def_layout_auto(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2007,7 +1343,7 @@ pub struct Config {
     pub theme_light: String,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
-    pub keybindings: KeybindingConfig,
+    pub keybindings: crate::keymap::Keymap,
     pub custom_keybindings: CustomKeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
@@ -2058,7 +1394,7 @@ impl Default for Config {
             theme_light: DEFAULT_LIGHT_THEME.to_string(),
             active_tab: None,
             theme: ThemeOverrides::default(),
-            keybindings: KeybindingConfig::default(),
+            keybindings: crate::keymap::Keymap::default(),
             custom_keybindings: CustomKeybindingConfig::default(),
             page_size: def_page_size(),
             api_per_page: def_api_per_page(),
@@ -2185,157 +1521,6 @@ page_size = 100
 # purple = "{purple}"
 # purple_bg = "{purple_bg}"
 
-[keybindings.global]
-quit = "q"
-help = "?"
-search = "/"
-refresh = "Ctrl+r"
-configure = "Tab"
-next_tab = "l"
-prev_tab = "h"
-scroll_down = "J"
-scroll_up = "K"
-scroll_page_down = "PageDown"
-scroll_page_up = "PageUp"
-scroll_half_page_down = "Ctrl+d"
-scroll_half_page_up = "Ctrl+u"
-scroll_to_end = "End"
-scroll_top = "Home"
-jump_to_id = "g"
-sort_next = ">"
-sort_prev = "<"
-sort_reverse = "="
-
-[keybindings.issues]
-create_issue = "n"
-select_issue = "Space"
-create_mr = "m"
-edit_entity = "e"
-close_entity = "c"
-reopen_entity = "r"
-delete_entity = "d"
-selection_toggle = "v"
-jump_related_mrs = "M"
-
-[keybindings.mrs]
-create_mr = "n"
-select_mr = "Space"
-approve_mr = "a"
-revoke_mr = "A"
-rebase_mr = "R"
-merge_mr = "m"
-toggle_draft = "s"
-view_diff = "D"
-view_related_pipelines = "P"
-edit_entity = "e"
-close_entity = "c"
-reopen_entity = "r"
-delete_entity = "d"
-selection_toggle = "v"
-jump_linked_issues = "I"
-
-[keybindings.pipelines]
-trigger_pipeline = "p"
-enter_jobs = "Alt+j"
-select_pipeline = "Space"
-retry = "r"
-retry_failed = "R"
-cycle_status_filter = "s"
-toggle_preview = "i"
-copy_url = "y"
-copy_id = "Y"
-copy_sha = "C"
-cancel = "d"
-open_workflow = "W"
-selection_toggle = "v"
-
-[keybindings.releases]
-create_release = "n"
-edit_release = "e"
-delete_release = "d"
-open_in_browser = "o"
-
-[keybindings.milestones]
-create_milestone = "n"
-edit_milestone = "e"
-close_milestone = "c"
-reopen_milestone = "r"
-delete_milestone = "d"
-open_in_browser = "o"
-
-[keybindings.jobs]
-enter_pipeline = "p"
-select_job = "Space"
-retry = "r"
-start_job = "S"
-select_stage = "s"
-cancel = "c"
-download_artifact = "d"
-open_in_browser = "o"
-view_trace_editor = "e"
-view_trace = "Enter"
-toggle_trace_wrap = "w"
-trace_search = "/"
-toggle_trace_follow = "f"
-jump_to_failure = "E"
-copy_url = "y"
-copy_id = "Y"
-copy_sha = "Alt+y"
-selection_toggle = "v"
-
-[keybindings.runners]
-pause = "p"
-resume = "r"
-edit_description = "e"
-cycle_status = "s"
-copy_url = "y"
-copy_id = "Y"
-
-[keybindings.todos]
-mark_as_read = "Enter"
-open_in_browser = "o"
-mark_as_done = "d"
-mark_all_as_read = "A"
-unsubscribe = "U"
-toggle_show_read = "r"
-select_todo = "Space"
-selection_toggle = "v"
-select_all = "Ctrl+a"
-copy_url = "y"
-copy_reference = "Y"
-toggle_preview = "p"
-
-[keybindings.branches]
-create_branch = "n"
-delete_branch = "d"
-checkout_branch = "C"
-create_mr = "m"
-select_branch = "Space"
-selection_toggle = "v"
-select_all = "Ctrl+a"
-
-[keybindings.environments]
-view_deployments = "Enter"
-open_in_browser = "o"
-focus_deployments = "Tab"
-rollback_deployment = "R"
-stop_environment = "d"
-copy_url = "y"
-view_deployment_log = "e"
-
-[keybindings.terminal]
-toggle_wrap = "w"
-clear_log = "C"
-copy_command = "y"
-copy_output = "Y"
-inspect_command = "Enter"
-rerun_command = "r"
-cycle_status_filter = "s"
-
-[keybindings.diff]
-layout_side_by_side = "1"
-layout_unified = "2"
-layout_auto = "0"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:
@@ -2870,18 +2055,6 @@ page_size = 250
     }
 
     #[test]
-    fn revoke_mr_defaults_to_shift_a() {
-        let cfg = Config::default();
-        assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");
-    }
-
-    #[test]
-    fn rebase_mr_defaults_to_shift_r() {
-        let cfg = Config::default();
-        assert_eq!(cfg.keybindings.mrs.rebase_mr, "R");
-    }
-
-    #[test]
     fn fetch_label_colors_defaults_true_and_is_configurable() {
         assert!(Config::default().fetch_label_colors);
 
@@ -2902,107 +2075,12 @@ page_size = 250
     }
 
     #[test]
-    fn copy_issue_reference_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.issues.copy_reference, "y");
-    }
-
-    #[test]
-    fn copy_mr_reference_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.mrs.copy_reference, "y");
-    }
-
-    #[test]
-    fn view_stack_defaults_to_y() {
-        // Reusing `Y` (capital) keeps `y` free for `copy_reference`. The
-        // mnemonic is `Y` → "stacK" or "stack list"; users can rebind.
-        assert_eq!(Config::default().keybindings.mrs.view_stack, "Y");
-    }
-
-    #[test]
-    fn copy_sha_defaults_to_c_on_pipelines_and_alt_y_on_jobs() {
-        assert_eq!(Config::default().keybindings.pipelines.copy_sha, "C");
-        assert_eq!(Config::default().keybindings.jobs.copy_sha, "Alt+y");
-    }
-
-    #[test]
-    fn pipeline_default_bindings_never_share_a_key() {
-        let bindings = toml::Value::try_from(KeybindingPipelines::default()).expect("serialize");
-        let mut keys: Vec<&str> = bindings
-            .as_table()
-            .expect("a table of bindings")
-            .values()
-            .filter_map(toml::Value::as_str)
-            .filter(|key| !key.is_empty())
-            .collect();
-        let total = keys.len();
-        keys.sort_unstable();
-        keys.dedup();
-        assert_eq!(
-            keys.len(),
-            total,
-            "a default key is bound twice: {bindings}"
-        );
-    }
-
-    #[test]
     fn default_config_is_what_loading_without_config_files_yields() {
         let from_default_toml: Config = toml::from_str(&Config::generate_default_toml()).unwrap();
         assert_eq!(
             toml::Value::try_from(Config::default()).unwrap(),
             toml::Value::try_from(from_default_toml).unwrap(),
         );
-    }
-
-    #[test]
-    fn copy_branch_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.branches.copy_branch, "y");
-    }
-
-    #[test]
-    fn page_scroll_defaults_to_pager_keys() {
-        let global = Config::default().keybindings.global;
-        assert_eq!(global.scroll_page_down, "PageDown");
-        assert_eq!(global.scroll_page_up, "PageUp");
-        assert_eq!(global.scroll_half_page_down, "Ctrl+d");
-        assert_eq!(global.scroll_half_page_up, "Ctrl+u");
-    }
-
-    /// Panics when two fields of a keybinding table share a default key.
-    /// Fields are enumerated through the table's own `Serialize` impl, so a
-    /// newly added field is checked without being listed anywhere.
-    fn assert_no_duplicate_bindings(table: &str, bindings: &impl Serialize) {
-        let value = serde_json::to_value(bindings).expect("serialize keybinding table");
-        let fields = value
-            .as_object()
-            .expect("a keybinding table serializes to a JSON object");
-        assert!(!fields.is_empty(), "{table} serialized to no fields");
-
-        let mut seen: HashMap<&str, &str> = HashMap::new();
-        for (field, binding) in fields {
-            let binding = binding
-                .as_str()
-                .expect("every keybinding field is a string");
-            if let Some(other_field) = seen.insert(binding, field) {
-                panic!(
-                    "duplicate {table} keybinding {binding:?}: used by both `{other_field}` and `{field}`"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn mr_keybindings_do_not_collide() {
-        assert_no_duplicate_bindings("mrs", &Config::default().keybindings.mrs);
-    }
-
-    #[test]
-    fn branches_keybindings_do_not_collide() {
-        assert_no_duplicate_bindings("branches", &Config::default().keybindings.branches);
-    }
-
-    #[test]
-    fn todo_keybindings_do_not_collide() {
-        assert_no_duplicate_bindings("todos", &Config::default().keybindings.todos);
     }
 
     #[test]
@@ -3228,6 +2306,8 @@ diff_addition_fg = "#141414"
 diff_addition_bg = "#151515"
 diff_deletion_fg = "#161616"
 diff_deletion_bg = "#171717"
+diff_addition_emph_bg = "#2e2e2e"
+diff_deletion_emph_bg = "#2f2f2f"
 diff_gutter_bg = "#181818"
 diff_sep = "#191919"
 comment_bg = "#1a1a1a"
@@ -3250,7 +2330,11 @@ label_palette_6 = "#2a2a2a"
 label_palette_7 = "#2b2b2b"
 label_palette_8 = "#2c2c2c"
 label_palette_9 = "#2d2d2d"
-diff_search_bg = "#2e2e2e"
+accent = "#2e2e2e"
+key_hint = "#2f2f2f"
+danger_border = "#303030"
+backdrop_dim = "#313131"
+diff_search_bg = "#323232"
 "##;
         let config: Config =
             toml::from_str(toml_str).expect("deserialize config with full theme overrides");
@@ -3301,7 +2385,114 @@ diff_search_bg = "#2e2e2e"
         assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
         assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
         assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
-        assert_eq!(theme.diff_search_bg, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Rgb(47, 47, 47));
+        assert_eq!(theme.accent, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.key_hint, Color::Rgb(47, 47, 47));
+        assert_eq!(theme.danger_border, Color::Rgb(48, 48, 48));
+        assert_eq!(theme.backdrop_dim, Color::Rgb(49, 49, 49));
+        assert_eq!(theme.diff_search_bg, Color::Rgb(50, 50, 50));
+    }
+
+    #[test]
+    fn every_bundled_theme_sets_the_form_tokens_itself() {
+        let missing: Vec<String> = BUNDLED_THEMES
+            .iter()
+            .flat_map(|(name, toml_str)| {
+                let table: toml::Table = toml::from_str(toml_str).expect("bundled theme parses");
+                ["accent", "key_hint", "danger_border", "backdrop_dim"]
+                    .into_iter()
+                    .filter(move |key| !table.contains_key(*key))
+                    .map(move |key| format!("{name}: {key}"))
+            })
+            .collect();
+        assert_eq!(missing, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_theme_without_form_tokens_takes_purple_yellow_red_and_text_muted() {
+        let mut table: toml::Table =
+            toml::from_str(include_str!("themes/default.toml")).expect("default theme parses");
+        for key in ["accent", "key_hint", "danger_border", "backdrop_dim"] {
+            table.remove(key);
+        }
+        let theme = toml::Value::Table(table)
+            .try_into::<ThemeToml>()
+            .expect("theme without form tokens parses")
+            .to_theme()
+            .expect("theme without form tokens maps");
+        assert_eq!(
+            [
+                theme.accent,
+                theme.key_hint,
+                theme.danger_border,
+                theme.backdrop_dim
+            ],
+            [theme.purple, theme.yellow, theme.red, theme.text_muted]
+        );
+    }
+
+    #[test]
+    fn a_theme_without_emphasis_tokens_mixes_them_from_the_diff_row_colors() {
+        let theme_toml = r##"
+bg = "#000000"
+border = "#000000"
+border_focused = "#000000"
+header_fg = "#000000"
+highlight_bg = "#000000"
+inactive_bg = "#000000"
+text_normal = "#000000"
+text_muted = "#000000"
+checked_bg = "#000000"
+green = "#00c800"
+green_bg = "#003200"
+red = "#c80000"
+red_bg = "#320000"
+blue = "#000000"
+blue_bg = "#000000"
+yellow = "#000000"
+yellow_bg = "#000000"
+purple = "#000000"
+purple_bg = "#000000"
+diff_deletion_fg = "#ffffff"
+diff_deletion_bg = ""
+"##;
+        let theme = toml::from_str::<ThemeToml>(theme_toml)
+            .expect("theme parses")
+            .to_theme()
+            .expect("theme resolves");
+
+        assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(0, 95, 0));
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Reset);
+    }
+
+    #[test]
+    fn a_row_color_override_rederives_the_emphasis_unless_it_sets_one() {
+        let config: Config = toml::from_str(
+            r##"
+[theme]
+diff_addition_bg = ""
+diff_deletion_fg = "#ffffff"
+diff_deletion_bg = "#000000"
+"##,
+        )
+        .expect("config parses");
+        let theme = config.resolve_theme(None);
+        assert_eq!(theme.diff_addition_emph_bg, Color::Reset);
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Rgb(77, 77, 77));
+
+        let config: Config = toml::from_str(
+            r##"
+[theme]
+diff_addition_bg = "#000000"
+diff_addition_emph_bg = "#123456"
+"##,
+        )
+        .expect("config parses");
+        assert_eq!(
+            config.resolve_theme(None).diff_addition_emph_bg,
+            Color::Rgb(0x12, 0x34, 0x56)
+        );
     }
 
     #[test]

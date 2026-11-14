@@ -39,3 +39,7 @@ comment_bg = ""
 modal_border = "green"
 
 badge_group_bg = "cyan"
+accent = "magenta"
+key_hint = "yellow"
+danger_border = "red"
+backdrop_dim = "dark-gray"

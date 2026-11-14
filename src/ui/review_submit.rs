@@ -7,7 +7,7 @@ use crate::review_submit::{
     ReviewSubmit, ReviewSubmitFocus, ReviewSubmitLayout, ReviewVerdict, SubmissionState,
 };
 use crate::ui::render_ctx::RenderCtx;
-use crate::utils::format::{sanitize_untrusted, wrap_ranges, wrap_text};
+use crate::utils::format::{displayable, wrap_ranges, wrap_text};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Margin, Rect},
@@ -349,12 +349,6 @@ fn render_summary(f: &mut Frame, overlay: &ReviewSubmit, area: Rect, theme: &The
         })
         .collect();
     f.render_widget(Paragraph::new(lines).style(text_style), inner);
-}
-
-/// The summary as drawn: escape sequences removed, and tabs and carriage
-/// returns shown as one space so byte offsets past them do not move.
-fn displayable(text: &str) -> String {
-    sanitize_untrusted(text).replace(['\t', '\r'], " ")
 }
 
 fn render_buttons(

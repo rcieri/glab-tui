@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_returns_false_when_nothing_pending() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_returns_false_within_debounce_window() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1230,7 +1230,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_clears_state_when_iid_already_fetched() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1271,7 +1271,7 @@ mod tests {
 
     /// A GitHub app on the PRs tab with the inspector open on PR #11.
     fn app_inspecting_pr_11() -> app::App {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         app.gitlab_client = Some(crate::domain::client::GitlabClient {
             is_github: true,
             backend: crate::backend::create_backend(true),

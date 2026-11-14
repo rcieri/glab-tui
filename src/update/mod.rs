@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn a_tick_does_not_fetch_the_highlighted_pipelines_jobs_but_a_new_list_does() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
         let mut app = app_with_client();
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn a_refetched_child_level_drops_the_cached_jobs_of_children_whose_status_changed() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
         let level = |children| crate::domain::pipelines::ChildLevel {
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn entering_a_pipeline_again_drops_the_cached_jobs_of_its_children() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
         let opened = |status: &str| Event::PipelineOpened {

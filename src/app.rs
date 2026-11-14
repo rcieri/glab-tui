@@ -6332,24 +6332,15 @@ impl App {
         self.update_filter_selection();
     }
 
-    /// The tabs `layout.tabs` shows, in its order. A list that hides every
-    /// tab shows them all instead, so the app always has somewhere to be.
+    /// The tabs `layout.tabs` shows, in its order.
     pub fn available_tabs(&self) -> Vec<Tab> {
         let kind = self.kind();
-        let shown: Vec<Tab> = self
-            .config
+        self.config
             .layout
             .tab_order()
             .into_iter()
             .filter(|&(tab, is_shown)| is_shown && tab.available_on_platform(kind))
             .map(|(tab, _)| tab)
-            .collect();
-        if !shown.is_empty() {
-            return shown;
-        }
-        Tab::ALL
-            .into_iter()
-            .filter(|tab| tab.available_on_platform(kind))
             .collect()
     }
 

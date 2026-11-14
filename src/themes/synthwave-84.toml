@@ -29,6 +29,8 @@ label_palette_6 = "#fa7850"
 label_palette_7 = "#28c8c8"
 label_palette_8 = "#b4e628"
 label_palette_9 = "#dca0ff"
+diff_addition_emph_bg = "#006a50"
+diff_deletion_emph_bg = "#751628"
 diff_gutter_bg = "#241b35"
 diff_sep = "#7a6a9a"
 

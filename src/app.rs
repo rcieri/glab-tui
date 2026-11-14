@@ -22,6 +22,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::ListState;
 use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
@@ -910,6 +911,10 @@ pub struct DiffLine {
     /// Token runs over [`DiffLine::code`]; colours are resolved from the
     /// theme at render time by [`DiffLine::syntax_spans`].
     pub syntax_highlighted: Option<Vec<SyntaxToken>>,
+    /// Byte ranges of [`DiffLine::code`] that differ from the line it was
+    /// paired with: the added line replacing a removed one, or the reverse.
+    /// Empty for context rows and for changed lines left unpaired.
+    pub changed_ranges: Vec<Range<usize>>,
     pub fuzzy_indices: Option<Vec<usize>>,
 }
 
@@ -931,6 +936,57 @@ impl DiffLine {
 
 pub fn strip_diff_marker(line: &str) -> &str {
     line.strip_prefix(['+', '-', ' ']).unwrap_or(line)
+}
+
+/// Pairs each run of removed lines with the added lines that follow it, the
+/// first removed line with the first added one and so on, and marks the words
+/// each pair changed. A run ends at any row other than a change or a
+/// missing-newline note. Runs of different lengths get no marks: which
+/// removed line an added one replaces is then unknown, and pairing them by
+/// position marks renames that never happened.
+fn mark_changed_words(lines: &mut [DiffLine]) {
+    let mut removed: Vec<usize> = Vec::new();
+    let mut added: Vec<usize> = Vec::new();
+    for idx in 0..lines.len() {
+        match lines[idx].line_type {
+            DiffLineType::Deletion => {
+                if !added.is_empty() {
+                    mark_changed_pairs(lines, &removed, &added);
+                    removed.clear();
+                    added.clear();
+                }
+                removed.push(idx);
+            }
+            DiffLineType::Addition => added.push(idx),
+            _ if is_missing_newline_note(&lines[idx]) => {}
+            _ => {
+                mark_changed_pairs(lines, &removed, &added);
+                removed.clear();
+                added.clear();
+            }
+        }
+    }
+    mark_changed_pairs(lines, &removed, &added);
+}
+
+/// `\ No newline at end of file`, which git puts between the two halves of a
+/// last-line edit.
+fn is_missing_newline_note(line: &DiffLine) -> bool {
+    line.line_type == DiffLineType::Meta && line.content.starts_with('\\')
+}
+
+fn mark_changed_pairs(lines: &mut [DiffLine], removed: &[usize], added: &[usize]) {
+    if removed.len() != added.len() {
+        return;
+    }
+    for (&old, &new) in removed.iter().zip(added) {
+        if let Some(changed) =
+            crate::word_diff::changed_ranges(lines[old].code(), lines[new].code())
+        {
+            lines[old].changed_ranges = changed.old;
+            lines[new].changed_ranges = changed.new;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1403,8 +1459,8 @@ impl DiffView {
         )
     }
 
-    /// Parses the diff without syntax highlighting, for callers that only
-    /// read its structure (anchors, line numbers) and never render it.
+    /// Parses the diff without syntax highlighting or word marks, for callers
+    /// that only read its structure (anchors, line numbers) and never render it.
     pub fn without_highlighting(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
         Self::parse(mr_iid, project_path, raw_diff, None)
     }
@@ -1671,8 +1727,12 @@ impl DiffView {
                 old_line_num: line_old,
                 new_line_num: line_new,
                 syntax_highlighted: highlighted,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             });
+        }
+        if highlighter.is_some() {
+            mark_changed_words(&mut all_lines);
         }
 
         let mut root_node = DiffTreeNode::Directory {
@@ -10812,6 +10872,105 @@ diff --git a/Makefile b/Makefile
         );
     }
 
+    fn changed_words(view: &DiffView) -> Vec<(String, Vec<String>)> {
+        view.all_lines
+            .iter()
+            .filter(|l| matches!(l.line_type, DiffLineType::Addition | DiffLineType::Deletion))
+            .map(|l| {
+                let words = l
+                    .changed_ranges
+                    .iter()
+                    .map(|r| l.code()[r.clone()].to_string())
+                    .collect();
+                (l.content.clone(), words)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn removed_lines_pair_with_the_added_lines_after_them_word_by_word() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,6 +1,6 @@
+ fn main() {
+-    let timeout = 30;
+-    let retries = 3;
++    let timeout = 60;
++    let retries = 5;
+ }
+-let unpaired = 1;
+ // context
++let other = 2;
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let words = |content: &str, changed: &[&str]| {
+            (
+                content.to_string(),
+                changed.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            changed_words(&view),
+            [
+                words("-    let timeout = 30;", &["30"]),
+                words("-    let retries = 3;", &["3"]),
+                words("+    let timeout = 60;", &["60"]),
+                words("+    let retries = 5;", &["5"]),
+                words("-let unpaired = 1;", &[]),
+                words("+let other = 2;", &[]),
+            ]
+        );
+    }
+
+    #[test]
+    fn uneven_runs_of_removed_and_added_lines_get_no_word_marks() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,4 +1,3 @@
+ fn main() {
+-    let alpha = compute(x, y);
+-    let beta = compute(x, z);
++    let beta = compute(x, w);
+ }
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let unmarked = |content: &str| (content.to_string(), Vec::<String>::new());
+        assert_eq!(
+            changed_words(&view),
+            [
+                unmarked("-    let alpha = compute(x, y);"),
+                unmarked("-    let beta = compute(x, z);"),
+                unmarked("+    let beta = compute(x, w);"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_newline_note_does_not_split_a_last_line_edit() {
+        let diff = "\
+diff --git a/VERSION b/VERSION
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-version = 1.2.3
+\\ No newline at end of file
++version = 1.2.4
+\\ No newline at end of file
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        assert_eq!(
+            changed_words(&view),
+            [
+                ("-version = 1.2.3".to_string(), vec!["1.2.3".to_string()]),
+                ("+version = 1.2.4".to_string(), vec!["1.2.4".to_string()]),
+            ]
+        );
+    }
+
     #[test]
     fn a_comment_action_in_group_scope_targets_the_open_diffs_project() {
         let mut app = App {
@@ -11472,6 +11631,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: None,
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11481,6 +11641,7 @@ index abcdef..ffffff 100644
                 old_line_num: Some(1),
                 new_line_num: None,
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11490,6 +11651,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(1),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11499,6 +11661,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(2),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11508,6 +11671,7 @@ index abcdef..ffffff 100644
                 old_line_num: Some(2),
                 new_line_num: Some(3),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
         ];
@@ -11933,6 +12097,7 @@ diff --git a/foo.txt b/foo.txt
                 new_line_num,
                 file_path: file_path.to_string(),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             }),
             right: Some(DiffLine {
@@ -11942,6 +12107,7 @@ diff --git a/foo.txt b/foo.txt
                 new_line_num,
                 file_path: file_path.to_string(),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             }),
             line_type: DiffLineType::Normal,

@@ -23,6 +23,7 @@ pub mod templates;
 pub mod ui;
 pub mod update;
 pub mod utils;
+pub mod word_diff;
 
 pub type AppTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 

@@ -2001,6 +2001,13 @@ impl DiffView {
         self.lines = new_lines;
         self.side_by_side_lines = build_side_by_side_lines(&self.lines);
 
+        self.index_active_rows();
+    }
+
+    /// Clamps the cursor to the active layout's rows and rebuilds its hunk
+    /// list and search matches: everything that depends on the layout once
+    /// both row lists are built.
+    fn index_active_rows(&mut self) {
         let active_len = if self.side_by_side {
             self.side_by_side_lines.len()
         } else {
@@ -2045,7 +2052,7 @@ impl DiffView {
         self.side_by_side = side_by_side;
         self.selection_start = None;
         self.selection_end = None;
-        self.update_active_lines();
+        self.index_active_rows();
 
         let new_cursor = if side_by_side {
             self.unified_cursor_before_split = Some(old_cursor);

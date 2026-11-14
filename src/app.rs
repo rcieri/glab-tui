@@ -9177,13 +9177,25 @@ impl App {
     }
 
     /// `display`, an order of `tab`'s current columns, as the order to store:
-    /// merged with the stored order so columns this host or scope lacks keep
-    /// their place.
+    /// merged with the stored order, then with every host's and scope's
+    /// built-in order, so columns this host or scope lacks keep their place.
     fn stored_column_order(&self, tab: Tab, display: &[&str]) -> Vec<String> {
-        match self.column_order.get(&tab) {
+        let mut order = match self.column_order.get(&tab) {
             Some(stored) => crate::column_order::merge_order(display, stored),
             None => display.iter().map(|label| label.to_string()).collect(),
+        };
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            for is_group in [false, true] {
+                let current: Vec<&str> = order.iter().map(String::as_str).collect();
+                let built_in: Vec<String> = tab
+                    .columns(kind, is_group)
+                    .into_iter()
+                    .map(String::from)
+                    .collect();
+                order = crate::column_order::merge_order(&current, &built_in);
+            }
         }
+        order
     }
 
     /// Every column of `tab` in display order, shown or not.
@@ -14788,6 +14800,54 @@ index 123456..789012 100644
         assert_eq!(
             app.saved_columns(Tab::Issues).unwrap(),
             ["Title", "MRs", "ID"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_on_github_keeps_gitlab_only_columns_next_to_their_built_in_neighbours() {
+        let mut app = App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        };
+        app.enabled_columns
+            .get_mut(&Tab::Pipelines)
+            .unwrap()
+            .insert("Project".to_string());
+
+        assert_eq!(
+            app.saved_columns(Tab::Pipelines).unwrap(),
+            [
+                "Project", "ID", "Status", "Stages", "Source", "Created", "Duration", "Ref"
+            ]
+            .map(String::from)
+        );
+        assert_eq!(
+            app.saved_columns(Tab::Jobs).unwrap(),
+            ["ID", "Stage", "Status", "Name", "Matrix"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_on_gitlab_keeps_the_github_stack_column_next_to_its_built_in_neighbours() {
+        let mut app = App::default();
+        app.config.mrs.columns = Some(
+            ["Author", "ID", "Pipeline", "Stack", "Title"]
+                .map(String::from)
+                .to_vec(),
+        );
+        app.apply_config();
+
+        assert_eq!(
+            app.saved_columns(Tab::MergeRequests).unwrap(),
+            ["ID", "Title", "Pipeline", "Stack", "Author"].map(String::from)
         );
     }
 

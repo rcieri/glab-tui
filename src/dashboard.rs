@@ -37,6 +37,9 @@ pub enum DashboardRefresh {
 pub struct DashboardFetchPlan {
     pub sources: Vec<Tab>,
     pub reads_activity: bool,
+    /// Whether this refresh restarts `SLOW_REFRESH_INTERVAL`. Unlike
+    /// `reads_activity`, also in group scope, which has no activity feed.
+    pub restarts_slow_refresh: bool,
 }
 
 /// The repository's activity feed as the Dashboard last fetched it.
@@ -453,17 +456,17 @@ impl App {
                 DashboardRefresh::Periodic => tab.is_high_churn() || is_slow_refresh_due,
             })
             .collect();
-        let reads_activity = self.scope.is_repository()
-            && match refresh {
-                DashboardRefresh::Full => true,
-                DashboardRefresh::Missing => {
-                    matches!(self.dashboard.contributions, ContributionFeed::NotLoaded)
-                }
-                DashboardRefresh::Periodic => is_slow_refresh_due,
-            };
+        let restarts_slow_refresh = match refresh {
+            DashboardRefresh::Full => true,
+            DashboardRefresh::Missing => {
+                matches!(self.dashboard.contributions, ContributionFeed::NotLoaded)
+            }
+            DashboardRefresh::Periodic => is_slow_refresh_due,
+        };
         DashboardFetchPlan {
             sources,
-            reads_activity,
+            reads_activity: self.scope.is_repository() && restarts_slow_refresh,
+            restarts_slow_refresh,
         }
     }
 
@@ -1155,6 +1158,7 @@ mod tests {
             DashboardFetchPlan {
                 sources: vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines],
                 reads_activity: false,
+                restarts_slow_refresh: false,
             }
         );
 
@@ -1170,6 +1174,37 @@ mod tests {
                     Tab::Releases,
                 ],
                 reads_activity: true,
+                restarts_slow_refresh: true,
+            }
+        );
+    }
+
+    #[test]
+    fn the_periodic_refresh_in_group_scope_reads_milestones_only_once_due() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Periodic),
+            DashboardFetchPlan {
+                sources: vec![
+                    Tab::MergeRequests,
+                    Tab::Issues,
+                    Tab::Pipelines,
+                    Tab::Milestones,
+                ],
+                reads_activity: false,
+                restarts_slow_refresh: true,
+            }
+        );
+
+        app.dashboard.slow_refreshed_at = Some(Instant::now());
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Periodic),
+            DashboardFetchPlan {
+                sources: vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines],
+                reads_activity: false,
+                restarts_slow_refresh: false,
             }
         );
     }
@@ -1198,6 +1233,7 @@ mod tests {
             DashboardFetchPlan {
                 sources: vec![Tab::Milestones, Tab::Releases],
                 reads_activity: false,
+                restarts_slow_refresh: false,
             }
         );
     }

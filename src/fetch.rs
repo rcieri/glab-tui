@@ -523,7 +523,7 @@ pub fn spawn_refresh_dashboard(
     for tab in &plan.sources {
         app.start_loading_tab(*tab);
     }
-    if plan.reads_activity {
+    if plan.restarts_slow_refresh {
         app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
     }
     fx.spawn(refresh_dashboard(

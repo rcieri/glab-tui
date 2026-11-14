@@ -23,6 +23,9 @@ fn merge_the_listed_mr(extra: &[(&str, &str)]) -> TestSession {
     session.send_input(b"m");
     session
         .wait_for_screen_contains("Merge method", 15000)
+        .expect("the merge dialog should show its method radio");
+    session
+        .wait_for_screen_without("loading…", 15000)
         .expect("the merge dialog should list the methods the project allows");
     session.send_input(b"\r");
     session

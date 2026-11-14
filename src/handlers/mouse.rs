@@ -1,7 +1,6 @@
 use crate::app::App;
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::handlers::overlays::handle_submit_dialog;
 use tokio::sync::mpsc::UnboundedSender;
 
 fn rect_contains(rect: ratatui::layout::Rect, row: u16, col: u16) -> bool {
@@ -177,7 +176,9 @@ pub fn handle_mouse_event(
                 let inner = border_inner(*rect);
                 match kind {
                     OverlayKind::ConfirmPopup => {
-                        handle_submit_dialog_mouse(app, row, col, tx, fx);
+                        crate::handlers::overlays::submit_dialog::click_submit_dialog(
+                            app, row, col, tx, fx,
+                        );
                         return;
                     }
                     OverlayKind::SaveMenu => {
@@ -258,33 +259,6 @@ pub fn handle_mouse_event(
         }
         _ => {}
     }
-}
-
-/// A click on a control picks or flips it; a click on a button presses it.
-fn handle_submit_dialog_mouse(
-    app: &mut App,
-    row: u16,
-    col: u16,
-    tx: &UnboundedSender<Event>,
-    fx: &mut Effects,
-) {
-    let Some(dialog) = app.submit_dialog_mut() else {
-        return;
-    };
-    let Some(focus) = dialog
-        .form
-        .layout
-        .as_ref()
-        .and_then(|layout| layout.focus_at(col, row))
-    else {
-        return;
-    };
-    dialog.form.set_focus(focus);
-    let key = crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Enter,
-        crossterm::event::KeyModifiers::NONE,
-    );
-    handle_submit_dialog(app, &key, tx, fx);
 }
 
 /// A click in the filter box starts filtering; a click on a row moves the

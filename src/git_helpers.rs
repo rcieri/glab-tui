@@ -231,6 +231,18 @@ pub fn remote_project_path(remote: &str) -> Option<String> {
     parse_project_path(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Extracts the host from the URL of the named remote.
+pub fn remote_host(remote: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", remote])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_remote_host(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// The project the user pointed `gh` at, or `None` when they never did.
 pub fn gh_resolved_project() -> Option<String> {
     match gh_resolved()? {

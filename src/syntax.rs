@@ -5,9 +5,10 @@ use std::ops::Range;
 use std::sync::LazyLock;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
-/// The newline variant: its grammars match `\n` at line ends, so every line is
-/// fed with its newline restored (see [`LineHighlighter::highlight`]).
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+/// bat's grammars, via `two-face`. The newline variant: its grammars match
+/// `\n` at line ends, so every line is fed with its newline restored (see
+/// [`LineHighlighter::highlight`]).
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 
 pub type Syntax = &'static SyntaxReference;
 
@@ -93,13 +94,30 @@ pub fn syntax_for_path(path: &str) -> Option<Syntax> {
     if file_name.is_empty() {
         return None;
     }
-    SYNTAX_SET.find_syntax_by_extension(file_name).or_else(|| {
+    find_syntax_by_extension(file_name).or_else(|| {
         let (stem, extension) = file_name.rsplit_once('.')?;
         if stem.is_empty() || extension.is_empty() {
             return None;
         }
-        SYNTAX_SET.find_syntax_by_extension(extension)
+        find_syntax_by_extension(extension)
     })
+}
+
+/// Extensions bat's set gives to more than one grammar, with the grammar they
+/// usually mean. syntect takes the last grammar listing an extension, which
+/// for `fs` is GLSL, while `.fs` files are mostly F# (shaders tend to use
+/// `.frag` or `.glsl`).
+const EXTENSION_GRAMMARS: &[(&str, &str)] = &[("fs", "F#")];
+
+fn preferred_grammar(extension: &str) -> Option<Syntax> {
+    let (_, name) = EXTENSION_GRAMMARS
+        .iter()
+        .find(|(claimed, _)| claimed.eq_ignore_ascii_case(extension))?;
+    SYNTAX_SET.find_syntax_by_name(name)
+}
+
+fn find_syntax_by_extension(extension: &str) -> Option<Syntax> {
+    preferred_grammar(extension).or_else(|| SYNTAX_SET.find_syntax_by_extension(extension))
 }
 
 /// Picks the grammar from a file's first line: a shebang or an editor mode line.
@@ -110,7 +128,7 @@ pub fn syntax_for_first_line(line: &str) -> Option<Syntax> {
 /// Picks the grammar for a fenced code block's language token, by extension or
 /// by name.
 pub fn syntax_for_token(token: &str) -> Option<Syntax> {
-    SYNTAX_SET.find_syntax_by_token(token)
+    preferred_grammar(token).or_else(|| SYNTAX_SET.find_syntax_by_token(token))
 }
 
 /// Classifies scopes once each. Formatting a scope to its name takes syntect's
@@ -360,6 +378,53 @@ mod tests {
         assert_eq!(
             syntax_for_path("src/GNUmakefile").map(|s| s.name.as_str()),
             Some("Makefile")
+        );
+    }
+
+    #[test]
+    fn bat_grammars_resolve_languages_syntect_does_not_bundle() {
+        let paths = [
+            "web/app.ts",
+            "web/App.tsx",
+            "Cargo.toml",
+            "Dockerfile",
+            "app/Main.kt",
+            "Sources/main.swift",
+            "flake.nix",
+            "src/main.zig",
+            "infra/main.tf",
+            "src/App.svelte",
+            "src/App.vue",
+            "src/Program.fs",
+        ];
+        let resolved: Vec<(&str, Option<&str>)> = paths
+            .into_iter()
+            .map(|path| (path, syntax_for_path(path).map(|s| s.name.as_str())))
+            .collect();
+        assert_eq!(
+            resolved,
+            [
+                ("web/app.ts", Some("TypeScript")),
+                ("web/App.tsx", Some("TypeScriptReact")),
+                ("Cargo.toml", Some("TOML")),
+                ("Dockerfile", Some("Dockerfile")),
+                ("app/Main.kt", Some("Kotlin")),
+                ("Sources/main.swift", Some("Swift")),
+                ("flake.nix", Some("Nix")),
+                ("src/main.zig", Some("Zig")),
+                ("infra/main.tf", Some("Terraform")),
+                ("src/App.svelte", Some("Svelte")),
+                ("src/App.vue", Some("Vue Component")),
+                ("src/Program.fs", Some("F#")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_shader_extension_keeps_glsl() {
+        assert_eq!(
+            syntax_for_path("shaders/light.frag").map(|s| s.name.as_str()),
+            Some("GLSL")
         );
     }
 

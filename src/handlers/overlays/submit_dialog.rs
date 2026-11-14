@@ -1,80 +1,104 @@
-use crate::app::{App, ConfirmAction, DialogChoice, DialogControl};
-use crate::effect::Effects;
+use crate::app::{App, ConfirmAction, DialogChoice, MergeChoices, SubmitDialog};
+use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
+use crate::form::FormAction;
 use crate::handlers::tabs::{
     OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
     spawn_cancel_jobs,
 };
-use crossterm::event::{KeyCode, KeyEvent};
+use crate::keybinding::KeyPress;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn handle_submit_dialog(
     app: &mut App,
-    key_event: &KeyEvent,
+    key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
-    let Some(mut dialog) = app.pop_submit_dialog() else {
+    if app.submit_dialog().is_none() {
+        return false;
+    }
+    let resolved = app
+        .config
+        .keybindings
+        .resolve(crate::keymap::KeyContext::Dialog, key_event);
+
+    let Some(dialog) = app.submit_dialog_mut() else {
         return false;
     };
-
-    let pressed = match key_event.code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            dialog.form.move_up();
-            None
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            dialog.form.move_down();
-            None
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            dialog.form.move_between_buttons(-1);
-            None
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            dialog.form.move_between_buttons(1);
-            None
-        }
-        KeyCode::Tab => {
-            dialog.form.focus_next();
-            None
-        }
-        KeyCode::BackTab => {
-            dialog.form.focus_previous();
-            None
-        }
-        KeyCode::Char(' ') => {
-            dialog.form.toggle_focused();
-            None
-        }
-        KeyCode::Enter => dialog.form.activate().copied(),
-        KeyCode::Char('y') | KeyCode::Char('Y')
-            if dialog.form.focused_button().map(|b| b.id) == Some(DialogControl::Submit) =>
-        {
-            Some(DialogControl::Submit)
-        }
-        KeyCode::Esc => Some(DialogControl::Cancel),
-        // Every other key is swallowed so it cannot reach the tab below.
-        _ => None,
-    };
-
-    match pressed {
-        Some(DialogControl::Submit) => {
-            if let Some(blocker) = dialog.merge_blocker() {
-                app.show_error(blocker);
-                app.push_modal(crate::app::Modal::Submit(Box::new(dialog)));
-            } else {
-                run_submit_action(app, dialog, tx.clone(), fx);
-            }
-        }
-        Some(DialogControl::Choice(choice)) => {
-            run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
-        }
-        Some(DialogControl::Cancel) => {}
-        _ => app.push_modal(crate::app::Modal::Submit(Box::new(dialog))),
+    if dialog.form.is_editing() {
+        let action = dialog.form.handle_key(key_event);
+        apply_form_action(app, action, tx, fx);
+        return true;
     }
 
+    let action = match resolved {
+        Some(action) => dialog.form.handle_action(action),
+        None => dialog.form.handle_unbound_key(key_event),
+    };
+    apply_form_action(app, action, tx, fx);
     true
+}
+
+/// Clicks on the open dialog's rows and buttons, at the places its last draw
+/// recorded.
+pub fn click_submit_dialog(
+    app: &mut App,
+    row: u16,
+    col: u16,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    let Some(dialog) = app.submit_dialog_mut() else {
+        return;
+    };
+    let action = dialog.form.click_at(col, row);
+    apply_form_action(app, action, tx, fx);
+}
+
+/// Every outcome but a button press or Cancel keeps the dialog open, and so
+/// does Submit while the merge has no method to merge with.
+fn apply_form_action(
+    app: &mut App,
+    action: FormAction,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    match action {
+        FormAction::None => {}
+        FormAction::OpenEditor { path, text } => fx.suspend(ForegroundJob::Edit {
+            text,
+            file_suffix: ".txt".to_string(),
+            purpose: EditPurpose::DialogField { path },
+        }),
+        FormAction::Cancel => {
+            app.pop_submit_dialog();
+        }
+        FormAction::Activate(button) => {
+            if button == SubmitDialog::SUBMIT_BUTTON_INDEX {
+                if let Some(blocker) = app.submit_dialog().and_then(SubmitDialog::merge_blocker) {
+                    app.show_error(blocker);
+                    return;
+                }
+            }
+            let Some(dialog) = app.pop_submit_dialog() else {
+                return;
+            };
+            if button == SubmitDialog::SUBMIT_BUTTON_INDEX {
+                let merge = dialog.merge_choices();
+                run_submit_action(
+                    app,
+                    dialog.action,
+                    dialog.project_path,
+                    merge,
+                    tx.clone(),
+                    fx,
+                );
+            } else if let Some(choice) = dialog.choice_at(button) {
+                run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
+            }
+        }
+    }
 }
 
 fn run_dialog_choice(
@@ -107,32 +131,6 @@ fn run_dialog_choice(
     app.close_diff_view();
 }
 
-/// The merge the dialog's form describes.
-struct MergeChoice {
-    method: crate::domain::mr::MergeMethod,
-    delete_branch: bool,
-    auto_merge: bool,
-}
-
-impl MergeChoice {
-    fn from_dialog(dialog: &crate::app::SubmitDialog) -> Option<Self> {
-        Some(Self {
-            method: dialog.merge_method()?,
-            delete_branch: dialog.is_checked(DialogControl::DeleteSourceBranch),
-            auto_merge: dialog.is_checked(DialogControl::AutoMerge),
-        })
-    }
-
-    fn options<'a>(&self, sha: Option<&'a str>) -> crate::backend::MergeOptions<'a> {
-        crate::backend::MergeOptions {
-            method: self.method,
-            delete_branch: self.delete_branch,
-            auto_merge: self.auto_merge,
-            sha,
-        }
-    }
-}
-
 /// The PRs among `items` (project path, number) that sit in a stack, which
 /// only the stack merge can merge. A failed lookup leaves a project's PRs to
 /// the plain merge, whose error then names the problem.
@@ -153,27 +151,26 @@ async fn stacked_prs(
     }
     stacked
 }
+
 /// Runs the dialog's action against its `project_path`, the project the
-/// dialog was opened for, never one re-resolved from the iid.
+/// dialog was opened for, never one re-resolved from the iid. `merge` is
+/// `None` for actions that do not merge.
 fn run_submit_action(
     app: &mut App,
-    dialog: crate::app::SubmitDialog,
+    confirm_action: crate::app::ConfirmAction,
+    project_path: String,
+    merge: Option<MergeChoices>,
     tx: UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let merge = MergeChoice::from_dialog(&dialog);
-    let crate::app::SubmitDialog {
-        action: confirm_action,
-        project_path,
-        ..
-    } = dialog;
     match confirm_action {
-        crate::app::ConfirmAction::DeleteMilestone(iid) => {
-            app.pending_delete_milestone = Some((project_path.clone(), iid));
+        crate::app::ConfirmAction::DeleteMilestone(milestone) => {
+            app.pending_delete_milestone = Some((project_path.clone(), milestone.iid));
             let client = app.gitlab_client.clone().unwrap();
             fx.spawn(async move {
                 let res =
-                    crate::domain::milestones::delete_milestone(&client, &project_path, iid).await;
+                    crate::domain::milestones::delete_milestone(&client, &project_path, &milestone)
+                        .await;
                 match res {
                     Ok(_) => {
                         let _ = tx.send(Event::CommandCompleted(
@@ -191,8 +188,8 @@ fn run_submit_action(
                 }
             });
         }
-        crate::app::ConfirmAction::CloseMilestone(iid) => {
-            if let Some(pos) = app.milestone_index(&project_path, iid) {
+        crate::app::ConfirmAction::CloseMilestone(milestone) => {
+            if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "closed".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
@@ -202,7 +199,7 @@ fn run_submit_action(
                 let res = crate::domain::milestones::update_milestone_state(
                     &client,
                     &project_path,
-                    iid,
+                    &milestone,
                     true,
                 )
                 .await;
@@ -219,8 +216,8 @@ fn run_submit_action(
                 }
             });
         }
-        crate::app::ConfirmAction::ReopenMilestone(iid) => {
-            if let Some(pos) = app.milestone_index(&project_path, iid) {
+        crate::app::ConfirmAction::ReopenMilestone(milestone) => {
+            if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "active".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
@@ -230,7 +227,7 @@ fn run_submit_action(
                 let res = crate::domain::milestones::update_milestone_state(
                     &client,
                     &project_path,
-                    iid,
+                    &milestone,
                     false,
                 )
                 .await;
@@ -475,7 +472,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeStack(pr_number) => {
-            let Some(MergeChoice { method, .. }) = merge else {
+            let Some(MergeChoices { method, .. }) = merge else {
                 return;
             };
             let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
@@ -503,7 +500,6 @@ fn run_submit_action(
             let Some(merge) = merge else {
                 return;
             };
-            let method = merge.method;
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
             let mut items_with_sha: Vec<(String, u64, Option<String>)> =
@@ -540,7 +536,7 @@ fn run_submit_action(
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
                     let result = if stacked.contains(&(proj.clone(), mr_iid)) {
-                        client.merge_pr_stack(&proj, mr_iid, method).await
+                        client.merge_pr_stack(&proj, mr_iid, merge.method).await
                     } else {
                         client
                             .merge_mr(&proj, mr_iid, &merge.options(sha.as_deref()))

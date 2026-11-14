@@ -170,6 +170,9 @@ fn request_bodies(session: &TestSession) -> Vec<String> {
 fn wait_for_merge_methods(session: &mut TestSession) {
     session
         .wait_for_screen_contains("Merge method", 15000)
+        .expect("the merge dialog should show its method radio");
+    session
+        .wait_for_screen_without("loading…", 15000)
         .expect("the merge dialog should list the methods the repository allows");
 }
 

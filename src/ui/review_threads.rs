@@ -31,12 +31,12 @@ pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mu
     };
     let theme = ctx.theme;
 
-    let mut form: Form<()> = Form::new(
+    let mut form = Form::panel(
+        title.clone(),
         vec![
-            Group::Custom(Rows::Percent(LIST_PERCENT)),
-            Group::Custom(Rows::Fill),
+            Group::region(Rows::Percent(LIST_PERCENT)),
+            Group::region(Rows::Fill),
         ],
-        Vec::new(),
     );
     let frame = FormFrame {
         title: &title,

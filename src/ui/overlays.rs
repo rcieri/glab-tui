@@ -2595,7 +2595,7 @@ command = "true"
             app.open_configure();
             if let Some(c) = app.configure_mut() {
                 c.save_menu_open = open_save_menu;
-                c.save_menu_selection = open_save_menu.then_some(crate::app::SaveMenu::Local);
+                c.save_menu_selection = open_save_menu.then_some(crate::app::SaveMenu::Cancel);
                 c.editing_page_size = !open_save_menu;
             }
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -2608,10 +2608,16 @@ command = "true"
             terminal
                 .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
                 .unwrap();
-            let list = app.configure().unwrap().layout.as_ref().unwrap().groups[0];
-            let before = app.configure().unwrap().column_checklist_idx;
+            let configure = app.configure().unwrap();
+            let list = configure.layout.as_ref().unwrap().groups[0];
+            let before = configure.column_checklist_idx;
+            let enter_row = configure
+                .visible_rows
+                .iter()
+                .rposition(Option::is_some)
+                .expect("a selectable row is drawn");
 
-            click(&mut app, list.x + 1, list.y);
+            click(&mut app, list.x + 1, list.y + enter_row as u16);
 
             let c = app.configure().expect("Configure stays open");
             assert_eq!(

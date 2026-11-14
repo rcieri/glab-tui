@@ -1010,7 +1010,8 @@ src/
 ## Running Tests
 
 ```sh
-cargo test
+just test       # unit tests
+just check      # fmt check, clippy, unit tests and e2e tests
 ```
 
 Unit tests live in several modules:
@@ -1038,8 +1039,8 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
-3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo nextest run --test e2e`, which needs `cargo-nextest`).
+3. Add or update tests where relevant. A bug fix starts with a test that fails without the fix.
+4. Run `just check` before opening a PR (the e2e tests need `cargo-nextest`).
 
 ### Development & Tasks (`just`)
 
@@ -1048,7 +1049,7 @@ The repository includes `rust-toolchain.toml` to automatically pin the Rust vers
 A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 
 ```sh
-just check      # runs fmt check, clippy, unit tests, and single-threaded e2e tests (mirrors CI)
+just check      # runs fmt check, clippy, unit tests, and e2e tests (mirrors CI)
 ```
 
 Available recipes:
@@ -1056,12 +1057,12 @@ Available recipes:
 - `just build` — build the release binary (`target/release/glab-tui`)
 - `just install` — build, then copy the binary to the first directory in `PATH`
 - `just fmt` / `just fmt-check` — format code or verify formatting
-- `just lint` — run Clippy with `-Dwarnings`
+- `just lint` — run Clippy over all targets with `-Dwarnings`
 - `just test` — run unit tests (`cargo test --lib --bin glab-tui`)
-- `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e`, requires `cargo-nextest`)
+- `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e --no-fail-fast`, requires `cargo-nextest`)
 - `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
 - `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
-- `just check` — run the full CI check matrix locally
+- `just check` — run the recipes CI's Rustfmt, Clippy and Test jobs run (`fmt-check`, `lint`, `test`, `e2e`)
 - `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 
 

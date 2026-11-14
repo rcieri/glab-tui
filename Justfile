@@ -34,7 +34,7 @@ test:
 
 # Run end-to-end tests, one process per test (requires cargo-nextest)
 e2e:
-    cargo nextest run --test e2e
+    cargo nextest run --test e2e --no-fail-fast
 
 # Check advisories, licenses, duplicate versions and sources (requires cargo-deny)
 deny:

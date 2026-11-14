@@ -164,7 +164,9 @@ pub(crate) fn activate_row(
     match row {
         ConfigureRow::Column(column) => {
             if let Some(set) = app.enabled_columns.get_mut(&tab) {
-                if !set.remove(column) {
+                let enabled_before = set.len();
+                set.retain(|name| !crate::column_order::same_column(name, column));
+                if set.len() == enabled_before {
                     set.insert(column.to_string());
                 }
                 app.update_filter_selection();
@@ -395,6 +397,25 @@ mod tests {
         assert!(!app.available_tabs().contains(&Tab::Issues));
         assert_eq!(app.active_tab, Tab::MergeRequests);
         assert_eq!(focused(&app), ConfigureRow::Tab(Tab::Issues));
+    }
+
+    #[test]
+    fn space_hides_a_column_enabled_under_its_other_host_name() {
+        let mut app = configure_open_on(Tab::MergeRequests);
+        app.enabled_columns.insert(
+            Tab::MergeRequests,
+            ["ID", "Action", "Title"]
+                .map(String::from)
+                .into_iter()
+                .collect(),
+        );
+        focus_row(&mut app, ConfigureRow::Column("Pipeline"));
+
+        press(&mut app, KeyCode::Char(' '));
+        assert!(!app.is_column_visible(Tab::MergeRequests, "Pipeline"));
+
+        press(&mut app, KeyCode::Char(' '));
+        assert!(app.is_column_visible(Tab::MergeRequests, "Pipeline"));
     }
 
     #[test]

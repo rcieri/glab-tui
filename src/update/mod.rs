@@ -248,6 +248,78 @@ mod tests {
         assert!(matches!(effects.as_slice(), [Effect::Quit]));
     }
 
+    #[test]
+    fn q_in_the_diff_view_closes_the_diff_instead_of_quitting() {
+        let mut app = with_open_diff(App::default());
+
+        let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
+
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Quit)));
+        assert!(app.diff_view.is_none());
+    }
+
+    #[test]
+    fn q_on_a_confirmation_dialog_keeps_it_open_instead_of_quitting() {
+        let mut app = App::default();
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::MarkAllTodosRead,
+            &app,
+        ));
+
+        let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
+
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Quit)));
+        assert!(app.submit_dialog.is_some());
+    }
+
+    #[test]
+    fn only_esc_returns_from_a_project_narrowed_from_its_group_and_reloads_it() {
+        let _home = crate::config::isolate_home();
+        let group = crate::scope::Scope::Group("group".to_string());
+        let project = crate::scope::Scope::Repository("group/project".to_string());
+        let mut app = App::default();
+        app.scope = group.clone();
+        app.drill_into("group/project".to_string());
+
+        update(&mut app, press(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(app.scope, project);
+
+        let effects = update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.scope, group);
+        assert!(app.loading_tabs.contains(&app.active_tab));
+        assert_eq!(spawned(&effects), 1, "the group's client is built again");
+    }
+
+    fn app_with_searched_job_trace() -> App {
+        let mut app = App::default();
+        app.active_tab = Tab::Jobs;
+        app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(
+            crate::domain::job_trace::JobTrace::from_read(b"error: boom\n", false),
+        ));
+        app.job_trace_search_query = "boom".to_string();
+        app
+    }
+
+    #[test]
+    fn esc_clears_the_job_trace_search_and_keeps_the_trace() {
+        let mut app = app_with_searched_job_trace();
+
+        update(&mut app, press(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(app.job_trace.is_some());
+        assert_eq!(app.job_trace_search_query, "");
+    }
+
+    #[test]
+    fn backspace_closes_the_job_trace_without_leaving_its_search_behind() {
+        let mut app = app_with_searched_job_trace();
+
+        update(&mut app, press(KeyCode::Backspace, KeyModifiers::NONE));
+
+        assert!(app.job_trace.is_none());
+        assert_eq!(app.job_trace_search_query, "");
+    }
+
     fn pipeline(id: u64, status: &str) -> crate::domain::pipelines::Pipeline {
         serde_json::from_value(serde_json::json!({
             "id": id, "status": status, "ref": "main", "updated_at": "2026-01-01T00:00:00Z"

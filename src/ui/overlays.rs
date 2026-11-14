@@ -4,6 +4,7 @@ use super::helpers::highlight_fuzzy_match;
 use super::modal::{button_style, clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
+use crate::keymap::{Action, KeyContext};
 use crate::notice::{Notice, NoticeLevel};
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::sanitize_untrusted;
@@ -1207,13 +1208,30 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 }
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
-const START_MANUAL_JOB_ACTION: &str = "Start manual job";
-const TOGGLE_TRACE_FOLLOW_ACTION: &str = "Toggle trace auto-follow mode";
-/// GitHub deployments carry no job, so they have no log to open.
-const VIEW_DEPLOYMENT_LOG_ACTION: &str = "Open the selected deployment's job log in $EDITOR";
 
-const RUNNER_PAUSE_RESUME_ACTION: &str = "Pause / Resume runner";
-const RUNNER_EDIT_DESCRIPTION_ACTION: &str = "Edit runner description text";
+fn help_category(context: KeyContext, is_github: bool) -> &'static str {
+    match context {
+        KeyContext::Global | KeyContext::ListView => "Global & Nav",
+        KeyContext::EditMenu => "Inspector / Editor",
+        KeyContext::DiffView => "Diff View",
+        KeyContext::Selector => "Selector / Filter",
+        KeyContext::Dialog => "Confirm Dialog",
+        KeyContext::Tab(tab) => match tab {
+            Tab::Issues => "Issues",
+            Tab::MergeRequests if is_github => "Pull Requests",
+            Tab::MergeRequests => "Merge Requests",
+            Tab::Pipelines => "Pipelines",
+            Tab::Jobs => "Jobs",
+            Tab::Runners => "Runners",
+            Tab::Releases => "Releases",
+            Tab::Todos => "TODOs",
+            Tab::Milestones => "Milestones",
+            Tab::Branches => "Branches",
+            Tab::Environments => "Environments",
+            Tab::Terminal => "Terminal",
+        },
+    }
+}
 
 pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     if !app.show_help {
@@ -1222,16 +1240,11 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
 
     let icons = ctx.icons;
     let is_github = ctx.kind.is_github();
-    let mr_label: &'static str = if is_github {
-        "Pull Requests"
-    } else {
-        "Merge Requests"
-    };
 
-    struct Shortcut<'a> {
+    struct Shortcut {
         category: &'static str,
         key: std::borrow::Cow<'static, str>,
-        action: &'a str,
+        action: String,
     }
 
     let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
@@ -1246,1104 +1259,110 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             .collect()
     };
 
-    let mut shortcuts: Vec<Shortcut> = vec![
-        // ── Global & Nav ──
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / →", app.config.keybindings.global.next_tab)),
-            action: "Next tab",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / ←", app.config.keybindings.global.prev_tab)),
-            action: "Previous tab",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.configure.to_string()),
-            action: "Toggle columns config popup (filter / group / sort)",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("j / k / ↓ / ↑ / Home / End"),
-            action: "Select item / Scroll page / Jump to top or bottom",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.scroll_down, app.config.keybindings.global.scroll_up
-            )),
-            action: "Scroll description / trace / notes",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.scroll_page_down,
-                app.config.keybindings.global.scroll_page_up
-            )),
-            action: "Scroll description pane by one page",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.scroll_half_page_down,
-                app.config.keybindings.global.scroll_half_page_up
-            )),
-            action: "Scroll description pane (or the list when it is hidden) by half a page",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.scroll_to_end.to_string()),
-            action: "Jump to the last line of the description pane",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.scroll_top.to_string()),
-            action: "Jump to the top of the description pane",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / f", app.config.keybindings.global.search)),
-            action: "Open fuzzy search / filter bar",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Ctrl+W / Ctrl+U"),
-            action: "Search: delete previous word / clear line",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Esc"),
-            action: "Exit input / clear the active filter",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.jump_to_id.to_string()),
-            action: "Jump to issue/MR by ID; fetch if not cached",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.sort_next, app.config.keybindings.global.sort_prev
-            )),
-            action: "Sort list by next / previous column",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.sort_reverse.to_string()),
-            action: "Reverse sort order",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "F5 / Ctrl+R / {}",
-                app.config.keybindings.global.refresh
-            )),
-            action: "Refresh active tab data",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Ctrl+S"),
-            action: "Switch repository",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("u"),
-            action: "Check for updates",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.quit.clone()),
-            action: "Quit program",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Esc"),
-            action: "Close active overlay",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.submit_edit.clone()),
-            action: "Submit active edit form",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Ctrl+C"),
-            action: "Quit program",
-        },
-        // ── Issues ──
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.create_issue.clone()),
-            action: "Create new Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.select_issue.clone()),
-            action: "Toggle issue selection (bulk edit with e)",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.select_all.clone()),
-            action: "Select all filtered issues (in select mode)",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.edit_entity.clone()),
-            action: "Open parameter edit menu",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.close_entity.clone()),
-            action: "Close selected Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.reopen_entity.clone()),
-            action: "Reopen selected Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.delete_entity.clone()),
-            action: "Delete selected Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.copy_reference.clone()),
-            action: "Copy selected Issue as Markdown link",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.open_in_browser.clone()),
-            action: "Open selected Issue in browser",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.create_mr.clone()),
-            action: if is_github {
-                "Create Pull Request from selected Issue"
-            } else {
-                "Create Merge Request from selected Issue"
-            },
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.jump_related_mrs.clone()),
-            action: "Jump to related Merge Requests / Pull Requests",
-        },
-        // ── Merge Requests / Pull Requests ──
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.create_mr.clone()),
-            action: if is_github {
-                "Create new Pull Request"
-            } else {
-                "Create new Merge Request"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.select_mr.clone()),
-            action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.select_all.clone()),
-            action: "Select all filtered MRs / PRs (in select mode)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.edit_entity.clone()),
-            action: "Open parameter edit menu",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.approve_mr.clone()),
-            action: if is_github {
-                "Approve selected PR"
-            } else {
-                "Approve selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.revoke_mr.clone()),
-            action: "Revoke your approval (GitLab only)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.rebase_mr.clone()),
-            action: "Rebase source branch onto target",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.merge_mr.clone()),
-            action: if is_github {
-                "Merge selected PR (a stacked PR merges with the open PRs below it)"
-            } else {
-                "Merge selected MR (configure squash/delete)"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.toggle_draft.clone()),
-            action: "Toggle Draft / Ready status",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.view_diff.clone()),
-            action: if is_github {
-                "View Pull Request diff changes"
-            } else {
-                "View Merge Request diff changes"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.view_related_pipelines.clone()),
-            action: if is_github {
-                "View related Actions for selected PR"
-            } else {
-                "View related pipelines for selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.view_stack.clone()),
-            action: if is_github {
-                "Browse the stack of the selected stacked PR"
-            } else {
-                "Browse the stack of the selected MR (GitHub-only)"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.close_entity.clone()),
-            action: if is_github {
-                "Close selected PR"
-            } else {
-                "Close selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.reopen_entity.clone()),
-            action: if is_github {
-                "Reopen selected PR"
-            } else {
-                "Reopen selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.delete_entity.clone()),
-            action: if is_github {
-                "Delete selected PR"
-            } else {
-                "Delete selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.copy_reference.clone()),
-            action: if is_github {
-                "Copy selected PR as Markdown link"
-            } else {
-                "Copy selected MR as Markdown link"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.jump_linked_issues.clone()),
-            action: "Jump to linked Issues",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.open_in_browser.clone()),
-            action: if is_github {
-                "Open selected PR in browser"
-            } else {
-                "Open selected MR in browser"
-            },
-        },
-        // ── Pipelines ──
-        Shortcut {
-            category: "Pipelines",
-            key: s("Enter"),
-            action: "Descend into downstream pipelines, or the pipeline's jobs",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.enter_jobs.clone()),
-            action: "View the selected pipeline's own jobs",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.toggle_preview.clone()),
-            action: "Show / hide the pipeline inspector (commit, failed jobs)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.run_new.clone()),
-            action: "Create pipeline with interactive form",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.trigger_pipeline.clone()),
-            action: "Trigger new pipeline from MR",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.retry.clone()),
-            action: "Retry selected pipeline(s)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.retry_failed.clone()),
-            action: "Retry only the failed jobs of the selected pipeline(s)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.cycle_status_filter.clone()),
-            action: "Filter by status: All / Running / Failed / Success",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.cancel.clone()),
-            action: "Cancel pipeline execution",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.open_workflow.clone()),
-            action: "Open pipeline workflow in browser",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.select_pipeline.clone()),
-            action: "Check / uncheck pipeline for bulk retry",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.select_all.clone()),
-            action: "Select all filtered pipelines (in select mode)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.open_in_browser.clone()),
-            action: "Open pipeline in browser",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.copy_url.clone()),
-            action: "Copy selected pipeline URL",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.copy_id.clone()),
-            action: "Copy selected pipeline ID (#123)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.copy_sha.clone()),
-            action: "Copy selected pipeline commit SHA",
-        },
-        // ── Jobs ──
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.view_trace.clone()),
-            action: "View job trace (toggle zoom)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: s("Esc / Backspc"),
-            action: "Go back to Pipelines list",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.enter_pipeline.clone()),
-            action: "Switch to pipeline selector",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.retry.clone()),
-            action: "Retry selected job(s)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.start_job.clone()),
-            action: START_MANUAL_JOB_ACTION,
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.cancel.clone()),
-            action: "Cancel selected job(s)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.select_job.clone()),
-            action: "Check / uncheck job for bulk retry/cancel",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.select_all.clone()),
-            action: "Select all filtered jobs (in select mode)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.select_stage.clone()),
-            action: "Select all jobs in stage",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.download_artifact.clone()),
-            action: "Download job artifact",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.view_trace_editor.clone()),
-            action: "Open job trace in external $EDITOR",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.open_in_browser.clone()),
-            action: "Open selected job in browser",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.toggle_trace_wrap.clone()),
-            action: "Toggle trace word wrap / clipped view",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.trace_search.clone()),
-            action: "Search within job trace",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.toggle_trace_follow.clone()),
-            action: TOGGLE_TRACE_FOLLOW_ACTION,
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.jump_to_failure.clone()),
-            action: "Jump to the next failure line in the job trace",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: s("m"),
-            action: "Collapse / expand matrix jobs",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.copy_sha.clone()),
-            action: "Copy pipeline commit SHA",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.copy_url.clone()),
-            action: "Copy job web URL",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.copy_id.clone()),
-            action: "Copy job ID",
-        },
-        // ── Milestones ──
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.create_milestone.clone()),
-            action: "Create new milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.edit_milestone.clone()),
-            action: "Edit selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.close_milestone.clone()),
-            action: "Close selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.reopen_milestone.clone()),
-            action: "Reopen selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.delete_milestone.clone()),
-            action: "Delete selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.open_in_browser.clone()),
-            action: "Open milestone in browser",
-        },
-        // ── Runners ──
-        Shortcut {
-            category: "Runners",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.runners.pause, app.config.keybindings.runners.resume,
-            )),
-            action: RUNNER_PAUSE_RESUME_ACTION,
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.edit_description.clone()),
-            action: RUNNER_EDIT_DESCRIPTION_ACTION,
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.open_in_browser.clone()),
-            action: "Open runner in browser",
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.cycle_status.clone()),
-            action: if ctx.kind.supports_runner_management() {
-                "Cycle status filter (Online, Paused, Offline, All)"
-            } else {
-                "Cycle status filter (Online, Offline, All)"
-            },
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.copy_url.clone()),
-            action: "Copy runner URL",
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.copy_id.clone()),
-            action: "Copy runner ID",
-        },
-        // ── Releases ──
-        Shortcut {
-            category: "Releases",
-            key: s("Enter"),
-            action: "View release notes (toggle zoom)",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.create_release.clone()),
-            action: "Create new release",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.edit_release.clone()),
-            action: "Edit selected release",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.delete_release.clone()),
-            action: "Delete selected release",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.open_in_browser.clone()),
-            action: "Open release in browser",
-        },
-        // ── TODOs ──
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.mark_as_read.clone()),
-            action: "Open todo target & mark read (selection: mark all selected read)",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.open_in_browser.clone()),
-            action: "Open todo in browser",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.mark_as_done.clone()),
-            action: "Mark todo (or all selected) done",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.mark_all_as_read.clone()),
-            action: "Mark all todos read",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.unsubscribe.clone()),
-            action: "Unsubscribe from todo target",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.toggle_show_read.clone()),
-            action: "Toggle showing read todos",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.select_todo.clone()),
-            action: "Toggle selection of todo",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.select_all.clone()),
-            action: "Select all filtered todos",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.copy_url.clone()),
-            action: "Copy todo target URL",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.copy_reference.clone()),
-            action: "Copy todo target reference (#123 / !456)",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.toggle_preview.clone()),
-            action: "Show / hide the todo preview",
-        },
-        // ── Terminal ──
-        Shortcut {
-            category: "Terminal",
-            key: s("j / k / ↑ / ↓"),
-            action: "Scroll terminal log",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.toggle_wrap.clone()),
-            action: "Toggle terminal line wrapping",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(format!(
-                "{} / P",
-                app.config.keybindings.terminal.inspect_command
-            )),
-            action: "Inspect the highlighted command (full command, timing, stdout, stderr)",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.cycle_status_filter.clone()),
-            action: "Cycle the status filter: All, Errors, Success",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.rerun_command.clone()),
-            action: "Re-run the highlighted glab, gh or git call",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.copy_command.clone()),
-            action: "Copy the highlighted command line",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.copy_output.clone()),
-            action: "Copy the highlighted command's output or error",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.clear_log.clone()),
-            action: "Clear the terminal log",
-        },
-        // ── Branches ──
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.create_branch.clone()),
-            action: "Create new branch",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.delete_branch.clone()),
-            action: "Delete selected branch",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.checkout_branch.clone()),
-            action: "Checkout selected branch",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.create_mr.clone()),
-            action: if is_github {
-                "Create Pull Request from selected branch"
-            } else {
-                "Create Merge Request from selected branch"
-            },
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.select_branch.clone()),
-            action: "Toggle branch selection",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.selection_toggle.clone()),
-            action: "Toggle visual select mode",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.select_all.clone()),
-            action: "Select all visible branches",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.open_in_browser.clone()),
-            action: "Open branch in browser",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.copy_branch.clone()),
-            action: "Copy selected branch name",
-        },
-        // ── Environments ──
-        Shortcut {
-            category: "Environments",
-            key: d(app.config.keybindings.environments.view_deployments.clone()),
-            action: "List and focus the environment's deployments",
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app
-                .config
-                .keybindings
-                .environments
-                .focus_deployments
-                .clone()),
-            action: "Move focus between environments and deployments",
-        },
-        Shortcut {
-            category: "Environments",
-            key: s("j / k (focused)"),
-            action: "Select a deployment to inspect",
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app
-                .config
-                .keybindings
-                .environments
-                .rollback_deployment
-                .clone()),
-            action: "Roll back to the selected deployment",
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app
-                .config
-                .keybindings
-                .environments
-                .view_deployment_log
-                .clone()),
-            action: VIEW_DEPLOYMENT_LOG_ACTION,
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app.config.keybindings.environments.stop_environment.clone()),
-            action: "Stop environment",
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app.config.keybindings.environments.copy_url.clone()),
-            action: "Copy environment URL",
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app.config.keybindings.environments.open_in_browser.clone()),
-            action: "Open environment in browser",
-        },
-        // ── Diff View ──
-        Shortcut {
-            category: "Diff View",
-            key: s("q / Esc"),
-            action: "Exit Diff View",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("Tab"),
-            action: "Toggle Focus (Files / Diff)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("h / l / Left / Right"),
-            action: "Switch Panel Focus",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("j / k / ↓ / ↑"),
-            action: "Navigate files or diff lines",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("J / K"),
-            action: "Page down / Page up",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("[ / ]"),
-            action: "Previous / Next Hunk",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("c"),
-            action: "Add Comment on Line",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("r"),
-            action: "Submit Review (comment/approve/request changes/keep as draft)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("d"),
-            action: "Toggle unified / side-by-side layout (pinned for the session)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.diff.layout_side_by_side,
-                app.config.keybindings.diff.layout_unified
-            )),
-            action: "Pin side-by-side / unified layout for the session",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: d(app.config.keybindings.diff.layout_auto.clone()),
-            action: "Pick the layout from the diff pane width again (unified when narrow)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("v / V"),
-            action: "Start / Stop line selection for comment",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("a"),
-            action: "Interact with comments on current line (focus the diff with `l`/`Tab` first; pushes and drafts both)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("C"),
-            action: "Add comment via external $EDITOR",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("e"),
-            action: "Add code suggestion via $EDITOR",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("/ f"),
-            action: "Search within diff",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("Ctrl+n / Ctrl+N"),
-            action: "Search next / previous match",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("z / Z"),
-            action: "Collapse / Expand all files",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("m"),
-            action: "Mark / unmark file (or directory) as reviewed",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("M"),
-            action: "Hide / show reviewed files in the tree",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("T"),
-            action: "Review threads overview (general, outdated, unresolved)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("Enter / Space"),
-            action: "Expand file tree / Toggle zoom",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Inspector / Editor ──
+    let mut shortcuts: Vec<Shortcut> = Action::ALL
+        .iter()
+        .filter(|action| action.spec().support.includes(ctx.kind))
+        .map(|&action| {
+            let spec = action.spec();
+            Shortcut {
+                category: help_category(spec.context, is_github),
+                key: d(app.config.keybindings.display(action)),
+                action: spec.label_for(ctx.kind),
+            }
+        })
+        .collect();
+
+    shortcuts.extend([
         Shortcut {
             category: "Inspector / Editor",
             key: s("j / k / ↓ / ↑ / Tab / Shift+Tab"),
-            action: "Navigate fields & buttons",
+            action: "Navigate fields & buttons".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("Enter / Space"),
-            action: "Edit field / Select option / Submit",
+            action: "Edit field / Select option / Submit".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("Ctrl+E"),
-            action: "Edit description / notes in $EDITOR",
+            action: "Edit description / notes in $EDITOR".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("J / K"),
-            action: "Scroll description / notes pane",
+            action: "Scroll description / notes pane".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("Esc"),
-            action: "Exit inspector / Close editor form",
+            action: "Exit inspector / Close editor form".to_string(),
         },
         Shortcut {
-            category: "Inspector / Editor",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Selector / Filter ──
-        Shortcut {
-            category: "Selector / Filter",
-            key: s("j / k / ↓ / ↑"),
-            action: "Navigate options",
+            category: "Global & Nav",
+            key: s("Ctrl+W / Ctrl+U"),
+            action: "Search: delete previous word / clear line".to_string(),
         },
         Shortcut {
-            category: "Selector / Filter",
-            key: s("Enter"),
-            action: "Confirm selection",
-        },
-        Shortcut {
-            category: "Selector / Filter",
-            key: s("Space"),
-            action: "Toggle item (multi-select)",
-        },
-        Shortcut {
-            category: "Selector / Filter",
+            category: "Global & Nav",
             key: s("Esc"),
-            action: "Close selector overlay",
+            action: "Exit input / clear the active filter".to_string(),
         },
-        Shortcut {
-            category: "Selector / Filter",
-            key: s("Type to search"),
-            action: "Fuzzy filter available items",
-        },
-        Shortcut {
-            category: "Selector / Filter",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Column Config ──
         Shortcut {
             category: "Column Config",
             key: s("j / k / ↓ / ↑"),
-            action: "Navigate columns & group-by options",
+            action: "Navigate columns & group-by options".to_string(),
         },
         Shortcut {
             category: "Column Config",
             key: s("Space"),
-            action: "Toggle column visibility checkbox",
+            action: "Toggle column visibility checkbox".to_string(),
         },
         Shortcut {
             category: "Column Config",
             key: s("Enter"),
-            action: "Open value filter selector for column",
+            action: "Open value filter selector for column".to_string(),
         },
         Shortcut {
             category: "Column Config",
             key: s("Esc"),
-            action: "Close columns config popup",
+            action: "Close columns config popup".to_string(),
         },
-        Shortcut {
-            category: "Column Config",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Date Picker ──
         Shortcut {
             category: "Date Picker",
             key: s("h / l / ← / →"),
-            action: "Previous / Next month",
+            action: "Previous / Next month".to_string(),
         },
         Shortcut {
             category: "Date Picker",
             key: s("j / k / ↓ / ↑"),
-            action: "Previous / Next day",
+            action: "Previous / Next day".to_string(),
         },
         Shortcut {
             category: "Date Picker",
             key: s("Enter"),
-            action: "Confirm date selection",
+            action: "Confirm date selection".to_string(),
         },
         Shortcut {
             category: "Date Picker",
             key: s("Esc"),
-            action: "Cancel date selection",
+            action: "Cancel date selection".to_string(),
         },
-        Shortcut {
-            category: "Date Picker",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-    ];
-    if !ctx.kind.supports_runner_management() {
-        shortcuts.retain(|shortcut| {
-            ![RUNNER_PAUSE_RESUME_ACTION, RUNNER_EDIT_DESCRIPTION_ACTION].contains(&shortcut.action)
-        });
-    }
+    ]);
+
     // The few user-defined commands go first, above the long built-in lists.
     shortcuts.splice(
         0..0,
         custom_commands.iter().map(|command| Shortcut {
             category: CUSTOM_COMMANDS_CATEGORY,
             key: d(command.key.clone()),
-            action: command.label(),
+            action: command.label().to_string(),
         }),
     );
-    if is_github {
-        shortcuts.retain(|shortcut| {
-            !matches!(
-                (shortcut.category, shortcut.action),
-                ("Jobs", START_MANUAL_JOB_ACTION)
-                    | ("Jobs", TOGGLE_TRACE_FOLLOW_ACTION)
-                    | ("Environments", VIEW_DEPLOYMENT_LOG_ACTION)
-            )
-        });
-    }
 
-    let active_categories: &[&str] = if app.diff_view.is_some() {
+    let active_categories: &[&str] = if app.submit_dialog.is_some() {
+        &["Confirm Dialog"]
+    } else if app.diff_view.is_some() {
         &["Diff View", CUSTOM_COMMANDS_CATEGORY]
     } else if app.edit_menu.is_some() {
         &["Global & Nav", "Inspector / Editor"]
@@ -2375,11 +1394,24 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         }
     };
 
-    let filtered_shortcuts: Vec<&Shortcut> = shortcuts
+    // The help key itself stays reachable from every context, even one
+    // (Diff View, Confirm Dialog) whose active categories do not include
+    // "Global & Nav".
+    let help_label = Action::GlobalHelp.spec().label;
+    let mut filtered_shortcuts: Vec<&Shortcut> = shortcuts
         .iter()
-        .filter(|s| active_categories.contains(&s.category) && !s.key.trim().is_empty())
-        .filter(|s| s.key.split('/').any(|k| !k.trim().is_empty()))
+        .filter(|s| {
+            (active_categories.contains(&s.category) || s.action == help_label)
+                && !s.key.trim().is_empty()
+        })
         .collect();
+    // The registry lists the global keys first, but the keys of the open
+    // view are what the modal is opened for.
+    filtered_shortcuts.sort_by_key(|s| match s.category {
+        CUSTOM_COMMANDS_CATEGORY => 0,
+        "Global & Nav" => 2,
+        _ => 1,
+    });
 
     let block = Block::default()
         .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
@@ -2482,7 +1514,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         } else {
             ""
         };
-        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+        let (action_text, action_lines) = wrap_cell_text(&s.action, action_width);
         shortcut_rows.push(rows.len());
         rows.push(
             Row::new(vec![
@@ -2609,7 +1641,10 @@ mod tests {
         );
         assert!(text.contains("Approve selected MR"));
         assert!(text.contains("Open selected MR in browser"));
-        assert!(text.contains("View related pipelines for selected MR"));
+        assert!(text.contains("View related Pipelines for selected MR"));
+        assert!(text.contains("Merge selected MR (configure squash/delete)"));
+        assert!(!text.contains("stacked PR"), "{text:?}");
+        assert!(text.contains("Delete selected MR"));
     }
 
     #[test]
@@ -2649,7 +1684,11 @@ mod tests {
         assert!(text.contains("Approve selected PR"));
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related Actions for selected PR"));
+        assert!(
+            text.contains("Merge selected PR (a stacked PR merges with the open PRs below it)")
+        );
         assert!(text.contains("Create new Pull Request"));
+        assert!(!text.contains("Delete selected PR"), "{text:?}");
     }
 
     fn render_jobs_help(is_github: bool) -> String {
@@ -2743,7 +1782,7 @@ command = "true"
             .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let top = buffer_text(&terminal);
-        assert!(top.contains("Next tab"), "{top:?}");
+        assert!(top.contains("Create new Issue"), "{top:?}");
         let listed = top
             .split(" 1/")
             .nth(1)
@@ -2766,7 +1805,7 @@ command = "true"
             "{bottom:?}"
         );
         assert!(
-            !bottom.contains("Next tab"),
+            !bottom.contains("Create new Issue"),
             "the list scrolled past the first entries"
         );
     }
@@ -2793,8 +1832,8 @@ command = "true"
             "save_view should not be listed in help: {text:?}",
         );
 
-        // If a keybinding is set to empty string, it is filtered out from help
-        app.config.keybindings.issues.create_issue = "".to_string();
+        // If a keybinding is set to no keys, it is filtered out from help
+        app.config.keybindings.set(Action::IssuesCreateIssue, &[]);
         terminal
             .draw(|f| {
                 render_help(f, ctx, &mut app, f.area());
@@ -2803,9 +1842,64 @@ command = "true"
 
         let text_empty = buffer_text(&terminal);
         assert!(
-            !text_empty.contains("Create new issue"),
+            !text_empty.contains("Create new Issue"),
             "empty keybinding shortcut should be filtered from help: {text_empty:?}",
         );
+    }
+
+    #[test]
+    fn render_help_lists_actions_bound_only_to_slash() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Jobs;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains(Action::GlobalSearch.spec().label), "{text:?}");
+        assert!(
+            text.contains(Action::JobsTraceSearch.spec().label),
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn render_help_shows_a_remapped_key_instead_of_the_default() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Issues;
+        app.config
+            .keybindings
+            .set(Action::IssuesCreateIssue, &["F9"]);
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row: String = buffer
+            .content
+            .chunks(buffer.area.width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .find(|row| row.contains("Create new Issue"))
+            .expect("Create new Issue row rendered");
+        let before_label = row.split("Create new Issue").next().unwrap_or_default();
+        let key_cell = before_label
+            .trim_end()
+            .rsplit("  ")
+            .next()
+            .unwrap_or_default();
+        assert_eq!(key_cell.trim(), "F9", "{row:?}");
     }
 
     /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:

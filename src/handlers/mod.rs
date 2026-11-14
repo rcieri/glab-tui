@@ -1,3 +1,4 @@
+pub mod confirm;
 pub mod custom_commands;
 pub mod diff_view;
 pub mod editor_result;

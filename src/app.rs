@@ -1,6 +1,6 @@
 use crate::backend::BackendKind;
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
-use crate::config::{Config, Icons, KeybindingConfig, Theme};
+use crate::config::{Config, Icons, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
@@ -3961,26 +3961,9 @@ impl SubmitDialog {
     }
 }
 
-/// Every key sequence bound in any `[keybindings.<table>]`.
-fn key_sequences(keybindings: &KeybindingConfig) -> crate::keybinding::KeySequences {
-    fn collect<'a>(value: &'a toml::Value, bindings: &mut Vec<&'a str>) {
-        match value {
-            toml::Value::Table(table) => {
-                for v in table.values() {
-                    collect(v, bindings);
-                }
-            }
-            toml::Value::String(s) => bindings.push(s),
-            _ => {}
-        }
-    }
-
-    let Ok(value) = toml::Value::try_from(keybindings) else {
-        return crate::keybinding::KeySequences::default();
-    };
-    let mut bindings = Vec::new();
-    collect(&value, &mut bindings);
-    crate::keybinding::KeySequences::new(bindings)
+/// Every key sequence bound to any action.
+fn key_sequences(keybindings: &crate::keymap::Keymap) -> crate::keybinding::KeySequences {
+    crate::keybinding::KeySequences::new(keybindings.all_bindings())
 }
 
 pub struct NavFrame {
@@ -5897,22 +5880,37 @@ impl App {
     }
 
     /// Rebuilds `custom_commands` from the current config, logging every
-    /// ignored or shadowed entry in the terminal log.
-    pub fn load_custom_commands(&mut self) {
-        let (commands, problems) = crate::custom_commands::CustomCommands::load(&self.config);
+    /// `[keybindings]` entry that binds nothing and every ignored or shadowed
+    /// custom keybinding in the terminal log.
+    pub fn load_keybindings(&mut self) {
+        let (commands, custom_problems) =
+            crate::custom_commands::CustomCommands::load(&self.config);
         self.custom_commands = commands;
+        let problems: Vec<_> = self
+            .config
+            .keybindings
+            .problems()
+            .iter()
+            .cloned()
+            .map(|problem| ("Keybinding", problem))
+            .chain(
+                custom_problems
+                    .into_iter()
+                    .map(|problem| ("Custom keybinding", problem)),
+            )
+            .collect();
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        for problem in &problems {
+        for (kind, problem) in &problems {
             self.terminal_commands.push(TerminalCommand {
                 timestamp: timestamp.clone(),
-                command: format!("Custom keybinding: {}", problem.binding),
+                command: format!("{kind}: {}", problem.binding),
                 status: format!("Failed: {}", problem.problem),
                 ..Default::default()
             });
         }
         if !problems.is_empty() {
             self.raise_error_toast(format!(
-                "{} custom keybinding problem(s); see the Terminal tab",
+                "{} keybinding problem(s); see the Terminal tab",
                 problems.len()
             ));
         }
@@ -6426,7 +6424,7 @@ impl App {
             }
         }
         app.apply_config();
-        app.load_custom_commands();
+        app.load_keybindings();
         app
     }
 
@@ -8238,10 +8236,10 @@ impl App {
                 .environment_deployments
                 .as_ref()
                 .is_some_and(|shown| !shown.table.items.is_empty())
-            && crate::keybinding::keybinding_matches(
-                &self.config.keybindings.environments.focus_deployments,
-                key,
-            )
+            && self
+                .config
+                .keybindings
+                .matches(crate::keymap::Action::EnvironmentsFocusDeployments, key)
     }
 
     /// Whether a keypress goes into a text field (a search, a filter, an
@@ -8264,10 +8262,10 @@ impl App {
     /// Feeds a keypress from the terminal into `key_buffer`; what it resolves
     /// to comes out of `key_buffer.pop_ready()`.
     pub fn receive_key(&mut self, event: crossterm::event::KeyEvent) {
-        let is_quit = event.code == crossterm::event::KeyCode::Char('c')
-            && event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL);
+        let is_quit = self.config.keybindings.matches(
+            crate::keymap::Action::GlobalForceQuit,
+            &crate::keybinding::KeyPress::Key(event),
+        );
         if is_quit || self.is_capturing_text() {
             self.key_buffer.pass_through(event);
         } else {
@@ -12434,9 +12432,15 @@ scroll_page_up = "Ctrl+b"
 
         let app = App::default();
 
-        let global = &app.config.keybindings.global;
-        assert_eq!(global.scroll_page_down, "PageDown");
-        assert_eq!(global.scroll_page_up, "PageUp");
+        let keys = &app.config.keybindings;
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageDown),
+            ["PageDown"]
+        );
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageUp),
+            ["PageUp"]
+        );
     }
 
     #[test]
@@ -12446,9 +12450,15 @@ scroll_page_up = "Ctrl+b"
 
         let app = App::new();
 
-        let global = &app.config.keybindings.global;
-        assert_eq!(global.scroll_page_down, "Ctrl+f");
-        assert_eq!(global.scroll_page_up, "Ctrl+b");
+        let keys = &app.config.keybindings;
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageDown),
+            ["Ctrl+f"]
+        );
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageUp),
+            ["Ctrl+b"]
+        );
     }
 
     #[test]
@@ -12473,8 +12483,18 @@ help = "h"
 
         // Load App (which loads this config)
         let mut app = App::new();
-        assert_eq!(app.config.keybindings.global.quit, "ctrl+c");
-        assert_eq!(app.config.keybindings.global.help, "h");
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalQuit),
+            ["ctrl+c"]
+        );
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalHelp),
+            ["h"]
+        );
 
         // Change layout/page size and save
         app.config.page_size = 456;
@@ -14648,8 +14668,12 @@ index 123456..789012 100644
     #[test]
     fn sequence_bound_in_any_table_resolves_after_apply_config() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
-        app.config.keybindings.terminal.clear_log = "cc".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::TerminalClearLog, &["cc"]);
         app.apply_config();
 
         app.receive_key(typed('z'));
@@ -14670,7 +14694,9 @@ index 123456..789012 100644
     #[test]
     fn key_typed_into_a_text_field_never_waits_for_a_sequence() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
         app.apply_config();
         app.is_typing_search = true;
 
@@ -14685,7 +14711,9 @@ index 123456..789012 100644
     #[test]
     fn function_key_binding_does_not_hold_back_its_letter() {
         let mut app = App::default();
-        app.config.keybindings.global.scroll_top = "F1".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["F1"]);
         app.apply_config();
 
         app.receive_key(typed('F'));
@@ -14699,7 +14727,9 @@ index 123456..789012 100644
     #[test]
     fn ctrl_c_quits_while_a_sequence_is_waiting() {
         let mut app = App::default();
-        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
         app.apply_config();
         let ctrl_c = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('c'),
@@ -14712,6 +14742,63 @@ index 123456..789012 100644
         assert_eq!(
             resolved(&mut app),
             vec![crate::keybinding::KeyPress::Key(ctrl_c)]
+        );
+    }
+
+    #[test]
+    fn remapped_force_quit_quits_while_a_sequence_is_waiting() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalForceQuit, &["Ctrl+q"]);
+        app.apply_config();
+        let ctrl_q = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        app.receive_key(typed('g'));
+        app.receive_key(ctrl_q);
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(ctrl_q)]
+        );
+    }
+
+    #[test]
+    fn an_unknown_keybinding_entry_is_logged_and_keeps_the_rest_of_the_config() {
+        let mut app = App {
+            config: toml::from_str(
+                "theme_preset = \"nord\"\n[keybindings]\nquit = \"x\"\n[keybindings.issues]\nfoo = 3\n",
+            )
+            .expect("config with stray keybinding entries parses"),
+            ..App::default()
+        };
+
+        app.load_keybindings();
+
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+        let logged: Vec<(&str, &str)> = app
+            .terminal_commands
+            .iter()
+            .map(|entry| (entry.command.as_str(), entry.status.as_str()))
+            .collect();
+        assert_eq!(
+            logged,
+            [
+                (
+                    "Keybinding: keybindings.issues.foo",
+                    "Failed: not an action glab-tui knows, ignored"
+                ),
+                (
+                    "Keybinding: keybindings.quit",
+                    "Failed: not a keybinding table glab-tui knows, ignored"
+                ),
+            ]
         );
     }
 

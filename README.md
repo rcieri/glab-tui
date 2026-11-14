@@ -298,22 +298,40 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # border_focused = "#31bf67"
 # ...color tokens (see bundled themes for the full list)
 
-# Remap any keybinding. A binding is one key ("l", "Ctrl+x", "PageDown", "F5")
-# or a sequence of plain characters typed one after the other ("gg", "gcc").
+# Remap any action. A binding is one key ("l", "Ctrl+x", "PageDown", "F5"),
+# a sequence of plain characters typed one after the other ("gg", "gcc"), or a
+# list of either (["j", "Down"]). The keys you set replace the action's default
+# keys: the old key stops triggering it. "" or [] unbinds the action. A key
+# glab-tui cannot read ("esc", "Ctrl+Shift+N") is reported in the Terminal tab
+# and the action keeps its defaults.
 # While the keys typed so far start a sequence, glab-tui waits for the next one.
 # A sequence that is also the start of a longer one ("g" next to "gg") fires
 # after keybinding_timeout_ms (default 1000) without a key, and a key that
 # completes nothing drops what was typed.
 [keybindings.global]
-next_tab = "l"
+next_tab = ["l", "Right"]
 submit_edit = "Ctrl+x"
-scroll_top = "gg"
+scroll_top = ["gg", "Home"]
+help = ["?", "F1"]
 # ...
 
 [keybindings.issues]
 create_issue = "n"
 edit_entity = "e"
 copy_reference = "y"
+# ...
+
+# Keys every list view handles after the tab's own keys.
+[keybindings.list]
+next_row = ["j", "Down"]
+back = ["Esc", "Backspace"]
+# ...
+
+# The diff view, selector overlays and confirmation dialogs remap the same way
+# under [keybindings.diff], [keybindings.selector] and [keybindings.dialog].
+[keybindings.diff]
+toggle_side_by_side = "d"
+search_previous = "Ctrl+p"
 # ...
 
 # Persist default column visibility / grouping / filters per pane.
@@ -393,7 +411,7 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 - **Bulk runs:** with issues, MRs/PRs, pipelines, jobs, or branches selected (`Space`, or `v` select mode), an `issues`/`mrs`/`pipelines`/`jobs`/`branches` binding runs once per selected item, in number/name order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
 - Row arguments come from the highlighted issue, MR/PR, pipeline, job, or branch. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project. GitHub jobs have no stage, so `{{.Stage}}` is refused there. `JobName` is the full name GitLab or GitHub reports, so a matrix job's (`rspec: [3.2, pg]`, `build (ubuntu, 3.2)`) holds spaces and brackets: pass it as `"$GLAB_TUI_JOB_NAME"`.
 - Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_PIPELINE_ID`, `GLAB_TUI_REF`, `GLAB_TUI_SHA`, `GLAB_TUI_BRANCH_NAME`, `GLAB_TUI_COMMIT_SHA`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`, `GLAB_TUI_JOB_ID`, `GLAB_TUI_JOB_NAME`, `GLAB_TUI_STAGE`, `GLAB_TUI_STATUS`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
-- Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
+- Built-in keys always win. Every built-in key is an action in the same registry the help modal lists. A plain character matches only with its own modifiers (Shift for an uppercase letter), so `Ctrl+q` is free while `q` quits. Named keys (Enter, Esc, arrows, Home, F-keys) still match whatever the modifiers, and `Ctrl+`/`Alt+` combos also match with extra modifiers, so a custom `Ctrl+Enter` is reported as taken by `keybindings.list.open`. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action takes first is reported in the Terminal tab at startup, naming the action's config key (e.g. `keybindings.list.next_row`); remap that action to free the key. A pane-specific binding overrides a universal one on the same key.
 - Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A custom `key` is a single key: a key sequence such as `gg` counts as unbindable here. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
 ---
@@ -511,11 +529,11 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 ## Key Bindings
 
-> All tables below show the **default** keys. The **Config** column shows the key name to remap in `config.toml` (e.g. under `[keybindings.issues]`, `create_issue = "n"`). `—` means the binding is fixed and **not** remappable.
+> All tables below show the **default** keys. The **Config** column shows the key name to remap in `config.toml` (e.g. under `[keybindings.issues]`, `create_issue = "n"`). Keys you set replace the defaults of that action. `—` means the key belongs to a text field or an overlay outside the registry and is **not** remappable.
 
 ### Global
 
-> Remappable via `[keybindings.global]` in `config.toml`.
+> Remappable via `[keybindings.global]` in `config.toml`, or `[keybindings.list]` for the `list.*` keys, which every list view handles after the tab's own keys.
 
 | Key | Action | Config |
 |---|---|---|
@@ -523,24 +541,30 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `h` / `←` | Previous tab | `prev_tab` |
 | `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) | `configure` |
 | `Esc` | Close configure popup / overlay | — |
-| `j` / `↓` | Move selection down | — |
-| `k` / `↑` | Move selection up | — |
+| `j` / `↓` | Move selection down | `list.next_row` |
+| `k` / `↑` | Move selection up | `list.previous_row` |
+| `Home` / `End` | Select the first / last row (with the detail pane closed) | `list.first_row` / `list.last_row` |
+| `Enter` | Open details, zoom, then edit | `list.open` |
+| `Esc` / `Backspace` | Go back: clear the selection, close details, leave a pipeline, clear the filter | `list.back` |
+| `Esc` | Return from a project narrowed with `G` to its group | `leave_scope` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 | `Home` | Jump to the top of the description panel | `scroll_top` |
 | `End` | Jump to the last line of the description panel | `scroll_to_end` |
 | `PageDown` / `PageUp` | Scroll description panel by one page | `scroll_page_down` / `scroll_page_up` |
 | `Ctrl+d` / `Ctrl+u` | Scroll description panel (or the list when it is hidden) by half a page | `scroll_half_page_down` / `scroll_half_page_up` |
-| `f` / `/` | Open search / filter bar | `search` |
+| `/` | Open search / filter bar | `search` |
+| `f` | Open search / filter bar, unless the tab uses `f` | `list.search` |
 | `Enter` / `Esc` (in search) | Close search bar | — |
 | `?` / `F1` | Show help: type to filter; `↑`/`↓`, `Ctrl+N`/`Ctrl+P`, `PgUp`/`PgDn`, `Ctrl+D`/`Ctrl+U`, `Home`/`End` or the mouse wheel scroll the list | `help` |
 | `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
 | `>` / `<` | Sort list by next / previous visible column | `sort_next` / `sort_prev` |
 | `=` | Reverse sort order | `sort_reverse` |
-| `Ctrl+S` | Switch repository | — |
+| `Ctrl+S` | Switch repository | `switch_repo` |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
-| `u` | Check for updates | — |
-| `q` / `Esc` | Quit (or close current overlay) | `quit` |
+| `u` | Check for updates | `list.check_updates` |
+| `q` | Quit | `quit` |
+| `Ctrl+C` | Quit, even from an overlay | `force_quit` |
 
 ---
 
@@ -598,11 +622,11 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |
 | `Space` | Select MR for bulk editing | `select_mr` |
 | `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
-| `o` | Open selected MR in browser | — |
+| `o` | Open selected MR in browser | `open_in_browser` |
 | `s` | Toggle Draft / Ready status | `toggle_draft` |
 | `c` | Close selected MR | `close_entity` |
 | `r` | Reopen selected MR | `reopen_entity` |
-| `d` | Delete selected MR (with confirmation) | `delete_entity` |
+| `d` | Delete selected MR (with confirmation) *(GitLab only)* | `delete_entity` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 
@@ -625,37 +649,38 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
 
-> Diff View keys are **fixed** and not remappable in `config.toml`, except the layout keys `1`, `2` and `0`: remap them under `[keybindings.diff]` as `layout_side_by_side`, `layout_unified` and `layout_auto`.
+> Remappable via `[keybindings.diff]` in `config.toml`.
 
-| Key | Action |
-|---|---|
-| `q` / `Esc` | Exit diff view (or cancel current selection / search). With draft comments pending, asks to **Submit**, **Keep drafts** (close, keep them for later), **Discard** them, or **Cancel** (`Esc`, back to the diff) |
-| `Tab` | Toggle focus between file tree and diff pane |
-| `h` / `←` | In file tree: collapse directory; in diff: focus file tree |
-| `l` / `→` | In file tree: expand directory / open file |
-| `j` / `↓` | Move down (file tree or diff lines) |
-| `k` / `↑` | Move up (file tree or diff lines) |
-| `J` / `K` | Scroll 10 lines / jump 10 files |
-| `Ctrl+d` / `Ctrl+u` | Move half a page (file tree or diff lines) |
-| `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) |
-| `[` / `]` | Previous / next hunk |
-| `z` / `Z` | Collapse / expand all files |
-| `m` | Mark / unmark file as reviewed (on a directory: every file below it) |
-| `M` | Hide / show reviewed files in the file tree |
-| `d` | Toggle unified / side-by-side layout, pinned for the session |
-| `1` / `2` | Pin side-by-side / unified layout for the session |
-| `0` | Pick the layout from the width again: side-by-side when the diff pane has at least 121 columns inside its border (two 60-column sides and the divider), unified below |
-| `v` / `V` | Start / stop multi-line selection for comments |
-| `c` | Add comment on current line / selection |
-| `C` | Add comment via external `$EDITOR` |
-| `e` | Add code suggestion via `$EDITOR` |
-| `a` | Open comment actions menu (reply, resolve, edit, delete) |
-| `T` | Review threads overview: every thread, including general and outdated ones |
-| `r` | Submit review: pick Comment / Approve / Request changes / Keep as draft with `j`/`k`, move into the summary with `j` past the last verdict or `Tab`, type it (or `Ctrl+E` for `$EDITOR`) and submit. A failed submission shows its error in the dialog and keeps the drafts. On GitLab, a failure after the comments are published (the approval or the summary) leaves them posted: do not resubmit them |
-| `/` / `f` | Search within diff |
-| `Ctrl+N` | Next search match |
-| `Ctrl+Shift+N` | Previous search match |
-| `?` / `F1` | Show help |
+| Key | Action | Config |
+|---|---|---|
+| `Esc` | Leave the search, then the selection, focus the file tree, show the tree, then exit the diff view. With draft comments pending, asks to **Submit**, **Keep drafts** (close, keep them for later), **Discard** them, or **Cancel** (`Esc`, back to the diff) | `back` |
+| `q` | Cancel the current selection, or exit the diff view (asking first with drafts pending, as above) | `close` |
+| `Tab` | Toggle focus between file tree and diff pane | `toggle_focus` |
+| `h` / `←` | In file tree: collapse directory; in diff: focus file tree | `focus_files` |
+| `l` / `→` | In file tree: expand directory / open file | `focus_diff` |
+| `j` / `↓` | Move down (file tree or diff lines) | `next_line` |
+| `k` / `↑` | Move up (file tree or diff lines) | `previous_line` |
+| `J` / `K` | Scroll 10 lines / jump 10 files | `page_down` / `page_up` |
+| `Ctrl+d` / `Ctrl+u` | Move half a page (file tree or diff lines) | `global.scroll_half_page_down` / `global.scroll_half_page_up` |
+| `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) | `open` |
+| `[` / `]` | Previous / next hunk | `previous_hunk` / `next_hunk` |
+| `z` / `Z` | Collapse / expand all files | `collapse_all` / `expand_all` |
+| `m` | Mark / unmark file as reviewed (on a directory: every file below it) | `toggle_reviewed` |
+| `M` | Hide / show reviewed files in the file tree | `toggle_hide_reviewed` |
+| `d` | Toggle unified / side-by-side layout, pinned for the session | `toggle_side_by_side` |
+| `1` / `2` | Pin side-by-side / unified layout for the session | `layout_side_by_side` / `layout_unified` |
+| `0` | Pick the layout from the width again: side-by-side when the diff pane has at least 121 columns inside its border (two 60-column sides and the divider), unified below | `layout_auto` |
+| `v` / `V` | Start / stop multi-line selection for comments | `toggle_selection` |
+| `c` | Add comment on current line / selection | `comment` |
+| `C` | Add comment via external `$EDITOR` | `comment_in_editor` |
+| `e` | Add code suggestion via `$EDITOR` | `suggest` |
+| `a` | Open comment actions menu (reply, resolve, edit, delete) | `comment_actions` |
+| `T` | Review threads overview: every thread, including general and outdated ones | `review_threads` |
+| `r` | Submit review: pick Comment / Approve / Request changes / Keep as draft with `j`/`k`, move into the summary with `j` past the last verdict or `Tab`, type it (or `Ctrl+E` for `$EDITOR`) and submit. A failed submission shows its error in the dialog and keeps the drafts. On GitLab, a failure after the comments are published (the approval or the summary) leaves them posted: do not resubmit them | `submit_review` |
+| `/` / `f` | Search within diff | `search` |
+| `Ctrl+n` | Next search match | `search_next` |
+| `Ctrl+p` | Previous search match | `search_previous` |
+| `?` / `F1` | Show help | `global.help` |
 
 **Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` and restored the next time you open the same diff (files that are no longer part of the diff are dropped). They are local to `glab-tui` — GitLab's own "viewed" checkboxes are not synced.
 
@@ -669,10 +694,10 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Drill into selected pipeline (show downstream pipelines or jobs) | — |
+| `Enter` | Drill into selected pipeline (show downstream pipelines or jobs) | `list.open` |
 | `Alt+j` | View selected pipeline's own jobs directly (skip downstream pipelines) | `enter_jobs` |
-| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | — |
-| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | — |
+| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | `list.back` |
+| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | `run_new` |
 | `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
 | `r` | Retry selected pipeline (or all checked pipelines). GitLab reruns its failed and canceled jobs, GitHub the whole run | `retry` |
 | `R` | Retry only the failed jobs of the selected pipeline (or all checked pipelines) | `retry_failed` |
@@ -683,9 +708,9 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Y` | Copy selected pipeline ID (`#123`) | `copy_id` |
 | `C` | Copy selected pipeline commit SHA | `copy_sha` |
 | `o` | Open pipeline in browser | `open_in_browser` |
-| `Space` | Check/uncheck pipeline for bulk retry | — |
-| `j` / `↓` | (in job view) move down | — |
-| `k` / `↑` | (in job view) move up | — |
+| `Space` | Check/uncheck pipeline for bulk retry | `select_pipeline` |
+| `j` / `↓` | (in job view) move down | `list.next_row` |
+| `k` / `↑` | (in job view) move up | `list.previous_row` |
 
 **Inside a pipeline (job view)**
 
@@ -696,7 +721,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Enter` | Fetch and display job trace (toggle zoom when trace is open) | `view_trace` |
 | `r` | Retry selected job (or all checked jobs) | `retry` |
 | `S` | Start manual (blocked) job. GitLab only: hidden on GitHub | `start_job` |
-| `c` | Cancel selected job (or all checked jobs) | `cancel` |
+| `c` | Cancel selected job (or all checked jobs), after a confirmation | `cancel` |
 | `d` | Download job artifact | `download_artifact` |
 | `y` | Copy job web URL | `copy_url` |
 | `Y` | Copy job ID | `copy_id` |
@@ -708,14 +733,14 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `s` | Select all jobs in the current stage | `select_stage` |
 | `w` | Toggle trace word wrap | `toggle_trace_wrap` |
 | `f` | Follow the trace of a running job: every 5 seconds, append what the log gained (GitLab asks only for the new bytes) | `toggle_trace_follow` |
-| `m` | Collapse / expand matrix jobs | — |
 | `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
-| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
-| `j` / `↓` | (in trace view) scroll down | — |
-| `k` / `↑` | (in trace view) scroll up | — |
-| `PageDown` / `PageUp` | (in trace view) page down / up | — |
-| `Ctrl+d` / `Ctrl+u` | (in trace view) scroll half page down / up | — |
-| `Home` / `End` | (in trace view) jump to top / bottom | — |
+| `Esc` | Clear the job trace search (before going back) | `clear_trace_search` |
+| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | `list.back` |
+| `j` / `↓` | (in trace view) scroll down | `list.next_row` |
+| `k` / `↑` | (in trace view) scroll up | `list.previous_row` |
+| `PageDown` / `PageUp` | (in trace view) page down / up | `global.scroll_page_down` / `global.scroll_page_up` |
+| `Ctrl+d` / `Ctrl+u` | (in trace view) scroll half page down / up | `global.scroll_half_page_down` / `global.scroll_half_page_up` |
+| `Home` / `End` | (in trace view) jump to top / bottom | `global.scroll_top` / `global.scroll_to_end` |
 
 glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[TRUNCATED: first 16 MiB]` in the pane title (press `o` to open the full log in the browser). A diff larger than 32 MiB is refused with an error rather than shown in part.
 
@@ -745,7 +770,7 @@ The preview lists each runner's type (instance, group or project), tags, version
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | View release details in terminal | — |
+| `Enter` | View release details in terminal | `list.open` |
 | `n` | Create a new release (tag, name, description) | `create_release` |
 | `e` | Edit selected release | `edit_release` |
 | `d` | Delete selected release (with confirmation) | `delete_release` |
@@ -841,9 +866,9 @@ Logs every `glab` / `gh` command the TUI executes and the `git` calls its backen
 
 | Key | Action | Config |
 |---|---|---|
-| `j` / `↓` | Scroll log down | — |
-| `k` / `↑` | Scroll log up | — |
-| `Enter` / `P` | Inspect the highlighted entry (`P` is fixed) | `inspect_command` |
+| `j` / `↓` | Scroll log down | `list.next_row` |
+| `k` / `↑` | Scroll log up | `list.previous_row` |
+| `Enter` / `P` | Inspect the highlighted entry | `inspect_command` |
 | `s` | Cycle the status filter: All, Errors, Success | `cycle_status_filter` |
 | `r` | Re-run the highlighted entry's `glab` / `gh` / `git` call after a confirmation | `rerun_command` |
 | `w` | Toggle line wrapping | `toggle_wrap` |
@@ -851,7 +876,7 @@ Logs every `glab` / `gh` command the TUI executes and the `git` calls its backen
 | `Y` | Copy the highlighted entry's output (stdout, then stderr), or its error when it printed nothing | `copy_output` |
 | `C` | Clear the log | `clear_log` |
 
-In the inspector, `j`/`k`, `g`/`G` and the `[keybindings.global]` scroll keys (`J`/`K`, Home/End, PageUp/PageDown, `Ctrl+d`/`Ctrl+u`) scroll, and `Esc`, `q`, `Enter` or `P` close it.
+In the inspector, the `[keybindings.list]` row keys (`next_row` / `previous_row`: `j`/`k`, `Down`/`Up`; `first_row` / `last_row`) and the `[keybindings.global]` scroll keys (`J`/`K`, Home/End, PageUp/PageDown, `Ctrl+d`/`Ctrl+u`) scroll, and the `list.back` keys (`Esc`, `Backspace`), the `quit` key (`q`) or the `inspect_command` keys (`Enter`, `P`) close it.
 
 ---
 
@@ -859,19 +884,37 @@ In the inspector, `j`/`k`, `g`/`G` and the `[keybindings.global]` scroll keys (`
 
 Searchable multi-select popups are used for choosing labels, assignees, reviewers, milestones, and for **value-based column filtering** (see [Filtering, Grouping & Columns](#filtering-grouping--columns)).
 
-> Selector keys are **fixed** and not remappable in `config.toml`.
+> Remappable via `[keybindings.selector]` in `config.toml`. Keys typed while filtering go into the filter.
 
-| Key | Action |
-|---|---|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `Space` | Toggle selection |
-| `f` / `/` / `i` | Enter filter/search mode |
-| `Backspace` | Delete last character in filter |
-| `Enter` | Confirm selection and apply |
-| `Esc` | Cancel and return to edit menu |
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` | Move down | `next` |
+| `k` / `↑` | Move up | `previous` |
+| `Space` | Toggle selection | `toggle` |
+| `f` / `/` / `i` | Enter filter/search mode | `filter` |
+| `Backspace` | Delete last character in filter | — |
+| `Enter` | Confirm selection and apply (while filtering: leave the filter) | `confirm` |
+| `Esc` | Clear the filter, then cancel and return to edit menu (while filtering: leave the filter) | `close` |
 
 > If you type a value that doesn't exist in the list, a **`+ Create "…"`** option appears at the top, letting you create a new label inline.
+
+### Confirmation dialogs
+
+Every destructive action (close, reopen, delete, revoke, cancel, stop, roll back, mark all read) opens a confirmation dialog first, whatever key it is bound to.
+
+> Remappable via `[keybindings.dialog]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` | Next option / button row | `next_field` |
+| `k` / `↑` | Previous option / button row | `previous_field` |
+| `l` / `→` | Next button | `next_button` |
+| `h` / `←` | Previous button | `previous_button` |
+| `Tab` / `Shift+Tab` | Next / previous control | `next` / `previous` |
+| `Space` | Toggle the focused option | `toggle_option` |
+| `Enter` | Activate the focused button | `activate` |
+| `y` / `Y` | Submit while the Submit button is focused | `submit` |
+| `Esc` | Cancel | `cancel` |
 
 ---
 
@@ -911,7 +954,8 @@ src/
 ├── update/          # update(app, event) -> Vec<Effect>: applies every event to App
 ├── effect.rs        # Effect: what update asks the loop to do (spawn, suspend, quit)
 ├── app.rs           # App state, Tab enum, DiffView, DatePicker, filtering logic
-├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
+├── config.rs        # Config/Theme loading, TOML generation
+├── keymap.rs        # Action registry: every bindable key, its context, defaults, help label
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
 ├── fetch.rs         # Per-tab data-fetching dispatch
 ├── git_helpers.rs   # Git remote parsing, current branch, workflow file detection

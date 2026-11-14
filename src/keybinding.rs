@@ -244,6 +244,15 @@ pub fn keybinding_matches(binding: &str, press: &KeyPress) -> bool {
     }
 }
 
+/// Whether a key with Ctrl or Alt held is a shortcut rather than typed text.
+/// Windows reports AltGr as Ctrl+Alt with the composed character, so a German
+/// `@` or a Nordic `{` arrives as Ctrl+Alt and is text, not a shortcut.
+pub fn is_shortcut(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    let is_alt_gr_text = modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && matches!(code, KeyCode::Char(c) if !c.is_ascii_alphanumeric());
+    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) && !is_alt_gr_text
+}
+
 /// The key event a single-key binding stands for, or `None` when the binding
 /// is a sequence or not spelled in the grammar `keybinding_matches` accepts.
 /// Lets a binding be tested against other bindings without a real keypress.
@@ -252,6 +261,11 @@ pub fn binding_key_event(binding: &str) -> Option<KeyEvent> {
         Binding::Key(key) => Some(key.event()),
         Binding::Sequence(_) => None,
     }
+}
+
+/// Whether `binding` is a key or sequence `keybinding_matches` can match.
+pub(crate) fn is_readable_binding(binding: &str) -> bool {
+    parse_binding(binding).is_some()
 }
 
 /// Every configured key sequence, and every start of one the event loop has

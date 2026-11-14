@@ -77,7 +77,9 @@ if [[ "$*" == *"api"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
-    elif [[ "$*" == *"/members/all"* || "$*" == *"groups/"*"/labels"* ]]; then
+    elif [[ "$*" == *"/members/all"* ]]; then
+        cat "$FIXTURES_DIR/members.json"
+    elif [[ "$*" == *"groups/"*"/labels"* ]]; then
         echo "[]"
     elif [[ "$*" == *"groups/test-group/issues"* ]]; then
         # Pages are requested concurrently; only the first carries the fixture.
@@ -89,12 +91,6 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"groups/test-group/merge_requests"* ]]; then
         if [[ " $* " == *"&page=1 "* ]]; then
             cat "$FIXTURES_DIR/group_mrs.json"
-        else
-            echo "[]"
-        fi
-    elif [[ "$*" == *"groups/test-group/pipelines"* ]]; then
-        if [[ " $* " == *"&page=1 "* ]]; then
-            cat "$FIXTURES_DIR/group_pipelines.json"
         else
             echo "[]"
         fi
@@ -160,8 +156,6 @@ if [[ "$*" == *"api"* ]]; then
         else
             echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", "duration": 95.4, "queued_duration": 3.2, "runner": {"id": 7, "description": "shared-runner-7"}, "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321", "artifacts": [{"file_type": "archive"}, {"file_type": "trace"}, {"file_type": "junit"}]}]'
         fi
-    elif [[ "$*" == *"groups/"*"/pipelines"* ]]; then
-        echo '[{"id": 777, "status": "running", "ref": "main", "updated_at": "2026-07-06T12:00:00Z", "web_url": "https://gitlab.com/acme/project-b/-/pipelines/777"}]'
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
@@ -170,6 +164,8 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/todos_done.json"
     elif [[ "$*" == *"/todos"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
+    elif [[ "$*" == *"groups/test-group/milestones"* ]]; then
+        cat "$FIXTURES_DIR/group_milestones.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     else
@@ -193,8 +189,9 @@ elif [[ "$*" == *"mr list"* ]]; then
         echo "[]"
     fi
 elif [[ "$*" == *"issue list"* ]]; then
+    # TEST_GLAB_ISSUES names another fixture, for tests that need other issues.
     if [[ " $* " == *" --page 1 "* ]]; then
-        cat "$FIXTURES_DIR/custom_command_issues.json"
+        cat "$FIXTURES_DIR/${TEST_GLAB_ISSUES:-custom_command_issues.json}"
     else
         echo "[]"
     fi
@@ -220,7 +217,9 @@ elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* 
         || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* \
         || "$*" == "issue close "* || "$*" == "mr close "* \
         || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
-        || "$*" == "runner update "* ]]; then
+        || "$*" == "runner update "* || "$*" == "issue update "* \
+        || "$*" == "mr update "* || "$*" == "milestone edit "* \
+        || "$*" == "milestone delete "* ]]; then
     # Mutations whose output glab-tui does not read.
     :
 else

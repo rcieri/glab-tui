@@ -3,7 +3,7 @@
 use crate::app::{App, REVIEW_SUBMIT_LOG_PREFIX};
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::Event;
-use crate::keybinding::KeyPress;
+use crate::keybinding::{KeyPress, is_shortcut};
 use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, ReviewVerdict, SubmissionState};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
@@ -99,14 +99,6 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
             _ => {}
         },
     }
-}
-
-/// Windows reports AltGr as Ctrl+Alt with the composed character, so a German
-/// `@` or a Nordic `{` arrives as Ctrl+Alt and is text, not a shortcut.
-fn is_shortcut(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    let is_alt_gr_text = modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        && matches!(code, KeyCode::Char(c) if !c.is_ascii_alphanumeric());
-    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) && !is_alt_gr_text
 }
 
 fn select_verdict(overlay: &mut ReviewSubmit, verdict: ReviewVerdict) {

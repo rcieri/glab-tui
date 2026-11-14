@@ -5,6 +5,7 @@ use crate::domain::client::GitlabClient;
 use crate::domain::notifications::{self, Notification, NotificationTarget, TodoChange};
 use crate::effect::Effects;
 use crate::event::{CommandOutcome, Event};
+use crate::keymap::Action;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub fn activate_todo(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
@@ -260,7 +261,7 @@ fn jump_to_target(
     let iid = todo.target_iid;
     if !app.scope.contains_project(project) {
         let reference = todo.reference(app.kind()).unwrap_or_default();
-        let open_in_browser = &app.config.keybindings.todos.open_in_browser;
+        let open_in_browser = app.config.keybindings.display(Action::TodosOpenInBrowser);
         app.show_error(format!(
             "{project}{reference} is outside {}. Press {open_in_browser} to open it in the browser.",
             app.scope

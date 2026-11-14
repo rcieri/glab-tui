@@ -1,23 +1,21 @@
 use crate::app::App;
 use crate::keybinding::KeyPress;
-use crossterm::event::KeyCode;
+use crate::keymap::Action;
 use ratatui::widgets::ListState;
 
 pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
-    let is_switch_repo = (key_event.code == KeyCode::Char('s')
-        && key_event
-            .modifiers
-            .contains(crossterm::event::KeyModifiers::CONTROL))
-        || (key_event.code == KeyCode::Char('S')
-            && key_event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL))
-        || crate::keybinding::keybinding_matches(
-            &app.config.keybindings.global.switch_repo,
-            key_event,
-        );
+    let is_switch_repo = app
+        .config
+        .keybindings
+        .matches(Action::GlobalSwitchRepo, key_event);
 
-    if is_switch_repo && !app.has_modal() && !app.is_typing_search && !app.job_trace_searching {
+    let can_switch = match app.top_modal() {
+        None => true,
+        Some(crate::app::Modal::Diff(d)) => !d.search_active,
+        _ => false,
+    };
+
+    if is_switch_repo && can_switch && !app.is_typing_search && !app.job_trace_searching {
         let mut items = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut switch_repo_paths = std::collections::HashMap::new();

@@ -298,24 +298,22 @@ fn test_notice_over_stale_list_keeps_the_offline_banner() {
     );
 }
 
-/// In group scope, `d` asks first and then cancels the pipeline in the project
-/// it belongs to, never the group path.
 #[test]
-fn test_group_scope_pipeline_cancel_confirms_and_targets_its_own_project() {
-    let sandbox = crate::Sandbox::new(false).unwrap();
+fn github_org_scope_run_cancel_confirms_and_targets_its_own_repository() {
+    let sandbox = crate::Sandbox::new(true).unwrap();
     let mut session =
         TestSession::launch_with_args(sandbox, 24, 100, &["-g", "acme", "--tab", "pipelines"], &[]);
     session
-        .wait_for_screen_contains("777", 8000)
-        .expect("the group pipeline is listed");
+        .wait_for_screen_contains("12345", 8000)
+        .expect("the org's run is listed");
 
     session.send_input(b"d");
     session
-        .wait_for_screen_contains("Cancel Pipeline #777", 5000)
+        .wait_for_screen_contains("Cancel Action #12345", 5000)
         .expect("cancel asks for confirmation");
     session.settle(300);
     assert!(
-        !session.get_cli_calls().contains("ci cancel pipeline"),
+        !session.get_cli_calls().contains("run cancel"),
         "nothing is cancelled before confirming"
     );
 
@@ -325,11 +323,11 @@ fn test_group_scope_pipeline_cancel_confirms_and_targets_its_own_project() {
     let calls = session.get_cli_calls();
     let cancel = calls
         .lines()
-        .find(|l| l.contains("ci cancel pipeline 777"))
+        .find(|l| l.contains("run cancel 12345"))
         .unwrap_or_else(|| panic!("cancel was sent; calls:\n{calls}"));
     assert!(
         cancel.contains("-R acme/project-b"),
-        "cancel targets the pipeline's project: {cancel}"
+        "cancel targets the run's repository: {cancel}"
     );
 }
 
@@ -527,6 +525,36 @@ fn test_github_jobs_tab_does_not_offer_start_job() {
     assert!(
         !session.emulator.get_text().contains("Start manual job"),
         "start job is not offered on GitHub"
+    );
+}
+
+/// Opens the highlighted job's page, the URL the job list reported.
+fn open_job_in_browser(github: bool, url: &str) {
+    let mut session = TestSession::new(github, 24, 100);
+    open_jobs_tab(&mut session);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the branch pipeline's jobs are listed");
+
+    session.send_input(b"o");
+    session
+        .wait_for_cli_call(&format!("browser {url}"), 5000)
+        .expect("the job's page is opened");
+}
+
+#[test]
+fn test_github_jobs_tab_opens_the_job_page() {
+    open_job_in_browser(
+        true,
+        "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321",
+    );
+}
+
+#[test]
+fn test_gitlab_jobs_tab_opens_the_job_page() {
+    open_job_in_browser(
+        false,
+        "https://gitlab.com/test-owner/test-repo/-/jobs/54321",
     );
 }
 

@@ -53,7 +53,6 @@ fn unknown_tab_name_is_reported_and_the_rest_of_the_list_applies() {
     assert!(!screen.contains("PIPELINES"), "{screen}");
 }
 
-/// `toggle_nav` (`Alt+n`) hides the sidebar and shows it again.
 #[test]
 fn alt_n_toggles_the_navigation_sidebar() {
     let mut session = TestSession::new(false, 24, 120);

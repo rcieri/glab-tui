@@ -7,6 +7,7 @@ mod cli_contract;
 mod config;
 mod custom_keybindings;
 mod environments;
+mod gitlab_merge;
 mod group_scope_actions;
 mod job_trace;
 mod keybindings;

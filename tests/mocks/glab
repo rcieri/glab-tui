@@ -60,9 +60,10 @@ if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"
 fi
 
-# Merge settings the merge dialog reads: merge commits, squash preselected.
+# Merge settings the merge dialog reads: merge commits, squash preselected
+# unless TEST_GLAB_SQUASH_OPTION names another squash_option.
 if [[ "$*" == "repo view --output json"* ]]; then
-    echo '{"id":1,"merge_method":"merge","squash_option":"default_on"}'
+    echo "{\"id\":1,\"merge_method\":\"merge\",\"squash_option\":\"${TEST_GLAB_SQUASH_OPTION:-default_on}\"}"
     exit 0
 fi
 
@@ -206,6 +207,9 @@ elif [[ "$*" == *"issue list"* ]]; then
     fi
 elif [[ "$*" == *"mr diff"* ]]; then
     cat "$FIXTURES_DIR/mr_diff.txt"
+elif [[ "$*" == *"mr view"* && -n "$TEST_GLAB_MR_SQUASH" ]]; then
+    # The MR's own squash flag, which GitLab follows on merge.
+    sed '1s/{/{"squash": true,/' "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then
@@ -226,7 +230,8 @@ elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* 
         || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* \
         || "$*" == "issue close "* || "$*" == "mr close "* \
         || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
-        || "$*" == "runner update "* ]]; then
+        || "$*" == "runner update "* || "$*" == "mr merge "* \
+        || "$*" == "mr update "*" --squash-before-merge "* ]]; then
     # Mutations whose output glab-tui does not read.
     :
 else

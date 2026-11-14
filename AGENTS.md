@@ -518,7 +518,7 @@ Key handlers in [src/handlers/](src/handlers/) (`tabs.rs`, `overlays/`, `diff_vi
 | Delete MR (Glab) | `glab mr delete <iid> -R <repo>` |
 | Delete issue (GH) | `gh issue delete <iid> -R <repo> --yes` |
 | Approve MR | `gh pr review <iid> --approve` / `glab mr approve <iid>` |
-| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --squash --remove-source-branch --yes` (the `--yes` flag skips the CLI's interactive confirmation; multiple selected MRs are merged in sequence through `Backend::merge_mr`) |
+| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --squash --remove-source-branch --yes` (the `--yes` flag skips the CLI's interactive confirmation; multiple selected MRs are merged in sequence through `Backend::merge_mr`). A GitLab merge other than Squash first reads the MR's own squash flag (`glab mr view <iid> --output json -R <repo>`) and, when it is set, clears it with `glab mr update <iid> --squash-before-merge -R <repo>`: GitLab follows that flag whatever `glab mr merge` is asked, and `--squash-before-merge` flips the flag rather than setting it |
 | Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
 | Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
 | Create milestone | `gh api POST repos/{}/milestones -f title=...` / `glab api POST projects/{}/milestones -f title=...` |

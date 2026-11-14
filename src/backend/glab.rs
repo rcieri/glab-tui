@@ -991,7 +991,6 @@ impl GlabBackend {
         if delete_branch {
             args.push("--remove-source-branch".into());
         }
-        // A merge commit is what `glab mr merge` does without a method flag.
         if method == MergeMethod::Rebase {
             args.push("--rebase".into());
         }
@@ -1054,6 +1053,33 @@ impl GlabBackend {
             .context("Failed to parse glab mr view output")?
             .diff_refs
             .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
+    }
+
+    /// The MR's own squash flag, which GitLab follows on merge unless the
+    /// project always or never squashes.
+    async fn mr_squash_flag(&self, project: &str, iid: u64) -> Result<bool> {
+        #[derive(Deserialize)]
+        struct GiMr {
+            #[serde(default)]
+            squash: bool,
+        }
+        let raw = self
+            .run_glab(
+                &[
+                    "mr",
+                    "view",
+                    &iid.to_string(),
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                ],
+                "READING MR SQUASH",
+            )
+            .await?;
+        Ok(serde_json::from_str::<GiMr>(&raw)
+            .context("parsing the squash flag of `glab mr view`")?
+            .squash)
     }
 
     /// Creates one draft note per comment, then publishes them. `created`
@@ -2006,6 +2032,25 @@ impl Backend for GlabBackend {
             auto_merge,
             sha,
         } = *options;
+        // GitLab squashes whenever the MR's own squash flag is set (the
+        // default on `default_on` projects), and its merge endpoint can only
+        // turn the flag on, so a merge that must not squash clears it first.
+        // glab's --squash-before-merge flips the flag instead of setting it,
+        // hence the read.
+        if method != MergeMethod::Squash && self.mr_squash_flag(project, iid).await? {
+            self.run_glab(
+                &[
+                    "mr",
+                    "update",
+                    &iid.to_string(),
+                    "--squash-before-merge",
+                    "-R",
+                    project,
+                ],
+                "CLEARING MR SQUASH",
+            )
+            .await?;
+        }
         let args = Self::merge_args(project, iid, method, delete_branch, auto_merge, sha);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "MERGING MR").await?;

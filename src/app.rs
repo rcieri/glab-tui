@@ -114,12 +114,12 @@ impl Tab {
         }
     }
 
-    /// Whether this tab's list can be fetched in `scope`. Runners are listed
-    /// per repository only, so in group scope the fetch could only fail on
-    /// every refresh.
-    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope) -> bool {
+    /// Whether this tab's list can be fetched in `scope` on `kind`.
+    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope, kind: BackendKind) -> bool {
         match self {
             Tab::Runners => scope.is_repository(),
+            // GitLab has no group pipelines endpoint.
+            Tab::Pipelines => scope.is_repository() || kind.is_github(),
             _ => true,
         }
     }
@@ -1316,6 +1316,27 @@ pub fn note_position_anchors(
     path_matches && (new_line_matches || old_line_matches)
 }
 
+/// The session's diff layout: picked from the diff pane width, or pinned by a layout key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiffLayout {
+    /// Side by side when the diff pane is wide enough, unified otherwise.
+    #[default]
+    Auto,
+    SideBySide,
+    Unified,
+}
+
+impl DiffLayout {
+    /// Whether a diff pane `columns` wide shows its rows side by side.
+    pub fn is_side_by_side(self, columns: u16) -> bool {
+        match self {
+            Self::Auto => crate::ui::compaction::fits_side_by_side_diff(columns),
+            Self::SideBySide => true,
+            Self::Unified => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct DiffView {
@@ -1336,6 +1357,10 @@ pub struct DiffView {
     pub selection_end: Option<usize>,
     pub side_by_side: bool,
     pub side_by_side_lines: Vec<SideBySideLine>,
+    /// Unified row the cursor left when the view last went side by side. A row
+    /// pairing a removal with an addition shows two unified lines, so the row
+    /// alone cannot say which one to return to.
+    unified_cursor_before_split: Option<usize>,
     pub viewport_height: usize,
     pub search_query: String,
     pub search_matches: Vec<usize>,
@@ -1732,6 +1757,7 @@ impl DiffView {
             selection_end: None,
             side_by_side: false,
             side_by_side_lines: Vec::new(),
+            unified_cursor_before_split: None,
             viewport_height: 15,
             search_query: String::new(),
             search_matches: Vec::new(),
@@ -2005,6 +2031,13 @@ impl DiffView {
         self.lines = new_lines;
         self.side_by_side_lines = build_side_by_side_lines(&self.lines);
 
+        self.index_active_rows();
+    }
+
+    /// Clamps the cursor to the active layout's rows and rebuilds its hunk
+    /// list and search matches: everything that depends on the layout once
+    /// both row lists are built.
+    fn index_active_rows(&mut self) {
         let active_len = if self.side_by_side {
             self.side_by_side_lines.len()
         } else {
@@ -2036,6 +2069,41 @@ impl DiffView {
             let query = self.search_query.clone();
             self.search(&query);
         }
+    }
+
+    /// Switches between side-by-side and unified rows, keeping the cursor on
+    /// the same diff line. A line selection is dropped, since its row indices
+    /// refer to the layout being left.
+    pub fn set_side_by_side(&mut self, side_by_side: bool) {
+        if self.side_by_side == side_by_side {
+            return;
+        }
+        let old_cursor = self.cursor_idx;
+        self.side_by_side = side_by_side;
+        self.selection_start = None;
+        self.selection_end = None;
+        self.index_active_rows();
+
+        let new_cursor = if side_by_side {
+            self.unified_cursor_before_split = Some(old_cursor);
+            self.side_by_side_row_of(old_cursor)
+        } else {
+            self.unified_cursor_before_split
+                .take()
+                .filter(|&line| self.side_by_side_row_of(line) == Some(old_cursor))
+                .or_else(|| self.unified_line_of(old_cursor))
+        };
+        if let Some(new_cursor) = new_cursor {
+            self.cursor_idx = new_cursor;
+        }
+        if let Some(position) = self
+            .search_matches
+            .iter()
+            .position(|&m| m == self.cursor_idx)
+        {
+            self.search_cursor = position;
+        }
+        self.scroll_offset = self.cursor_idx.saturating_sub(5);
     }
 
     /// Moves the file-tree selection or the diff cursor `rows` down or up,
@@ -2232,26 +2300,35 @@ impl DiffView {
         self.rebuild_visible_nodes();
     }
 
+    /// Ranks the rows of the active layout against `query`: a side-by-side row
+    /// matches once, with the better score of its two sides.
     pub fn search(&mut self, query: &str) {
         self.search_query = query.to_string();
-        self.search_matches.clear();
-
-        // Clear previous fuzzy indices on all lines
-        for line in &mut self.lines {
-            line.fuzzy_indices = None;
-        }
+        self.clear_fuzzy_indices();
 
         let matcher = &*FUZZY_MATCHER;
-        let mut scored: Vec<(i64, usize)> = self
-            .lines
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, line)| {
-                let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
-                line.fuzzy_indices = Some(indices);
-                Some((score, i))
-            })
-            .collect();
+        let score = |line: &mut DiffLine| {
+            let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
+            line.fuzzy_indices = Some(indices);
+            Some(score)
+        };
+        let mut scored: Vec<(i64, usize)> = if self.side_by_side {
+            self.side_by_side_lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, row)| {
+                    let left = row.left.as_mut().and_then(score);
+                    let right = row.right.as_mut().and_then(score);
+                    Some((left.max(right)?, i))
+                })
+                .collect()
+        } else {
+            self.lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, line)| Some((score(line)?, i)))
+                .collect()
+        };
         scored.sort_by_key(|(score, _)| -(*score));
         self.search_matches = scored.into_iter().map(|(_, i)| i).collect();
         self.search_cursor = 0;
@@ -2291,7 +2368,15 @@ impl DiffView {
         self.search_matches.clear();
         self.search_cursor = 0;
         self.search_active = false;
-        for line in &mut self.lines {
+        self.clear_fuzzy_indices();
+    }
+
+    fn clear_fuzzy_indices(&mut self) {
+        let halves = self
+            .side_by_side_lines
+            .iter_mut()
+            .flat_map(|row| row.left.iter_mut().chain(row.right.iter_mut()));
+        for line in self.lines.iter_mut().chain(halves) {
             line.fuzzy_indices = None;
         }
     }
@@ -2510,6 +2595,72 @@ impl DiffView {
             (right, None) => right.as_ref(),
         }
     }
+
+    /// Side-by-side row showing the unified line `line`.
+    fn side_by_side_row_of(&self, line: usize) -> Option<usize> {
+        let unified = self.lines.get(line)?;
+        if is_marker(unified.line_type) {
+            let nth = self.lines[..line]
+                .iter()
+                .filter(|l| is_marker(l.line_type))
+                .count();
+            return nth_marker(self.side_by_side_lines.iter().map(|row| row.line_type), nth);
+        }
+        self.side_by_side_lines
+            .iter()
+            .position(|row| side_by_side_row_shows(row, unified))
+    }
+
+    /// Unified line shown by the side-by-side row `row_idx`.
+    fn unified_line_of(&self, row_idx: usize) -> Option<usize> {
+        let row = self.side_by_side_lines.get(row_idx)?;
+        if is_marker(row.line_type) {
+            let nth = self.side_by_side_lines[..row_idx]
+                .iter()
+                .filter(|r| is_marker(r.line_type))
+                .count();
+            return nth_marker(self.lines.iter().map(|line| line.line_type), nth);
+        }
+        unified_row_of(row, &self.lines)
+    }
+}
+
+/// Hunk headers and meta lines carry no line numbers, but
+/// `build_side_by_side_lines` gives each exactly one row, in order, so they
+/// map between the layouts by ordinal.
+fn is_marker(line_type: DiffLineType) -> bool {
+    matches!(line_type, DiffLineType::HunkHeader | DiffLineType::Meta)
+}
+
+fn nth_marker(types: impl Iterator<Item = DiffLineType>, nth: usize) -> Option<usize> {
+    types
+        .enumerate()
+        .filter(|&(_, line_type)| is_marker(line_type))
+        .nth(nth)
+        .map(|(i, _)| i)
+}
+
+/// Whether the side-by-side `row` shows the unified content line `unified`.
+fn side_by_side_row_shows(row: &SideBySideLine, unified: &DiffLine) -> bool {
+    let same_line = |side: &Option<DiffLine>| {
+        side.as_ref().is_some_and(|l| {
+            l.old_line_num == unified.old_line_num
+                && l.new_line_num == unified.new_line_num
+                && l.file_path == unified.file_path
+        })
+    };
+    same_line(&row.left) || same_line(&row.right)
+}
+
+/// Unified row of the line `row` shows on its new side, else on its old side.
+fn unified_row_of(row: &SideBySideLine, lines: &[DiffLine]) -> Option<usize> {
+    let target = row.right.as_ref().or(row.left.as_ref())?;
+    lines.iter().position(|line| {
+        line.file_path == target.file_path
+            && line.old_line_num == target.old_line_num
+            && line.new_line_num == target.new_line_num
+            && line.line_type == target.line_type
+    })
 }
 
 pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
@@ -3096,17 +3247,17 @@ pub enum StackAction {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64),             // milestone iid
-    DeleteRelease(String),            // release tag_name
-    DeleteBranch(String),             // branch name
-    DeleteIssue(u64),                 // issue iid
-    DeleteMr(u64),                    // mr iid
-    CloseIssue(u64),                  // issue iid
-    CloseMr(u64),                     // mr iid
-    CloseMilestone(u64),              // milestone iid
-    ReopenIssue(u64),                 // issue iid
-    ReopenMr(u64),                    // mr iid
-    ReopenMilestone(u64),             // milestone iid
+    DeleteMilestone(crate::domain::milestones::Milestone),
+    DeleteRelease(String), // release tag_name
+    DeleteBranch(String),  // branch name
+    DeleteIssue(u64),      // issue iid
+    DeleteMr(u64),         // mr iid
+    CloseIssue(u64),       // issue iid
+    CloseMr(u64),          // mr iid
+    CloseMilestone(crate::domain::milestones::Milestone),
+    ReopenIssue(u64), // issue iid
+    ReopenMr(u64),    // mr iid
+    ReopenMilestone(crate::domain::milestones::Milestone),
     MergeMr(u64),                     // mr iid
     MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
@@ -3426,9 +3577,12 @@ impl SubmitDialog {
 
         let action_clone = action.clone();
         let (title, body, submit_label, options, safe) = match &action {
-            ConfirmAction::DeleteMilestone(iid) => (
-                format!("Delete Milestone #{iid}"),
-                format!("Are you sure you want to delete milestone #{iid}?"),
+            ConfirmAction::DeleteMilestone(milestone) => (
+                format!("Delete Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to delete milestone #{}?",
+                    milestone.iid
+                ),
                 "Delete".to_string(),
                 vec![],
                 true,
@@ -3479,9 +3633,12 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::CloseMilestone(iid) => (
-                format!("Close Milestone #{iid}"),
-                format!("Are you sure you want to close milestone #{iid}?"),
+            ConfirmAction::CloseMilestone(milestone) => (
+                format!("Close Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to close milestone #{}?",
+                    milestone.iid
+                ),
                 "Close".to_string(),
                 vec![],
                 true,
@@ -3500,9 +3657,12 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::ReopenMilestone(iid) => (
-                format!("Reopen Milestone #{iid}"),
-                format!("Are you sure you want to reopen milestone #{iid}?"),
+            ConfirmAction::ReopenMilestone(milestone) => (
+                format!("Reopen Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to reopen milestone #{}?",
+                    milestone.iid
+                ),
                 "Reopen".to_string(),
                 vec![],
                 true,
@@ -4034,6 +4194,8 @@ pub struct App {
     pub in_review_mode: bool,
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
+    /// Session-wide diff layout, `Auto` until a layout key pins one.
+    pub diff_layout: DiffLayout,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4088,7 +4250,12 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let config = Config::load();
+        Self::with_config(Config::default())
+    }
+}
+
+impl App {
+    fn with_config(config: Config) -> Self {
         let key_buffer = crate::keybinding::KeyBuffer::new(key_sequences(&config.keybindings));
         Self {
             theme: config.resolve_theme(None),
@@ -4210,6 +4377,7 @@ impl Default for App {
             column_checklist_idx: 0,
             in_review_mode: false,
             hide_reviewed_files: false,
+            diff_layout: DiffLayout::Auto,
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             save_menu_open: false,
@@ -4347,6 +4515,20 @@ fn milestone_progress_sort_key(
     "000%".to_string()
 }
 
+fn ids_with_changed_status<'a>(
+    listed: &'a [crate::domain::pipelines::Pipeline],
+    fetched: &'a [crate::domain::pipelines::Pipeline],
+) -> impl Iterator<Item = u64> + 'a {
+    fetched
+        .iter()
+        .filter(move |new| {
+            listed
+                .iter()
+                .any(|old| old.id() == new.id() && old.status() != new.status())
+        })
+        .map(|pipeline| pipeline.id())
+}
+
 impl App {
     /// Open an edit/create menu, capturing the current zoom state so Esc
     /// can restore it. Use this helper instead of assigning to
@@ -4429,6 +4611,8 @@ impl App {
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.job_trace_follow = false;
+        self.job_trace_poll_in_flight = false;
         self.pending_issue_select = None;
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;
@@ -4586,6 +4770,19 @@ impl App {
             .position(|m| m.iid == iid && self.scope.project_of(&m.project_path) == project_path)
     }
 
+    /// Milestone `iid` of `project_path` from `milestones.items`.
+    pub fn listed_milestone(
+        &self,
+        project_path: &str,
+        iid: u64,
+    ) -> anyhow::Result<crate::domain::milestones::Milestone> {
+        self.milestone_index(project_path, iid)
+            .map(|pos| self.milestones.items[pos].clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Milestone {iid} is not listed; refresh the Milestones tab")
+            })
+    }
+
     /// An MR/PR as (project path, number), the key of the session's stack
     /// knowledge.
     pub fn mr_ref(&self, mr: &crate::domain::mr::MergeRequest) -> (String, u64) {
@@ -4726,6 +4923,37 @@ impl App {
         self.jobs_project()
             .unwrap_or(self.scope.as_str())
             .to_string()
+    }
+
+    /// Shows pipeline `id` on the Jobs tab. Refreshes fetch it until
+    /// `close_opened_pipeline`.
+    pub fn open_pipeline_in_jobs_tab(&mut self, id: u64) {
+        self.active_pipeline_project = self.pipeline_project(id).map(str::to_owned);
+        self.active_pipeline_id = Some(id);
+        let project = self.project_path_for_jobs();
+        let parents = self
+            .pipeline_nav
+            .iter()
+            .map(|frame| frame.parent_id)
+            .collect();
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.opened_pipeline = Some(Box::new(crate::domain::client::OpenedPipeline {
+                id,
+                project,
+                parents,
+            }));
+        }
+    }
+
+    /// Puts the Jobs tab back on the checked-out branch's pipeline, fetched
+    /// when the tab is next shown.
+    pub fn close_opened_pipeline(&mut self) {
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.opened_pipeline = None;
+        }
+        self.loading_tabs.remove(&Tab::Jobs);
+        self.loaded_tabs.remove(&Tab::Jobs);
+        self.refreshed_tabs.remove(&Tab::Jobs);
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -5133,13 +5361,11 @@ impl App {
         next
     }
 
-    /// The job a fetched log is shown for: the selected job of the Jobs tab,
-    /// or of the job list behind the Pipelines tab.
+    /// The job a fetched log is shown for: the selected job of the Jobs tab.
     pub fn trace_job_id(&self) -> Option<u64> {
         let idx = self.jobs.state.selected()?;
         match self.active_tab {
             Tab::Jobs => self.filtered_jobs().get(idx).map(|job| job.id()),
-            Tab::Pipelines => self.jobs.items.get(idx).map(|job| job.id()),
             _ => None,
         }
     }
@@ -5165,12 +5391,16 @@ impl App {
         self.filtered_jobs().get(index).copied()
     }
 
-    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
-        let url = self
-            .selected_job()
+    /// The web page of the highlighted row of the Jobs tab.
+    pub fn selected_job_url(&self) -> anyhow::Result<String> {
+        self.selected_job()
             .and_then(|job| job.web_url.clone())
             .filter(|url| !url.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))?;
+            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))
+    }
+
+    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
+        let url = self.selected_job_url()?;
         self.clipboard.set_text(url)?;
         Ok(())
     }
@@ -5184,6 +5414,14 @@ impl App {
         Ok(())
     }
 
+    /// Closes the shown job log, ending follow mode and any pending jump in it.
+    pub fn close_job_trace(&mut self) {
+        self.job_trace = None;
+        self.job_trace_follow = false;
+        self.detail_scroll_to_bottom = false;
+        self.job_trace_scroll_to_line = None;
+    }
+
     /// Scrolls the shown job log to the first failure line after line
     /// `after` (from the top when `None`), wrapping around.
     pub fn jump_to_trace_failure(&mut self, after: Option<usize>) {
@@ -5191,12 +5429,16 @@ impl App {
             return;
         };
         match view.trace().next_failure_line(after) {
-            Some(line) => {
-                self.job_trace_scroll_to_line = Some(line);
-                self.detail_scroll_to_bottom = false;
-            }
+            Some(line) => self.scroll_job_trace_to_line(line),
             None => self.show_notice("No failure line in the job log"),
         }
+    }
+
+    /// Scrolls the shown job log to `line`. A pending jump to the bottom is
+    /// cleared because it would override the target.
+    pub fn scroll_job_trace_to_line(&mut self, line: usize) {
+        self.job_trace_scroll_to_line = Some(line);
+        self.detail_scroll_to_bottom = false;
     }
 
     pub fn selected_branch_name(&self) -> Option<String> {
@@ -6075,15 +6317,18 @@ impl App {
             .pipeline_nav
             .first()
             .map_or(&self.pipelines.items, |frame| &frame.items);
-        let changed: Vec<u64> = fetched
-            .iter()
-            .filter(|new| {
-                root.iter()
-                    .any(|old| old.id() == new.id() && old.status() != new.status())
-            })
-            .map(|pipeline| pipeline.id())
-            .collect();
-        for id in changed {
+        for id in ids_with_changed_status(root, fetched) {
+            self.pipeline_jobs.remove(&id);
+        }
+    }
+
+    /// Forgets the cached jobs of every child on screen whose status differs in
+    /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
+    pub fn drop_jobs_of_changed_children(
+        &mut self,
+        fetched: &[crate::domain::pipelines::Pipeline],
+    ) {
+        for id in ids_with_changed_status(&self.pipelines.items, fetched) {
             self.pipeline_jobs.remove(&id);
         }
     }
@@ -6098,9 +6343,33 @@ impl App {
             .join(" › ")
     }
 
+    /// The pipeline path in the Jobs tab title: the opened pipeline and its
+    /// parents, e.g. `#1002 › #2001`. Empty for the branch's pipeline.
+    pub fn jobs_breadcrumb(&self) -> String {
+        let Some(opened) = self
+            .gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref())
+        else {
+            return String::new();
+        };
+        opened
+            .parents
+            .iter()
+            .chain(std::iter::once(&opened.id))
+            .map(|id| format!("#{id}"))
+            .collect::<Vec<_>>()
+            .join(" › ")
+    }
+
     /// Show one level down in the Pipelines tab, remembering the current level
-    /// so `ascend` can restore it without another API call.
+    /// so `ascend` can restore it without another API call. Forgets the cached
+    /// jobs of the level's children: there is no earlier status to compare
+    /// against, and one may have changed since its jobs were fetched.
     pub fn descend_into(&mut self, parent_id: u64, level: crate::domain::pipelines::ChildLevel) {
+        for child in &level.children {
+            self.pipeline_jobs.remove(&child.id());
+        }
         self.pipeline_nav.push(NavFrame {
             parent_id,
             items: std::mem::take(&mut self.pipelines.items),
@@ -6128,7 +6397,7 @@ impl App {
     }
 
     pub fn new() -> Self {
-        let mut app = Self::default();
+        let mut app = Self::with_config(Config::load());
         if let Some(ref active_tab_str) = app.config.active_tab {
             if let Some(tab) = Tab::from_str(active_tab_str) {
                 app.active_tab = tab;
@@ -7948,7 +8217,7 @@ impl App {
     }
 
     /// Whether the last frame drew the detail pane. `detail_rect` covers the
-    /// terminal being too narrow for it, `detail_visible` a `q` pressed since.
+    /// terminal being too small for it, `detail_visible` a `q` pressed since.
     fn is_detail_pane_on_screen(&self) -> bool {
         self.detail_visible && self.detail_rect.is_some()
     }
@@ -8771,10 +9040,43 @@ mod tests {
     use crate::domain::milestones::Milestone;
 
     #[test]
+    fn pipelines_are_not_fetched_in_gitlab_group_scope() {
+        let group = crate::scope::Scope::Group("acme".to_string());
+        let repo = crate::scope::Scope::Repository("acme/app".to_string());
+        assert!(!Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitLab));
+        assert!(Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitHub));
+        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitLab));
+        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitHub));
+    }
+
+    #[test]
     fn milestone_state_display_uppercases_known_states() {
         assert_eq!(milestone_state_display("active"), "ACTIVE");
         assert_eq!(milestone_state_display("closed"), "CLOSED");
         assert_eq!(milestone_state_display(""), "");
+    }
+
+    #[test]
+    fn listed_milestone_finds_the_row_of_its_project_or_reports_it_missing() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..App::default()
+        };
+        let milestone = |id: u64, project: &str| Milestone {
+            id,
+            iid: 3,
+            project_path: project.to_string(),
+            ..Milestone::default()
+        };
+        app.milestones.items = vec![milestone(10, "acme/alpha"), milestone(20, "acme/beta")];
+
+        let found = app.listed_milestone("acme/beta", 3).expect("listed");
+        assert_eq!(found.id, 20);
+        let missing = app.listed_milestone("acme/beta", 4).unwrap_err();
+        assert_eq!(
+            missing.to_string(),
+            "Milestone 4 is not listed; refresh the Milestones tab"
+        );
     }
 
     fn runner(
@@ -9086,6 +9388,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         };
         let values = App::milestone_filter_values(&m, "State");
         assert_eq!(values, vec!["ACTIVE".to_string()]);
@@ -9426,6 +9729,20 @@ mod tests {
         assert_eq!(issues6[0].iid, 3);
 
         assert!(app.milestone_issues(7).is_none());
+    }
+
+    #[test]
+    fn reset_on_scope_change_ends_job_trace_follow() {
+        let mut app = App {
+            job_trace_follow: true,
+            job_trace_poll_in_flight: true,
+            ..App::default()
+        };
+
+        app.reset_on_scope_change();
+
+        assert!(!app.job_trace_follow);
+        assert!(!app.job_trace_poll_in_flight);
     }
 
     #[tokio::test]
@@ -11393,6 +11710,191 @@ deleted file mode 100644
     }
 
     #[test]
+    fn switching_the_diff_layout_keeps_the_cursor_on_its_line_and_drops_the_selection() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "+added eleven");
+        view.selection_start = Some(0);
+        view.selection_end = Some(view.cursor_idx);
+
+        view.set_side_by_side(true);
+        let row = &view.side_by_side_lines[view.cursor_idx];
+        assert_eq!(
+            row.right.as_ref().map(|line| line.content.as_str()),
+            Some("+added eleven")
+        );
+        assert_eq!((view.selection_start, view.selection_end), (None, None));
+
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "+added eleven"));
+
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+        view.set_side_by_side(true);
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "-removed eleven"));
+    }
+
+    #[test]
+    fn leaving_side_by_side_ignores_the_remembered_line_once_the_cursor_moved_off_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+
+        view.set_side_by_side(true);
+        view.cursor_idx = side_by_side_row(&view, " context twelve");
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, " context twelve"));
+    }
+
+    const REPEATED_MARKER_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+-old one
++new one
+ two
+@@ -20,2 +20,2 @@
+-old twenty
++new twenty
+ twenty-one
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone one
+-gone two
+diff --git a/src/also_gone.rs b/src/also_gone.rs
+deleted file mode 100644
+--- a/src/also_gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-also gone one
+-also gone two
+";
+
+    #[test]
+    fn leaving_side_by_side_on_a_later_hunk_header_stays_on_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.cursor_idx = view.hunks[1];
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "@@ -20,2 +20,2 @@"));
+    }
+
+    #[test]
+    fn switching_the_diff_layout_on_a_marker_repeated_in_an_earlier_file_keeps_its_file() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+
+        for marker in [
+            "deleted file mode 100644",
+            "+++ /dev/null",
+            "@@ -1,2 +0,0 @@",
+        ] {
+            let last_line = view
+                .lines
+                .iter()
+                .rposition(|line| line.content == marker)
+                .unwrap();
+            let last_row = view
+                .side_by_side_lines
+                .iter()
+                .rposition(|row| row.left.as_ref().is_some_and(|line| line.content == marker))
+                .unwrap();
+
+            view.cursor_idx = last_line;
+            view.set_side_by_side(true);
+            assert_eq!(view.cursor_idx, last_row, "{marker:?} to side-by-side");
+            view.set_side_by_side(false);
+            assert_eq!(view.cursor_idx, last_line, "{marker:?} back to unified");
+        }
+    }
+
+    fn side_by_side_row(view: &DiffView, content: &str) -> usize {
+        view.side_by_side_lines
+            .iter()
+            .position(|row| {
+                [&row.left, &row.right]
+                    .into_iter()
+                    .flatten()
+                    .any(|line| line.content == content)
+            })
+            .unwrap_or_else(|| panic!("no side-by-side row {content:?}"))
+    }
+
+    #[test]
+    fn search_in_side_by_side_lands_on_the_matching_row() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("context twelve");
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+
+        view.search("gone two");
+        assert_eq!(view.cursor_idx, side_by_side_row(&view, "-gone two"));
+    }
+
+    #[test]
+    fn search_in_side_by_side_matches_a_paired_row_once_and_marks_both_sides() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("eleven");
+        let eleven = side_by_side_row(&view, "-removed eleven");
+        assert_eq!(view.search_matches, vec![eleven]);
+        let row = &view.side_by_side_lines[eleven];
+        assert_eq!(
+            (
+                row.left.as_ref().map(|l| l.fuzzy_indices.is_some()),
+                row.right.as_ref().map(|l| l.fuzzy_indices.is_some())
+            ),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn search_made_in_unified_follows_a_switch_to_side_by_side() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context twelve");
+
+        view.set_side_by_side(true);
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+    }
+
+    #[test]
+    fn switching_the_diff_layout_keeps_the_search_position_on_the_cursor_match() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context");
+        view.search_next();
+        let unified_match = view.cursor_idx;
+
+        view.set_side_by_side(true);
+        assert_eq!(view.search_matches[view.search_cursor], view.cursor_idx);
+
+        view.set_side_by_side(false);
+        assert_eq!(
+            (view.cursor_idx, view.search_matches[view.search_cursor]),
+            (unified_match, unified_match)
+        );
+    }
+
+    #[test]
     fn cursor_file_position_on_a_tree_row_opens_the_file_at_its_first_line() {
         let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
         view.focus_on_files = true;
@@ -11596,7 +12098,7 @@ diff --git a/foo.txt b/foo.txt
             username: "tester".to_string(),
         };
 
-        let mut app = App::new();
+        let mut app = App::default();
 
         // 1. Thread 1: unresolved
         let note1 = DiscussionNote {
@@ -11715,16 +12217,8 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_save_layout_and_active_tab_and_group_sorting() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
 
         let mut app = App::new();
         app.active_tab = Tab::MergeRequests;
@@ -11763,15 +12257,6 @@ diff --git a/foo.txt b/foo.txt
             app2.group_ascending.get(&Tab::MergeRequests).copied(),
             Some(true)
         );
-
-        std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            if let Some(old) = old_config {
-                std::env::set_var("GLAB_TUI_CONFIG", old);
-            } else {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
@@ -11812,13 +12297,8 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_app_new_honours_active_tab_config() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
         std::fs::write(
             &config_path,
             r#"active_tab = "milestones"
@@ -11828,27 +12308,12 @@ diff --git a/foo.txt b/foo.txt
 
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Milestones);
-
-        if let Some(prev) = previous {
-            unsafe {
-                std::env::set_var("GLAB_TUI_CONFIG", prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
     fn test_app_new_falls_back_to_issues_for_unknown_active_tab() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
         std::fs::write(
             &config_path,
             r#"active_tab = "this-is-not-a-tab"
@@ -11858,37 +12323,49 @@ diff --git a/foo.txt b/foo.txt
 
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Issues);
+    }
 
-        if let Some(prev) = previous {
-            unsafe {
-                std::env::set_var("GLAB_TUI_CONFIG", prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
+    const REMAPPED_PAGE_KEYS: &str = r#"
+[keybindings.global]
+scroll_page_down = "Ctrl+f"
+scroll_page_up = "Ctrl+b"
+"#;
+
+    #[test]
+    fn app_default_ignores_the_config_file() {
+        let _home = crate::config::isolate_home();
+        std::fs::write(Config::config_path(), REMAPPED_PAGE_KEYS).unwrap();
+
+        let app = App::default();
+
+        let global = &app.config.keybindings.global;
+        assert_eq!(global.scroll_page_down, "PageDown");
+        assert_eq!(global.scroll_page_up, "PageUp");
+    }
+
+    #[test]
+    fn app_new_reads_the_config_file() {
+        let _config = crate::config::isolate_config();
+        std::fs::write(Config::config_path(), REMAPPED_PAGE_KEYS).unwrap();
+
+        let app = App::new();
+
+        let global = &app.config.keybindings.global;
+        assert_eq!(global.scroll_page_down, "Ctrl+f");
+        assert_eq!(global.scroll_page_up, "Ctrl+b");
     }
 
     #[test]
     fn test_app_inline_page_size_defaults() {
-        let app = App::new();
+        let app = App::default();
         assert!(!app.editing_page_size);
         assert_eq!(app.page_size_input, "");
     }
 
     #[test]
     fn test_save_layout_preserves_custom_settings() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
 
         // Write an initial config with custom keybindings
         let initial_toml = r#"
@@ -11927,15 +12404,6 @@ help = "h"
             .unwrap();
         assert_eq!(kb.get("quit").and_then(|v| v.as_str()), Some("ctrl+c"));
         assert_eq!(kb.get("help").and_then(|v| v.as_str()), Some("h"));
-
-        std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            if let Some(old) = old_config {
-                std::env::set_var("GLAB_TUI_CONFIG", old);
-            } else {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
@@ -14777,6 +15245,7 @@ index 123456..789012 100644
                 page_size: 30,
                 api_per_page: 30,
                 show_read_notifications: shows_read,
+                opened_pipeline: None,
             }),
             active_tab: Tab::Todos,
             ..Default::default()
@@ -14843,6 +15312,7 @@ index 123456..789012 100644
                 page_size: 100,
                 api_per_page: 100,
                 show_read_notifications: false,
+                opened_pipeline: None,
             }),
             ..Default::default()
         }
@@ -15199,8 +15669,10 @@ index 123456..789012 100644
     }
 
     fn app_showing_deployments_for(environment: &str) -> App {
-        let mut app = App::new();
-        app.active_tab = Tab::Environments;
+        let mut app = App {
+            active_tab: Tab::Environments,
+            ..Default::default()
+        };
         app.search_query.clear();
         app.column_filters.clear();
         app.enabled_columns

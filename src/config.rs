@@ -62,6 +62,31 @@ impl Drop for EnvGuard {
     }
 }
 
+/// RAII guard that moves the process into a directory for the duration of a
+/// scope and moves it back on drop, including on panic. The working
+/// directory is process-global like the environment, so hold
+/// `TEST_ENV_MUTEX` (e.g. through `isolate_home()`) while it is changed.
+#[cfg(test)]
+struct CurrentDirGuard {
+    previous: PathBuf,
+}
+
+#[cfg(test)]
+impl CurrentDirGuard {
+    fn enter(dir: &std::path::Path) -> Self {
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.previous);
+    }
+}
+
 #[cfg(test)]
 fn set_or_remove_env(name: &str, value: Option<&str>) {
     // SAFETY: callers hold TEST_ENV_MUTEX, so no other test thread reads or
@@ -83,17 +108,57 @@ pub(crate) struct IsolatedHome {
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 
+/// Takes `TEST_ENV_MUTEX`, also after a test panicked while holding it, so one
+/// failing test does not fail every later test that takes the lock.
+#[cfg(test)]
+pub(crate) fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 pub(crate) fn isolate_home() -> IsolatedHome {
-    let lock = TEST_ENV_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let lock = lock_test_env();
     let home = tempfile::tempdir().unwrap();
     let env = EnvGuard::isolate_home(home.path());
     IsolatedHome {
         _env: env,
         _home: home,
         _lock: lock,
+    }
+}
+
+#[cfg(test)]
+impl IsolatedHome {
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self._home.path()
+    }
+}
+
+/// An isolated home that is also the working directory.
+#[cfg(test)]
+pub(crate) struct IsolatedConfig {
+    _cwd: CurrentDirGuard,
+    _home: IsolatedHome,
+}
+
+#[cfg(all(test, unix))]
+impl IsolatedConfig {
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self._home.path()
+    }
+}
+
+/// `isolate_home()`, run from inside the temporary home, so `Config::load()`
+/// finds neither the developer's global nor their repo-local config.
+#[cfg(test)]
+pub(crate) fn isolate_config() -> IsolatedConfig {
+    let home = isolate_home();
+    let cwd = CurrentDirGuard::enter(home.path());
+    IsolatedConfig {
+        _cwd: cwd,
+        _home: home,
     }
 }
 
@@ -894,6 +959,18 @@ fn themes_dir() -> PathBuf {
     path
 }
 
+/// Where user themes are looked up. Unit tests use the bundled themes only, so
+/// a theme the developer installed cannot change their results.
+#[cfg(not(test))]
+fn user_themes_dir() -> Option<PathBuf> {
+    Some(themes_dir())
+}
+
+#[cfg(test)]
+fn user_themes_dir() -> Option<PathBuf> {
+    None
+}
+
 fn ensure_themes() {
     let dir = themes_dir();
     let _ = private_fs::create_dir_all(&dir);
@@ -922,9 +999,13 @@ impl Theme {
     }
 
     pub fn preset(name: &str) -> Option<Self> {
-        // Check user's themes directory first
-        let theme_path = themes_dir().join(format!("{name}.toml"));
-        if theme_path.exists() {
+        Self::preset_from(user_themes_dir().as_deref(), name)
+    }
+
+    /// The preset `name` from `user_themes`, else the bundled one.
+    fn preset_from(user_themes: Option<&std::path::Path>, name: &str) -> Option<Self> {
+        if let Some(dir) = user_themes {
+            let theme_path = dir.join(format!("{name}.toml"));
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
                     if let Some(theme) = tf.to_theme() {
@@ -1403,6 +1484,17 @@ pub struct KeybindingTerminal {
     pub cycle_status_filter: String,
 }
 
+/// The MR/PR diff view's layout keys. Its other keys are still hard-wired.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingDiff {
+    #[serde(default = "def_layout_side_by_side")]
+    pub layout_side_by_side: String,
+    #[serde(default = "def_layout_unified")]
+    pub layout_unified: String,
+    #[serde(default = "def_layout_auto")]
+    pub layout_auto: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingConfig {
     #[serde(default)]
@@ -1429,6 +1521,8 @@ pub struct KeybindingConfig {
     pub environments: KeybindingEnvironments,
     #[serde(default)]
     pub terminal: KeybindingTerminal,
+    #[serde(default)]
+    pub diff: KeybindingDiff,
 }
 
 /// A user-defined shell command bound to a key, in the gh-dash shape.
@@ -1595,6 +1689,9 @@ keybind_defaults! {
     def_copy_id = "Y",
     def_cycle_status_filter = "s",
     def_toggle_preview = "i",
+    def_layout_side_by_side = "1",
+    def_layout_unified = "2",
+    def_layout_auto = "0",
 }
 
 impl Default for KeybindingGlobal {
@@ -1818,6 +1915,16 @@ impl Default for KeybindingTerminal {
             inspect_command: def_inspect_terminal_command(),
             rerun_command: def_rerun_terminal_command(),
             cycle_status_filter: def_cycle_terminal_status_filter(),
+        }
+    }
+}
+
+impl Default for KeybindingDiff {
+    fn default() -> Self {
+        Self {
+            layout_side_by_side: def_layout_side_by_side(),
+            layout_unified: def_layout_unified(),
+            layout_auto: def_layout_auto(),
         }
     }
 }
@@ -2225,6 +2332,11 @@ inspect_command = "Enter"
 rerun_command = "r"
 cycle_status_filter = "s"
 
+[keybindings.diff]
+layout_side_by_side = "1"
+layout_unified = "2"
+layout_auto = "0"
+
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:
 # disabled_tabs = ["Runners", "Terminal"]
@@ -2384,7 +2496,19 @@ cycle_status_filter = "s"
 }
 
 static COMMAND_TIMEOUT_SECONDS: Lazy<AtomicU64> =
-    Lazy::new(|| AtomicU64::new(Config::load().command_timeout().as_secs()));
+    Lazy::new(|| AtomicU64::new(initial_command_timeout().as_secs()));
+
+#[cfg(not(test))]
+fn initial_command_timeout() -> Duration {
+    Config::load().command_timeout()
+}
+
+/// Unit tests start from the default timeout, so the first test that runs a
+/// subprocess does not read the developer's config files.
+#[cfg(test)]
+fn initial_command_timeout() -> Duration {
+    Config::default().command_timeout()
+}
 
 /// The `command_timeout_seconds` every `gh`/`glab` subprocess runs under.
 pub fn command_timeout() -> Duration {
@@ -2398,8 +2522,7 @@ pub fn all_theme_presets() -> Vec<String> {
         .collect();
 
     // Scan user themes directory for additional .toml files
-    let dir = themes_dir();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    if let Some(entries) = user_themes_dir().and_then(|dir| std::fs::read_dir(dir).ok()) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "toml") {
@@ -2610,6 +2733,55 @@ pub fn reload_command_timeout() {
 mod tests {
     use super::*;
 
+    fn bundled_theme(name: &str) -> &'static str {
+        BUNDLED_THEMES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, toml)| *toml)
+            .unwrap()
+    }
+
+    /// The bundled `default` theme with its `bg` replaced.
+    fn user_default_with_bg(bg: &str) -> String {
+        let mut theme = String::new();
+        for line in bundled_theme("default").lines() {
+            if line.starts_with("bg = ") {
+                theme.push_str(&format!("bg = \"{bg}\"\n"));
+            } else {
+                theme.push_str(line);
+                theme.push('\n');
+            }
+        }
+        theme
+    }
+
+    #[test]
+    fn presets_ignore_the_user_themes_dir() {
+        let _home = isolate_home();
+        let themes = themes_dir();
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(themes.join("default.toml"), user_default_with_bg("#010203")).unwrap();
+        std::fs::write(themes.join("mine.toml"), bundled_theme("default")).unwrap();
+
+        assert_eq!(Theme::preset("default"), Some(Theme::default()));
+        assert!(!all_theme_presets().contains(&"mine".to_string()));
+    }
+
+    #[test]
+    fn current_dir_guard_restores_the_directory_after_a_panic() {
+        let _home = isolate_home();
+        let original = std::env::current_dir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            let _dir = CurrentDirGuard::enter(elsewhere.path());
+            panic!("test body failed");
+        });
+
+        assert!(result.is_err());
+        assert_eq!(std::env::current_dir().unwrap(), original);
+    }
+
     #[test]
     fn ascii_icon_set_uses_only_single_width_ascii() {
         // Debug escapes non-printable code points (Private Use Area included)
@@ -2685,30 +2857,14 @@ page_size = 250
 
     #[test]
     fn test_config_load_override() {
-        let _guard = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let conf_dir = temp_dir.path().join("glab-tui");
-        std::fs::create_dir_all(&conf_dir).unwrap();
+        let _config = isolate_config();
         std::fs::write(
-            conf_dir.join("config.toml"),
+            Config::config_path(),
             "page_size = 250\napi_per_page = 20\n",
         )
         .unwrap();
 
-        let old_xdg = std::env::var("XDG_CONFIG_HOME");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        }
         let cfg = Config::load();
-        if let Ok(old) = old_xdg {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
         assert_eq!(cfg.page_size, 250);
         assert_eq!(cfg.api_per_page, 20);
     }
@@ -2789,6 +2945,15 @@ page_size = 250
     }
 
     #[test]
+    fn default_config_is_what_loading_without_config_files_yields() {
+        let from_default_toml: Config = toml::from_str(&Config::generate_default_toml()).unwrap();
+        assert_eq!(
+            toml::Value::try_from(Config::default()).unwrap(),
+            toml::Value::try_from(from_default_toml).unwrap(),
+        );
+    }
+
+    #[test]
     fn copy_branch_defaults_to_y() {
         assert_eq!(Config::default().keybindings.branches.copy_branch, "y");
     }
@@ -2852,33 +3017,31 @@ page_size = 250
 
     #[test]
     fn test_preset_falls_back_to_bundled_when_user_theme_is_invalid() {
-        let _guard = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let themes_dir = temp_dir.path().join("glab-tui").join("themes");
-        std::fs::create_dir_all(&themes_dir).unwrap();
+        let themes_dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            themes_dir.join("default.toml"),
+            themes_dir.path().join("default.toml"),
             "bg = \"\"\ninactive_bg = \"\"\n",
         )
         .unwrap();
 
-        let old_xdg = std::env::var("XDG_CONFIG_HOME");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        }
-        let preset = Theme::preset("default");
-        if let Ok(old) = old_xdg {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
+        let preset = Theme::preset_from(Some(themes_dir.path()), "default");
 
         let theme = preset.expect("invalid user override must fall back to bundled theme");
         assert_eq!(theme, Theme::default());
+    }
+
+    #[test]
+    fn preset_prefers_a_valid_user_theme_over_the_bundled_one() {
+        let themes_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            themes_dir.path().join("default.toml"),
+            user_default_with_bg("#010203"),
+        )
+        .unwrap();
+
+        let theme = Theme::preset_from(Some(themes_dir.path()), "default").unwrap();
+
+        assert_eq!(theme.bg, Color::Rgb(1, 2, 3));
     }
 
     #[test]
@@ -2900,7 +3063,7 @@ page_size = 250
 
     #[test]
     fn test_home_dir_resolution() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let _lock = lock_test_env();
         let temp_dir = tempfile::tempdir().unwrap();
         let guard = EnvGuard::isolate_home(temp_dir.path());
 
@@ -2970,9 +3133,7 @@ page_size = 250
 
     #[test]
     fn test_save_layout_persists_prefetch_tabs() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let guard = EnvGuard::isolate_home(temp_dir.path());
+        let _config = isolate_config();
 
         let mut config = Config {
             prefetch_tabs: true,
@@ -2988,22 +3149,18 @@ page_size = 250
 
         let reloaded = Config::load();
         assert!(!reloaded.prefetch_tabs);
-
-        drop(guard);
     }
 
     #[cfg(unix)]
     #[test]
     fn config_dir_and_files_are_owner_only() {
         use crate::utils::private_fs::mode_of;
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let config = isolate_config();
 
         Config::load();
         Config::default().save_layout(SaveMenu::Global).unwrap();
 
-        let config_dir = temp_dir.path().join(".config").join("glab-tui");
+        let config_dir = config.path().join(".config").join("glab-tui");
         assert_eq!(mode_of(&config_dir), 0o700);
         assert_eq!(mode_of(&config_dir.join("config.toml")), 0o600);
         assert_eq!(mode_of(&config_dir.join("themes")), 0o700);
@@ -3018,10 +3175,8 @@ page_size = 250
     fn config_dir_left_world_readable_is_tightened_on_load() {
         use crate::utils::private_fs::mode_of;
         use std::os::unix::fs::PermissionsExt;
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
-        let config_dir = temp_dir.path().join(".config").join("glab-tui");
+        let config = isolate_config();
+        let config_dir = config.path().join(".config").join("glab-tui");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -3035,10 +3190,8 @@ page_size = 250
     fn glab_tui_config_parent_keeps_its_mode() {
         use crate::utils::private_fs::mode_of;
         use std::os::unix::fs::PermissionsExt;
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
-        let chosen = temp_dir.path().join("dotfiles");
+        let config = isolate_config();
+        let chosen = config.path().join("dotfiles");
         std::fs::create_dir_all(&chosen).unwrap();
         std::fs::set_permissions(&chosen, std::fs::Permissions::from_mode(0o755)).unwrap();
         unsafe { std::env::set_var("GLAB_TUI_CONFIG", chosen.join("glab-tui.toml")) };

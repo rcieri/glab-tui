@@ -193,12 +193,13 @@ fn run_submit_action(
     fx: &mut Effects,
 ) {
     match confirm_action {
-        crate::app::ConfirmAction::DeleteMilestone(iid) => {
-            app.pending_delete_milestone = Some((project_path.clone(), iid));
+        crate::app::ConfirmAction::DeleteMilestone(milestone) => {
+            app.pending_delete_milestone = Some((project_path.clone(), milestone.iid));
             let client = app.gitlab_client.clone().unwrap();
             fx.spawn(async move {
                 let res =
-                    crate::domain::milestones::delete_milestone(&client, &project_path, iid).await;
+                    crate::domain::milestones::delete_milestone(&client, &project_path, &milestone)
+                        .await;
                 match res {
                     Ok(_) => {
                         let _ = tx.send(Event::CommandCompleted(
@@ -216,8 +217,8 @@ fn run_submit_action(
                 }
             });
         }
-        crate::app::ConfirmAction::CloseMilestone(iid) => {
-            if let Some(pos) = app.milestone_index(&project_path, iid) {
+        crate::app::ConfirmAction::CloseMilestone(milestone) => {
+            if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "closed".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
@@ -227,7 +228,7 @@ fn run_submit_action(
                 let res = crate::domain::milestones::update_milestone_state(
                     &client,
                     &project_path,
-                    iid,
+                    &milestone,
                     true,
                 )
                 .await;
@@ -244,8 +245,8 @@ fn run_submit_action(
                 }
             });
         }
-        crate::app::ConfirmAction::ReopenMilestone(iid) => {
-            if let Some(pos) = app.milestone_index(&project_path, iid) {
+        crate::app::ConfirmAction::ReopenMilestone(milestone) => {
+            if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "active".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
@@ -255,7 +256,7 @@ fn run_submit_action(
                 let res = crate::domain::milestones::update_milestone_state(
                     &client,
                     &project_path,
-                    iid,
+                    &milestone,
                     false,
                 )
                 .await;

@@ -637,12 +637,11 @@ pub fn handle_key(
                             val.strip_prefix('#').and_then(|s| s.split(" — ").next())
                         {
                             if let Ok(pipeline_id) = id_str.parse::<u64>() {
+                                if app.gitlab_client.is_some() {
+                                    app.open_pipeline_in_jobs_tab(pipeline_id);
+                                }
                                 if let Some(client) = &app.gitlab_client {
-                                    let project_context =
-                                        app.project_path_for_pipeline(pipeline_id);
-                                    app.active_pipeline_project =
-                                        app.pipeline_project(pipeline_id).map(str::to_owned);
-                                    app.active_pipeline_id = Some(pipeline_id);
+                                    let project_context = app.project_path_for_jobs();
                                     app.jobs.state.select(Some(0));
                                     app.jobs.items.clear();
                                     app.loading_tabs.insert(app::Tab::Jobs);
@@ -659,6 +658,9 @@ pub fn handle_key(
                                             Ok(jobs) => {
                                                 let _ =
                                                     tx.send(Event::JobsTabFetched(
+                                                        domain::client::JobsSource::Opened(
+                                                            pipeline_id,
+                                                        ),
                                                         pipeline_id,
                                                         jobs,
                                                     ));

@@ -1,0 +1,3 @@
+#!/bin/bash
+# Stands in for the browser `git web--browse` starts (see `Sandbox::envs`).
+echo "browser $*" >> "${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"

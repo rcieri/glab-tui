@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_repos_dir_env_var() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let temp_dir = tempdir().unwrap();
         let path_str = temp_dir.path().to_str().unwrap().to_string();
 
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_get_switchable_repos_uses_recent_cache_only() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
 
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_get_switchable_repos_skips_non_git_entries() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
 
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_get_available_groups_derives_from_cache_repos() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         // Isolate the cache dir so recent_repos.json / recent_groups.json
         // land under HOME/USERPROFILE.
         let home = tempdir().unwrap();
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn cache_dir_and_files_are_owner_only() {
         use crate::utils::private_fs::mode_of;
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
         let repo = home.path().join("repo");
@@ -678,7 +678,7 @@ mod tests {
     fn cache_dir_left_world_readable_is_tightened_on_load() {
         use crate::utils::private_fs::mode_of;
         use std::os::unix::fs::PermissionsExt;
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
         let cache_dir = get_cache_dir();

@@ -2130,12 +2130,16 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         },
         Shortcut {
             category: "Diff View",
-            key: s("1 / 2"),
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.diff.layout_side_by_side,
+                app.config.keybindings.diff.layout_unified
+            )),
             action: "Pin side-by-side / unified layout for the session",
         },
         Shortcut {
             category: "Diff View",
-            key: s("0"),
+            key: d(app.config.keybindings.diff.layout_auto.clone()),
             action: "Pick the layout from the diff pane width again (unified when narrow)",
         },
         Shortcut {

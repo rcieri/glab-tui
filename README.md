@@ -625,7 +625,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
 
-> Diff View keys are **fixed** and not remappable in `config.toml`.
+> Diff View keys are **fixed** and not remappable in `config.toml`, except the layout keys `1`, `2` and `0`: remap them under `[keybindings.diff]` as `layout_side_by_side`, `layout_unified` and `layout_auto`.
 
 | Key | Action |
 |---|---|

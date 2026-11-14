@@ -146,6 +146,18 @@ pub fn handle_key(
             diff_view.move_by(false, rows, in_selection);
             app.diff_view = Some(diff_view);
         }
+        _ if keybinding_matches(&app.config.keybindings.diff.layout_side_by_side, key_event) => {
+            set_layout(app, &mut diff_view, app::DiffLayout::SideBySide);
+            app.diff_view = Some(diff_view);
+        }
+        _ if keybinding_matches(&app.config.keybindings.diff.layout_unified, key_event) => {
+            set_layout(app, &mut diff_view, app::DiffLayout::Unified);
+            app.diff_view = Some(diff_view);
+        }
+        _ if keybinding_matches(&app.config.keybindings.diff.layout_auto, key_event) => {
+            set_layout(app, &mut diff_view, app::DiffLayout::Auto);
+            app.diff_view = Some(diff_view);
+        }
         KeyCode::Char('q') => {
             if in_selection {
                 diff_view.selection_start = None;
@@ -300,18 +312,6 @@ pub fn handle_key(
                 app::DiffLayout::SideBySide
             };
             set_layout(app, &mut diff_view, other);
-            app.diff_view = Some(diff_view);
-        }
-        KeyCode::Char('1') => {
-            set_layout(app, &mut diff_view, app::DiffLayout::SideBySide);
-            app.diff_view = Some(diff_view);
-        }
-        KeyCode::Char('2') => {
-            set_layout(app, &mut diff_view, app::DiffLayout::Unified);
-            app.diff_view = Some(diff_view);
-        }
-        KeyCode::Char('0') => {
-            set_layout(app, &mut diff_view, app::DiffLayout::Auto);
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('j') | KeyCode::Down => {
@@ -586,15 +586,18 @@ pub fn handle_key(
 /// draw.
 fn set_layout(app: &mut App, diff_view: &mut app::DiffView, layout: app::DiffLayout) {
     app.diff_layout = layout;
+    let auto_key = &app.config.keybindings.diff.layout_auto;
     let notice = match layout {
-        app::DiffLayout::Auto => "Diff layout follows the diff pane width again",
+        app::DiffLayout::Auto => "Diff layout follows the diff pane width again".to_string(),
         app::DiffLayout::SideBySide => {
             diff_view.set_side_by_side(true);
-            "Diff layout pinned to side-by-side (0 follows the diff pane width again)"
+            format!(
+                "Diff layout pinned to side-by-side ({auto_key} follows the diff pane width again)"
+            )
         }
         app::DiffLayout::Unified => {
             diff_view.set_side_by_side(false);
-            "Diff layout pinned to unified (0 follows the diff pane width again)"
+            format!("Diff layout pinned to unified ({auto_key} follows the diff pane width again)")
         }
     };
     app.show_notice(notice);

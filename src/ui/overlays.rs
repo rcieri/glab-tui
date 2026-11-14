@@ -736,7 +736,7 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
             .title(" Filter ");
         let (search_text, search_style) = if selector.is_filtering {
             (
-                format!("{}▋", selector.search_query),
+                format!("{}{}", selector.search_query, icons.input_cursor),
                 Style::default().fg(theme.text_normal),
             )
         } else if selector.search_query.is_empty() {
@@ -2116,9 +2116,9 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         );
 
     let search_text = if app.help_search_query.is_empty() {
-        "Type to search commands...▋".to_string()
+        format!("Type to search commands...{}", icons.input_cursor)
     } else {
-        format!("{}▋", app.help_search_query)
+        format!("{}{}", app.help_search_query, icons.input_cursor)
     };
 
     let search_style = if app.help_search_query.is_empty() {

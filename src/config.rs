@@ -281,6 +281,7 @@ pub struct Icons {
     pub pointer: String,
     pub todo_unread: String,
     pub todo_read: String,
+    pub input_cursor: String,
 }
 
 impl Icons {
@@ -401,6 +402,7 @@ impl Icons {
             pointer: "❯".to_string(),
             todo_unread: "\u{f0e0}".to_string(),
             todo_read: "\u{f2b6}".to_string(),
+            input_cursor: "▋".to_string(),
         }
     }
 
@@ -523,6 +525,7 @@ impl Icons {
             pointer: ">".to_string(),
             todo_unread: "*".to_string(),
             todo_read: ".".to_string(),
+            input_cursor: "_".to_string(),
         }
     }
 }

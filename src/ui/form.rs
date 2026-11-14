@@ -180,8 +180,6 @@ fn natural_rows<F>(group: &Group<F>, width: usize) -> u16 {
     u16::try_from(rows).unwrap_or(u16::MAX)
 }
 
-const INPUT_CURSOR: char = '▋';
-
 /// A line input as drawn: escape sequences removed, wrapped without
 /// collapsing spaces, and one column kept free for the cursor at the end of
 /// a full row.
@@ -420,7 +418,7 @@ fn draw_group<F>(
                         return Line::from(row_text.to_string());
                     }
                     let (head, tail) = row_text.split_at(wrapped.cursor - row.start);
-                    Line::from(format!("{head}{INPUT_CURSOR}{tail}"))
+                    Line::from(format!("{head}{}{tail}", icons.input_cursor))
                 })
                 .collect();
             f.render_widget(Paragraph::new(lines).style(text), rect);
@@ -670,7 +668,11 @@ mod tests {
             vec![
                 "a   b".to_string(),
                 "x".repeat(35),
-                format!("{}{INPUT_CURSOR}", "x".repeat(5)),
+                format!(
+                    "{}{}",
+                    "x".repeat(5),
+                    crate::config::Icons::ascii().input_cursor
+                ),
             ]
         );
     }

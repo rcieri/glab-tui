@@ -13,9 +13,11 @@ pub mod effect;
 pub mod entity_editor;
 pub mod event;
 pub mod fetch;
+pub mod form;
 pub mod git_helpers;
 pub mod handlers;
 pub mod keybinding;
+pub mod keymap;
 pub mod notice;
 pub mod review_submit;
 pub mod scope;
@@ -24,6 +26,7 @@ pub mod templates;
 pub mod ui;
 pub mod update;
 pub mod utils;
+pub mod word_diff;
 
 pub type AppTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 

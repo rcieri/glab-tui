@@ -1,28 +1,41 @@
 //! Terminal tab actions: filtering the log, inspecting an entry, copying it
 //! and running its CLI call again.
 
-use crossterm::event::KeyCode;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::App;
 use crate::command_log::Invocation;
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::keybinding::{KeyPress, keybinding_matches};
+use crate::keybinding::KeyPress;
+use crate::keymap::Action;
 
 /// Keys of the Terminal tab's log view. Returns false for a key it does not
 /// handle.
 pub fn handle_tab_key(app: &mut App, key_event: &KeyPress) -> bool {
-    let terminal = &app.config.keybindings.terminal;
-    if keybinding_matches(&terminal.toggle_wrap, key_event) {
+    if app
+        .config
+        .keybindings
+        .matches(Action::TerminalToggleWrap, key_event)
+    {
         app.terminal_wrap = !app.terminal_wrap;
         app.terminal_scroll = 0;
-    } else if keybinding_matches(&terminal.clear_log, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::TerminalClearLog, key_event)
+    {
         app.clear_terminal_log();
-    } else if keybinding_matches(&terminal.cycle_status_filter, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::TerminalCycleStatusFilter, key_event)
+    {
         app.cycle_terminal_status_filter();
-    } else if key_event.code == KeyCode::Char('P')
-        || keybinding_matches(&terminal.inspect_command, key_event)
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::TerminalInspectCommand, key_event)
     {
         if let Err(error) = app.open_terminal_inspector() {
             app.raise_error_toast(format!("Cannot inspect command: {error}"));
@@ -44,11 +57,13 @@ pub fn handle_inspector_key(app: &mut App, key_event: &KeyPress) -> bool {
     let Some(mut inspector) = app.terminal_inspector else {
         return false;
     };
-    let terminal = &app.config.keybindings.terminal;
-    if matches!(
-        key_event.code,
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('P')
-    ) || keybinding_matches(&terminal.inspect_command, key_event)
+    if [
+        Action::ListBack,
+        Action::GlobalQuit,
+        Action::TerminalInspectCommand,
+    ]
+    .into_iter()
+    .any(|action| app.config.keybindings.matches(action, key_event))
     {
         app.terminal_inspector = None;
         return true;
@@ -57,28 +72,95 @@ pub fn handle_inspector_key(app: &mut App, key_event: &KeyPress) -> bool {
         return true;
     }
 
-    let global = &app.config.keybindings.global;
     let page = inspector.page_height.max(1);
     let half_page = (page / 2).max(1);
     let scroll = inspector.scroll;
     inspector.scroll = match key_event.code {
-        _ if keybinding_matches(&global.scroll_half_page_down, key_event) => {
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollHalfPageDown, key_event) =>
+        {
             scroll.saturating_add(half_page)
         }
-        _ if keybinding_matches(&global.scroll_half_page_up, key_event) => {
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollHalfPageUp, key_event) =>
+        {
             scroll.saturating_sub(half_page)
         }
-        _ if keybinding_matches(&global.scroll_page_down, key_event) => scroll.saturating_add(page),
-        _ if keybinding_matches(&global.scroll_page_up, key_event) => scroll.saturating_sub(page),
-        _ if keybinding_matches(&global.scroll_down, key_event) => scroll.saturating_add(1),
-        _ if keybinding_matches(&global.scroll_up, key_event) => scroll.saturating_sub(1),
-        _ if keybinding_matches(&global.scroll_top, key_event) => 0,
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollPageDown, key_event) =>
+        {
+            scroll.saturating_add(page)
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollPageUp, key_event) =>
+        {
+            scroll.saturating_sub(page)
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollDown, key_event) =>
+        {
+            scroll.saturating_add(1)
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollUp, key_event) =>
+        {
+            scroll.saturating_sub(1)
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollTop, key_event) =>
+        {
+            0
+        }
         // The render clamps it to the last line.
-        _ if keybinding_matches(&global.scroll_to_end, key_event) => usize::MAX,
-        KeyCode::Char('j') | KeyCode::Down => scroll.saturating_add(1),
-        KeyCode::Char('k') | KeyCode::Up => scroll.saturating_sub(1),
-        KeyCode::Char('g') | KeyCode::Home => 0,
-        KeyCode::Char('G') | KeyCode::End => usize::MAX,
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::GlobalScrollToEnd, key_event) =>
+        {
+            usize::MAX
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::ListNextRow, key_event) =>
+        {
+            scroll.saturating_add(1)
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::ListPreviousRow, key_event) =>
+        {
+            scroll.saturating_sub(1)
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::ListFirstRow, key_event) =>
+        {
+            0
+        }
+        _ if app
+            .config
+            .keybindings
+            .matches(Action::ListLastRow, key_event) =>
+        {
+            usize::MAX
+        }
         _ => scroll,
     };
     app.terminal_inspector = Some(inspector);
@@ -88,12 +170,23 @@ pub fn handle_inspector_key(app: &mut App, key_event: &KeyPress) -> bool {
 /// Copy and re-run, which act on the inspected entry while the inspector is
 /// open and on the highlighted one otherwise.
 fn handle_entry_action(app: &mut App, key_event: &KeyPress) -> bool {
-    let terminal = &app.config.keybindings.terminal;
-    let (result, failure) = if keybinding_matches(&terminal.copy_command, key_event) {
+    let (result, failure) = if app
+        .config
+        .keybindings
+        .matches(Action::TerminalCopyCommand, key_event)
+    {
         (app.copy_terminal_command(), "Failed to copy command")
-    } else if keybinding_matches(&terminal.copy_output, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::TerminalCopyOutput, key_event)
+    {
         (app.copy_terminal_output(), "Failed to copy output")
-    } else if keybinding_matches(&terminal.rerun_command, key_event) {
+    } else if app
+        .config
+        .keybindings
+        .matches(Action::TerminalRerunCommand, key_event)
+    {
         (app.confirm_terminal_rerun(), "Cannot re-run command")
     } else {
         return false;
@@ -121,7 +214,7 @@ pub fn rerun(app: &mut App, invocation: Invocation, tx: UnboundedSender<Event>, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn inspector_leaves_keys_to_a_selector_opened_over_it() {
@@ -145,8 +238,10 @@ mod tests {
         let mut app = App::default();
         app.start_command("Creating branch: x from main".to_string());
         app.open_terminal_inspector().unwrap();
-        app.config.keybindings.global.scroll_down = "z".to_string();
-        app.config.keybindings.global.scroll_to_end = "x".to_string();
+        app.config.keybindings.set(Action::GlobalScrollDown, &["z"]);
+        app.config
+            .keybindings
+            .set(Action::GlobalScrollToEnd, &["x"]);
         let scroll_after = |app: &mut App, key: char| {
             handle_inspector_key(
                 app,
@@ -157,5 +252,23 @@ mod tests {
 
         assert_eq!(scroll_after(&mut app, 'z'), Some(1));
         assert_eq!(scroll_after(&mut app, 'x'), Some(usize::MAX));
+    }
+
+    #[test]
+    fn inspector_closes_and_scrolls_with_remapped_list_keys() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+        app.open_terminal_inspector().unwrap();
+        app.config.keybindings.set(Action::ListBack, &["x"]);
+        app.config.keybindings.set(Action::ListNextRow, &["n"]);
+        let press = |app: &mut App, code: KeyCode| {
+            handle_inspector_key(app, &KeyEvent::new(code, KeyModifiers::NONE).into());
+            app.terminal_inspector.map(|inspector| inspector.scroll)
+        };
+
+        assert_eq!(press(&mut app, KeyCode::Char('j')), Some(0));
+        assert_eq!(press(&mut app, KeyCode::Char('n')), Some(1));
+        assert_eq!(press(&mut app, KeyCode::Esc), Some(1));
+        assert_eq!(press(&mut app, KeyCode::Char('x')), None);
     }
 }

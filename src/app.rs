@@ -1,11 +1,15 @@
 use crate::backend::BackendKind;
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
-use crate::config::{Config, Icons, KeybindingConfig, Theme};
-use crate::domain::mr::{DiscussionNote, NotePosition};
+use crate::config::{Config, Icons, Theme};
+use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::state_query::{StateQueries, StateQuery};
 use crate::domain::workflow_inputs::WorkflowInput;
+use crate::form::{
+    Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel,
+    Radio, Toggle, Toggles,
+};
 use crate::syntax::{DiffHighlighter, DiffSide, SyntaxToken, styled_tokens};
 use crate::ui::list_tab::branches::BranchColumn;
 use crate::ui::list_tab::environments::EnvironmentColumn;
@@ -22,6 +26,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::ListState;
 use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
@@ -941,6 +946,10 @@ pub struct DiffLine {
     /// Token runs over [`DiffLine::code`]; colours are resolved from the
     /// theme at render time by [`DiffLine::syntax_spans`].
     pub syntax_highlighted: Option<Vec<SyntaxToken>>,
+    /// Byte ranges of [`DiffLine::code`] that differ from the line it was
+    /// paired with: the added line replacing a removed one, or the reverse.
+    /// Empty for context rows and for changed lines left unpaired.
+    pub changed_ranges: Vec<Range<usize>>,
     pub fuzzy_indices: Option<Vec<usize>>,
 }
 
@@ -962,6 +971,57 @@ impl DiffLine {
 
 pub fn strip_diff_marker(line: &str) -> &str {
     line.strip_prefix(['+', '-', ' ']).unwrap_or(line)
+}
+
+/// Pairs each run of removed lines with the added lines that follow it, the
+/// first removed line with the first added one and so on, and marks the words
+/// each pair changed. A run ends at any row other than a change or a
+/// missing-newline note. Runs of different lengths get no marks: which
+/// removed line an added one replaces is then unknown, and pairing them by
+/// position marks renames that never happened.
+fn mark_changed_words(lines: &mut [DiffLine]) {
+    let mut removed: Vec<usize> = Vec::new();
+    let mut added: Vec<usize> = Vec::new();
+    for idx in 0..lines.len() {
+        match lines[idx].line_type {
+            DiffLineType::Deletion => {
+                if !added.is_empty() {
+                    mark_changed_pairs(lines, &removed, &added);
+                    removed.clear();
+                    added.clear();
+                }
+                removed.push(idx);
+            }
+            DiffLineType::Addition => added.push(idx),
+            _ if is_missing_newline_note(&lines[idx]) => {}
+            _ => {
+                mark_changed_pairs(lines, &removed, &added);
+                removed.clear();
+                added.clear();
+            }
+        }
+    }
+    mark_changed_pairs(lines, &removed, &added);
+}
+
+/// `\ No newline at end of file`, which git puts between the two halves of a
+/// last-line edit.
+fn is_missing_newline_note(line: &DiffLine) -> bool {
+    line.line_type == DiffLineType::Meta && line.content.starts_with('\\')
+}
+
+fn mark_changed_pairs(lines: &mut [DiffLine], removed: &[usize], added: &[usize]) {
+    if removed.len() != added.len() {
+        return;
+    }
+    for (&old, &new) in removed.iter().zip(added) {
+        if let Some(changed) =
+            crate::word_diff::changed_ranges(lines[old].code(), lines[new].code())
+        {
+            lines[old].changed_ranges = changed.old;
+            lines[new].changed_ranges = changed.new;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1434,8 +1494,8 @@ impl DiffView {
         )
     }
 
-    /// Parses the diff without syntax highlighting, for callers that only
-    /// read its structure (anchors, line numbers) and never render it.
+    /// Parses the diff without syntax highlighting or word marks, for callers
+    /// that only read its structure (anchors, line numbers) and never render it.
     pub fn without_highlighting(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
         Self::parse(mr_iid, project_path, raw_diff, None)
     }
@@ -1702,8 +1762,12 @@ impl DiffView {
                 old_line_num: line_old,
                 new_line_num: line_new,
                 syntax_highlighted: highlighted,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             });
+        }
+        if highlighter.is_some() {
+            mark_changed_words(&mut all_lines);
         }
 
         let mut root_node = DiffTreeNode::Directory {
@@ -3306,27 +3370,6 @@ impl ConfirmAction {
     }
 }
 
-/// Toggleable option shown inside a [`SubmitDialog`] body.
-///
-/// Used for actions that have additional knobs (merge options such as
-/// "Squash commits" or "Delete source branch"). The user flips these
-/// with `Space` / `Enter` before pressing the Submit button; nothing is
-/// sent to the API until Submit is activated.
-#[derive(Clone, Debug)]
-pub struct SubmitOption {
-    pub label: String,
-    pub checked: bool,
-}
-
-impl SubmitOption {
-    pub fn new(label: impl Into<String>, checked: bool) -> Self {
-        Self {
-            label: label.into(),
-            checked,
-        }
-    }
-}
-
 /// A button between Submit and Cancel in a [`SubmitDialog`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialogChoice {
@@ -3349,208 +3392,98 @@ impl DialogChoice {
     }
 }
 
-/// A modal dialog that gates a mutating API call behind an explicit
-/// Submit button click. Replaces the old two-button YES/NO popup
-/// (issue #315).
-///
-/// Layout:
-///
-/// ```text
-/// ┌─ <title> ─────────────────────┐
-/// │                                │
-/// │ <body, wrapped>                │
-/// │                                │
-/// │ [ ] <option label>             │   ← only if options is non-empty
-/// │ [x] <option label>             │
-/// │                                │
-/// ├────────────────────────────────┤
-/// │ [Submit] [<extra>…]  [Cancel]  │
-/// └────────────────────────────────┘
-/// ```
-///
-/// Cursor layout: index `0` is Submit (leftmost button), `1..=options.len()`
-/// are the options (one per toggle), then one index per extra button, and
-/// `cancel_idx()` is Cancel (rightmost button).
-///
-/// Keyboard:
-/// - `Tab` / `Shift-Tab` — move vertically through all rows (options + buttons)
-/// - `j` / `Down` / `k` / `Up` — move vertically through options only
-/// - `h` / `Left` / `l` / `Right` (on a button) — move to the neighbouring button
-/// - `Enter` — activate focused (Cancel closes, option toggles, a button runs its action)
-/// - `Space` — toggle the focused option (no-op on buttons)
-/// - `Esc` — cancel (equivalent to Cancel)
+/// What the strategy radio and the option toggles of a merge dialog chose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MergeChoices {
+    pub method: MergeMethod,
+    pub delete_branch: bool,
+    pub auto_merge: bool,
+}
+
+impl MergeChoices {
+    /// The flags `Backend::merge_mr` takes for these choices, with `sha` the
+    /// head commit the merge must find.
+    pub fn options<'a>(&self, sha: Option<&'a str>) -> crate::backend::MergeOptions<'a> {
+        crate::backend::MergeOptions {
+            squash: self.method == MergeMethod::Squash,
+            delete_branch: self.delete_branch,
+            strategy: (self.method != MergeMethod::Squash).then(|| self.method.as_api_str()),
+            auto_merge: self.auto_merge,
+            sha,
+        }
+    }
+}
+
+/// The toggles of a merge dialog's Options group, top to bottom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MergeToggle {
+    DeleteSourceBranch,
+    AutoMerge,
+}
+
+impl MergeToggle {
+    const ALL: [Self; 2] = [Self::DeleteSourceBranch, Self::AutoMerge];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::DeleteSourceBranch => "Delete source branch",
+            Self::AutoMerge => "Auto-merge",
+        }
+    }
+
+    fn is_on_by_default(self) -> bool {
+        self == Self::DeleteSourceBranch
+    }
+}
+
+/// A [`Form`] that gates a mutating API call behind an explicit Submit
+/// button: the body text, any choices the action takes (merge strategy and
+/// options) and the buttons Submit, then any extra choices the action
+/// offers, then Cancel. Destructive actions open in the form's danger tone,
+/// on Cancel.
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
     pub project_path: String,
-    pub title: String,
-    pub body: String,
-    pub options: Vec<SubmitOption>,
-    pub submit_label: String,
     /// Buttons between Submit and Cancel, left to right.
-    pub extra_buttons: Vec<DialogChoice>,
-    /// `0` = Submit, `1..=options.len()` = options, then the extra buttons,
-    /// `cancel_idx()` = Cancel.
-    pub cursor_idx: usize,
+    extra_buttons: Vec<DialogChoice>,
+    /// The merge methods the `Strategy` radio offers, in its order.
+    strategies: Vec<MergeMethod>,
+    pub form: Form,
 }
 
 impl SubmitDialog {
-    /// Leftmost position: the Submit button (rendered on the left).
-    pub const SUBMIT_IDX: usize = 0;
+    pub const SUBMIT_BUTTON_INDEX: usize = 0;
+    const BODY: GroupId = GroupId("body");
+    const STRATEGY: GroupId = GroupId("strategy");
+    const MERGE_OPTIONS: GroupId = GroupId("merge_options");
 
-    /// Outer width of the dialog (including borders/padding).
-    pub const DIALOG_WIDTH: u16 = 64;
-    /// Inner width available for the wrapped body text. Derived from
-    /// `DIALOG_WIDTH` minus the block's borders and horizontal padding.
-    pub const BODY_INNER_WIDTH: usize = 56;
-
-    /// Index of the Cancel button (rendered on the right, after the options
-    /// and the extra buttons).
-    pub fn cancel_idx(&self) -> usize {
-        self.options.len() + self.extra_buttons.len() + 1
-    }
-
-    pub fn is_on_submit(&self) -> bool {
-        self.cursor_idx == Self::SUBMIT_IDX
-    }
-
-    pub fn is_on_cancel(&self) -> bool {
-        self.cursor_idx == self.cancel_idx()
-    }
-
-    pub fn is_on_button(&self) -> bool {
-        self.option_idx().is_none()
-    }
-
-    /// `None` when on a button, `Some(i)` when on the `i`-th option.
-    pub fn option_idx(&self) -> Option<usize> {
-        if self.cursor_idx >= 1 && self.cursor_idx <= self.options.len() {
-            Some(self.cursor_idx - 1)
-        } else {
-            None
-        }
-    }
-
-    /// The extra button under the cursor, if any.
-    pub fn focused_choice(&self) -> Option<DialogChoice> {
-        self.cursor_idx
-            .checked_sub(self.options.len() + 1)
+    /// The extra button at form button index `button`, if it is one.
+    pub fn choice_at(&self, button: usize) -> Option<DialogChoice> {
+        button
+            .checked_sub(Self::SUBMIT_BUTTON_INDEX + 1)
             .and_then(|i| self.extra_buttons.get(i).copied())
     }
 
-    /// Cursor positions of the buttons, left to right: Submit, the extra
-    /// buttons, Cancel.
-    pub fn button_cursors(&self) -> impl Iterator<Item = usize> + use<> {
-        std::iter::once(Self::SUBMIT_IDX).chain(self.options.len() + 1..=self.cancel_idx())
-    }
-
-    /// Moves to the button left (`step < 0`) or right (`step > 0`) of the
-    /// focused one, stopping at either end. No-op on an option row.
-    pub fn move_between_buttons(&mut self, step: isize) {
-        if !self.is_on_button() {
-            return;
-        }
-        let buttons: Vec<usize> = self.button_cursors().collect();
-        let Some(pos) = buttons.iter().position(|&c| c == self.cursor_idx) else {
-            return;
+    /// The merge the dialog's strategy and options ask for. A dialog without
+    /// one of the groups contributes that group's defaults.
+    pub fn merge_choices(&self) -> MergeChoices {
+        let method = self
+            .form
+            .radio(Self::STRATEGY)
+            .and_then(|radio| self.strategies.get(radio.selected).copied())
+            .unwrap_or(MergeMethod::DEFAULT);
+        let is_on = |toggle: MergeToggle| {
+            let row = MergeToggle::ALL.iter().position(|&t| t == toggle);
+            self.form
+                .toggles(Self::MERGE_OPTIONS)
+                .and_then(|toggles| toggles.items.get(row?))
+                .map_or(toggle.is_on_by_default(), |item| item.is_on)
         };
-        let target = pos.saturating_add_signed(step).min(buttons.len() - 1);
-        self.cursor_idx = buttons[target];
-    }
-
-    /// Construct a SubmitDialog that defaults its cursor to Submit (left).
-    /// Used for reversible actions (merge, rebase, submit review).
-    pub fn new(
-        action: ConfirmAction,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self::new_with_project(action, String::new(), title, body, submit_label, options)
-    }
-
-    pub fn new_with_project(
-        action: ConfirmAction,
-        project_path: impl Into<String>,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self {
-            action,
-            project_path: project_path.into(),
-            title: title.into(),
-            body: body.into(),
-            options,
-            submit_label: submit_label.into(),
-            extra_buttons: Vec::new(),
-            cursor_idx: Self::SUBMIT_IDX,
-        }
-    }
-
-    /// Construct a SubmitDialog that defaults its cursor to Cancel (right).
-    /// Used for destructive actions where the safer default is opt-in.
-    pub fn new_safe(
-        action: ConfirmAction,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self::new_safe_with_project(action, String::new(), title, body, submit_label, options)
-    }
-
-    pub fn new_safe_with_project(
-        action: ConfirmAction,
-        project_path: impl Into<String>,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        let options_len = options.len();
-        Self {
-            action,
-            project_path: project_path.into(),
-            title: title.into(),
-            body: body.into(),
-            options,
-            submit_label: submit_label.into(),
-            extra_buttons: Vec::new(),
-            cursor_idx: options_len + 1,
-        }
-    }
-
-    pub fn move_next(&mut self) {
-        let max = self.cancel_idx();
-        if self.cursor_idx < max {
-            self.cursor_idx += 1;
-        }
-    }
-
-    pub fn move_prev(&mut self) {
-        if self.cursor_idx > Self::SUBMIT_IDX {
-            self.cursor_idx -= 1;
-        }
-    }
-
-    pub fn toggle_focused_option(&mut self) {
-        if let Some(idx) = self.option_idx() {
-            let label = self.options[idx].label.clone();
-            let is_radio = label.starts_with("Strategy: ");
-            if is_radio {
-                // For radio buttons, only check it and uncheck others in the group
-                for opt in &mut self.options {
-                    if opt.label.starts_with("Strategy: ") {
-                        opt.checked = false;
-                    }
-                }
-                self.options[idx].checked = true;
-            } else {
-                self.options[idx].checked = !self.options[idx].checked;
-            }
+        MergeChoices {
+            method,
+            delete_branch: is_on(MergeToggle::DeleteSourceBranch),
+            auto_merge: is_on(MergeToggle::AutoMerge),
         }
     }
 
@@ -3577,7 +3510,13 @@ impl SubmitDialog {
         let marker = kind.mr_reference_prefix();
 
         let action_clone = action.clone();
-        let (title, body, submit_label, options, safe) = match &action {
+        let strategies = match &action {
+            ConfirmAction::MergeMr(_)
+            | ConfirmAction::MergeStack(_)
+            | ConfirmAction::BulkMergeMrs(_) => MergeMethod::ALL.to_vec(),
+            _ => Vec::new(),
+        };
+        let (title, body, submit_label, options) = match &action {
             ConfirmAction::DeleteMilestone(milestone) => (
                 format!("Delete Milestone #{}", milestone.iid),
                 format!(
@@ -3586,53 +3525,51 @@ impl SubmitDialog {
                 ),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteRelease(tag_name) => (
                 format!("Delete Release {tag_name}"),
                 format!("Are you sure you want to delete release {tag_name}?"),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteBranch(branch_name) => (
                 format!("Delete Branch '{branch_name}'"),
                 format!("Are you sure you want to delete branch \'{branch_name}\'?"),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::BulkDeleteBranches(branch_names) => (
                 format!("Delete {} Branches", branch_names.len()),
                 format!(
-                    "Are you sure you want to delete {} selected branches?\n{}",
-                    branch_names.len(),
-                    branch_names.join(", ")
+                    "Are you sure you want to delete {} selected branches?",
+                    branch_names.len()
                 ),
                 "Delete All".to_string(),
-                vec![],
-                true,
+                vec![Group::new(GroupKind::ItemList(ItemList {
+                    entries: branch_names
+                        .iter()
+                        .cloned()
+                        .map(ListEntry::queued)
+                        .collect(),
+                }))],
             ),
             ConfirmAction::CloseIssue(iid) => (
                 format!("Close Issue #{iid}"),
                 format!("Are you sure you want to close issue #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteIssue(iid) => (
                 format!("Delete Issue #{iid}"),
                 format!("Are you sure you want to delete issue #{iid}? This action is permanent."),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::CloseMr(iid) => (
                 format!("Close {mr} #{iid}"),
                 format!("Are you sure you want to close {mr_short} #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::CloseMilestone(milestone) => (
                 format!("Close Milestone #{}", milestone.iid),
@@ -3642,21 +3579,18 @@ impl SubmitDialog {
                 ),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenIssue(iid) => (
                 format!("Reopen Issue #{iid}"),
                 format!("Are you sure you want to reopen issue #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenMr(iid) => (
                 format!("Reopen {mr} #{iid}"),
                 format!("Are you sure you want to reopen {mr_short} #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenMilestone(milestone) => (
                 format!("Reopen Milestone #{}", milestone.iid),
@@ -3666,7 +3600,6 @@ impl SubmitDialog {
                 ),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteMr(iid) => (
                 format!("Delete {mr} #{iid}"),
@@ -3675,7 +3608,6 @@ impl SubmitDialog {
                 ),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::MergeMr(iid) => {
                 let (source, target) = app
@@ -3691,18 +3623,14 @@ impl SubmitDialog {
                     format!("Merging: {source} \u{2192} {target}")
                 };
                 let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                    SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
+                    Self::strategy_group(&strategies),
+                    Self::merge_options_group(),
                 ];
                 (
                     format!("Merge {mr} #{iid}"),
                     body,
                     "Merge".to_string(),
                     options,
-                    false,
                 )
             }
             ConfirmAction::MergeStack(iid) => {
@@ -3714,47 +3642,40 @@ impl SubmitDialog {
                     Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
                     None => format!("Merge Stack through #{iid}"),
                 };
-                let body = stack
-                    .map(|stack| {
-                        let merged: Vec<String> = stack
+                let (body, mut options) = match stack {
+                    Some(stack) => {
+                        let entries: Vec<ListEntry> = stack
                             .downstack_open_entries()
                             .map(|e| {
-                                format!(
+                                ListEntry::queued(format!(
                                     "#{}: {}{}",
                                     e.number,
-                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    e.title,
                                     if e.is_draft { " [draft]" } else { "" }
-                                )
+                                ))
                             })
                             .collect();
-                        format!(
-                            "Merges {} PRs together, all or nothing:\n{}",
-                            merged.len(),
-                            merged.join("\n")
+                        (
+                            format!("Merges {} PRs together, all or nothing:", entries.len()),
+                            vec![Group::new(GroupKind::ItemList(ItemList { entries }))],
                         )
-                    })
-                    .unwrap_or_default();
-                let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                ];
-                (title, body, "Merge".to_string(), options, false)
+                    }
+                    None => (String::new(), Vec::new()),
+                };
+                options.push(Self::strategy_group(&strategies));
+                (title, body, "Merge".to_string(), options)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                    SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
+                    Self::bulk_merge_items(app, iids, marker),
+                    Self::strategy_group(&strategies),
+                    Self::merge_options_group(),
                 ];
                 (
                     format!("Merge {} {}s", iids.len(), mr),
                     format!("Merging {} {}s", iids.len(), mr_short),
                     "Merge".to_string(),
                     options,
-                    false,
                 )
             }
             ConfirmAction::RevokeMr(iid) => (
@@ -3762,7 +3683,6 @@ impl SubmitDialog {
                 format!("Are you sure you want to revoke your approval on {mr_short} #{iid}?"),
                 "Revoke".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::RebaseMr(iid) => {
                 let target = app
@@ -3776,7 +3696,6 @@ impl SubmitDialog {
                     ),
                     "Rebase".to_string(),
                     vec![],
-                    false,
                 )
             }
             ConfirmAction::SubmitReview(iid) => {
@@ -3791,7 +3710,6 @@ impl SubmitDialog {
                     ),
                     "Submit".to_string(),
                     vec![],
-                    false,
                 )
             }
             ConfirmAction::CancelPipeline(id) => {
@@ -3804,7 +3722,6 @@ impl SubmitDialog {
                     ),
                     format!("Cancel {pipeline}"),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::CancelJobs {
@@ -3822,7 +3739,6 @@ impl SubmitDialog {
                     ),
                     format!("Cancel {jobs}"),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::RerunCommand(invocation) => {
@@ -3839,7 +3755,6 @@ impl SubmitDialog {
                     ),
                     "Re-run".to_string(),
                     vec![],
-                    false,
                 )
             }
             ConfirmAction::MarkAllTodosRead => {
@@ -3855,7 +3770,6 @@ impl SubmitDialog {
                     body,
                     "Mark All".to_string(),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::StopEnvironment(environment) => {
@@ -3876,7 +3790,6 @@ impl SubmitDialog {
                     body,
                     "Stop".to_string(),
                     vec![],
-                    true,
                 )
             }
             ConfirmAction::RollbackDeployment {
@@ -3904,7 +3817,6 @@ impl SubmitDialog {
                     ),
                     "Roll Back".to_string(),
                     vec![],
-                    true,
                 )
             }
         };
@@ -3915,43 +3827,112 @@ impl SubmitDialog {
             _ => Vec::new(),
         };
 
-        let mut dialog = Self {
+        let mut groups = Vec::new();
+        if !body.is_empty() {
+            groups.push(Group::note(NoteLevel::Info, body).with_id(Self::BODY));
+        }
+        groups.extend(options);
+        let is_destructive = action.is_destructive();
+        let submit_tone = if is_destructive {
+            ButtonTone::Destructive
+        } else {
+            ButtonTone::Positive
+        };
+        let extras = extra_buttons.iter().map(|choice| {
+            let tone = if choice.is_destructive() {
+                ButtonTone::Destructive
+            } else {
+                ButtonTone::Neutral
+            };
+            Button::new(choice.label(), tone)
+        });
+        let buttons = ButtonRow::new(
+            Button::new(submit_label, submit_tone),
+            extras,
+            Button::new("Cancel", ButtonTone::Neutral),
+        );
+        let form = Form::new(title, groups, buttons);
+
+        Self {
             action: action_clone,
             project_path,
-            title,
-            body,
-            options,
-            submit_label,
             extra_buttons,
-            cursor_idx: Self::SUBMIT_IDX,
-        };
-        if safe {
-            dialog.cursor_idx = dialog.cancel_idx();
+            strategies,
+            form: if is_destructive { form.danger() } else { form },
         }
-        dialog
+    }
+
+    fn strategy_group(strategies: &[MergeMethod]) -> Group {
+        let choices = strategies
+            .iter()
+            .map(|method| method.label().to_string())
+            .collect();
+        let default = strategies
+            .iter()
+            .position(|&method| method == MergeMethod::DEFAULT)
+            .unwrap_or_default();
+        Group::new(GroupKind::Radio(Radio::new(choices, default)))
+            .with_id(Self::STRATEGY)
+            .with_label("Strategy")
+    }
+
+    fn merge_options_group() -> Group {
+        let toggles = MergeToggle::ALL
+            .iter()
+            .map(|toggle| Toggle::new(toggle.label(), toggle.is_on_by_default()))
+            .collect();
+        Group::new(GroupKind::Toggles(Toggles::new(toggles)))
+            .with_id(Self::MERGE_OPTIONS)
+            .with_label("Options")
+    }
+
+    /// The items of a bulk merge, by title when the row is listed, else by
+    /// reference alone. The reference names the project in group scope,
+    /// where the same iid recurs across projects, and for an unlisted row.
+    fn bulk_merge_items(app: &App, items: &[(String, u64)], marker: &str) -> Group {
+        let entries = items
+            .iter()
+            .map(|(project_path, iid)| {
+                let title = app
+                    .mr_index(project_path, *iid)
+                    .map(|i| &app.mrs.items[i].title);
+                let project = if app.scope.is_group() || title.is_none() {
+                    project_path.as_str()
+                } else {
+                    ""
+                };
+                let reference = format!("{project}{marker}{iid}");
+                ListEntry::queued(match title {
+                    Some(title) => format!("{reference}: {title}"),
+                    None => reference,
+                })
+            })
+            .collect();
+        Group::new(GroupKind::ItemList(ItemList { entries }))
     }
 }
 
-/// Every key sequence bound in any `[keybindings.<table>]`.
-fn key_sequences(keybindings: &KeybindingConfig) -> crate::keybinding::KeySequences {
-    fn collect<'a>(value: &'a toml::Value, bindings: &mut Vec<&'a str>) {
-        match value {
-            toml::Value::Table(table) => {
-                for v in table.values() {
-                    collect(v, bindings);
-                }
-            }
-            toml::Value::String(s) => bindings.push(s),
-            _ => {}
-        }
+#[cfg(test)]
+impl SubmitDialog {
+    pub(crate) fn is_on_submit(&self) -> bool {
+        self.form.focused_button() == Some(Self::SUBMIT_BUTTON_INDEX)
     }
 
-    let Ok(value) = toml::Value::try_from(keybindings) else {
-        return crate::keybinding::KeySequences::default();
-    };
-    let mut bindings = Vec::new();
-    collect(&value, &mut bindings);
-    crate::keybinding::KeySequences::new(bindings)
+    pub(crate) fn is_on_cancel(&self) -> bool {
+        self.form.focused_button() == Some(self.form.cancel())
+    }
+
+    pub(crate) fn body(&self) -> &str {
+        match self.form.group(Self::BODY).map(|group| &group.kind) {
+            Some(GroupKind::Note(note)) => &note.text,
+            _ => "",
+        }
+    }
+}
+
+/// Every key sequence bound to any action.
+fn key_sequences(keybindings: &crate::keymap::Keymap) -> crate::keybinding::KeySequences {
+    crate::keybinding::KeySequences::new(keybindings.all_bindings())
 }
 
 pub struct NavFrame {
@@ -5910,22 +5891,37 @@ impl App {
     }
 
     /// Rebuilds `custom_commands` from the current config, logging every
-    /// ignored or shadowed entry in the terminal log.
-    pub fn load_custom_commands(&mut self) {
-        let (commands, problems) = crate::custom_commands::CustomCommands::load(&self.config);
+    /// `[keybindings]` entry that binds nothing and every ignored or shadowed
+    /// custom keybinding in the terminal log.
+    pub fn load_keybindings(&mut self) {
+        let (commands, custom_problems) =
+            crate::custom_commands::CustomCommands::load(&self.config);
         self.custom_commands = commands;
+        let problems: Vec<_> = self
+            .config
+            .keybindings
+            .problems()
+            .iter()
+            .cloned()
+            .map(|problem| ("Keybinding", problem))
+            .chain(
+                custom_problems
+                    .into_iter()
+                    .map(|problem| ("Custom keybinding", problem)),
+            )
+            .collect();
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        for problem in &problems {
+        for (kind, problem) in &problems {
             self.terminal_commands.push(TerminalCommand {
                 timestamp: timestamp.clone(),
-                command: format!("Custom keybinding: {}", problem.binding),
+                command: format!("{kind}: {}", problem.binding),
                 status: format!("Failed: {}", problem.problem),
                 ..Default::default()
             });
         }
         if !problems.is_empty() {
             self.raise_error_toast(format!(
-                "{} custom keybinding problem(s); see the Terminal tab",
+                "{} keybinding problem(s); see the Terminal tab",
                 problems.len()
             ));
         }
@@ -6462,7 +6458,7 @@ impl App {
         app.apply_config();
         app.dashboard.person = app.configured_dashboard_person();
         app.fall_back_from_hidden_tab();
-        app.load_custom_commands();
+        app.load_keybindings();
         app
     }
 
@@ -8302,10 +8298,10 @@ impl App {
                 .environment_deployments
                 .as_ref()
                 .is_some_and(|shown| !shown.table.items.is_empty())
-            && crate::keybinding::keybinding_matches(
-                &self.config.keybindings.environments.focus_deployments,
-                key,
-            )
+            && self
+                .config
+                .keybindings
+                .matches(crate::keymap::Action::EnvironmentsFocusDeployments, key)
     }
 
     /// Whether a keypress goes into a text field (a search, a filter, an
@@ -8319,6 +8315,10 @@ impl App {
             || self.selector.as_ref().is_some_and(|s| s.is_filtering)
             || self.edit_menu.as_ref().is_some_and(|m| m.editing)
             || self.diff_view.as_ref().is_some_and(|d| d.search_active)
+            || self
+                .submit_dialog
+                .as_ref()
+                .is_some_and(|d| d.form.is_editing())
     }
 
     fn keybinding_timeout(&self) -> std::time::Duration {
@@ -8328,10 +8328,10 @@ impl App {
     /// Feeds a keypress from the terminal into `key_buffer`; what it resolves
     /// to comes out of `key_buffer.pop_ready()`.
     pub fn receive_key(&mut self, event: crossterm::event::KeyEvent) {
-        let is_quit = event.code == crossterm::event::KeyCode::Char('c')
-            && event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL);
+        let is_quit = self.config.keybindings.matches(
+            crate::keymap::Action::GlobalForceQuit,
+            &crate::keybinding::KeyPress::Key(event),
+        );
         if is_quit || self.is_capturing_text() {
             self.key_buffer.pass_through(event);
         } else {
@@ -10701,83 +10701,89 @@ mod tests {
         assert_eq!(dp.value_string(), "2026-05-29");
     }
 
-    #[test]
-    fn test_submit_dialog_cursor_and_toggle() {
-        let mut dialog = SubmitDialog::new(
-            ConfirmAction::MergeMr(42),
-            "Merge MR #42",
-            "Merge with the selected options.",
-            "Merge",
-            vec![
-                SubmitOption::new("Squash", true),
-                SubmitOption::new("Delete source branch", true),
-            ],
-        );
-
-        // Default cursor sits on Submit (leftmost).
-        assert!(dialog.is_on_submit());
-        assert_eq!(dialog.cancel_idx(), 3);
-        assert_eq!(dialog.cursor_idx, 0);
-
-        // Move right/down: Submit -> Squash -> Delete source branch -> Cancel.
-        dialog.move_next();
-        assert_eq!(dialog.option_idx(), Some(0));
-        dialog.move_next();
-        assert_eq!(dialog.option_idx(), Some(1));
-        dialog.move_next();
-        assert!(dialog.is_on_cancel());
-        dialog.move_next();
-        assert!(dialog.is_on_cancel(), "Cancel must clamp at the right");
-
-        // Move left/up: Cancel -> Delete source branch -> Squash -> Submit.
-        dialog.move_prev();
-        assert_eq!(dialog.option_idx(), Some(1));
-        dialog.move_prev();
-        assert_eq!(dialog.option_idx(), Some(0));
-        dialog.move_prev();
-        assert!(dialog.is_on_submit());
-        dialog.move_prev();
-        assert!(dialog.is_on_submit(), "Submit must clamp at the left");
-
-        // Toggle flips state and stays in place.
-        dialog.cursor_idx = 1;
-        assert!(dialog.options[0].checked);
-        dialog.toggle_focused_option();
-        assert!(!dialog.options[0].checked);
-        dialog.toggle_focused_option();
-        assert!(dialog.options[0].checked);
-
-        // Toggling on a button row is a no-op.
-        dialog.cursor_idx = 0;
-        let before = dialog.options[0].checked;
-        dialog.toggle_focused_option();
-        assert_eq!(dialog.options[0].checked, before);
+    fn press_in_form(dialog: &mut SubmitDialog, keys: &[crossterm::event::KeyCode]) {
+        for &code in keys {
+            dialog.form.handle_key(&crossterm::event::KeyEvent::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
     }
 
     #[test]
-    fn test_submit_dialog_build_safe_vs_submit_focus() {
+    fn the_merge_dialog_sends_the_strategy_and_options_the_user_picked() {
+        use crossterm::event::KeyCode::{Char, Tab};
         let app = App::default();
-        // Destructive action defaults to Cancel.
+        let mut dialog = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
+        assert_eq!(
+            dialog.merge_choices(),
+            MergeChoices {
+                method: MergeMethod::Squash,
+                delete_branch: true,
+                auto_merge: false,
+            }
+        );
+
+        press_in_form(
+            &mut dialog,
+            &[
+                Tab,
+                Char('h'),
+                Char(' '),
+                Tab,
+                Char(' '),
+                Char('j'),
+                Char(' '),
+            ],
+        );
+
+        let choices = dialog.merge_choices();
+        assert_eq!(
+            choices,
+            MergeChoices {
+                method: MergeMethod::Merge,
+                delete_branch: false,
+                auto_merge: true,
+            }
+        );
+        assert_eq!(
+            choices.options(Some("abc123")),
+            crate::backend::MergeOptions {
+                squash: false,
+                delete_branch: false,
+                strategy: Some("merge"),
+                auto_merge: true,
+                sha: Some("abc123"),
+            }
+        );
+    }
+
+    #[test]
+    fn destructive_dialogs_open_in_the_danger_tone_on_cancel_and_reversible_ones_on_submit() {
+        let app = App::default();
         let close = SubmitDialog::build(ConfirmAction::CloseIssue(7), &app);
         assert!(close.is_on_cancel());
-        assert_eq!(close.options.len(), 0);
-        assert_eq!(close.submit_label, "Close");
+        assert_eq!(close.form.tone(), crate::form::FormTone::Danger);
+        assert_eq!(close.form.buttons()[0].label, "Close");
 
-        // Reversible action defaults to Submit.
         let merge = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
         assert!(merge.is_on_submit());
-        assert_eq!(merge.options.len(), 5);
-        assert!(merge.options.iter().any(|o| o.label == "Strategy: Squash"));
-        assert!(
+        assert_eq!(merge.form.tone(), crate::form::FormTone::Normal);
+        assert_eq!(
             merge
-                .options
-                .iter()
-                .any(|o| o.label == "Delete source branch")
+                .form
+                .radio(SubmitDialog::STRATEGY)
+                .map(|r| r.choices.clone()),
+            Some(vec![
+                "Merge commit".to_string(),
+                "Squash".to_string(),
+                "Rebase".to_string()
+            ])
         );
 
         let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
         assert!(rebase.is_on_submit());
-        assert_eq!(rebase.submit_label, "Rebase");
+        assert_eq!(rebase.form.buttons()[0].label, "Rebase");
     }
 
     const RUST_BLOCK_COMMENT_DIFF: &str = "\
@@ -10856,21 +10862,17 @@ diff --git a/src/lib.rs b/src/lib.rs
         let app = App::default();
         let mut dialog = SubmitDialog::build(ConfirmAction::SubmitReview(3), &app);
         let focused = |d: &SubmitDialog| {
-            if d.is_on_submit() {
-                "Submit"
-            } else if d.is_on_cancel() {
-                "Cancel"
-            } else {
-                d.focused_choice().map_or("option", DialogChoice::label)
-            }
+            d.form
+                .focused_button()
+                .map_or(String::new(), |b| d.form.buttons()[b].label.clone())
         };
         let mut visited = vec![focused(&dialog)];
         for _ in 0..4 {
-            dialog.move_between_buttons(1);
+            press_in_form(&mut dialog, &[crossterm::event::KeyCode::Right]);
             visited.push(focused(&dialog));
         }
         for _ in 0..4 {
-            dialog.move_between_buttons(-1);
+            press_in_form(&mut dialog, &[crossterm::event::KeyCode::Left]);
             visited.push(focused(&dialog));
         }
         assert_eq!(
@@ -10943,6 +10945,105 @@ diff --git a/Makefile b/Makefile
             DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string())
                 .all_lines
                 .len()
+        );
+    }
+
+    fn changed_words(view: &DiffView) -> Vec<(String, Vec<String>)> {
+        view.all_lines
+            .iter()
+            .filter(|l| matches!(l.line_type, DiffLineType::Addition | DiffLineType::Deletion))
+            .map(|l| {
+                let words = l
+                    .changed_ranges
+                    .iter()
+                    .map(|r| l.code()[r.clone()].to_string())
+                    .collect();
+                (l.content.clone(), words)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn removed_lines_pair_with_the_added_lines_after_them_word_by_word() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,6 +1,6 @@
+ fn main() {
+-    let timeout = 30;
+-    let retries = 3;
++    let timeout = 60;
++    let retries = 5;
+ }
+-let unpaired = 1;
+ // context
++let other = 2;
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let words = |content: &str, changed: &[&str]| {
+            (
+                content.to_string(),
+                changed.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            changed_words(&view),
+            [
+                words("-    let timeout = 30;", &["30"]),
+                words("-    let retries = 3;", &["3"]),
+                words("+    let timeout = 60;", &["60"]),
+                words("+    let retries = 5;", &["5"]),
+                words("-let unpaired = 1;", &[]),
+                words("+let other = 2;", &[]),
+            ]
+        );
+    }
+
+    #[test]
+    fn uneven_runs_of_removed_and_added_lines_get_no_word_marks() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,4 +1,3 @@
+ fn main() {
+-    let alpha = compute(x, y);
+-    let beta = compute(x, z);
++    let beta = compute(x, w);
+ }
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let unmarked = |content: &str| (content.to_string(), Vec::<String>::new());
+        assert_eq!(
+            changed_words(&view),
+            [
+                unmarked("-    let alpha = compute(x, y);"),
+                unmarked("-    let beta = compute(x, z);"),
+                unmarked("+    let beta = compute(x, w);"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_newline_note_does_not_split_a_last_line_edit() {
+        let diff = "\
+diff --git a/VERSION b/VERSION
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-version = 1.2.3
+\\ No newline at end of file
++version = 1.2.4
+\\ No newline at end of file
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        assert_eq!(
+            changed_words(&view),
+            [
+                ("-version = 1.2.3".to_string(), vec!["1.2.3".to_string()]),
+                ("+version = 1.2.4".to_string(), vec!["1.2.4".to_string()]),
+            ]
         );
     }
 
@@ -11606,6 +11707,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: None,
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11615,6 +11717,7 @@ index abcdef..ffffff 100644
                 old_line_num: Some(1),
                 new_line_num: None,
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11624,6 +11727,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(1),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11633,6 +11737,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(2),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -11642,6 +11747,7 @@ index abcdef..ffffff 100644
                 old_line_num: Some(2),
                 new_line_num: Some(3),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
         ];
@@ -12067,6 +12173,7 @@ diff --git a/foo.txt b/foo.txt
                 new_line_num,
                 file_path: file_path.to_string(),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             }),
             right: Some(DiffLine {
@@ -12076,6 +12183,7 @@ diff --git a/foo.txt b/foo.txt
                 new_line_num,
                 file_path: file_path.to_string(),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             }),
             line_type: DiffLineType::Normal,
@@ -12402,9 +12510,15 @@ scroll_page_up = "Ctrl+b"
 
         let app = App::default();
 
-        let global = &app.config.keybindings.global;
-        assert_eq!(global.scroll_page_down, "PageDown");
-        assert_eq!(global.scroll_page_up, "PageUp");
+        let keys = &app.config.keybindings;
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageDown),
+            ["PageDown"]
+        );
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageUp),
+            ["PageUp"]
+        );
     }
 
     #[test]
@@ -12414,9 +12528,15 @@ scroll_page_up = "Ctrl+b"
 
         let app = App::new();
 
-        let global = &app.config.keybindings.global;
-        assert_eq!(global.scroll_page_down, "Ctrl+f");
-        assert_eq!(global.scroll_page_up, "Ctrl+b");
+        let keys = &app.config.keybindings;
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageDown),
+            ["Ctrl+f"]
+        );
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageUp),
+            ["Ctrl+b"]
+        );
     }
 
     #[test]
@@ -12441,8 +12561,18 @@ help = "h"
 
         // Load App (which loads this config)
         let mut app = App::new();
-        assert_eq!(app.config.keybindings.global.quit, "ctrl+c");
-        assert_eq!(app.config.keybindings.global.help, "h");
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalQuit),
+            ["ctrl+c"]
+        );
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalHelp),
+            ["h"]
+        );
 
         // Change layout/page size and save
         app.config.page_size = 456;
@@ -13910,7 +14040,7 @@ index 123456..789012 100644
         app.confirm_terminal_rerun().unwrap();
 
         let dialog = app.submit_dialog.expect("confirmation is open");
-        let crate::app::ConfirmAction::RerunCommand(invocation) = dialog.action else {
+        let crate::app::ConfirmAction::RerunCommand(invocation) = &dialog.action else {
             panic!("expected a rerun confirmation, got {:?}", dialog.action);
         };
         assert_eq!(
@@ -13918,7 +14048,7 @@ index 123456..789012 100644
             "glab api -X DELETE projects/1/repository/branches/x"
         );
         assert_eq!(
-            dialog.body,
+            dialog.body(),
             "Run again: glab api -X DELETE projects/1/repository/branches/x"
         );
     }
@@ -14173,6 +14303,37 @@ index 123456..789012 100644
         let filtered = app.filtered_mrs();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn bulk_merge_items_name_their_project_in_group_scope() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..App::default()
+        };
+        let mut in_a = mr_fixture(12, "opened", "a", false, "Fix A");
+        in_a.project_path = "acme/a".to_string();
+        let mut in_b = mr_fixture(12, "opened", "b", false, "Fix B");
+        in_b.project_path = "acme/b".to_string();
+        app.mrs.items = vec![in_a, in_b];
+        let items = vec![
+            ("acme/a".to_string(), 12),
+            ("acme/b".to_string(), 12),
+            ("acme/c".to_string(), 7),
+        ];
+
+        let dialog = SubmitDialog::build(ConfirmAction::BulkMergeMrs(items), &app);
+        let labels: Vec<&str> = dialog
+            .form
+            .groups()
+            .iter()
+            .find_map(|group| match &group.kind {
+                GroupKind::ItemList(list) => Some(&list.entries),
+                _ => None,
+            })
+            .map(|entries| entries.iter().map(|e| e.label.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(labels, ["acme/a!12: Fix A", "acme/b!12: Fix B", "acme/c!7"]);
     }
 
     #[test]
@@ -14616,8 +14777,12 @@ index 123456..789012 100644
     #[test]
     fn sequence_bound_in_any_table_resolves_after_apply_config() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
-        app.config.keybindings.terminal.clear_log = "cc".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::TerminalClearLog, &["cc"]);
         app.apply_config();
 
         app.receive_key(typed('z'));
@@ -14638,7 +14803,9 @@ index 123456..789012 100644
     #[test]
     fn key_typed_into_a_text_field_never_waits_for_a_sequence() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
         app.apply_config();
         app.is_typing_search = true;
 
@@ -14653,7 +14820,9 @@ index 123456..789012 100644
     #[test]
     fn function_key_binding_does_not_hold_back_its_letter() {
         let mut app = App::default();
-        app.config.keybindings.global.scroll_top = "F1".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["F1"]);
         app.apply_config();
 
         app.receive_key(typed('F'));
@@ -14667,7 +14836,9 @@ index 123456..789012 100644
     #[test]
     fn ctrl_c_quits_while_a_sequence_is_waiting() {
         let mut app = App::default();
-        app.config.keybindings.global.scroll_top = "gg".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
         app.apply_config();
         let ctrl_c = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('c'),
@@ -14680,6 +14851,63 @@ index 123456..789012 100644
         assert_eq!(
             resolved(&mut app),
             vec![crate::keybinding::KeyPress::Key(ctrl_c)]
+        );
+    }
+
+    #[test]
+    fn remapped_force_quit_quits_while_a_sequence_is_waiting() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalForceQuit, &["Ctrl+q"]);
+        app.apply_config();
+        let ctrl_q = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        app.receive_key(typed('g'));
+        app.receive_key(ctrl_q);
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(ctrl_q)]
+        );
+    }
+
+    #[test]
+    fn an_unknown_keybinding_entry_is_logged_and_keeps_the_rest_of_the_config() {
+        let mut app = App {
+            config: toml::from_str(
+                "theme_preset = \"nord\"\n[keybindings]\nquit = \"x\"\n[keybindings.issues]\nfoo = 3\n",
+            )
+            .expect("config with stray keybinding entries parses"),
+            ..App::default()
+        };
+
+        app.load_keybindings();
+
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+        let logged: Vec<(&str, &str)> = app
+            .terminal_commands
+            .iter()
+            .map(|entry| (entry.command.as_str(), entry.status.as_str()))
+            .collect();
+        assert_eq!(
+            logged,
+            [
+                (
+                    "Keybinding: keybindings.issues.foo",
+                    "Failed: not an action glab-tui knows, ignored"
+                ),
+                (
+                    "Keybinding: keybindings.quit",
+                    "Failed: not a keybinding table glab-tui knows, ignored"
+                ),
+            ]
         );
     }
 
@@ -15852,9 +16080,9 @@ index 123456..789012 100644
             &App::default(),
         );
 
-        assert_eq!(dialog.title, "Roll Back 'prod' to abc123");
+        assert_eq!(dialog.form.title, "Roll Back 'prod' to abc123");
         assert_eq!(
-            dialog.body,
+            dialog.body(),
             "Re-deploy abc123 (main) from deployment #1 to 'prod'? This re-runs its job 'deploy'."
         );
     }

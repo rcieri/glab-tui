@@ -328,7 +328,10 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
         ListAvailability::NotLoaded => Paragraph::new(Line::styled(
             format!(
                 "Not loaded yet. Press {} to fetch.",
-                ctx.app.config.keybindings.global.refresh
+                ctx.app
+                    .config
+                    .keybindings
+                    .display(crate::keymap::Action::GlobalRefresh)
             ),
             Style::default().fg(theme.text_muted),
         ))

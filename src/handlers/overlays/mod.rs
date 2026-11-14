@@ -234,6 +234,30 @@ mod tests {
         app.date_picker = None;
     }
 
+    #[test]
+    fn only_a_function_key_bound_to_help_opens_it_over_a_text_field() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalHelp, &["Enter", "F2"]);
+        app.text_input = Some(crate::app::TextInput::new(
+            " Page Size ",
+            "30".to_string(),
+            crate::app::TextInputAction::EditPageSize,
+        ));
+
+        assert!(!handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE).into(),
+        ));
+        assert!(!app.show_help);
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE).into(),
+        ));
+        assert!(app.show_help);
+    }
+
     const REVIEW_DIFF: &str = "\
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
@@ -326,13 +350,40 @@ diff --git a/src/lib.rs b/src/lib.rs
                 .map(|id| review_note(id, &format!("t{id}"), None))
                 .collect(),
         );
-        app.config.keybindings.global.scroll_top = "gg".to_string();
-        app.config.keybindings.global.scroll_to_end = "ge".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollToEnd, &["ge"]);
 
         handle_review_threads(&mut app, &KeyPress::Sequence("ge".to_string()));
         assert_eq!(selected_root_id(&app), Some(3));
         handle_review_threads(&mut app, &KeyPress::Sequence("gg".to_string()));
         assert_eq!(selected_root_id(&app), Some(1));
+    }
+
+    #[test]
+    fn review_threads_close_on_the_remapped_opening_key_only() {
+        let mut app = app_with_review_threads(vec![review_note(1, "first", None)]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::DiffReviewThreads, &["R"]);
+
+        press(&mut app, KeyCode::Char('T'));
+        assert!(
+            app.review_threads.is_some(),
+            "the old default key closed it"
+        );
+
+        handle_review_threads(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT).into(),
+        );
+        assert!(
+            app.review_threads.is_none(),
+            "the remapped key left it open"
+        );
     }
 
     #[test]
@@ -492,7 +543,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         for &code in codes {
             assert!(handle_submit_dialog(
                 app,
-                &KeyEvent::new(code, KeyModifiers::NONE),
+                &KeyEvent::new(code, KeyModifiers::NONE).into(),
                 &tx,
                 &mut crate::effect::Effects::default(),
             ));
@@ -683,7 +734,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         let tx = app.tx.clone();
         super::handle_submit_dialog(
             app,
-            &KeyEvent::new(code, KeyModifiers::NONE),
+            &KeyEvent::new(code, KeyModifiers::NONE).into(),
             &tx,
             &mut crate::effect::Effects::default(),
         );
@@ -698,6 +749,26 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.jobs.items.iter().all(|j| j.status == "running"));
         assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[test]
+    fn remapping_dialog_cancel_off_esc_stops_esc_and_arms_the_new_key() {
+        let mut app = app_with_cancel_jobs_dialog();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::DialogCancel, &["x"]);
+
+        press_in_submit_dialog(&mut app, KeyCode::Esc);
+        assert!(
+            app.submit_dialog.is_some(),
+            "the old default key must no longer cancel the dialog"
+        );
+
+        press_in_submit_dialog(&mut app, KeyCode::Char('x'));
+        assert!(
+            app.submit_dialog.is_none(),
+            "the new key must cancel the dialog"
+        );
     }
 
     #[test]

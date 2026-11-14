@@ -1,6 +1,7 @@
 pub mod compaction;
 pub mod dashboard;
 mod diff;
+mod form;
 mod helpers;
 pub(crate) mod inspector;
 pub mod job_trace;
@@ -16,7 +17,7 @@ mod terminal_inspector;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
@@ -248,8 +249,67 @@ fn render_mode_indicator(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Re
     f.render_widget(indicator, area);
 }
 
-/// Render a diff line's content with per-character fuzzy search highlighting.
+/// Render a diff line's content: syntax colors, fuzzy search matches and,
+/// with an `emphasis_bg`, that background on the words that differ from its
+/// paired line.
 fn render_diff_line_content(
+    line: &DiffLine,
+    base_style: Style,
+    theme: &Theme,
+    emphasis_bg: Option<Color>,
+) -> Vec<Span<'static>> {
+    let spans = render_highlighted_content(line, base_style, theme);
+    match emphasis_bg {
+        Some(bg) => emphasize_ranges(spans, &line.changed_ranges, bg),
+        None => spans,
+    }
+}
+
+/// Splits `spans`, which together hold one line, at the edges of `ranges`
+/// (byte ranges of that line) and sets `bg` on the parts inside them.
+fn emphasize_ranges(
+    spans: Vec<Span<'static>>,
+    ranges: &[std::ops::Range<usize>],
+    bg: Color,
+) -> Vec<Span<'static>> {
+    if ranges.is_empty() {
+        return spans;
+    }
+    let mut out = Vec::with_capacity(spans.len() + 2 * ranges.len());
+    let mut span_start = 0;
+    for span in spans {
+        let text = span.content.as_ref();
+        let span_end = span_start + text.len();
+        let mut cut = 0;
+        for range in ranges
+            .iter()
+            .filter(|r| r.start < span_end && r.end > span_start)
+        {
+            let start = range.start.max(span_start) - span_start;
+            let end = range.end.min(span_end) - span_start;
+            push_piece(&mut out, text, cut..start, span.style);
+            push_piece(&mut out, text, start..end, span.style.bg(bg));
+            cut = end;
+        }
+        push_piece(&mut out, text, cut..text.len(), span.style);
+        span_start = span_end;
+    }
+    out
+}
+
+fn push_piece(
+    out: &mut Vec<Span<'static>>,
+    text: &str,
+    range: std::ops::Range<usize>,
+    style: Style,
+) {
+    if let Some(piece) = text.get(range).filter(|piece| !piece.is_empty()) {
+        out.push(Span::styled(piece.to_string(), style));
+    }
+}
+
+/// Render a diff line's content with per-character fuzzy search highlighting.
+fn render_highlighted_content(
     line: &DiffLine,
     base_style: Style,
     theme: &Theme,
@@ -1144,8 +1204,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
+                                let emphasis_bg =
+                                    sel_bg.is_none().then_some(theme.diff_deletion_emph_bg);
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme);
+                                    render_diff_line_content(line, final_style, theme, emphasis_bg);
                                 left_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Normal => {
@@ -1173,7 +1235,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                                 let theme = &ctx.theme;
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme);
+                                    render_diff_line_content(line, final_style, theme, None);
                                 left_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Meta => {
@@ -1280,8 +1342,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
+                                let emphasis_bg =
+                                    sel_bg.is_none().then_some(theme.diff_addition_emph_bg);
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme);
+                                    render_diff_line_content(line, final_style, theme, emphasis_bg);
                                 right_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Normal => {
@@ -1309,7 +1373,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                                 let theme = &ctx.theme;
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme);
+                                    render_diff_line_content(line, final_style, theme, None);
                                 right_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Meta => {
@@ -1637,8 +1701,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 content_base
                             };
 
+                            let emphasis_bg = sel_bg.is_none().then_some(if is_add {
+                                theme.diff_addition_emph_bg
+                            } else {
+                                theme.diff_deletion_emph_bg
+                            });
                             let mut content_spans =
-                                render_diff_line_content(line, final_style, theme);
+                                render_diff_line_content(line, final_style, theme, emphasis_bg);
                             line_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
@@ -1666,7 +1735,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                             let theme = &ctx.theme;
                             let mut content_spans =
-                                render_diff_line_content(line, final_style, theme);
+                                render_diff_line_content(line, final_style, theme, None);
                             line_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Meta => {
@@ -1993,6 +2062,42 @@ mod tests {
             toast_text,
             Some(format!("{icon} push rejected: feature!").as_str())
         );
+    }
+
+    #[test]
+    fn changed_words_keep_their_syntax_colors_on_the_emphasis_background() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1 +1 @@
+-let total = 1 + 2;
++let total = 3 * 4;
+";
+        let view = crate::app::DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let added = view
+            .all_lines
+            .iter()
+            .find(|l| l.content == "+let total = 3 * 4;")
+            .expect("added line parsed");
+        let theme = Theme::default();
+        let base = Style::default().bg(theme.diff_addition_bg);
+        let spans =
+            render_diff_line_content(added, base, &theme, Some(theme.diff_addition_emph_bg));
+
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, added.code());
+        let emphasized: String = spans
+            .iter()
+            .filter(|s| s.style.bg == Some(theme.diff_addition_emph_bg))
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(emphasized, "3 * 4");
+        let operator = spans
+            .iter()
+            .find(|s| s.content == "*")
+            .expect("operator is its own span");
+        assert_eq!(operator.style.fg, Some(theme.purple));
     }
 
     fn rendered_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {

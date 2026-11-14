@@ -19,6 +19,16 @@ fn is_sequence_char(c: char) -> bool {
     !c.is_whitespace() && !c.is_control()
 }
 
+/// Whether a key with these modifiers is a shortcut rather than text typed
+/// into a field. Windows reports AltGr as Ctrl+Alt with the composed
+/// character, so a German `@` or a Nordic `{` arrives as Ctrl+Alt and is
+/// text, not a shortcut.
+pub fn is_shortcut(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    let is_alt_gr_text = modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && matches!(code, KeyCode::Char(c) if !c.is_ascii_alphanumeric());
+    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) && !is_alt_gr_text
+}
+
 /// One key a binding names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Key {
@@ -252,6 +262,11 @@ pub fn binding_key_event(binding: &str) -> Option<KeyEvent> {
         Binding::Key(key) => Some(key.event()),
         Binding::Sequence(_) => None,
     }
+}
+
+/// Whether `binding` is a key or sequence `keybinding_matches` can match.
+pub(crate) fn is_readable_binding(binding: &str) -> bool {
+    parse_binding(binding).is_some()
 }
 
 /// Every configured key sequence, and every start of one the event loop has

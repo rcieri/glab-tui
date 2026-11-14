@@ -4,7 +4,7 @@ use crate::entity_editor::{apply_selector_changes, rebuild_edit_menu};
 use crate::event::{CommandOutcome, Event};
 use crate::git_helpers::slugify;
 use crate::keybinding::KeyPress;
-use crate::keybinding::keybinding_matches;
+use crate::keymap::{Action, KeyContext};
 use crate::templates::list_templates;
 use crate::{app, domain, handlers};
 use crossterm::event::KeyCode;
@@ -83,8 +83,12 @@ pub fn handle_key(
         }
     } else {
         let filtered_items = selector.get_filtered_items();
-        match key_event.code {
-            KeyCode::Esc => {
+        match app
+            .config
+            .keybindings
+            .resolve(KeyContext::Selector, key_event)
+        {
+            Some(Action::SelectorClose) => {
                 // First Esc with an active query clears it (the
                 // user already exited filter mode via the inner
                 // match arm). Second Esc closes the selector.
@@ -97,7 +101,7 @@ pub fn handle_key(
                 // else: leave the selector taken out so the
                 // caller closes it (EditMenu stays open).
             }
-            KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
+            Some(Action::SelectorFilter) => {
                 let has_filter = selector.field_type != "comment_action_select"
                     && selector.field_type != "related_mrs"
                     && selector.field_type != "linked_issues";
@@ -106,14 +110,14 @@ pub fn handle_key(
                 }
                 app.selector = Some(selector);
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            Some(Action::SelectorNext) => {
                 if !filtered_items.is_empty() {
                     selector.cursor_idx = (selector.cursor_idx + 1) % filtered_items.len();
                     selector.state.select(Some(selector.cursor_idx));
                 }
                 app.selector = Some(selector);
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            Some(Action::SelectorPrevious) => {
                 if !filtered_items.is_empty() {
                     if selector.cursor_idx == 0 {
                         selector.cursor_idx = filtered_items.len() - 1;
@@ -126,23 +130,23 @@ pub fn handle_key(
             }
             // The selector does not store its list height, so a
             // half page is a fixed number of rows.
-            _ if keybinding_matches(
-                &app.config.keybindings.global.scroll_half_page_down,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollHalfPageDown, key_event) =>
             {
                 selector.move_by(true, SELECTOR_HALF_PAGE_ROWS);
                 app.selector = Some(selector);
             }
-            _ if keybinding_matches(
-                &app.config.keybindings.global.scroll_half_page_up,
-                key_event,
-            ) =>
+            _ if app
+                .config
+                .keybindings
+                .matches(Action::GlobalScrollHalfPageUp, key_event) =>
             {
                 selector.move_by(false, SELECTOR_HALF_PAGE_ROWS);
                 app.selector = Some(selector);
             }
-            KeyCode::Char(' ') => {
+            Some(Action::SelectorToggle) => {
                 if !filtered_items.is_empty() {
                     let item = &filtered_items[selector.cursor_idx];
                     if item.starts_with("+ Create \"") {
@@ -174,7 +178,7 @@ pub fn handle_key(
                 }
                 app.selector = Some(selector);
             }
-            KeyCode::Enter => {
+            Some(Action::SelectorConfirm) => {
                 let field_type = selector.field_type.clone();
                 if field_type == "jump_to_id" {
                     let filtered_items = selector.get_filtered_items();
@@ -322,7 +326,7 @@ pub fn handle_key(
                                 app.config = crate::config::Config::load();
                                 app.apply_config();
                                 app.fall_back_from_hidden_tab();
-                                app.load_custom_commands();
+                                app.load_keybindings();
                                 crate::config::reload_command_timeout();
 
                                 if let Ok(context) = domain::client::get_project_context() {

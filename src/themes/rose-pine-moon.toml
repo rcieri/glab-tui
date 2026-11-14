@@ -37,8 +37,10 @@ purple_bg      = "#4b2f6d"
 # ── Diff ──
 diff_addition_fg = "#9ccfd8"
 diff_addition_bg = "#1f4248"
+diff_addition_emph_bg = "#456c73"
 diff_deletion_fg = "#eb6f92"
 diff_deletion_bg = "#5b2736"
+diff_deletion_emph_bg = "#863d52"
 diff_gutter_bg   = "#393552"  # overlay
 diff_sep         = "#56526e"  # highlight high
 
@@ -71,3 +73,9 @@ label_palette_8 = "#b95c7b"  # dim love
 label_palette_9 = "#908caa"  # subtle
 
 badge_group_bg = "#00bcd4"
+
+# ── Forms ──
+accent = "#c4a7e7"
+key_hint = "#f6c177"
+danger_border = "#eb6f92"
+backdrop_dim = "#908caa"

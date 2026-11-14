@@ -55,7 +55,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Features
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
-- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
+- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`; pipelines on GitHub organizations only). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
 - **Bulk editing & Visual Select Mode** — select multiple issues, merge requests, or branches with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
 - **Custom commands** — bind a key to your own shell command with the highlighted issue, MR/PR or pipeline as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.PipelineId}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
@@ -625,7 +625,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
 
-> Diff View keys are **fixed** and not remappable in `config.toml`.
+> Diff View keys are **fixed** and not remappable in `config.toml`, except the layout keys `1`, `2` and `0`: remap them under `[keybindings.diff]` as `layout_side_by_side`, `layout_unified` and `layout_auto`.
 
 | Key | Action |
 |---|---|
@@ -642,7 +642,9 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `z` / `Z` | Collapse / expand all files |
 | `m` | Mark / unmark file as reviewed (on a directory: every file below it) |
 | `M` | Hide / show reviewed files in the file tree |
-| `d` | Toggle unified / side-by-side layout |
+| `d` | Toggle unified / side-by-side layout, pinned for the session |
+| `1` / `2` | Pin side-by-side / unified layout for the session |
+| `0` | Pick the layout from the width again: side-by-side when the diff pane has at least 121 columns inside its border (two 60-column sides and the divider), unified below |
 | `v` / `V` | Start / stop multi-line selection for comments |
 | `c` | Add comment on current line / selection |
 | `C` | Add comment via external `$EDITOR` |
@@ -663,7 +665,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 ### Pipelines tab
 
-> Remappable via `[keybindings.pipelines]` in `config.toml`.
+> Remappable via `[keybindings.pipelines]` in `config.toml`. GitLab has no group pipelines endpoint, so in GitLab group scope the tab is unavailable.
 
 | Key | Action | Config |
 |---|---|---|

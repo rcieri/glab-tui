@@ -23,6 +23,10 @@ pub struct Milestone {
     /// per-project issue listing commands.
     #[serde(default)]
     pub project_path: String,
+    /// The milestone's page as GitLab reports it. `None` on GitHub, whose
+    /// milestone page `GhBackend` builds from the project and number.
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 pub async fn list_milestones(

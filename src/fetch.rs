@@ -455,7 +455,7 @@ pub fn spawn_refresh_active_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if tab.is_fetchable_in(scope) {
+    if tab.is_fetchable_in(scope, client.kind()) {
         fx.spawn(refresh_tab(client.clone(), scope.clone(), states, tab, tx));
     }
 }
@@ -470,7 +470,7 @@ pub async fn refresh_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if !tab.is_fetchable_in(&scope) {
+    if !tab.is_fetchable_in(&scope, client.kind()) {
         return;
     }
     client.tx = None; // suppress terminal log for background fetches
@@ -940,6 +940,9 @@ fn prefetch_pipeline_jobs(
     fx: &mut Effects,
 ) {
     if let Some(client) = &app.gitlab_client {
+        if !app::Tab::Pipelines.is_fetchable_in(&app.scope, client.kind()) {
+            return;
+        }
         if let Some(idx) = app.pipelines.state.selected() {
             let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
             if let Some(pipe_id) = pipe_id {
@@ -1188,7 +1191,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_returns_false_when_nothing_pending() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1202,7 +1205,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_returns_false_within_debounce_window() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1230,7 +1233,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_clears_state_when_iid_already_fetched() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1271,7 +1274,7 @@ mod tests {
 
     /// A GitHub app on the PRs tab with the inspector open on PR #11.
     fn app_inspecting_pr_11() -> app::App {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         app.gitlab_client = Some(crate::domain::client::GitlabClient {
             is_github: true,
             backend: crate::backend::create_backend(true),

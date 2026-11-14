@@ -282,7 +282,7 @@ registry! {
     JobsToggleTraceWrap => ActionSpec::new(JOBS, "toggle_trace_wrap", &["w"], "Toggle trace word wrap / clipped view");
     JobsTraceSearch => ActionSpec::new(JOBS, "trace_search", &["/"], "Search within job trace");
     JobsClearTraceSearch => ActionSpec::new(JOBS, "clear_trace_search", &["Esc"], "Clear the job trace search");
-    JobsToggleTraceFollow => ActionSpec::new(JOBS, "toggle_trace_follow", &["f"], "Toggle trace auto-follow mode");
+    JobsToggleTraceFollow => ActionSpec::new(JOBS, "toggle_trace_follow", &["f"], "Toggle trace auto-follow mode").only(Support::GitLab);
     JobsJumpToFailure => ActionSpec::new(JOBS, "jump_to_failure", &["E"], "Jump to the next failure line in the job trace");
     JobsCopyUrl => ActionSpec::new(JOBS, "copy_url", &["y"], "Copy job web URL");
     JobsCopyId => ActionSpec::new(JOBS, "copy_id", &["Y"], "Copy job ID");
@@ -365,7 +365,10 @@ registry! {
     DiffExpandAll => ActionSpec::new(DiffView, "expand_all", &["Z"], "Expand all files");
     DiffToggleReviewed => ActionSpec::new(DiffView, "toggle_reviewed", &["m"], "Mark / unmark file (or directory) as reviewed");
     DiffToggleHideReviewed => ActionSpec::new(DiffView, "toggle_hide_reviewed", &["M"], "Hide / show reviewed files in the tree");
-    DiffToggleSideBySide => ActionSpec::new(DiffView, "toggle_side_by_side", &["d"], "Toggle unified / side-by-side layout");
+    DiffToggleSideBySide => ActionSpec::new(DiffView, "toggle_side_by_side", &["d"], "Toggle unified / side-by-side layout (pinned for the session)");
+    DiffLayoutSideBySide => ActionSpec::new(DiffView, "layout_side_by_side", &["1"], "Pin the side-by-side layout for the session");
+    DiffLayoutUnified => ActionSpec::new(DiffView, "layout_unified", &["2"], "Pin the unified layout for the session");
+    DiffLayoutAuto => ActionSpec::new(DiffView, "layout_auto", &["0"], "Pick the layout from the diff pane width again (unified when narrow)");
     DiffSearch => ActionSpec::new(DiffView, "search", &["/", "f"], "Search within diff");
     DiffSearchNext => ActionSpec::new(DiffView, "search_next", &["Ctrl+n"], "Next search match");
     DiffSearchPrevious => ActionSpec::new(DiffView, "search_previous", &["Ctrl+p"], "Previous search match");

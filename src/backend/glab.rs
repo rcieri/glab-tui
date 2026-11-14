@@ -900,6 +900,14 @@ impl GlabBackend {
         ]
     }
 
+    /// `<flag>=+user` per added and `<flag>=!user` per removed user. glab
+    /// replaces the whole list for a name without a prefix.
+    fn people_args(flag: &str, add: &[String], remove: &[String]) -> Vec<String> {
+        let added = add.iter().map(|u| format!("{flag}=+{u}"));
+        let removed = remove.iter().map(|u| format!("{flag}=!{u}"));
+        added.chain(removed).collect()
+    }
+
     fn merge_args(
         project: &str,
         iid: u64,
@@ -1421,12 +1429,11 @@ impl Backend for GlabBackend {
         for label in &update.remove_labels {
             args.extend(["--unlabel".into(), label.clone()]);
         }
-        for a in &update.add_assignees {
-            args.extend(["--assignee".into(), a.clone()]);
-        }
-        for a in &update.remove_assignees {
-            args.extend(["--unassign".into(), a.clone()]);
-        }
+        args.extend(Self::people_args(
+            "--assignee",
+            &update.add_assignees,
+            &update.remove_assignees,
+        ));
         if let Some(ref milestone) = update.milestone {
             let val = if milestone == "--" || milestone.is_empty() {
                 "0"
@@ -2155,18 +2162,16 @@ impl Backend for GlabBackend {
         for label in &update.remove_labels {
             args.extend(["--unlabel".into(), label.clone()]);
         }
-        for a in &update.add_assignees {
-            args.extend(["--assignee".into(), a.clone()]);
-        }
-        for a in &update.remove_assignees {
-            args.extend(["--unassign".into(), a.clone()]);
-        }
-        for r in &update.add_reviewers {
-            args.extend(["--reviewer".into(), r.clone()]);
-        }
-        for r in &update.remove_reviewers {
-            args.extend(["--unreviewer".into(), r.clone()]);
-        }
+        args.extend(Self::people_args(
+            "--assignee",
+            &update.add_assignees,
+            &update.remove_assignees,
+        ));
+        args.extend(Self::people_args(
+            "--reviewer",
+            &update.add_reviewers,
+            &update.remove_reviewers,
+        ));
         if let Some(ref milestone) = update.milestone {
             let val = if milestone == "--" || milestone.is_empty() {
                 "0"
@@ -2266,42 +2271,7 @@ impl Backend for GlabBackend {
                 }
                 Ok(all)
             }
-            Scope::Group(group) => {
-                let pages = page_count(page_size, per_request);
-                let encoded_group = group.replace('/', "%2F");
-                let requests: Vec<Vec<String>> = (1..=pages)
-                    .map(|page| {
-                        vec![
-                            "api".to_string(),
-                            format!(
-                                "groups/{}/pipelines?per_page={}&page={}",
-                                encoded_group, per_request, page
-                            ),
-                        ]
-                    })
-                    .collect();
-                let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "FETCHING GROUP PIPELINES")
-                        .await,
-                )?;
-
-                let mut all: Vec<Pipeline> = Vec::new();
-                for raw in responses {
-                    let mut pipelines: Vec<Pipeline> =
-                        serde_json::from_str(&raw).unwrap_or_default();
-                    for pipe in &mut pipelines {
-                        if pipe.project_path.is_empty() {
-                            pipe.project_path = pipe
-                                .web_url
-                                .as_deref()
-                                .and_then(crate::git_helpers::parse_project_path_from_web_url)
-                                .unwrap_or_else(|| group.clone());
-                        }
-                    }
-                    all.extend(pipelines);
-                }
-                Ok(all)
-            }
+            Scope::Group(_) => Err(anyhow::anyhow!("Group-level pipelines not supported")),
         }
     }
 
@@ -2847,6 +2817,7 @@ impl Backend for GlabBackend {
             due_date: Option<String>,
             #[serde(default)]
             created_at: String,
+            web_url: Option<String>,
         }
         let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;
         let project_fallback = match scope {
@@ -2865,6 +2836,7 @@ impl Backend for GlabBackend {
                 due_date: m.due_date,
                 created_at: m.created_at,
                 project_path: project_fallback.clone(),
+                web_url: m.web_url,
             })
             .collect())
     }
@@ -2939,7 +2911,7 @@ impl Backend for GlabBackend {
         milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
-        let action = if close { "close" } else { "reopen" };
+        let state = if close { "close" } else { "activate" };
         let desc = if close {
             "CLOSING MILESTONE"
         } else {
@@ -2948,8 +2920,10 @@ impl Backend for GlabBackend {
         self.run_glab(
             &[
                 "milestone",
-                action,
-                &milestone.iid.to_string(),
+                "edit",
+                &milestone.id.to_string(),
+                "--state",
+                state,
                 "-R",
                 project,
             ],
@@ -2970,8 +2944,8 @@ impl Backend for GlabBackend {
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "milestone".into(),
-            "update".into(),
-            milestone.iid.to_string(),
+            "edit".into(),
+            milestone.id.to_string(),
             "-R".into(),
             project.to_string(),
             "--title".into(),
@@ -3003,10 +2977,9 @@ impl Backend for GlabBackend {
             &[
                 "milestone",
                 "delete",
-                &milestone.iid.to_string(),
+                &milestone.id.to_string(),
                 "-R",
                 project,
-                "-y",
             ],
             "Deleting Milestone",
         )
@@ -3515,34 +3488,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_glab(
-                &["job", "view", id, "-R", project, "-w"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_glab(&["job", "view", id, "-w"], "OPENING IN BROWSER")
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
-        self.run_glab(
-            &[
-                "milestone",
-                "view",
-                &milestone.iid.to_string(),
-                "-w",
-                "-R",
-                project,
-            ],
-            "OPENING IN BROWSER",
-        )
-        .await?;
-        Ok(())
+    async fn open_milestone_in_browser(&self, _project: &str, milestone: &Milestone) -> Result<()> {
+        let url = milestone
+            .web_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Milestone URL unavailable; refresh the Milestones tab")
+            })?;
+        open_url(url, self.tx.clone(), "OPENING MILESTONE IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
@@ -3663,17 +3617,9 @@ const RUNNER_DETAILS_QUERY_MAX: usize = 100;
 /// reading `git remote get-url origin` and stripping the path, falling back
 /// to `DEFAULT_GITLAB_HOST` when there is no remote to read. Used to
 /// construct browser URLs for entities whose `glab` subcommand doesn't
-/// ship a `-w` flag (runners, branches, environments).
+/// ship a `-w` flag.
 fn gitlab_host_or_default() -> String {
-    let output = std::process::Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .ok();
-    let host = output
-        .and_then(|out| out.status.success().then_some(out))
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .and_then(|url| crate::git_helpers::parse_remote_host(&url));
-    host.unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
+    crate::git_helpers::remote_host("origin").unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }
 
 /// Percent-encode a branch or environment name for use in a GitLab URL
@@ -3808,9 +3754,7 @@ mod tests {
 
     #[test]
     fn gitlab_host_without_origin_remote_falls_back_to_gitlab_com() {
-        // No upstream remote configured in CI/sandbox; assert graceful
-        // fallback rather than a panic.
-        std::env::set_current_dir("/").ok();
+        let _config = crate::config::isolate_config();
         assert_eq!(gitlab_host_or_default(), "gitlab.com");
     }
 
@@ -3916,6 +3860,21 @@ mod tests {
             })
             .collect();
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn people_args_prefix_added_and_removed_users() {
+        let add = vec!["a".to_string(), "b".to_string()];
+        let remove = vec!["c".to_string()];
+        assert_eq!(
+            GlabBackend::people_args("--reviewer", &add, &remove),
+            ["--reviewer=+a", "--reviewer=+b", "--reviewer=!c"]
+        );
+    }
+
+    #[test]
+    fn people_args_without_changes_is_empty() {
+        assert!(GlabBackend::people_args("--assignee", &[], &[]).is_empty());
     }
 
     #[test]
@@ -4724,6 +4683,23 @@ mod tests {
                 ),
                 (Some(3), Some("f00dfeed"), "bob", true, None, Some(false)),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_milestone_without_a_web_url_is_not_opened() {
+        let milestone = Milestone {
+            iid: 3,
+            project_path: "test-group".to_string(),
+            ..Milestone::default()
+        };
+        let error = GlabBackend::new()
+            .open_milestone_in_browser("test-group", &milestone)
+            .await
+            .expect_err("a milestone without a web_url has no page to open");
+        assert_eq!(
+            error.to_string(),
+            "Milestone URL unavailable; refresh the Milestones tab"
         );
     }
 }

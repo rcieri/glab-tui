@@ -1691,6 +1691,45 @@ mod tests {
         assert!(!text.contains("Delete selected PR"), "{text:?}");
     }
 
+    fn render_jobs_help(is_github: bool) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(160, 80)).unwrap();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github,
+            backend: create_backend(is_github),
+            tx: None,
+            page_size: 50,
+            api_per_page: 50,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.show_help = true;
+        app.active_tab = Tab::Jobs;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+        buffer_text(&terminal)
+    }
+
+    #[test]
+    fn render_help_offers_trace_follow_on_gitlab() {
+        let text = render_jobs_help(false);
+        assert!(text.contains("Toggle trace auto-follow mode"), "{text:?}");
+    }
+
+    #[test]
+    fn render_help_does_not_offer_trace_follow_on_github() {
+        let text = render_jobs_help(true);
+        assert!(text.contains("Toggle trace word wrap"), "{text:?}");
+        assert!(
+            !text.contains("Toggle trace auto-follow mode"),
+            "trace follow is not offered on GitHub: {text:?}"
+        );
+    }
+
     #[test]
     fn render_help_lists_custom_commands_only_on_their_tab() {
         let backend = TestBackend::new(160, 80);

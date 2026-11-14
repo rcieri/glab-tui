@@ -3338,6 +3338,7 @@ impl Backend for GhBackend {
                     due_date,
                     created_at: m.created_at,
                     project_path: project.to_string(),
+                    web_url: None,
                 }
             })
             .collect())
@@ -4002,20 +4003,6 @@ impl Backend for GhBackend {
             "OPENING WORKFLOW IN BROWSER",
         )
         .await?;
-        Ok(())
-    }
-
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_gh(
-                &["run", "view", id, "-R", project, "--web"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
-                .await?;
-        }
         Ok(())
     }
 

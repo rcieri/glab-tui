@@ -195,6 +195,7 @@ pub struct Theme {
     pub diff_gutter_bg: Color,
     pub diff_sep: Color,
     pub diff_search_bg: Color,
+    pub diff_search_fg: Color,
     // ── Comments ──
     pub comment_bg: Color,
     pub comment_draft_bg: Color,
@@ -710,6 +711,8 @@ struct ThemeToml {
     diff_sep: Option<String>,
     #[serde(default)]
     diff_search_bg: Option<String>,
+    #[serde(default)]
+    diff_search_fg: Option<String>,
     // ── Comments ──
     #[serde(default)]
     comment_bg: Option<String>,
@@ -833,6 +836,7 @@ impl ThemeToml {
             diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
             diff_sep: hex_or(&self.diff_sep, text_muted),
             diff_search_bg: hex_or(&self.diff_search_bg, yellow_bg),
+            diff_search_fg: hex_or(&self.diff_search_fg, yellow),
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
             comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
             modal_border: hex_or(&self.modal_border, border_focused),
@@ -1132,6 +1136,7 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.diff_gutter_bg, &overrides.diff_gutter_bg);
     apply_color(&mut base.diff_sep, &overrides.diff_sep);
     apply_color(&mut base.diff_search_bg, &overrides.diff_search_bg);
+    apply_color(&mut base.diff_search_fg, &overrides.diff_search_fg);
     // ── Comments ──
     apply_color(&mut base.comment_bg, &overrides.comment_bg);
     apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
@@ -1196,6 +1201,7 @@ pub struct ThemeOverrides {
     diff_gutter_bg: Option<String>,
     diff_sep: Option<String>,
     diff_search_bg: Option<String>,
+    diff_search_fg: Option<String>,
     // ── Comments ──
     comment_bg: Option<String>,
     comment_draft_bg: Option<String>,
@@ -2335,6 +2341,7 @@ key_hint = "#2f2f2f"
 danger_border = "#303030"
 backdrop_dim = "#313131"
 diff_search_bg = "#323232"
+diff_search_fg = "#333333"
 "##;
         let config: Config =
             toml::from_str(toml_str).expect("deserialize config with full theme overrides");
@@ -2392,6 +2399,7 @@ diff_search_bg = "#323232"
         assert_eq!(theme.danger_border, Color::Rgb(48, 48, 48));
         assert_eq!(theme.backdrop_dim, Color::Rgb(49, 49, 49));
         assert_eq!(theme.diff_search_bg, Color::Rgb(50, 50, 50));
+        assert_eq!(theme.diff_search_fg, Color::Rgb(51, 51, 51));
     }
 
     #[test]
@@ -2522,7 +2530,7 @@ diff_addition_emph_bg = "#123456"
     }
 
     #[test]
-    fn every_bundled_preset_gives_diff_search_matches_their_own_background() {
+    fn every_bundled_preset_keeps_diff_search_matches_readable() {
         let _lock = TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let _guard = EnvGuard::isolate_home(temp_dir.path());
@@ -2540,6 +2548,10 @@ diff_addition_emph_bg = "#123456"
                     "preset {name}: diff_search_bg matches {token}"
                 );
             }
+            assert_ne!(
+                theme.diff_search_fg, theme.diff_search_bg,
+                "preset {name}: diff_search_fg matches diff_search_bg"
+            );
         }
     }
 

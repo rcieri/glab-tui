@@ -326,7 +326,7 @@ fn render_highlighted_content(
     }
 
     let match_style = base_style
-        .fg(theme.yellow)
+        .fg(theme.diff_search_fg)
         .add_modifier(Modifier::BOLD)
         .add_modifier(Modifier::UNDERLINED);
 
@@ -347,11 +347,22 @@ fn render_content_normal(
 ) -> Vec<Span<'static>> {
     if let Some(highlighted) = line.syntax_spans(theme) {
         highlighted
-            .map(|(s, t)| Span::styled(t.to_string(), base_style.patch(s)))
+            .map(|(s, t)| Span::styled(t.to_string(), syntax_style_on_row(base_style, s)))
             .collect()
     } else {
         vec![Span::styled(code.to_string(), base_style)]
     }
+}
+
+/// A syntax color equal to the row background would hide the token, so the
+/// token keeps the row's foreground instead.
+fn syntax_style_on_row(row_style: Style, syntax: Style) -> Style {
+    let syntax = if syntax.fg == row_style.bg {
+        Style { fg: None, ..syntax }
+    } else {
+        syntax
+    };
+    row_style.patch(syntax)
 }
 
 fn merge_syntax_with_fuzzy<'a>(
@@ -363,13 +374,13 @@ fn merge_syntax_with_fuzzy<'a>(
     let mut result = Vec::new();
     let mut pos: usize = 0;
     for (syn_style, text) in highlighted {
-        // Keep the fuzzy match color (yellow) so matches stay visible over
-        // syntax coloring.
+        // Keep the search match color so matches stay visible over syntax
+        // coloring.
         let style_for = |in_match: bool| {
             if in_match {
                 match_style.add_modifier(syn_style.add_modifier)
             } else {
-                base_style.patch(syn_style)
+                syntax_style_on_row(base_style, syn_style)
             }
         };
         let mut buf = String::new();
@@ -2092,6 +2103,36 @@ diff --git a/a.rs b/a.rs
             .find(|s| s.content == "*")
             .expect("operator is its own span");
         assert_eq!(operator.style.fg, Some(theme.purple));
+    }
+
+    #[test]
+    fn a_syntax_color_matching_the_row_background_falls_back_to_the_row_foreground() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -0,0 +1 @@
++fn total() {}
+";
+        let view = crate::app::DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let added = view
+            .all_lines
+            .iter()
+            .find(|l| l.content == "+fn total() {}")
+            .expect("added line parsed");
+        let theme = Theme::default();
+        let function_fg = |row_bg: Color| {
+            let base = Style::default().fg(theme.text_normal).bg(row_bg);
+            render_diff_line_content(added, base, &theme, None)
+                .into_iter()
+                .find(|s| s.content == "total")
+                .expect("function name is its own span")
+                .style
+                .fg
+        };
+
+        assert_eq!(function_fg(theme.bg), Some(theme.yellow));
+        assert_eq!(function_fg(theme.yellow), Some(theme.text_normal));
     }
 
     fn rendered_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {

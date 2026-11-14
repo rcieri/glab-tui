@@ -60,7 +60,7 @@ if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"
 fi
 
-# Merge settings the merge dialog reads: merge commits, squash opt-in.
+# Merge settings the merge dialog reads: merge commits, squash preselected.
 if [[ "$*" == "repo view --output json"* ]]; then
     echo '{"id":1,"merge_method":"merge","squash_option":"default_on"}'
     exit 0

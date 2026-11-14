@@ -7,6 +7,7 @@ pub mod rate_limit;
 pub mod subprocess;
 
 use crate::domain::branches::Branch;
+use crate::domain::contributions::FeedPage;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JobTrace, TraceCursor, TraceUpdate};
@@ -39,6 +40,10 @@ impl BackendKind {
 
     pub fn is_gitlab(self) -> bool {
         matches!(self, BackendKind::GitLab)
+    }
+
+    pub fn mr_reference_prefix(self) -> &'static str {
+        if self.is_github() { "#" } else { "!" }
     }
 
     /// Pausing, resuming and renaming runners. GitHub's runner API has no
@@ -185,6 +190,10 @@ pub trait Backend: Send + Sync {
     fn server_state_query(&self, _scope: &Scope, _filtered: StateQuery) -> StateQuery {
         StateQuery::All
     }
+
+    /// The most rows one `list_issues` or `list_mrs` call returns for these
+    /// arguments. A listing that long may have left older rows out.
+    fn max_listed_rows(&self, scope: &Scope, page_size: usize, per_request: usize) -> usize;
 
     // ── Issues ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
@@ -700,6 +709,17 @@ pub trait Backend: Send + Sync {
         environment: &str,
         deployment: &Deployment,
     ) -> Result<()>;
+
+    // ── Contributions ──
+    /// Page `page` (from 1) of a repository's activity feed, newest first,
+    /// `EVENTS_PER_PAGE` events a page. GitLab leaves out events before
+    /// `since`, GitHub has no date filter. Repository scope only.
+    async fn list_contribution_page(
+        &self,
+        scope: &Scope,
+        since: chrono::NaiveDate,
+        page: usize,
+    ) -> Result<FeedPage>;
 
     // ── Labels / Members / Misc ──
     async fn fetch_labels(

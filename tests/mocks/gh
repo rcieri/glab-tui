@@ -1,4 +1,17 @@
 #!/bin/bash
+
+# Prints a fixture with every HOURS_AGO_<n> replaced by the UTC time n hours
+# before now, for fixtures whose readers only keep recent entries.
+cat_relative() {
+    local text hours at
+    text=$(cat "$1")
+    for hours in $(grep -o 'HOURS_AGO_[0-9]*' "$1" | sort -u | sed 's/HOURS_AGO_//'); do
+        at=$(( $(date +%s) - hours * 3600 ))
+        at=$(date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ)
+        text=${text//HOURS_AGO_$hours/$at}
+    done
+    printf '%s\n' "$text"
+}
 LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
 FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
@@ -55,7 +68,10 @@ elif [[ "$*" == "run list"* ]]; then
 elif [[ "$*" == "run view "*"--json jobs"* ]]; then
     echo '[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success", "url": "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321"}]'
     exit 0
-elif [[ "$*" == "issue list"* || "$*" == "label list"* ]]; then
+elif [[ "$*" == "issue list"* ]]; then
+    cat "$FIXTURES_DIR/gh_issues.json"
+    exit 0
+elif [[ "$*" == "label list"* ]]; then
     echo "[]"
     exit 0
 elif [[ "$*" == "auth status"* ]]; then
@@ -149,10 +165,14 @@ if [[ "$*" == *"api"* ]]; then
         echo "test-user"
     elif [[ "$*" == *"closingIssuesReferences"* ]]; then
         echo '{"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}'
+    elif [[ "$*" == *"closedByPullRequestsReferences"* ]]; then
+        echo '{"data": {"repository": {"issue": {"closedByPullRequestsReferences": {"nodes": []}}}}}'
     elif [[ "$*" == *"orgs/"*"/repos"*" --jq .[].full_name"* ]]; then
         echo "acme/project-b"
     elif [[ "$*" == *"/assignees"* || "$*" == *"orgs/"*"/members"* ]]; then
         echo "[]"
+    elif [[ "$*" == *"/events?"* ]]; then
+        cat_relative "$FIXTURES_DIR/gh_events.json"
     # Review threads and comments span two pages. Only `--paginate` gets the
     # second one, printed right after the first as its own JSON document.
     elif [[ "$*" == *"reviewThreads"* ]]; then
@@ -210,6 +230,8 @@ if [[ "$*" == *"api"* ]]; then
         }]'
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
+    elif [[ "$*" == *"/releases"* ]]; then
+        cat "$FIXTURES_DIR/gh_releases.json"
     elif [[ "$*" == *"/jobs"* ]]; then
         echo '{"jobs": [{"id": 54321, "status": "completed", "conclusion": "success", "name": "rspec"}]}'
     else

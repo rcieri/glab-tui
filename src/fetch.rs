@@ -447,6 +447,9 @@ pub fn dispatch_state_query_refetch(
     }
 }
 
+/// Fetch `tab`'s list in the background. The Dashboard has no list of its
+/// own and refreshes through `spawn_refresh_dashboard`, which reads the app
+/// to decide what to fetch.
 pub fn spawn_refresh_active_tab(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
@@ -474,8 +477,104 @@ pub async fn refresh_tab(
         return;
     }
     client.tx = None; // suppress terminal log for background fetches
+    if tab == app::Tab::Dashboard {
+        let _ = tx.send(Event::DashboardRefreshed);
+    } else {
+        refresh_list(client, scope, states, tab, tx).await;
+    }
+}
+
+/// Refresh the tab on screen: its list, or on the Dashboard what `refresh`
+/// calls for.
+pub fn spawn_refresh_shown_tab(
+    fx: &mut Effects,
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    refresh: crate::dashboard::DashboardRefresh,
+    tx: ScopedSender,
+) {
+    if app.active_tab == app::Tab::Dashboard {
+        spawn_refresh_dashboard(fx, client, app, refresh, tx);
+    } else {
+        spawn_refresh_active_tab(
+            fx,
+            client,
+            &app.scope,
+            app.requested_state_queries(),
+            app.active_tab,
+            tx,
+        );
+    }
+}
+
+/// Refresh the Dashboard: fetch the lists and the activity feed `refresh`
+/// calls for, each list reporting through its own tab's events, then report
+/// `Event::DashboardRefreshed`. The lists it fetches are marked loading so
+/// switching to their tab meanwhile does not fetch them a second time.
+pub fn spawn_refresh_dashboard(
+    fx: &mut Effects,
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    refresh: crate::dashboard::DashboardRefresh,
+    tx: ScopedSender,
+) {
+    let plan = app.dashboard_fetch_plan(refresh);
+    app.start_loading_tab(app::Tab::Dashboard);
+    for tab in &plan.sources {
+        app.start_loading_tab(*tab);
+    }
+    if plan.restarts_slow_refresh {
+        app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
+    }
+    fx.spawn(refresh_dashboard(
+        client.clone(),
+        app.scope.clone(),
+        app.requested_state_queries(),
+        plan,
+        tx,
+    ));
+}
+
+async fn refresh_dashboard(
+    mut client: domain::client::GitlabClient,
+    scope: crate::scope::Scope,
+    states: StateQueries,
+    plan: crate::dashboard::DashboardFetchPlan,
+    tx: ScopedSender,
+) {
+    client.tx = None;
+    let mut fetches: Vec<_> = plan
+        .sources
+        .into_iter()
+        .map(|source| {
+            tokio::spawn(refresh_list(
+                client.clone(),
+                scope.clone(),
+                states,
+                source,
+                tx.clone(),
+            ))
+        })
+        .collect();
+    if plan.reads_activity {
+        fetches.push(spawn_contributions_fetch(&client, &scope, tx.clone()));
+    }
+    for fetch in fetches {
+        let _ = fetch.await;
+    }
+    let _ = tx.send(Event::DashboardRefreshed);
+}
+
+async fn refresh_list(
+    client: domain::client::GitlabClient,
+    scope: crate::scope::Scope,
+    states: StateQueries,
+    tab: app::Tab,
+    tx: ScopedSender,
+) {
     let repo_path = scope.as_str().to_string();
     match tab {
+        app::Tab::Dashboard => {}
         app::Tab::Issues => {
             match domain::issues::list_issues(&client, &scope, states.issues).await {
                 Ok(issues) => {
@@ -643,6 +742,21 @@ pub async fn refresh_tab(
         }
         app::Tab::Terminal => {}
     }
+}
+
+fn spawn_contributions_fetch(
+    client: &domain::client::GitlabClient,
+    scope: &crate::scope::Scope,
+    tx: ScopedSender,
+) -> tokio::task::JoinHandle<()> {
+    let client = client.clone();
+    let scope = scope.clone();
+    tokio::spawn(async move {
+        let result = domain::contributions::list_contributions(&client, &scope, chrono::Utc::now())
+            .await
+            .map_err(|e| format!("Failed to fetch activity: {e}"));
+        let _ = tx.send(Event::ContributionsFetched(result));
+    })
 }
 
 /// Fetch a single issue by iid from `project_path` for the "go to issue/MR by
@@ -878,8 +992,10 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
 
 /// Kick off background fetches for `app`'s enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
-/// synchronous fetch), `Tab::Terminal`, and any tab whose data is
-/// already loaded.
+/// synchronous fetch), `Tab::Terminal` and `Tab::Dashboard`, which have
+/// no list of their own, and any tab already loading or loaded. The tabs
+/// it queues are marked loading, so switching to one meanwhile, or the
+/// Dashboard reading what is missing, does not fetch it again.
 ///
 /// Each tab fetches through `refresh_tab` so it shares the existing
 /// per-tab error handling. The queue paces itself through
@@ -888,7 +1004,7 @@ fn inspected_todo_without_detail(app: &app::App) -> Option<(String, String)> {
 pub fn spawn_refresh_all_tabs(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
-    app: &app::App,
+    app: &mut app::App,
     tx: ScopedSender,
 ) {
     let client = client.clone();
@@ -898,9 +1014,16 @@ pub fn spawn_refresh_all_tabs(
         .available_tabs()
         .into_iter()
         .filter(|tab| {
-            *tab != app.active_tab && *tab != app::Tab::Terminal && !app.loaded_tabs.contains(tab)
+            *tab != app.active_tab
+                && !matches!(tab, app::Tab::Terminal | app::Tab::Dashboard)
+                && tab.is_fetchable_in(&app.scope, client.kind())
+                && !app.loading_tabs.contains(tab)
+                && !app.loaded_tabs.contains(tab)
         })
         .collect();
+    for tab in &tabs {
+        app.start_loading_tab(*tab);
+    }
     fx.spawn(async move {
         for tab in tabs {
             crate::backend::rate_limit::pace_bulk_operation().await;

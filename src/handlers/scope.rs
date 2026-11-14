@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::domain::client::GitlabClient;
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab, spawn_refresh_all_tabs};
+use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_all_tabs};
 use crate::scope::Scope;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -99,8 +99,13 @@ pub(crate) fn apply_client_ready(
     }
 
     let tx = app.scoped_sender(tx.clone());
-    let states = app.requested_state_queries();
-    spawn_refresh_active_tab(fx, &client, &app.scope, states, app.active_tab, tx.clone());
+    crate::fetch::spawn_refresh_shown_tab(
+        fx,
+        &client,
+        app,
+        crate::dashboard::DashboardRefresh::Full,
+        tx.clone(),
+    );
     if app.config.prefetch_tabs {
         spawn_refresh_all_tabs(fx, &client, app, tx.clone());
     }

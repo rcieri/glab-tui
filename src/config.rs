@@ -240,6 +240,8 @@ impl IconSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
+    pub tab_dashboard: String,
+    pub commit: String,
     pub tab_issue: String,
     pub tab_pr: String,
     pub tab_pipeline: String,
@@ -355,11 +357,15 @@ pub struct Icons {
     pub pointer: String,
     pub todo_unread: String,
     pub todo_read: String,
+    pub progress_filled: String,
+    pub progress_empty: String,
 }
 
 impl Icons {
     pub fn nerd() -> Self {
         Self {
+            tab_dashboard: "\u{f463}".to_string(),
+            commit: "\u{f417}".to_string(),
             tab_issue: "\u{f41b}".to_string(),
             tab_pr: "\u{f407}".to_string(),
             tab_pipeline: "\u{f500}".to_string(),
@@ -475,6 +481,8 @@ impl Icons {
             pointer: "❯".to_string(),
             todo_unread: "\u{f0e0}".to_string(),
             todo_read: "\u{f2b6}".to_string(),
+            progress_filled: "█".to_string(),
+            progress_empty: "░".to_string(),
         }
     }
 
@@ -482,6 +490,8 @@ impl Icons {
     /// font.
     pub fn ascii() -> Self {
         Self {
+            tab_dashboard: "&".to_string(),
+            commit: "*".to_string(),
             tab_issue: "#".to_string(),
             tab_pr: "!".to_string(),
             tab_pipeline: ">".to_string(),
@@ -597,6 +607,8 @@ impl Icons {
             pointer: ">".to_string(),
             todo_unread: "*".to_string(),
             todo_read: ".".to_string(),
+            progress_filled: "#".to_string(),
+            progress_empty: "-".to_string(),
         }
     }
 }
@@ -1307,6 +1319,40 @@ impl Default for UiConfig {
     }
 }
 
+/// The `[dashboard]` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DashboardConfig {
+    /// The Dashboard tab is opt-in, so it does not take the first tab from
+    /// people used to starting on Issues.
+    pub enabled: bool,
+    /// Whose work the Dashboard opens on: `me`, `everyone` or a login.
+    pub person: String,
+    pub mr_idle_days: u32,
+    pub issue_idle_days: u32,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        let idle = crate::domain::dashboard::IdleDays::default();
+        Self {
+            enabled: false,
+            person: "me".to_string(),
+            mr_idle_days: u32::try_from(idle.mrs).unwrap_or(u32::MAX),
+            issue_idle_days: u32::try_from(idle.issues).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl DashboardConfig {
+    pub fn idle_days(&self) -> crate::domain::dashboard::IdleDays {
+        crate::domain::dashboard::IdleDays {
+            mrs: i64::from(self.mr_idle_days),
+            issues: i64::from(self.issue_idle_days),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -1342,6 +1388,7 @@ pub struct Config {
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
+    pub dashboard: DashboardConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1373,6 +1420,7 @@ impl Default for Config {
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
+            dashboard: DashboardConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -1481,6 +1529,14 @@ page_size = 100
 # purple = "{purple}"
 # purple_bg = "{purple_bg}"
 
+
+[dashboard]
+# The Dashboard tab is off until enabled here.
+enabled = false
+# Whose work it opens on: "me", "everyone" or a login.
+person = "me"
+mr_idle_days = 7
+issue_idle_days = 14
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

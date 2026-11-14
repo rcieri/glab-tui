@@ -50,6 +50,7 @@ impl KeyContext {
 /// The `[keybindings.<table>]` and `[custom_keybindings.<pane>]` name of a tab.
 pub fn tab_table(tab: Tab) -> &'static str {
     match tab {
+        Tab::Dashboard => "dashboard",
         Tab::Issues => "issues",
         Tab::MergeRequests => "mrs",
         Tab::Pipelines => "pipelines",
@@ -182,6 +183,7 @@ const MILESTONES: KeyContext = KeyContext::Tab(Tab::Milestones);
 const BRANCHES: KeyContext = KeyContext::Tab(Tab::Branches);
 const ENVIRONMENTS: KeyContext = KeyContext::Tab(Tab::Environments);
 const TERMINAL: KeyContext = KeyContext::Tab(Tab::Terminal);
+const DASHBOARD: KeyContext = KeyContext::Tab(Tab::Dashboard);
 
 registry! {
     GlobalForceQuit => ActionSpec::new(Global, "force_quit", &["Ctrl+c"], "Quit program, even from an overlay");
@@ -348,6 +350,8 @@ registry! {
     TerminalInspectCommand => ActionSpec::new(TERMINAL, "inspect_command", &["Enter", "P"], "Inspect the highlighted command (full command, timing, stdout, stderr)");
     TerminalRerunCommand => ActionSpec::new(TERMINAL, "rerun_command", &["r"], "Re-run the highlighted glab, gh or git call");
     TerminalCycleStatusFilter => ActionSpec::new(TERMINAL, "cycle_status_filter", &["s"], "Cycle the status filter: All, Errors, Success");
+
+    DashboardCycleWindow => ActionSpec::new(DASHBOARD, "cycle_window", &["w"], "Contributors: open work, then activity in the last day, week, month");
 
     DiffBack => ActionSpec::new(DiffView, "back", &["Esc"], "Leave search or selection, focus the file tree, then exit the diff view");
     DiffClose => ActionSpec::new(DiffView, "close", &["q"], "Cancel the selection, or exit the diff view");

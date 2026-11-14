@@ -309,6 +309,7 @@ fn validate(
     let tabs: Vec<Tab> = Tab::ALL
         .into_iter()
         .filter(|tab| pane.applies_to(*tab))
+        .filter(|tab| *tab != Tab::Dashboard || config.dashboard.enabled)
         .collect();
     let mut builtin_shadows: Vec<(Tab, Action)> = Vec::new();
     let mut shadowed_on: Vec<Tab> = Vec::new();

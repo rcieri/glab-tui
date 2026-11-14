@@ -1,0 +1,16 @@
+[
+  {
+    "number": 7,
+    "title": "Bug: Crash on startup",
+    "state": "OPEN",
+    "url": "https://github.com/test-owner/test-repo/issues/7",
+    "labels": [],
+    "author": { "login": "test-user" },
+    "body": "App crashes immediately.",
+    "createdAt": "2026-07-06T10:00:00Z",
+    "updatedAt": "2026-07-06T12:00:00Z",
+    "closedAt": null,
+    "milestone": null,
+    "assignees": []
+  }
+]

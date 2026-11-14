@@ -268,25 +268,12 @@ fn jump_to_target(
         ));
         return false;
     }
-    let is_loaded = match target {
-        NotificationTarget::Issue => app.focus_issue(Some(project), iid),
-        NotificationTarget::MergeRequest => app.focus_mr(Some(project), iid),
-    };
-    if is_loaded {
-        return true;
-    }
     match target {
         NotificationTarget::Issue => {
-            crate::fetch::spawn_fetch_issue(
-                fx,
-                client,
-                project,
-                iid,
-                app.scoped_sender(tx.clone()),
-            );
+            crate::handlers::tabs::focus_or_fetch_issue(app, client, project, iid, tx, fx);
         }
         NotificationTarget::MergeRequest => {
-            crate::fetch::spawn_fetch_mr(fx, client, project, iid, app.scoped_sender(tx.clone()));
+            crate::handlers::tabs::focus_or_fetch_mr(app, client, project, iid, tx, fx);
         }
     }
     true

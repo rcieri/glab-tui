@@ -1,4 +1,5 @@
 pub mod compaction;
+pub mod dashboard;
 mod diff;
 mod form;
 mod helpers;
@@ -555,7 +556,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
             detail: chunks[1],
         }
     } else {
-        let show_preview = app.detail_visible && app.active_tab != Tab::Terminal;
+        let show_preview =
+            app.detail_visible && !matches!(app.active_tab, Tab::Terminal | Tab::Dashboard);
         let preview_columns = show_preview.then(|| preview_columns(chunks[1].width));
         Workspace::split(chunks[1], sidebar_width, term_height, preview_columns)
     };
@@ -612,6 +614,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // are, so the path down is appended. Jobs shows the opened pipeline's
     // path. The Todos tab shows which items its read filter lets through.
     let breadcrumb = match app.active_tab {
+        Tab::Dashboard => app.scope.display(),
         Tab::Pipelines => app.nav_breadcrumb(),
         Tab::Jobs => app.jobs_breadcrumb(),
         Tab::Todos if app.shows_read_todos() => "All".to_string(),
@@ -683,6 +686,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
             main_block.clone(),
         ),
         Tab::Terminal => tabs::render_tab_terminal(f, ctx, app, content_area),
+        Tab::Dashboard => {
+            dashboard::render_tab_dashboard(f, ctx, app, content_area, main_block.clone())
+        }
     }
 
     // Compact terminal pane at bottom of the middle column

@@ -165,7 +165,9 @@ fn centered(width: u16, height: u16, screen: Rect) -> Rect {
 fn natural_rows<F>(group: &Group<F>, width: usize) -> u16 {
     let rows = match group {
         Group::Info(text) | Group::Warning(text) if text.is_empty() => 0,
-        Group::Info(text) | Group::Warning(text) => wrap_text(text, width).len(),
+        Group::Info(text) | Group::Warning(text) => {
+            wrap_text(&sanitize_untrusted(text), width).len()
+        }
         Group::Radio(radio) if radio.choices.len() > 1 => {
             usize::from(!radio.label.is_empty()) + radio.choices.len()
         }
@@ -289,14 +291,14 @@ fn draw_group<F>(
     };
     match group {
         Group::Info(body) => {
-            let lines: Vec<Line> = wrap_text(body, usize::from(rect.width))
+            let lines: Vec<Line> = wrap_text(&sanitize_untrusted(body), usize::from(rect.width))
                 .into_iter()
                 .map(Line::from)
                 .collect();
             f.render_widget(Paragraph::new(lines).style(text), rect);
         }
         Group::Warning(body) => {
-            let lines: Vec<Line> = wrap_text(body, usize::from(rect.width))
+            let lines: Vec<Line> = wrap_text(&sanitize_untrusted(body), usize::from(rect.width))
                 .into_iter()
                 .map(Line::from)
                 .collect();
@@ -657,5 +659,31 @@ mod tests {
                 format!("{}{INPUT_CURSOR}", "x".repeat(5)),
             ]
         );
+    }
+
+    #[test]
+    fn info_and_warning_text_is_drawn_without_escape_sequences() {
+        let mut form: Form<Id> = Form::new(
+            vec![
+                Group::Info("title \x1b]0;pwned\x07here".to_string()),
+                Group::Warning("stderr \x1b[31mred\x1b[0m".to_string()),
+            ],
+            Vec::new(),
+        );
+        let terminal = draw(&mut form, 60, 24);
+        let groups = form.layout.unwrap().groups;
+        assert_eq!(groups[0].height, 1);
+        assert_eq!(groups[1].height, 1);
+        let text = |rect: Rect| {
+            row_text(&terminal, rect.y)
+                .chars()
+                .skip(usize::from(rect.x))
+                .take(usize::from(rect.width))
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        };
+        assert_eq!(text(groups[0]), "title here");
+        assert_eq!(text(groups[1]), "stderr red");
     }
 }

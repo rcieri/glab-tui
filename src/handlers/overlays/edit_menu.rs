@@ -1660,28 +1660,25 @@ pub fn handle_key(
                 return;
             }
 
-            if field_name == "Labels"
-                || field_name == "Assignees"
-                || field_name == "Reviewers"
-                || field_name == "Milestone"
-                || field_name == "Confidential"
-                || field_name == "Status (Draft/Ready)"
-                || field_name == "Merge Request Pipeline"
-                || field_name == "Source Branch"
-                || field_name == "Target Branch"
-                || field_name == "Branch / Ref"
-                || field_name == "Create From"
-                || field_name == "Workflow File"
-                || field_name == "Tag"
-                || field_name == "Create from Issue"
-                || field_name == "Description Template"
-                || (field_name == "Project"
-                    && menu.selected_idx < menu.fields.len()
-                    && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Ref)
-                || field_name.starts_with("Input: ")
-            {
+            let is_ref_row = menu
+                .fields
+                .get(menu.selected_idx)
+                .is_some_and(|f| f.kind == crate::app::FieldType::Ref);
+            let purpose = match field_name.as_str() {
+                "Create from Issue" => Some(crate::app::SelectorPurpose::CreateMrFromIssue),
+                "Description Template" => Some(crate::app::SelectorPurpose::DescriptionTemplate {
+                    kind: crate::app::TemplateKind::of(&menu.entity_kind),
+                }),
+                "Project" if !is_ref_row => None,
+                _ => crate::app::SelectorField::from_label(&field_name)
+                    .map(crate::app::SelectorPurpose::Field),
+            };
+            if let Some(purpose) = purpose {
                 let mut current_set = std::collections::HashSet::new();
-                let field = crate::app::SelectorField::from_label(&field_name);
+                let field = match &purpose {
+                    crate::app::SelectorPurpose::Field(field) => Some(field.clone()),
+                    _ => None,
+                };
                 let multi_select = matches!(
                     field,
                     Some(
@@ -2044,17 +2041,6 @@ pub fn handle_key(
 
                 let request =
                     (is_loading && app.gitlab_client.is_some()).then(|| app.next_request_tag());
-                let purpose = if field_name == "Create from Issue" {
-                    crate::app::SelectorPurpose::CreateMrFromIssue
-                } else if field_name == "Description Template" {
-                    crate::app::SelectorPurpose::DescriptionTemplate {
-                        kind: crate::app::TemplateKind::of(&menu.entity_kind),
-                    }
-                } else {
-                    crate::app::SelectorPurpose::Field(
-                        field.clone().unwrap_or(crate::app::SelectorField::Labels),
-                    )
-                };
                 let sel = crate::app::Selector {
                     title: format!("Select {field_name}"),
                     all_items,
@@ -2371,5 +2357,50 @@ mod tests {
                 ("debug".to_string(), "bool(false)".to_string())
             ]
         );
+    }
+
+    /// Enter on a selector row opens the picker for that row, special rows
+    /// included, so the pick is written back to the row it came from.
+    #[test]
+    fn enter_on_a_selector_row_opens_the_picker_for_that_row() {
+        use crate::app::{EditEntityKind, EditMenu, Field, SelectorField, SelectorPurpose};
+        let rows = [
+            ("Create from Issue", SelectorPurpose::CreateMrFromIssue),
+            (
+                "Target Branch",
+                SelectorPurpose::Field(SelectorField::TargetBranch),
+            ),
+            ("Project", SelectorPurpose::Field(SelectorField::Project)),
+        ];
+        for (label, expected) in rows {
+            let mut app = App::default();
+            app.open_edit_menu(EditMenu {
+                title: "New MR".to_string(),
+                entity_project: "g/p".to_string(),
+                fields: vec![Field::ref_field(label, String::new())],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 0,
+                entity_kind: EditEntityKind::CreateMr,
+                state: ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            });
+            let tx = app.tx.clone();
+            let mut fx = Effects::default();
+            let enter = KeyPress::from(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            ));
+            handle_key(&mut app, &enter, &tx, &mut fx);
+            assert_eq!(
+                app.selector().map(|s| s.purpose.clone()),
+                Some(expected),
+                "{label}"
+            );
+        }
     }
 }

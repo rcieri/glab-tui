@@ -46,9 +46,11 @@ fn unknown_tab_name_is_reported_and_the_rest_of_the_list_applies() {
         .wait_for_screen_contains("1 unknown tab name(s) in layout.tabs", 5000)
         .expect("the unknown name is reported");
 
+    session.settle(300);
     let screen = session.emulator.get_text();
     assert!(screen.contains("MRS"), "{screen}");
     assert!(!screen.contains("ISSUES"), "{screen}");
+    assert!(!screen.contains("PIPELINES"), "{screen}");
 }
 
 /// `toggle_nav` (`Alt+n`) hides the sidebar and shows it again.

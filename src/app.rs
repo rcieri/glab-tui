@@ -3077,8 +3077,7 @@ pub enum ModalKind {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConfigureOverlay {
-    /// Index into `configure_view::configure_rows` of the focused row.
-    pub column_checklist_idx: usize,
+    pub focused_row: usize,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub editing_page_size: bool,
@@ -11709,7 +11708,7 @@ index abcdef..ffffff 100644
         assert!(!app.is_column_visible(Tab::MergeRequests, "Author"));
 
         assert!(!app.focus_column_checklist());
-        assert_eq!(app.configure().map(|c| c.column_checklist_idx), None);
+        assert_eq!(app.configure().map(|c| c.focused_row), None);
     }
 
     #[test]

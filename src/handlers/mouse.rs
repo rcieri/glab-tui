@@ -91,10 +91,10 @@ pub fn handle_mouse_event(
                             .len()
                             .saturating_sub(1);
                         if let Some(c) = app.configure_mut() {
-                            c.column_checklist_idx = if scroll_down {
-                                c.column_checklist_idx.saturating_add(1).min(last)
+                            c.focused_row = if scroll_down {
+                                c.focused_row.saturating_add(1).min(last)
                             } else {
-                                c.column_checklist_idx.saturating_sub(1)
+                                c.focused_row.saturating_sub(1)
                             };
                         }
                         return;

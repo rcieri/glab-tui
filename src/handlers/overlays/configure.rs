@@ -15,12 +15,8 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let (save_menu_open, editing_page_size, column_checklist_idx) = match app.configure() {
-        Some(c) => (
-            c.save_menu_open,
-            c.editing_page_size,
-            c.column_checklist_idx,
-        ),
+    let (save_menu_open, editing_page_size, focused_row) = match app.configure() {
+        Some(c) => (c.save_menu_open, c.editing_page_size, c.focused_row),
         None => return,
     };
 
@@ -106,7 +102,7 @@ pub fn handle_key(
     }
 
     let rows = configure_rows(app);
-    let cursor = column_checklist_idx.min(rows.len() - 1);
+    let cursor = focused_row.min(rows.len() - 1);
     let row = rows[cursor];
 
     match key_event.code {
@@ -219,7 +215,7 @@ pub(crate) fn activate_row(
 
 pub(crate) fn focus(app: &mut App, idx: usize) {
     if let Some(c) = app.configure_mut() {
-        c.column_checklist_idx = idx;
+        c.focused_row = idx;
     }
 }
 
@@ -357,7 +353,7 @@ mod tests {
     }
 
     fn focused(app: &App) -> ConfigureRow {
-        configure_rows(app)[app.configure().unwrap().column_checklist_idx]
+        configure_rows(app)[app.configure().unwrap().focused_row]
     }
 
     #[test]

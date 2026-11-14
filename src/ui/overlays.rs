@@ -464,7 +464,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         let (active_idx, editing_page_size, save_menu_open, save_menu_selection) =
             match app.configure() {
                 Some(cfg) => (
-                    cfg.column_checklist_idx,
+                    cfg.focused_row,
                     cfg.editing_page_size,
                     cfg.save_menu_open,
                     cfg.save_menu_selection,

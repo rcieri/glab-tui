@@ -146,6 +146,18 @@ pub fn handle_key(
             diff_view.move_by(false, rows, in_selection);
             app.diff_view = Some(diff_view);
         }
+        _ if keybinding_matches(&app.config.keybindings.diff.layout_side_by_side, key_event) => {
+            set_layout(app, &mut diff_view, app::DiffLayout::SideBySide);
+            app.diff_view = Some(diff_view);
+        }
+        _ if keybinding_matches(&app.config.keybindings.diff.layout_unified, key_event) => {
+            set_layout(app, &mut diff_view, app::DiffLayout::Unified);
+            app.diff_view = Some(diff_view);
+        }
+        _ if keybinding_matches(&app.config.keybindings.diff.layout_auto, key_event) => {
+            set_layout(app, &mut diff_view, app::DiffLayout::Auto);
+            app.diff_view = Some(diff_view);
+        }
         KeyCode::Char('q') => {
             if in_selection {
                 diff_view.selection_start = None;
@@ -294,51 +306,12 @@ pub fn handle_key(
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('d') => {
-            if !diff_view.focus_on_files {
-                let old_side_by_side = diff_view.side_by_side;
-                let old_cursor = diff_view.cursor_idx;
-                diff_view.side_by_side = !diff_view.side_by_side;
-                diff_view.update_active_lines();
-
-                if old_side_by_side {
-                    if let Some(sline) = diff_view.side_by_side_lines.get(old_cursor) {
-                        let target_line = sline.right.as_ref().or(sline.left.as_ref());
-                        if let Some(target) = target_line {
-                            if let Some(new_idx) = diff_view.lines.iter().position(|l| {
-                                l.file_path == target.file_path
-                                    && l.old_line_num == target.old_line_num
-                                    && l.new_line_num == target.new_line_num
-                                    && l.line_type == target.line_type
-                            }) {
-                                diff_view.cursor_idx = new_idx;
-                            }
-                        }
-                    }
-                } else if let Some(uline) = diff_view.lines.get(old_cursor) {
-                    if let Some(new_idx) = diff_view.side_by_side_lines.iter().position(|l| {
-                        if uline.line_type == crate::app::DiffLineType::HunkHeader
-                            || uline.line_type == crate::app::DiffLineType::Meta
-                        {
-                            l.line_type == uline.line_type
-                                && l.left.as_ref().is_some_and(|x| x.content == uline.content)
-                        } else {
-                            l.left.as_ref().is_some_and(|x| {
-                                x.old_line_num == uline.old_line_num
-                                    && x.new_line_num == uline.new_line_num
-                                    && x.file_path == uline.file_path
-                            }) || l.right.as_ref().is_some_and(|x| {
-                                x.old_line_num == uline.old_line_num
-                                    && x.new_line_num == uline.new_line_num
-                                    && x.file_path == uline.file_path
-                            })
-                        }
-                    }) {
-                        diff_view.cursor_idx = new_idx;
-                    }
-                }
-
-                diff_view.scroll_offset = diff_view.cursor_idx.saturating_sub(5);
-            }
+            let other = if diff_view.side_by_side {
+                app::DiffLayout::Unified
+            } else {
+                app::DiffLayout::SideBySide
+            };
+            set_layout(app, &mut diff_view, other);
             app.diff_view = Some(diff_view);
         }
         KeyCode::Char('j') | KeyCode::Down => {
@@ -606,6 +579,28 @@ pub fn handle_key(
             handlers::custom_commands::run_bound_diff_command(app, key_event, tx, fx);
         }
     }
+}
+
+/// Sets the diff layout for the rest of the session. A pinned layout applies to
+/// the open diff at once. `Auto` is resolved against the pane width on the next
+/// draw.
+fn set_layout(app: &mut App, diff_view: &mut app::DiffView, layout: app::DiffLayout) {
+    app.diff_layout = layout;
+    let auto_key = &app.config.keybindings.diff.layout_auto;
+    let notice = match layout {
+        app::DiffLayout::Auto => "Diff layout follows the diff pane width again".to_string(),
+        app::DiffLayout::SideBySide => {
+            diff_view.set_side_by_side(true);
+            format!(
+                "Diff layout pinned to side-by-side ({auto_key} follows the diff pane width again)"
+            )
+        }
+        app::DiffLayout::Unified => {
+            diff_view.set_side_by_side(false);
+            format!("Diff layout pinned to unified ({auto_key} follows the diff pane width again)")
+        }
+    };
+    app.show_notice(notice);
 }
 
 /// A draft anchored to `range`, its body still to be written.

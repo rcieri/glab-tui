@@ -625,7 +625,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
 
-> Diff View keys are **fixed** and not remappable in `config.toml`.
+> Diff View keys are **fixed** and not remappable in `config.toml`, except the layout keys `1`, `2` and `0`: remap them under `[keybindings.diff]` as `layout_side_by_side`, `layout_unified` and `layout_auto`.
 
 | Key | Action |
 |---|---|
@@ -642,7 +642,9 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `z` / `Z` | Collapse / expand all files |
 | `m` | Mark / unmark file as reviewed (on a directory: every file below it) |
 | `M` | Hide / show reviewed files in the file tree |
-| `d` | Toggle unified / side-by-side layout |
+| `d` | Toggle unified / side-by-side layout, pinned for the session |
+| `1` / `2` | Pin side-by-side / unified layout for the session |
+| `0` | Pick the layout from the width again: side-by-side when the diff pane has at least 121 columns inside its border (two 60-column sides and the divider), unified below |
 | `v` / `V` | Start / stop multi-line selection for comments |
 | `c` | Add comment on current line / selection |
 | `C` | Add comment via external `$EDITOR` |

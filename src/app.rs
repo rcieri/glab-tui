@@ -1286,6 +1286,27 @@ pub fn note_position_anchors(
     path_matches && (new_line_matches || old_line_matches)
 }
 
+/// The session's diff layout: picked from the diff pane width, or pinned by a layout key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiffLayout {
+    /// Side by side when the diff pane is wide enough, unified otherwise.
+    #[default]
+    Auto,
+    SideBySide,
+    Unified,
+}
+
+impl DiffLayout {
+    /// Whether a diff pane `columns` wide shows its rows side by side.
+    pub fn is_side_by_side(self, columns: u16) -> bool {
+        match self {
+            Self::Auto => crate::ui::compaction::fits_side_by_side_diff(columns),
+            Self::SideBySide => true,
+            Self::Unified => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct DiffView {
@@ -1306,6 +1327,10 @@ pub struct DiffView {
     pub selection_end: Option<usize>,
     pub side_by_side: bool,
     pub side_by_side_lines: Vec<SideBySideLine>,
+    /// Unified row the cursor left when the view last went side by side. A row
+    /// pairing a removal with an addition shows two unified lines, so the row
+    /// alone cannot say which one to return to.
+    unified_cursor_before_split: Option<usize>,
     pub viewport_height: usize,
     pub search_query: String,
     pub search_matches: Vec<usize>,
@@ -1702,6 +1727,7 @@ impl DiffView {
             selection_end: None,
             side_by_side: false,
             side_by_side_lines: Vec::new(),
+            unified_cursor_before_split: None,
             viewport_height: 15,
             search_query: String::new(),
             search_matches: Vec::new(),
@@ -1975,6 +2001,13 @@ impl DiffView {
         self.lines = new_lines;
         self.side_by_side_lines = build_side_by_side_lines(&self.lines);
 
+        self.index_active_rows();
+    }
+
+    /// Clamps the cursor to the active layout's rows and rebuilds its hunk
+    /// list and search matches: everything that depends on the layout once
+    /// both row lists are built.
+    fn index_active_rows(&mut self) {
         let active_len = if self.side_by_side {
             self.side_by_side_lines.len()
         } else {
@@ -2006,6 +2039,41 @@ impl DiffView {
             let query = self.search_query.clone();
             self.search(&query);
         }
+    }
+
+    /// Switches between side-by-side and unified rows, keeping the cursor on
+    /// the same diff line. A line selection is dropped, since its row indices
+    /// refer to the layout being left.
+    pub fn set_side_by_side(&mut self, side_by_side: bool) {
+        if self.side_by_side == side_by_side {
+            return;
+        }
+        let old_cursor = self.cursor_idx;
+        self.side_by_side = side_by_side;
+        self.selection_start = None;
+        self.selection_end = None;
+        self.index_active_rows();
+
+        let new_cursor = if side_by_side {
+            self.unified_cursor_before_split = Some(old_cursor);
+            self.side_by_side_row_of(old_cursor)
+        } else {
+            self.unified_cursor_before_split
+                .take()
+                .filter(|&line| self.side_by_side_row_of(line) == Some(old_cursor))
+                .or_else(|| self.unified_line_of(old_cursor))
+        };
+        if let Some(new_cursor) = new_cursor {
+            self.cursor_idx = new_cursor;
+        }
+        if let Some(position) = self
+            .search_matches
+            .iter()
+            .position(|&m| m == self.cursor_idx)
+        {
+            self.search_cursor = position;
+        }
+        self.scroll_offset = self.cursor_idx.saturating_sub(5);
     }
 
     /// Moves the file-tree selection or the diff cursor `rows` down or up,
@@ -2202,26 +2270,35 @@ impl DiffView {
         self.rebuild_visible_nodes();
     }
 
+    /// Ranks the rows of the active layout against `query`: a side-by-side row
+    /// matches once, with the better score of its two sides.
     pub fn search(&mut self, query: &str) {
         self.search_query = query.to_string();
-        self.search_matches.clear();
-
-        // Clear previous fuzzy indices on all lines
-        for line in &mut self.lines {
-            line.fuzzy_indices = None;
-        }
+        self.clear_fuzzy_indices();
 
         let matcher = &*FUZZY_MATCHER;
-        let mut scored: Vec<(i64, usize)> = self
-            .lines
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, line)| {
-                let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
-                line.fuzzy_indices = Some(indices);
-                Some((score, i))
-            })
-            .collect();
+        let score = |line: &mut DiffLine| {
+            let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
+            line.fuzzy_indices = Some(indices);
+            Some(score)
+        };
+        let mut scored: Vec<(i64, usize)> = if self.side_by_side {
+            self.side_by_side_lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, row)| {
+                    let left = row.left.as_mut().and_then(score);
+                    let right = row.right.as_mut().and_then(score);
+                    Some((left.max(right)?, i))
+                })
+                .collect()
+        } else {
+            self.lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, line)| Some((score(line)?, i)))
+                .collect()
+        };
         scored.sort_by_key(|(score, _)| -(*score));
         self.search_matches = scored.into_iter().map(|(_, i)| i).collect();
         self.search_cursor = 0;
@@ -2261,7 +2338,15 @@ impl DiffView {
         self.search_matches.clear();
         self.search_cursor = 0;
         self.search_active = false;
-        for line in &mut self.lines {
+        self.clear_fuzzy_indices();
+    }
+
+    fn clear_fuzzy_indices(&mut self) {
+        let halves = self
+            .side_by_side_lines
+            .iter_mut()
+            .flat_map(|row| row.left.iter_mut().chain(row.right.iter_mut()));
+        for line in self.lines.iter_mut().chain(halves) {
             line.fuzzy_indices = None;
         }
     }
@@ -2480,6 +2565,72 @@ impl DiffView {
             (right, None) => right.as_ref(),
         }
     }
+
+    /// Side-by-side row showing the unified line `line`.
+    fn side_by_side_row_of(&self, line: usize) -> Option<usize> {
+        let unified = self.lines.get(line)?;
+        if is_marker(unified.line_type) {
+            let nth = self.lines[..line]
+                .iter()
+                .filter(|l| is_marker(l.line_type))
+                .count();
+            return nth_marker(self.side_by_side_lines.iter().map(|row| row.line_type), nth);
+        }
+        self.side_by_side_lines
+            .iter()
+            .position(|row| side_by_side_row_shows(row, unified))
+    }
+
+    /// Unified line shown by the side-by-side row `row_idx`.
+    fn unified_line_of(&self, row_idx: usize) -> Option<usize> {
+        let row = self.side_by_side_lines.get(row_idx)?;
+        if is_marker(row.line_type) {
+            let nth = self.side_by_side_lines[..row_idx]
+                .iter()
+                .filter(|r| is_marker(r.line_type))
+                .count();
+            return nth_marker(self.lines.iter().map(|line| line.line_type), nth);
+        }
+        unified_row_of(row, &self.lines)
+    }
+}
+
+/// Hunk headers and meta lines carry no line numbers, but
+/// `build_side_by_side_lines` gives each exactly one row, in order, so they
+/// map between the layouts by ordinal.
+fn is_marker(line_type: DiffLineType) -> bool {
+    matches!(line_type, DiffLineType::HunkHeader | DiffLineType::Meta)
+}
+
+fn nth_marker(types: impl Iterator<Item = DiffLineType>, nth: usize) -> Option<usize> {
+    types
+        .enumerate()
+        .filter(|&(_, line_type)| is_marker(line_type))
+        .nth(nth)
+        .map(|(i, _)| i)
+}
+
+/// Whether the side-by-side `row` shows the unified content line `unified`.
+fn side_by_side_row_shows(row: &SideBySideLine, unified: &DiffLine) -> bool {
+    let same_line = |side: &Option<DiffLine>| {
+        side.as_ref().is_some_and(|l| {
+            l.old_line_num == unified.old_line_num
+                && l.new_line_num == unified.new_line_num
+                && l.file_path == unified.file_path
+        })
+    };
+    same_line(&row.left) || same_line(&row.right)
+}
+
+/// Unified row of the line `row` shows on its new side, else on its old side.
+fn unified_row_of(row: &SideBySideLine, lines: &[DiffLine]) -> Option<usize> {
+    let target = row.right.as_ref().or(row.left.as_ref())?;
+    lines.iter().position(|line| {
+        line.file_path == target.file_path
+            && line.old_line_num == target.old_line_num
+            && line.new_line_num == target.new_line_num
+            && line.line_type == target.line_type
+    })
 }
 
 pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
@@ -4007,6 +4158,8 @@ pub struct App {
     pub in_review_mode: bool,
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
+    /// Session-wide diff layout, `Auto` until a layout key pins one.
+    pub diff_layout: DiffLayout,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4186,6 +4339,7 @@ impl App {
             column_checklist_idx: 0,
             in_review_mode: false,
             hide_reviewed_files: false,
+            diff_layout: DiffLayout::Auto,
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             save_menu_open: false,
@@ -7993,7 +8147,7 @@ impl App {
     }
 
     /// Whether the last frame drew the detail pane. `detail_rect` covers the
-    /// terminal being too narrow for it, `detail_visible` a `q` pressed since.
+    /// terminal being too small for it, `detail_visible` a `q` pressed since.
     fn is_detail_pane_on_screen(&self) -> bool {
         self.detail_visible && self.detail_rect.is_some()
     }
@@ -11482,6 +11636,191 @@ deleted file mode 100644
         assert_eq!(
             view.cursor_file_position(),
             Some(("src/lib.rs".to_string(), Some(11)))
+        );
+    }
+
+    #[test]
+    fn switching_the_diff_layout_keeps_the_cursor_on_its_line_and_drops_the_selection() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "+added eleven");
+        view.selection_start = Some(0);
+        view.selection_end = Some(view.cursor_idx);
+
+        view.set_side_by_side(true);
+        let row = &view.side_by_side_lines[view.cursor_idx];
+        assert_eq!(
+            row.right.as_ref().map(|line| line.content.as_str()),
+            Some("+added eleven")
+        );
+        assert_eq!((view.selection_start, view.selection_end), (None, None));
+
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "+added eleven"));
+
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+        view.set_side_by_side(true);
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "-removed eleven"));
+    }
+
+    #[test]
+    fn leaving_side_by_side_ignores_the_remembered_line_once_the_cursor_moved_off_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+
+        view.set_side_by_side(true);
+        view.cursor_idx = side_by_side_row(&view, " context twelve");
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, " context twelve"));
+    }
+
+    const REPEATED_MARKER_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+-old one
++new one
+ two
+@@ -20,2 +20,2 @@
+-old twenty
++new twenty
+ twenty-one
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone one
+-gone two
+diff --git a/src/also_gone.rs b/src/also_gone.rs
+deleted file mode 100644
+--- a/src/also_gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-also gone one
+-also gone two
+";
+
+    #[test]
+    fn leaving_side_by_side_on_a_later_hunk_header_stays_on_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.cursor_idx = view.hunks[1];
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "@@ -20,2 +20,2 @@"));
+    }
+
+    #[test]
+    fn switching_the_diff_layout_on_a_marker_repeated_in_an_earlier_file_keeps_its_file() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+
+        for marker in [
+            "deleted file mode 100644",
+            "+++ /dev/null",
+            "@@ -1,2 +0,0 @@",
+        ] {
+            let last_line = view
+                .lines
+                .iter()
+                .rposition(|line| line.content == marker)
+                .unwrap();
+            let last_row = view
+                .side_by_side_lines
+                .iter()
+                .rposition(|row| row.left.as_ref().is_some_and(|line| line.content == marker))
+                .unwrap();
+
+            view.cursor_idx = last_line;
+            view.set_side_by_side(true);
+            assert_eq!(view.cursor_idx, last_row, "{marker:?} to side-by-side");
+            view.set_side_by_side(false);
+            assert_eq!(view.cursor_idx, last_line, "{marker:?} back to unified");
+        }
+    }
+
+    fn side_by_side_row(view: &DiffView, content: &str) -> usize {
+        view.side_by_side_lines
+            .iter()
+            .position(|row| {
+                [&row.left, &row.right]
+                    .into_iter()
+                    .flatten()
+                    .any(|line| line.content == content)
+            })
+            .unwrap_or_else(|| panic!("no side-by-side row {content:?}"))
+    }
+
+    #[test]
+    fn search_in_side_by_side_lands_on_the_matching_row() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("context twelve");
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+
+        view.search("gone two");
+        assert_eq!(view.cursor_idx, side_by_side_row(&view, "-gone two"));
+    }
+
+    #[test]
+    fn search_in_side_by_side_matches_a_paired_row_once_and_marks_both_sides() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("eleven");
+        let eleven = side_by_side_row(&view, "-removed eleven");
+        assert_eq!(view.search_matches, vec![eleven]);
+        let row = &view.side_by_side_lines[eleven];
+        assert_eq!(
+            (
+                row.left.as_ref().map(|l| l.fuzzy_indices.is_some()),
+                row.right.as_ref().map(|l| l.fuzzy_indices.is_some())
+            ),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn search_made_in_unified_follows_a_switch_to_side_by_side() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context twelve");
+
+        view.set_side_by_side(true);
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+    }
+
+    #[test]
+    fn switching_the_diff_layout_keeps_the_search_position_on_the_cursor_match() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context");
+        view.search_next();
+        let unified_match = view.cursor_idx;
+
+        view.set_side_by_side(true);
+        assert_eq!(view.search_matches[view.search_cursor], view.cursor_idx);
+
+        view.set_side_by_side(false);
+        assert_eq!(
+            (view.cursor_idx, view.search_matches[view.search_cursor]),
+            (unified_match, unified_match)
         );
     }
 

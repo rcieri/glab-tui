@@ -1462,6 +1462,17 @@ pub struct KeybindingTerminal {
     pub cycle_status_filter: String,
 }
 
+/// The MR/PR diff view's layout keys. Its other keys are still hard-wired.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingDiff {
+    #[serde(default = "def_layout_side_by_side")]
+    pub layout_side_by_side: String,
+    #[serde(default = "def_layout_unified")]
+    pub layout_unified: String,
+    #[serde(default = "def_layout_auto")]
+    pub layout_auto: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingConfig {
     #[serde(default)]
@@ -1488,6 +1499,8 @@ pub struct KeybindingConfig {
     pub environments: KeybindingEnvironments,
     #[serde(default)]
     pub terminal: KeybindingTerminal,
+    #[serde(default)]
+    pub diff: KeybindingDiff,
 }
 
 /// A user-defined shell command bound to a key, in the gh-dash shape.
@@ -1654,6 +1667,9 @@ keybind_defaults! {
     def_copy_id = "Y",
     def_cycle_status_filter = "s",
     def_toggle_preview = "i",
+    def_layout_side_by_side = "1",
+    def_layout_unified = "2",
+    def_layout_auto = "0",
 }
 
 impl Default for KeybindingGlobal {
@@ -1877,6 +1893,16 @@ impl Default for KeybindingTerminal {
             inspect_command: def_inspect_terminal_command(),
             rerun_command: def_rerun_terminal_command(),
             cycle_status_filter: def_cycle_terminal_status_filter(),
+        }
+    }
+}
+
+impl Default for KeybindingDiff {
+    fn default() -> Self {
+        Self {
+            layout_side_by_side: def_layout_side_by_side(),
+            layout_unified: def_layout_unified(),
+            layout_auto: def_layout_auto(),
         }
     }
 }
@@ -2265,6 +2291,11 @@ copy_output = "Y"
 inspect_command = "Enter"
 rerun_command = "r"
 cycle_status_filter = "s"
+
+[keybindings.diff]
+layout_side_by_side = "1"
+layout_unified = "2"
+layout_auto = "0"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

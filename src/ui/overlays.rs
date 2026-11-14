@@ -477,7 +477,7 @@ fn render_save_menu(
     }
 }
 
-const TEXT_INPUT_HINTS: &str = "Type to edit · Enter submit · Ctrl+E $EDITOR · Esc cancel";
+const TEXT_INPUT_HINTS: &str = "Enter submit · Ctrl+E editor · Esc cancel";
 const DATE_PICKER_HINTS: &str = "hjkl day · [ ] month · Enter · Esc";
 /// Month line, weekday header and six weeks.
 const CALENDAR_ROWS: u16 = 8;
@@ -2641,5 +2641,34 @@ command = "true"
                 "{hints:?} is wider than {columns} columns"
             );
         }
+    }
+
+    #[test]
+    fn the_text_input_footer_fits_its_percent_width_at_80_columns() {
+        let mut app = App::default();
+        app.open_text_input(crate::app::TextInput::new(
+            "Title",
+            String::new(),
+            crate::app::TextInputAction::EditField {
+                entity_iid: 1,
+                entity_type: "issue".to_string(),
+                field_type: "title".to_string(),
+            },
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let text = snapshot_text(&terminal);
+        assert!(
+            text.lines().any(|line| line.contains(TEXT_INPUT_HINTS)),
+            "footer clipped:\n{text}"
+        );
     }
 }

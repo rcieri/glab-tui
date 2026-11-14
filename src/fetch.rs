@@ -1395,6 +1395,36 @@ mod tests {
         assert!(app.fetching_related_mrs.is_empty());
     }
 
+    #[test]
+    fn a_second_periodic_dashboard_refresh_in_group_scope_leaves_milestones_out() {
+        let mut app = app::App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        let client = dummy_client();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = app.scoped_sender(tx);
+        let mut fx = crate::effect::Effects::default();
+
+        spawn_refresh_dashboard(
+            &mut fx,
+            &client,
+            &mut app,
+            crate::dashboard::DashboardRefresh::Periodic,
+            tx.clone(),
+        );
+        assert!(app.loading_tabs.contains(&app::Tab::Milestones));
+
+        app.loading_tabs.clear();
+        spawn_refresh_dashboard(
+            &mut fx,
+            &client,
+            &mut app,
+            crate::dashboard::DashboardRefresh::Periodic,
+            tx,
+        );
+        assert!(!app.loading_tabs.contains(&app::Tab::Milestones));
+    }
+
     /// A GitHub app on the PRs tab with the inspector open on PR #11.
     fn app_inspecting_pr_11() -> app::App {
         let mut app = app::App::default();

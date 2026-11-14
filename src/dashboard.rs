@@ -15,9 +15,9 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-/// How often the periodic refresh reads the activity feed and the lists that
-/// rarely change (milestones, releases) again. The busy lists are read every
-/// time.
+/// How often the periodic refresh reads the Dashboard's lists and activity
+/// feed again. The Dashboard reads several lists per refresh, so it waits
+/// longer than a single list tab does.
 pub const SLOW_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// How much a Dashboard refresh reads again.
@@ -28,8 +28,8 @@ pub enum DashboardRefresh {
     Full,
     /// Only what was not read yet: switching to the tab.
     Missing,
-    /// The timer: the busy lists, plus the rest once `SLOW_REFRESH_INTERVAL`
-    /// has passed since they were last read.
+    /// The timer: every list but org pipelines, and the activity feed, once
+    /// `SLOW_REFRESH_INTERVAL` has passed since they were last read.
     Periodic,
 }
 
@@ -474,7 +474,9 @@ impl App {
             .filter(|tab| match refresh {
                 DashboardRefresh::Full => true,
                 DashboardRefresh::Missing => !self.refreshed_tabs.contains(tab),
-                DashboardRefresh::Periodic => tab.is_high_churn() || is_slow_refresh_due,
+                DashboardRefresh::Periodic => {
+                    is_slow_refresh_due && !self.is_read_only_on_request(*tab)
+                }
             })
             .collect();
         let restarts_slow_refresh = match refresh {
@@ -489,6 +491,12 @@ impl App {
             reads_activity: self.scope.is_repository() && restarts_slow_refresh,
             restarts_slow_refresh,
         }
+    }
+
+    /// Org pipelines cost one call per repository of the org, so the timer
+    /// never reads them: only the refresh key and entering the tab do.
+    fn is_read_only_on_request(&self, tab: Tab) -> bool {
+        tab == Tab::Pipelines && self.scope.is_group()
     }
 
     pub fn dashboard_signed_in_user(&self) -> Option<&str> {
@@ -1219,13 +1227,13 @@ mod tests {
     }
 
     #[test]
-    fn the_periodic_refresh_reads_the_slow_lists_and_activity_only_once_due() {
+    fn the_periodic_refresh_reads_the_lists_and_activity_only_once_due() {
         let mut app = repository_app();
         app.dashboard.slow_refreshed_at = Some(Instant::now());
         assert_eq!(
             app.dashboard_fetch_plan(DashboardRefresh::Periodic),
             DashboardFetchPlan {
-                sources: vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines],
+                sources: vec![],
                 reads_activity: false,
                 restarts_slow_refresh: false,
             }
@@ -1266,10 +1274,34 @@ mod tests {
         assert_eq!(
             app.dashboard_fetch_plan(DashboardRefresh::Periodic),
             DashboardFetchPlan {
-                sources: vec![Tab::MergeRequests, Tab::Issues],
+                sources: vec![],
                 reads_activity: false,
                 restarts_slow_refresh: false,
             }
+        );
+    }
+
+    #[test]
+    fn the_periodic_refresh_in_a_github_org_never_reads_pipelines() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Group("org".to_string());
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Periodic).sources,
+            vec![Tab::MergeRequests, Tab::Issues]
+        );
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Full).sources,
+            vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines]
         );
     }
 

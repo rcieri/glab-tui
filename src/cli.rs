@@ -457,6 +457,7 @@ pub fn run_cache_list() {
 
 pub async fn run_open_in_browser(entity: &str, id: &str) {
     let is_github = detect_github().await;
+    let web_url;
 
     let (program, subcommand) = match entity {
         "issue" => {
@@ -491,14 +492,16 @@ pub async fn run_open_in_browser(entity: &str, id: &str) {
                 );
                 return;
             } else {
-                ("glab", vec!["ci", "view", id, "-w"])
+                web_url = gitlab_web_url_or_exit("jobs", id);
+                ("git", vec!["web--browse", web_url.as_str()])
             }
         }
         "milestone" => {
             if is_github {
                 ("gh", vec!["issue", "list", "--milestone", id, "--web"])
             } else {
-                ("glab", vec!["milestone", "view", id, "-w"])
+                web_url = gitlab_web_url_or_exit("milestones", id);
+                ("git", vec!["web--browse", web_url.as_str()])
             }
         }
         _ => {
@@ -583,6 +586,21 @@ pub async fn run_update() {
             std::process::exit(1);
         }
     }
+}
+
+/// `https://<host>/<project>/-/<page>/<id>` for the project of the `origin`
+/// remote. Exits with an error when `origin` yields no host or project.
+fn gitlab_web_url_or_exit(page: &str, id: &str) -> String {
+    let host_and_project = crate::git_helpers::remote_host("origin")
+        .zip(crate::git_helpers::remote_project_path("origin"));
+    let Some((host, project)) = host_and_project else {
+        eprintln!(
+            "{} no GitLab project found in the `origin` remote",
+            styled("error:", C_RED)
+        );
+        std::process::exit(1);
+    };
+    format!("https://{host}/{project}/-/{page}/{id}")
 }
 
 async fn detect_github() -> bool {

@@ -66,7 +66,7 @@ elif [[ "$*" == "run list"* ]]; then
     echo '[{"databaseId": 12345}]'
     exit 0
 elif [[ "$*" == "run view "*"--json jobs"* ]]; then
-    echo '[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success"}]'
+    echo '[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success", "url": "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321"}]'
     exit 0
 elif [[ "$*" == "issue list"* ]]; then
     cat "$FIXTURES_DIR/gh_issues.json"
@@ -81,7 +81,7 @@ elif [[ "$*" == "auth status"* ]]; then
         exit 1
     fi
     exit 0
-elif [[ "$*" == "pr merge "* || "$*" == "run rerun "* ]]; then
+elif [[ "$*" == "pr merge "* || "$*" == "run rerun "* || "$*" == "run cancel "* ]]; then
     # Mutations whose output glab-tui does not read.
     exit 0
 fi
@@ -167,7 +167,9 @@ if [[ "$*" == *"api"* ]]; then
         echo '{"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}'
     elif [[ "$*" == *"closedByPullRequestsReferences"* ]]; then
         echo '{"data": {"repository": {"issue": {"closedByPullRequestsReferences": {"nodes": []}}}}}'
-    elif [[ "$*" == *"/assignees"* ]]; then
+    elif [[ "$*" == *"orgs/"*"/repos"*" --jq .[].full_name"* ]]; then
+        echo "acme/project-b"
+    elif [[ "$*" == *"/assignees"* || "$*" == *"orgs/"*"/members"* ]]; then
         echo "[]"
     elif [[ "$*" == *"/events?"* ]]; then
         cat_relative "$FIXTURES_DIR/gh_events.json"

@@ -468,7 +468,9 @@ impl App {
             .is_none_or(|at| at.elapsed() >= SLOW_REFRESH_INTERVAL);
         let sources = self
             .shown_dashboard_sources()
-            .filter(|tab| tab.is_fetchable_in(&self.scope) && !self.loading_tabs.contains(tab))
+            .filter(|tab| {
+                tab.is_fetchable_in(&self.scope, self.kind()) && !self.loading_tabs.contains(tab)
+            })
             .filter(|tab| match refresh {
                 DashboardRefresh::Full => true,
                 DashboardRefresh::Missing => !self.refreshed_tabs.contains(tab),
@@ -1254,12 +1256,7 @@ mod tests {
         assert_eq!(
             app.dashboard_fetch_plan(DashboardRefresh::Periodic),
             DashboardFetchPlan {
-                sources: vec![
-                    Tab::MergeRequests,
-                    Tab::Issues,
-                    Tab::Pipelines,
-                    Tab::Milestones,
-                ],
+                sources: vec![Tab::MergeRequests, Tab::Issues, Tab::Milestones],
                 reads_activity: false,
                 restarts_slow_refresh: true,
             }
@@ -1269,7 +1266,7 @@ mod tests {
         assert_eq!(
             app.dashboard_fetch_plan(DashboardRefresh::Periodic),
             DashboardFetchPlan {
-                sources: vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines],
+                sources: vec![Tab::MergeRequests, Tab::Issues],
                 reads_activity: false,
                 restarts_slow_refresh: false,
             }

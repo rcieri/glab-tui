@@ -178,6 +178,11 @@ fn diff_view_action(config: &Config, event: &KeyPress) -> Option<String> {
             return Some(format!("keybindings.global.{field}"));
         }
     }
+    if let Some(diff) = toml::Value::try_from(&config.keybindings.diff).ok()
+        && let Some(field) = matching_field(&diff, event, &[])
+    {
+        return Some(format!("keybindings.diff.{field}"));
+    }
     if let Some((binding, action)) = ["Ctrl+c", "Ctrl+s", "Ctrl+r", "F1", "F5"]
         .into_iter()
         .zip(["quit", "switch repository", "refresh", "help", "refresh"])
@@ -1134,6 +1139,46 @@ command = "true"
                 .map(|c| c.key.as_str())
                 .collect::<Vec<_>>(),
             vec!["Ctrl+o"]
+        );
+    }
+
+    #[test]
+    fn diff_binding_on_a_layout_key_runs_once_the_layout_key_is_remapped() {
+        let bindings = r#"
+[[diff]]
+key = "0"
+command = "true"
+[[diff]]
+key = "Alt+1"
+command = "true"
+"#;
+        let config = config_with(bindings);
+        let (commands, problems) = CustomCommands::load(&config);
+
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec!["never runs: keybindings.diff.layout_auto takes the key first"]
+        );
+        assert_eq!(
+            commands
+                .in_diff()
+                .map(|c| c.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alt+1"]
+        );
+
+        let mut config = config_with(bindings);
+        config.keybindings.diff.layout_auto = "=".to_string();
+        let (commands, problems) = CustomCommands::load(&config);
+
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            commands
+                .in_diff()
+                .map(|c| c.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0", "Alt+1"]
         );
     }
 

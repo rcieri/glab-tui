@@ -247,6 +247,40 @@ command = "printf '%s:%s %s' {{{{.FilePath}}}} {{{{.LineNumber}}}} {{{{.HeadRefN
     assert_eq!(output, "src/pagination.rs:41 feature/pagination");
 }
 
+#[test]
+fn test_diff_custom_command_on_a_remapped_layout_key_runs() {
+    let config = format!(
+        r#"
+[keybindings.diff]
+layout_auto = "="
+
+[[custom_keybindings.diff]]
+key = "0"
+command = "printf ran > {OUTPUT_FILE}"
+"#
+    );
+    let mut session = session_on_mrs_tab(&config);
+    session.send_input(b"D");
+    session
+        .wait_for_screen_contains("(unified, auto)", 15000)
+        .expect("D should open the MR diff in the auto layout");
+
+    session.send_input(b"1");
+    session
+        .wait_for_screen_contains("(side-by-side, pinned)", 5000)
+        .expect("1 should still pin side-by-side");
+    session.send_input(b"=");
+    session
+        .wait_for_screen_contains("(unified, auto)", 5000)
+        .expect("the remapped layout_auto key should return to the auto layout");
+
+    session.send_input(b"0");
+    let output_path = session.sandbox.repo_dir.join(OUTPUT_FILE);
+    let output = wait_for_file(&mut session, &output_path, 10000)
+        .expect("0 should run the diff binding once layout_auto moved off it");
+    assert_eq!(output, "ran");
+}
+
 /// Waits between keystrokes while feeding the app's output to the emulator.
 fn pump_output(session: &mut TestSession, duration: Duration) {
     let deadline = Instant::now() + duration;

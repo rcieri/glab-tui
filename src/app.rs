@@ -4871,10 +4871,12 @@ impl App {
     }
 
     /// Switch to the Issues tab, drop filters that would hide the target, and
-    /// select + preview `iid` (in `project` when given). Returns whether the
-    /// item is already loaded.
+    /// select `iid` (in `project` when given). A preview open on the tab
+    /// being left stays open. Returns whether the item is already loaded.
     pub fn focus_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
+        let preview_was_open = self.detail_visible;
         self.set_active_tab(Tab::Issues);
+        self.detail_visible |= preview_was_open;
         self.clear_tab_filters(Tab::Issues);
         let found = self.select_visible_issue(project, iid);
         if found {
@@ -4885,10 +4887,13 @@ impl App {
     }
 
     /// Switch to the MergeRequests tab, drop filters that would hide the
-    /// target, and select + preview `iid` (in `project` when given). Returns
-    /// whether the item is already loaded.
+    /// target, and select `iid` (in `project` when given). A preview open on
+    /// the tab being left stays open. Returns whether the item is already
+    /// loaded.
     pub fn focus_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
+        let preview_was_open = self.detail_visible;
         self.set_active_tab(Tab::MergeRequests);
+        self.detail_visible |= preview_was_open;
         self.clear_tab_filters(Tab::MergeRequests);
         let found = self.select_visible_mr(project, iid);
         if found {
@@ -15787,6 +15792,35 @@ index 123456..789012 100644
         assert_eq!(selected.project_path, "acme/api");
 
         assert!(!app.focus_issue(Some("acme/docs"), 5));
+    }
+
+    #[test]
+    fn focusing_an_issue_from_an_open_preview_keeps_the_preview_open() {
+        let mut app = App {
+            active_tab: Tab::Todos,
+            detail_visible: true,
+            ..Default::default()
+        };
+        app.issues.items = vec![issue_with_milestone(5, "opened", 1)];
+
+        assert!(app.focus_issue(None, 5));
+        assert!(app.detail_visible);
+
+        app.detail_visible = false;
+        app.switch_to_tab(Tab::Todos);
+        assert!(app.detail_visible, "Todos keeps its own open preview");
+    }
+
+    #[test]
+    fn focusing_an_mr_from_a_closed_preview_leaves_the_preview_closed() {
+        let mut app = App {
+            active_tab: Tab::Todos,
+            ..Default::default()
+        };
+
+        assert!(!app.focus_mr(None, 9));
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+        assert!(!app.detail_visible);
     }
 
     #[test]

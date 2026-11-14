@@ -260,9 +260,10 @@ pub fn handle_mouse_event(
             if let Some(sidebar_rect) = sidebar_rect {
                 if rect_contains(sidebar_rect, row, col) {
                     let tabs = app.available_tabs();
-                    let clicked = (row - sidebar_rect.y)
-                        .checked_sub(1)
-                        .and_then(|idx| tabs.get(idx as usize).copied());
+                    let inner = border_inner(sidebar_rect);
+                    let clicked = rect_contains(inner, row, col)
+                        .then(|| tabs.get(usize::from(row - inner.y)).copied())
+                        .flatten();
                     if let Some(tab) = clicked.filter(|tab| *tab != app.active_tab) {
                         app.switch_to_tab(tab);
                         crate::handlers::tabs::load_entered_tab(app, tx, fx);

@@ -73,3 +73,9 @@ label_palette_8 = "#8c4e5f"  # deep love
 label_palette_9 = "#797593"  # subtle
 
 badge_group_bg = "#00bcd4"
+
+# ── Forms ──
+accent = "#907aa9"
+key_hint = "#8f5e1a"
+danger_border = "#b4637a"
+backdrop_dim = "#797593"

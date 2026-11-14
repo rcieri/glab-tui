@@ -217,9 +217,9 @@ elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* 
         || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* \
         || "$*" == "issue close "* || "$*" == "mr close "* \
         || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
-        || "$*" == "runner update "* || "$*" == "issue update "* \
-        || "$*" == "mr update "* || "$*" == "milestone edit "* \
-        || "$*" == "milestone delete "* ]]; then
+        || "$*" == "runner update "* || "$*" == "mr merge "* \
+        || "$*" == "issue update "* || "$*" == "mr update "* \
+        || "$*" == "milestone edit "* || "$*" == "milestone delete "* ]]; then
     # Mutations whose output glab-tui does not read.
     :
 else

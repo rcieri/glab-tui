@@ -3,7 +3,7 @@
 use crate::app::{App, REVIEW_SUBMIT_LOG_PREFIX};
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::Event;
-use crate::keybinding::{KeyPress, is_shortcut};
+use crate::keybinding::KeyPress;
 use crate::review_submit::{ReviewSubmit, ReviewSubmitFocus, ReviewVerdict, SubmissionState};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
@@ -79,7 +79,7 @@ fn move_or_edit(overlay: &mut ReviewSubmit, code: KeyCode, modifiers: KeyModifie
         ReviewSubmitFocus::Summary => match code {
             KeyCode::Up => overlay.focus = ReviewSubmitFocus::Verdicts,
             KeyCode::Down => overlay.focus = ReviewSubmitFocus::SubmitButton,
-            _ if is_shortcut(code, modifiers) => {}
+            _ if crate::keybinding::is_shortcut(code, modifiers) => {}
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
                 overlay.summary.apply_edit_key(code);
                 overlay.clear_outcome();

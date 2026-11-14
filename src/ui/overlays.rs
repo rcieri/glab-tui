@@ -1,9 +1,10 @@
 use super::MODAL_NOTICE_ROWS;
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
-use super::modal::{button_style, clear_area, modal_area};
+use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
+use crate::config::Icons;
 use crate::keymap::{Action, KeyContext};
 use crate::notice::{Notice, NoticeLevel};
 use crate::ui::render_ctx::RenderCtx;
@@ -11,7 +12,7 @@ use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
@@ -974,237 +975,46 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
     }
 
-    if let Some(dialog) = &app.submit_dialog {
-        let theme = &ctx.theme;
-        let icon = match dialog.action {
-            crate::app::ConfirmAction::DeleteMilestone(_)
-            | crate::app::ConfirmAction::DeleteRelease(_)
-            | crate::app::ConfirmAction::DeleteBranch(_)
-            | crate::app::ConfirmAction::BulkDeleteBranches(_)
-            | crate::app::ConfirmAction::DeleteIssue(_)
-            | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
-            crate::app::ConfirmAction::CloseIssue(_)
-            | crate::app::ConfirmAction::CloseMr(_)
-            | crate::app::ConfirmAction::CloseMilestone(_) => icons.action_close.clone(),
-            crate::app::ConfirmAction::ReopenIssue(_)
-            | crate::app::ConfirmAction::ReopenMr(_)
-            | crate::app::ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
-            crate::app::ConfirmAction::MergeMr(_)
-            | crate::app::ConfirmAction::MergeStack(_)
-            | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
-            crate::app::ConfirmAction::RevokeMr(_) | crate::app::ConfirmAction::SubmitReview(_) => {
-                icons.action_review.clone()
-            }
-            crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
-            crate::app::ConfirmAction::MarkAllTodosRead => icons.tab_todo.clone(),
-            crate::app::ConfirmAction::CancelPipeline(_)
-            | crate::app::ConfirmAction::CancelJobs { .. } => icons.status_canceled.clone(),
-            crate::app::ConfirmAction::RerunCommand(_) => icons.tab_terminal.clone(),
-            crate::app::ConfirmAction::StopEnvironment(_) => icons.action_close.clone(),
-            crate::app::ConfirmAction::RollbackDeployment { .. } => icons.label_deployment.clone(),
-        };
-        let option_rows = dialog.options.len();
-
-        let title = format!(" {} {} ", icon, dialog.title);
-        let mut body_lines = if dialog.body.is_empty() {
-            0
-        } else {
-            textwrap(&dialog.body, 56).len() + 1 // text + leading blank line
-        };
-        if option_rows > 0 {
-            body_lines += 1; // +1 gap before options
-        }
-        let option_rows = dialog.options.len();
-        let button_height: u16 = 1; // label only (no top/bottom borders)
-        // [border top] + [pad] + body + options + [separator] + [buttons]
-        let mut dialog_height =
-            (2u16 + 1 + body_lines as u16 + option_rows as u16 + 1 + button_height) as u16;
-        let max_h = size.height.saturating_sub(2).max(11);
-        dialog_height = dialog_height.clamp(11, max_h);
-
-        let area = centered_rect_fixed(crate::app::SubmitDialog::DIALOG_WIDTH, dialog_height, size);
+    if let Some(dialog) = &mut app.submit_dialog {
+        let icon = submit_dialog_icon(&dialog.action, icons);
+        let title = format!("{icon} {}", dialog.form.title);
+        let area = super::form::render_form(f, ctx, &mut dialog.form, &title, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::ConfirmPopup, area));
-
-        let block = Block::default()
-            .title(title)
-            .title_style(
-                Style::default()
-                    .fg(theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.border_focused))
-            .style(Style::default().bg(theme.bg));
-
-        // Draw the backdrop + border first so the content below renders
-        // on top of it (the block fills the whole area with its bg).
-        clear_area(f, ctx, area);
-        f.render_widget(block, area);
-
-        let v = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(1),             // pad below title
-                Constraint::Min(0),                // body + options (flexes)
-                Constraint::Length(1),             // separator
-                Constraint::Length(button_height), // button row
-            ])
-            .split(area);
-
-        let content = v[1];
-        let sep = v[2];
-        let buttons = v[3];
-
-        let content_chunks = if option_rows > 0 {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(option_rows as u16)])
-                .split(content)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0)])
-                .split(content)
-        };
-
-        let mut body_lines = if dialog.body.is_empty() {
-            vec![]
-        } else {
-            textwrap(&dialog.body, 56)
-        };
-
-        if !dialog.body.is_empty() {
-            body_lines.insert(0, Line::from(""));
-            if option_rows > 0 {
-                body_lines.push(Line::from(""));
-            }
-        } else if option_rows > 0 {
-            body_lines.push(Line::from(""));
-        }
-        let body_p = Paragraph::new(body_lines)
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(theme.text_normal))
-            .wrap(ratatui::widgets::Wrap { trim: true });
-        f.render_widget(body_p, content_chunks[0]);
-
-        if option_rows > 0 {
-            let mut state = ListState::default();
-            state.select(dialog.option_idx());
-            let items: Vec<Line<'static>> = dialog
-                .options
-                .iter()
-                .map(|o| {
-                    let is_radio = o.label.starts_with("Strategy: ");
-                    let display_label = if is_radio {
-                        o.label.trim_start_matches("Strategy: ")
-                    } else {
-                        &o.label
-                    };
-                    let mark = if is_radio {
-                        if o.checked {
-                            "(x) ".to_string()
-                        } else {
-                            "( ) ".to_string()
-                        }
-                    } else if o.checked {
-                        "[x] ".to_string()
-                    } else {
-                        "[ ] ".to_string()
-                    };
-                    Line::from(format!("{mark}{display_label}"))
-                })
-                .collect();
-            let list = List::new(items)
-                .style(Style::default().fg(theme.text_normal))
-                .highlight_style(
-                    Style::default()
-                        .bg(theme.border_focused)
-                        .fg(theme.highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                );
-
-            // Center the options list to match the centered body text
-            let max_option_width = dialog
-                .options
-                .iter()
-                .map(|o| {
-                    let text = o.label.trim_start_matches("Strategy: ");
-                    text.chars().count() + 4 // "[x] "
-                })
-                .max()
-                .unwrap_or(20) as u16;
-            let pad = content_chunks[1].width.saturating_sub(max_option_width) / 2;
-            let list_layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(pad),
-                    Constraint::Length(max_option_width),
-                    Constraint::Min(0),
-                ])
-                .split(content_chunks[1]);
-
-            f.render_stateful_widget(list, list_layout[1], &mut state);
-        }
-
-        f.render_widget(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(theme.border)),
-            sep,
-        );
-
-        let accent_for_submit = if dialog.action.is_destructive() {
-            theme.red
-        } else {
-            theme.green
-        };
-        let buttons_row: Vec<(usize, String, Option<Color>)> = dialog
-            .button_cursors()
-            .map(|cursor| {
-                if cursor == crate::app::SubmitDialog::SUBMIT_IDX {
-                    (
-                        cursor,
-                        format!("{} {}", icons.check_on, dialog.submit_label),
-                        Some(accent_for_submit),
-                    )
-                } else if cursor == dialog.cancel_idx() {
-                    (cursor, format!("{} Cancel", icons.check_off), None)
-                } else {
-                    let choice = dialog.extra_buttons[cursor - dialog.options.len() - 1];
-                    let accent = choice.is_destructive().then_some(theme.red);
-                    (cursor, choice.label().to_string(), accent)
-                }
-            })
-            .collect();
-
-        let button_count = buttons_row.len() as u32;
-        let constraints: Vec<Constraint> = (0..buttons_row.len())
-            .flat_map(|i| {
-                let spacer = (i > 0).then_some(Constraint::Length(1));
-                spacer
-                    .into_iter()
-                    .chain(std::iter::once(Constraint::Ratio(1, button_count)))
-            })
-            .collect();
-        let cells = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(buttons);
-
-        for (i, (cursor, label, accent)) in buttons_row.into_iter().enumerate() {
-            f.render_widget(
-                Paragraph::new(label)
-                    .alignment(Alignment::Center)
-                    .style(button_style(theme, dialog.cursor_idx == cursor, accent)),
-                cells[i * 2],
-            );
-        }
     }
 
     super::review_submit::render_review_submit(f, ctx, app, size);
     render_help(f, ctx, app, size);
+}
+
+fn submit_dialog_icon<'a>(action: &crate::app::ConfirmAction, icons: &'a Icons) -> &'a str {
+    use crate::app::ConfirmAction;
+    match action {
+        ConfirmAction::DeleteMilestone(_)
+        | ConfirmAction::DeleteRelease(_)
+        | ConfirmAction::DeleteBranch(_)
+        | ConfirmAction::BulkDeleteBranches(_)
+        | ConfirmAction::DeleteIssue(_)
+        | ConfirmAction::DeleteMr(_) => &icons.action_delete,
+        ConfirmAction::CloseIssue(_)
+        | ConfirmAction::CloseMr(_)
+        | ConfirmAction::CloseMilestone(_)
+        | ConfirmAction::StopEnvironment(_) => &icons.action_close,
+        ConfirmAction::ReopenIssue(_)
+        | ConfirmAction::ReopenMr(_)
+        | ConfirmAction::ReopenMilestone(_) => &icons.action_reopen,
+        ConfirmAction::MergeMr(_)
+        | ConfirmAction::MergeStack(_)
+        | ConfirmAction::BulkMergeMrs(_) => &icons.action_merge,
+        ConfirmAction::RevokeMr(_) | ConfirmAction::SubmitReview(_) => &icons.action_review,
+        ConfirmAction::RebaseMr(_) => &icons.merge_rebase,
+        ConfirmAction::MarkAllTodosRead => &icons.tab_todo,
+        ConfirmAction::CancelPipeline(_) | ConfirmAction::CancelJobs { .. } => {
+            &icons.status_canceled
+        }
+        ConfirmAction::RerunCommand(_) => &icons.tab_terminal,
+        ConfirmAction::RollbackDeployment { .. } => &icons.label_deployment,
+    }
 }
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
@@ -1587,16 +1397,6 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
     );
 }
 
-/// Wrap a string into `width`-character lines at word boundaries,
-/// returning one `Line` per wrapped line. Hard-break overlong words
-/// instead of panicking on zero width.
-fn textwrap(text: &str, width: usize) -> Vec<Line<'static>> {
-    crate::utils::format::wrap_text(text, width)
-        .into_iter()
-        .map(Line::from)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1902,18 +1702,33 @@ command = "true"
         assert_eq!(key_cell.trim(), "F9", "{row:?}");
     }
 
-    /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:
-    /// a body line, five options and both buttons. Drawn with the ASCII icon
-    /// set, the one the snapshots are written in.
+    /// The merge dialog for the fixture MR.
     fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        render_dialog(crate::app::ConfirmAction::MergeMr(2), width, height)
+    }
+
+    /// A bulk merge of twenty MRs, too tall for 24 rows even without blank
+    /// rows, so the form shortens the list.
+    fn render_bulk_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        let items = (1..=20).map(|iid| (String::new(), iid)).collect();
+        render_dialog(
+            crate::app::ConfirmAction::BulkMergeMrs(items),
+            width,
+            height,
+        )
+    }
+
+    /// Drawn with the ASCII icon set, the one the snapshots are written in.
+    fn render_dialog(
+        action: crate::app::ConfirmAction,
+        width: u16,
+        height: u16,
+    ) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut app = App::default();
         app.mrs.items =
             serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
-        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-            crate::app::ConfirmAction::MergeMr(2),
-            &app,
-        ));
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(action, &app));
         let ascii = crate::config::Icons::ascii();
         let ctx = &crate::ui::render_ctx::RenderCtx {
             theme: crate::config::Theme::default(),
@@ -1974,5 +1789,40 @@ command = "true"
     fn merge_dialog_at_120_columns_matches_snapshot() {
         let terminal = render_merge_dialog(120, 24);
         assert_snapshot("submit_dialog_merge_120x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn bulk_merge_form_at_60_columns_matches_snapshot() {
+        let terminal = render_bulk_merge_dialog(60, 24);
+        assert_snapshot("form_bulk_merge_60x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn bulk_merge_form_at_80_columns_matches_snapshot() {
+        let terminal = render_bulk_merge_dialog(80, 24);
+        assert_snapshot("form_bulk_merge_80x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn a_long_bulk_branch_delete_lists_the_branches_that_fit_and_counts_the_rest() {
+        const BRANCHES: usize = 60;
+        let names = (1..=BRANCHES).map(|n| format!("branch-{n}")).collect();
+        let terminal = render_dialog(crate::app::ConfirmAction::BulkDeleteBranches(names), 80, 24);
+        let text = snapshot_text(&terminal);
+        let rows: Vec<&str> = text
+            .lines()
+            .map(|line| line.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+            .collect();
+        assert!(rows.contains(&"Are you sure you want to delete 60 selected branches?"));
+        let shown: Vec<&str> = rows
+            .iter()
+            .copied()
+            .filter(|row| row.starts_with("branch-"))
+            .collect();
+        let expected: Vec<String> = (1..=shown.len()).map(|n| format!("branch-{n}")).collect();
+        assert_eq!(shown, expected);
+        assert!(shown.len() >= 3, "only {} branches shown", shown.len());
+        let more = format!("v {} more", BRANCHES - shown.len());
+        assert!(rows.contains(&more.as_str()), "no `{more}` row in\n{text}");
     }
 }

@@ -249,6 +249,46 @@ mod tests {
     }
 
     #[test]
+    fn keys_typed_into_a_dialog_field_reach_the_field_not_quit_or_help() {
+        use crate::form::{Button, ButtonRow, ButtonTone, Form, Group, GroupKind, LineInput};
+        let mut app = App::default();
+        let mut dialog =
+            crate::app::SubmitDialog::build(crate::app::ConfirmAction::RebaseMr(12), &app);
+        dialog.form = Form::new(
+            "Rebase",
+            vec![Group::new(GroupKind::LineInput(LineInput::new(
+                String::new(),
+                None,
+            )))],
+            ButtonRow::new(
+                Button::new("Rebase", ButtonTone::Positive),
+                [],
+                Button::new("Cancel", ButtonTone::Neutral),
+            ),
+        );
+        app.submit_dialog = Some(dialog);
+        update(&mut app, press(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(app.is_capturing_text());
+
+        let quit = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
+        update(&mut app, press(KeyCode::Char('?'), KeyModifiers::NONE));
+
+        assert!(quit.is_empty(), "{quit:?}");
+        assert!(!app.show_help);
+        let typed = app.submit_dialog.as_ref().and_then(|dialog| {
+            dialog
+                .form
+                .groups()
+                .iter()
+                .find_map(|group| match &group.kind {
+                    GroupKind::LineInput(input) => Some(input.buffer.value().to_string()),
+                    _ => None,
+                })
+        });
+        assert_eq!(typed.as_deref(), Some("q?"));
+    }
+
+    #[test]
     fn q_in_the_diff_view_closes_the_diff_instead_of_quitting() {
         let mut app = with_open_diff(App::default());
 

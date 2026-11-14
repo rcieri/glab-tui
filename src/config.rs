@@ -125,6 +125,7 @@ pub struct Theme {
     pub diff_deletion_bg: Color,
     pub diff_gutter_bg: Color,
     pub diff_sep: Color,
+    pub diff_search_bg: Color,
     // ── Comments ──
     pub comment_bg: Color,
     pub comment_draft_bg: Color,
@@ -610,6 +611,8 @@ struct ThemeToml {
     diff_gutter_bg: Option<String>,
     #[serde(default)]
     diff_sep: Option<String>,
+    #[serde(default)]
+    diff_search_bg: Option<String>,
     // ── Comments ──
     #[serde(default)]
     comment_bg: Option<String>,
@@ -711,6 +714,7 @@ impl ThemeToml {
             diff_deletion_bg: hex_or(&self.diff_deletion_bg, red_bg),
             diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
             diff_sep: hex_or(&self.diff_sep, text_muted),
+            diff_search_bg: hex_or(&self.diff_search_bg, yellow_bg),
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
             comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
             modal_border: hex_or(&self.modal_border, border_focused),
@@ -973,6 +977,7 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
     apply_color(&mut base.diff_gutter_bg, &overrides.diff_gutter_bg);
     apply_color(&mut base.diff_sep, &overrides.diff_sep);
+    apply_color(&mut base.diff_search_bg, &overrides.diff_search_bg);
     // ── Comments ──
     apply_color(&mut base.comment_bg, &overrides.comment_bg);
     apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
@@ -1029,6 +1034,7 @@ pub struct ThemeOverrides {
     diff_deletion_bg: Option<String>,
     diff_gutter_bg: Option<String>,
     diff_sep: Option<String>,
+    diff_search_bg: Option<String>,
     // ── Comments ──
     comment_bg: Option<String>,
     comment_draft_bg: Option<String>,
@@ -3091,6 +3097,7 @@ label_palette_6 = "#2a2a2a"
 label_palette_7 = "#2b2b2b"
 label_palette_8 = "#2c2c2c"
 label_palette_9 = "#2d2d2d"
+diff_search_bg = "#2e2e2e"
 "##;
         let config: Config =
             toml::from_str(toml_str).expect("deserialize config with full theme overrides");
@@ -3141,6 +3148,7 @@ label_palette_9 = "#2d2d2d"
         assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
         assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
         assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
+        assert_eq!(theme.diff_search_bg, Color::Rgb(46, 46, 46));
     }
 
     #[test]
@@ -3167,6 +3175,28 @@ label_palette_9 = "#2d2d2d"
         assert_eq!(theme.text_normal, Color::Reset);
         assert_eq!(theme.text_muted, Color::DarkGray);
         assert_eq!(theme.highlight_bg, Color::Blue);
+    }
+
+    #[test]
+    fn every_bundled_preset_gives_diff_search_matches_their_own_background() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+
+        for (name, _) in BUNDLED_THEMES {
+            let theme = Theme::preset(name).expect("bundled preset parses");
+            for (token, color) in [
+                ("bg", theme.bg),
+                ("highlight_bg", theme.highlight_bg),
+                ("diff_addition_bg", theme.diff_addition_bg),
+                ("diff_deletion_bg", theme.diff_deletion_bg),
+            ] {
+                assert_ne!(
+                    theme.diff_search_bg, color,
+                    "preset {name}: diff_search_bg matches {token}"
+                );
+            }
+        }
     }
 
     #[test]

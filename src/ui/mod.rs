@@ -973,7 +973,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let sel_bg = if in_selection {
                         Some(ctx.theme.highlight_bg)
                     } else if updated_diff_view.search_matches.contains(&idx) {
-                        Some(ctx.theme.yellow_bg)
+                        Some(ctx.theme.diff_search_bg)
                     } else {
                         None
                     };
@@ -1476,7 +1476,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let sel_bg = if in_selection {
                         Some(ctx.theme.highlight_bg)
                     } else if updated_diff_view.search_matches.contains(&idx) {
-                        Some(ctx.theme.yellow_bg)
+                        Some(ctx.theme.diff_search_bg)
                     } else {
                         None
                     };

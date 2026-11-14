@@ -34,6 +34,7 @@ label_palette_8 = "light-green"
 label_palette_9 = "light-cyan"
 diff_gutter_bg = ""
 diff_sep = "dark-gray"
+diff_search_bg = "yellow"
 comment_bg = ""
 modal_border = "green"
 

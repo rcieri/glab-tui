@@ -295,7 +295,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 ### DatePicker
 * `DatePicker` in [src/app.rs](src/app.rs) is a modal widget for selecting dates. It holds `year`, `month`, `day` and a `DatePickerAction` enum identifying which field it's editing.
 * Open it with `App::open_date_picker(DatePicker::new(...))`; it closes when popped from the modal stack.
-* Navigation: `h`/`l` / Left/Right → previous/next day, `k`/`j` / Up/Down → previous/next week, `[`/`]` / PgUp/PgDn → previous/next month, `Enter` → confirm, `Esc`/`q` → cancel. A click on the arrow beside the month steps it (the cells come from `ui::date_picker_month_cells`, shared by the renderer and the mouse handler), a click on a day picks it.
+* Navigation: `h`/`l` / Left/Right → previous/next day, `k`/`j` / Up/Down → previous/next week, `[`/`]` / PgUp/PgDn → previous/next month, `Enter` → confirm, `Esc`/`q` → cancel. A click on the arrow beside the month steps it, a click on a day picks it. Both resolve against the cells the renderer draws: `ui::date_picker_month_cells` for the month line and `ui::date_picker_day_at` for the day grid, built from the same `DAY_COLUMNS` / `DAY_GAP_COLUMNS` the grid's `Table` uses.
 
 ### Submit Dialog & Confirmations (`SubmitDialog`)
 * Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review, cancel pipeline, bulk job cancel, stop environment, roll back deployment, re-run of a Terminal-tab command) open a `SubmitDialog` ([src/app.rs](src/app.rs)). Confirmed bulk job cancels are paced with `pace_bulk_operation()`.

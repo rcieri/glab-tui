@@ -24,7 +24,7 @@ use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestio
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
-pub(crate) use self::overlays::{SAVE_MENU_CHOICES, date_picker_month_cells};
+pub(crate) use self::overlays::{SAVE_MENU_CHOICES, date_picker_day_at, date_picker_month_cells};
 use crate::app::{App, DiffLine, Tab};
 use crate::config::Theme;
 use crate::ui::render_ctx::RenderCtx;

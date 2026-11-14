@@ -378,8 +378,6 @@ fn handle_save_menu_mouse(app: &mut App, row: u16, col: u16) {
 /// The arrows beside the month step it; a day in the grid is picked.
 fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
     use chrono::Datelike;
-    // Columns of a day cell plus the gap after it.
-    const DAY_CELL_COLUMNS: u16 = 5;
     let Some(dp) = app.date_picker_mut() else {
         return;
     };
@@ -389,7 +387,7 @@ fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
     if !rect_contains(calendar, row, col) {
         return;
     }
-    let offset = col - calendar.x;
+
     if row == calendar.y {
         let [prev, _, next] = crate::ui::date_picker_month_cells(ratatui::layout::Rect {
             height: 1,
@@ -402,18 +400,13 @@ fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
         }
         return;
     }
-    // The weekday header sits between the month line and the first week.
-    let Some(week) = row.checked_sub(calendar.y + 2) else {
+    let Some((weekday, week)) = crate::ui::date_picker_day_at(calendar, col, row) else {
         return;
     };
-    let weekday = offset / DAY_CELL_COLUMNS;
-    if weekday >= 7 {
-        return;
-    }
     let Some(first) = chrono::NaiveDate::from_ymd_opt(dp.year, dp.month, 1) else {
         return;
     };
-    let cell = u32::from(week) * 7 + u32::from(weekday) + 1;
+    let cell = week * 7 + weekday + 1;
     let day = cell.checked_sub(first.weekday().num_days_from_sunday());
     if let Some(day) =
         day.filter(|&d| (1..=crate::app::days_in_month(dp.year, dp.month)).contains(&d))

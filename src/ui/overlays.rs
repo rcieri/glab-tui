@@ -481,8 +481,12 @@ const TEXT_INPUT_HINTS: &str = "Enter submit · Ctrl+E editor · Esc cancel";
 const DATE_PICKER_HINTS: &str = "hjkl day · [ ] month · Enter · Esc";
 /// Month line, weekday header and six weeks.
 const CALENDAR_ROWS: u16 = 8;
-/// Seven 4-column day cells with one column between them, plus the frame.
-const DATE_PICKER_WIDTH: u16 = 7 * 4 + 6 + 4;
+/// Columns of one day in the date picker's grid.
+const DAY_COLUMNS: u16 = 4;
+/// Columns between two neighbouring days in the date picker's grid.
+const DAY_GAP_COLUMNS: u16 = 1;
+/// Seven days with a gap between each two, plus the frame.
+const DATE_PICKER_WIDTH: u16 = 7 * DAY_COLUMNS + 6 * DAY_GAP_COLUMNS + 4;
 /// Columns of the previous and next month arrows at each end of the month line.
 const MONTH_ARROW_COLUMNS: u16 = 4;
 
@@ -495,6 +499,23 @@ pub(crate) fn date_picker_month_cells(month_line: Rect) -> [Rect; 3] {
         Constraint::Length(MONTH_ARROW_COLUMNS),
     ])
     .areas(month_line)
+}
+
+/// The month line, then the day grid: the weekday header row and the weeks.
+fn date_picker_calendar_rows(calendar: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(calendar)
+}
+
+/// The weekday (0 is Sunday) and the week of the day cell drawn at a point
+/// of the calendar, a gap counting as the day before it.
+pub(crate) fn date_picker_day_at(calendar: Rect, column: u16, row: u16) -> Option<(u32, u32)> {
+    let [_, grid] = date_picker_calendar_rows(calendar);
+    if !grid.contains(ratatui::layout::Position::new(column, row)) {
+        return None;
+    }
+    let week = (row - grid.y).checked_sub(1)?;
+    let weekday = (column - grid.x) / (DAY_COLUMNS + DAY_GAP_COLUMNS);
+    (weekday < 7).then_some((u32::from(weekday), u32::from(week)))
 }
 
 fn render_text_input(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
@@ -565,8 +586,7 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
     let calendar = layout.groups[0];
     let area = layout.area;
 
-    let [month_area, grid_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(calendar);
+    let [month_area, grid_area] = date_picker_calendar_rows(calendar);
     let [prev_area, title_area, next_area] = date_picker_month_cells(month_area);
     let month_style = Style::default()
         .fg(ctx.theme.header_fg)
@@ -620,9 +640,9 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
         }))
     });
     f.render_widget(
-        Table::new(rows, [Constraint::Length(4); 7])
+        Table::new(rows, [Constraint::Length(DAY_COLUMNS); 7])
             .header(header)
-            .column_spacing(1),
+            .column_spacing(DAY_GAP_COLUMNS),
         grid_area,
     );
     date_picker.layout = Some(layout);
@@ -2676,5 +2696,52 @@ command = "true"
             text.lines().any(|line| line.contains(TEXT_INPUT_HINTS)),
             "footer clipped:\n{text}"
         );
+    }
+
+    /// A click on a day drawn in the grid picks that day, and a click on the
+    /// weekday header above it picks nothing.
+    #[test]
+    fn a_click_on_a_date_picker_day_picks_the_day_drawn_there() {
+        let mut app = App::default();
+        app.open_date_picker(crate::app::DatePicker::new(
+            "Pick".to_string(),
+            "2026-08-23",
+            crate::app::DatePickerAction::EditNewField { field_idx: 0 },
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let text = snapshot_text(&terminal);
+        let (row, column) = text
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                let byte = line.find(" 13 ")? + 1;
+                Some((row as u16, line[..byte].chars().count() as u16))
+            })
+            .expect("13 is drawn");
+
+        click(&mut app, column, row);
+        assert_eq!(app.date_picker().unwrap().day, 13);
+
+        let lines: Vec<&str> = text.lines().collect();
+        let header_row = lines
+            .iter()
+            .position(|line| line.contains("Su"))
+            .expect("the weekday header is drawn");
+        let first_week = lines[header_row + 1];
+        let first_day_column = first_week
+            .chars()
+            .position(|c| c == '1')
+            .expect("August 2026 starts on the last weekday of the first week");
+        click(&mut app, first_day_column as u16, header_row as u16);
+        assert_eq!(app.date_picker().unwrap().day, 13);
     }
 }

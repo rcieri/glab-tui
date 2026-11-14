@@ -4019,24 +4019,26 @@ mod tests {
     }
 
     #[test]
-    fn table_headers_follow_the_saved_column_order() {
+    fn table_columns_follow_the_saved_column_order() {
         use crate::backend::BackendKind;
         use crate::column_order::same_column;
 
+        const CELL: &str = "zzcell";
+        let column_of = |row: &str, text: &str| row.find(text).map(|at| row[..at].chars().count());
         let mut terminal = Terminal::new(TestBackend::new(400, 12)).unwrap();
-        let renderers: [(Tab, TabRenderer); 6] = [
-            (Tab::Issues, render_tab_issues),
-            (Tab::MergeRequests, render_tab_merge_requests),
-            (Tab::Pipelines, render_tab_pipelines),
-            (Tab::Jobs, render_tab_jobs),
-            (Tab::Todos, render_tab_todos),
-            (Tab::Milestones, render_tab_milestones),
+        let renderers: [(Tab, TabRenderer, &str); 6] = [
+            (Tab::Issues, render_tab_issues, "Title"),
+            (Tab::MergeRequests, render_tab_merge_requests, "Title"),
+            (Tab::Pipelines, render_tab_pipelines, "Ref"),
+            (Tab::Jobs, render_tab_jobs, "Name"),
+            (Tab::Todos, render_tab_todos, "Title"),
+            (Tab::Milestones, render_tab_milestones, "Title"),
         ];
         for (kind, other_kind) in [
             (BackendKind::GitLab, BackendKind::GitHub),
             (BackendKind::GitHub, BackendKind::GitLab),
         ] {
-            for (tab, render) in renderers {
+            for (tab, render, cell_column) in renderers {
                 let mut app = App::default();
                 app.gitlab_client = Some(crate::domain::client::GitlabClient {
                     is_github: kind.is_github(),
@@ -4065,15 +4067,46 @@ mod tests {
                 let reversed: Vec<String> = columns.iter().rev().map(|c| c.to_string()).collect();
                 app.column_order.insert(tab, reversed.clone());
                 match tab {
-                    Tab::Jobs => {
-                        app.jobs.items = serde_json::from_value(serde_json::json!([
-                            { "id": 1, "status": "success", "stage": "build", "name": "compile" }
+                    Tab::Issues => {
+                        app.issues.items = serde_json::from_value(serde_json::json!([{
+                            "iid": 1, "title": CELL, "state": "opened", "updated_at": "",
+                            "author": { "username": "u1" }
+                        }]))
+                        .unwrap();
+                    }
+                    Tab::MergeRequests => {
+                        app.mrs.items = serde_json::from_value(serde_json::json!([{
+                            "iid": 1, "title": CELL, "state": "opened", "updated_at": "",
+                            "author": { "username": "u1" }, "target_branch": "main",
+                            "draft": false
+                        }]))
+                        .unwrap();
+                    }
+                    Tab::Pipelines => {
+                        app.pipelines.items = serde_json::from_value(serde_json::json!([
+                            { "id": 1, "status": "success", "ref": CELL, "updated_at": "" }
                         ]))
                         .unwrap();
                     }
-                    Tab::Todos => app.todos.items = vec![Default::default()],
-                    Tab::Milestones => app.milestones.items = vec![Default::default()],
-                    _ => {}
+                    Tab::Jobs => {
+                        app.jobs.items = serde_json::from_value(serde_json::json!([
+                            { "id": 1, "status": "success", "stage": "build", "name": CELL }
+                        ]))
+                        .unwrap();
+                    }
+                    Tab::Todos => {
+                        app.todos.items = vec![crate::domain::notifications::Notification {
+                            title: CELL.to_string(),
+                            ..Default::default()
+                        }];
+                    }
+                    Tab::Milestones => {
+                        app.milestones.items = vec![crate::domain::milestones::Milestone {
+                            title: CELL.to_string(),
+                            ..Default::default()
+                        }];
+                    }
+                    _ => unreachable!("{tab:?} has no renderer in this test"),
                 }
 
                 let icons = std::sync::Arc::clone(&app.icons);
@@ -4092,8 +4125,9 @@ mod tests {
                     })
                     .unwrap();
 
-                let header = buffer_rows(&terminal)
-                    .into_iter()
+                let rows = buffer_rows(&terminal);
+                let header = rows
+                    .iter()
                     .find(|row| row.contains("ID "))
                     .map(|row| format!(" {row}"))
                     .unwrap_or_else(|| panic!("{kind:?} {tab:?}: no header row"));
@@ -4115,6 +4149,15 @@ mod tests {
                         "{kind:?} {tab:?}: {label} drawn in {header:?}"
                     );
                 }
+                let cell_row = rows
+                    .iter()
+                    .find(|row| row.contains(CELL))
+                    .unwrap_or_else(|| panic!("{kind:?} {tab:?}: no row drawn"));
+                assert_eq!(
+                    column_of(cell_row, CELL),
+                    column_of(&header, &format!(" {cell_column} ")),
+                    "{kind:?} {tab:?}: {cell_column} cell not under its header\n{header}\n {cell_row}"
+                );
             }
         }
     }

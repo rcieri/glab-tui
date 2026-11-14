@@ -736,8 +736,7 @@ fn apply_list_half_page(app: &mut App, key_event: &KeyPress, tx: &UnboundedSende
             crate::app::Tab::Jobs => {
                 let len = app.filtered_jobs().len();
                 app.jobs.move_by(len, down, rows);
-                app.job_trace = None;
-                app.job_trace_follow = false;
+                app.close_job_trace();
             }
             crate::app::Tab::Todos => app.todos.move_by(app.filtered_todos().len(), down, rows),
             crate::app::Tab::Milestones => {
@@ -2117,28 +2116,21 @@ pub fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
-                            let active_pipe_path = app
-                                .active_pipeline_id
-                                .and_then(|p_id| {
-                                    app.pipelines
-                                        .items
-                                        .iter()
-                                        .find(|p| p.id() == p_id)
-                                        .map(|p| p.project_path.clone())
-                                })
-                                .filter(|p| !p.is_empty());
-                            let project_path =
-                                active_pipe_path.unwrap_or_else(|| app.scope.as_str().to_string());
-                            let jid_str = job_id.to_string();
-                            let tx2 = tx.clone();
-                            fx.spawn(async move {
-                                let result =
-                                    client.open_job_in_browser(&project_path, &jid_str).await;
-                                let _ = tx2.send(Event::CommandCompleted(
-                                    crate::app::Tab::Jobs,
-                                    CommandOutcome::read_only(result),
-                                ));
-                            });
+                            match app.selected_job_url() {
+                                Ok(url) => {
+                                    let tx2 = tx.clone();
+                                    fx.spawn(async move {
+                                        let result = client.open_job_url(&url).await;
+                                        let _ = tx2.send(Event::CommandCompleted(
+                                            crate::app::Tab::Jobs,
+                                            CommandOutcome::read_only(result),
+                                        ));
+                                    });
+                                }
+                                Err(error) => {
+                                    app.show_error(format!("Failed to open job: {error}"))
+                                }
+                            }
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace_editor,
@@ -2174,9 +2166,14 @@ pub fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.job_trace_follow = !app.job_trace_follow;
-                            if app.job_trace_follow {
-                                app.detail_scroll_to_bottom = true;
+                            // GitHub serves only the logs of completed jobs, which
+                            // never grow. The key is still taken there, so it never
+                            // reaches a custom binding.
+                            if !app.is_github() {
+                                app.job_trace_follow = !app.job_trace_follow;
+                                if app.job_trace_follow {
+                                    app.detail_scroll_to_bottom = true;
+                                }
                             }
                         }
                         _ if keybinding_matches(
@@ -2576,7 +2573,7 @@ pub fn handle_active_tab_key(
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::CloseMilestone(milestone.iid),
+                            crate::app::ConfirmAction::CloseMilestone((*milestone).clone()),
                             app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
@@ -2592,7 +2589,7 @@ pub fn handle_active_tab_key(
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
+                            crate::app::ConfirmAction::ReopenMilestone((*milestone).clone()),
                             app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
@@ -2608,7 +2605,7 @@ pub fn handle_active_tab_key(
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                            crate::app::ConfirmAction::DeleteMilestone(milestone.iid),
+                            crate::app::ConfirmAction::DeleteMilestone((*milestone).clone()),
                             app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
@@ -2626,13 +2623,14 @@ pub fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
-                        let project_path = app.scope.as_str().to_string();
-                        let mid_str = milestone.iid.to_string();
+                        let project_path =
+                            app.scope.project_of(&milestone.project_path).to_string();
+                        let milestone = (*milestone).clone();
                         let tx2 = tx.clone();
 
                         fx.spawn(async move {
                             let result = client
-                                .open_milestone_in_browser(&project_path, &mid_str)
+                                .open_milestone_in_browser(&project_path, &milestone)
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Milestones,
@@ -2879,29 +2877,20 @@ pub fn handle_active_tab_key(
                     app.pending_job_trace_failure = None;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;
-                    app.job_trace = None;
+                    if app.active_tab == crate::app::Tab::Jobs {
+                        app.close_job_trace();
+                    }
                 } else if app.detail_visible {
                     app.detail_visible = false;
                 } else if app.active_tab == crate::app::Tab::Jobs {
                     if app.job_trace.is_some() {
-                        app.job_trace = None;
+                        app.close_job_trace();
                     } else {
                         app.close_opened_pipeline();
                         app.active_tab = crate::app::Tab::Pipelines;
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
-                    // Inside a descent Esc means the level you can see, not a
-                    // job list left over from an earlier visit.
                     app.ascend();
-                } else if app.active_tab == crate::app::Tab::Pipelines && !app.jobs.items.is_empty()
-                {
-                    if app.job_trace.is_some() {
-                        app.job_trace = None;
-                    } else {
-                        app.jobs.items.clear();
-                        app.jobs.state.select(None);
-                        app.selected_jobs.clear();
-                    }
                 } else if !app.search_query.is_empty() {
                     // Last-resort Esc action: drop the active filter. The
                     // previous Esc press already exited the search input
@@ -3164,8 +3153,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.next(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3214,8 +3202,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.previous(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3264,8 +3251,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.first(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3317,8 +3303,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
                             app.jobs.last(len);
-                            app.job_trace = None;
-                            app.job_trace_follow = false;
+                            app.close_job_trace();
                         }
                         crate::app::Tab::Runners
                         | crate::app::Tab::Releases
@@ -3504,7 +3489,7 @@ pub fn apply_opened_pipeline(
                 app.open_pipeline_in_jobs_tab(pipeline_id);
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
-                app.job_trace = None;
+                app.close_job_trace();
                 app.active_tab = crate::app::Tab::Jobs;
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
@@ -4031,6 +4016,46 @@ mod tests {
         assert_eq!(app.selected_jobs.len(), 2);
     }
 
+    #[tokio::test]
+    async fn follow_key_on_github_jobs_tab_is_consumed_without_enabling_follow() {
+        use crate::domain::pipelines::Job;
+
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.active_tab = crate::app::Tab::Jobs;
+        app.jobs.items = vec![Job {
+            id: 1,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "build".to_string(),
+            ..Default::default()
+        }];
+        app.jobs.state.select(Some(0));
+        app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(
+            crate::domain::job_trace::JobTrace::from_read(b"done\n", false),
+        ));
+        let tx = app.tx.clone();
+
+        let handled = handle_active_tab_key(
+            &mut app,
+            &KeyPress::from(key(KeyCode::Char('f'))),
+            &tx,
+            &mut crate::effect::Effects::default(),
+        );
+
+        assert!(handled, "the follow key is consumed on GitHub");
+        assert!(!app.job_trace_follow, "follow mode stays off on GitHub");
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
     /// `Ctrl+u` must not start a self-update check.
     #[tokio::test]
     async fn ctrl_u_does_not_trigger_a_self_update() {
@@ -4461,14 +4486,15 @@ mod tests {
         let mut app = App::default();
         app.scope = crate::scope::Scope::Group("acme".to_string());
         app.active_tab = crate::app::Tab::Milestones;
-        let milestone = |project: &str| Milestone {
+        let milestone = |id: u64, project: &str| Milestone {
+            id,
             iid: 3,
             title: format!("{project} v1"),
             state: "active".to_string(),
             project_path: project.to_string(),
             ..Milestone::default()
         };
-        app.milestones.items = vec![milestone("acme/alpha"), milestone("acme/beta")];
+        app.milestones.items = vec![milestone(10, "acme/alpha"), milestone(20, "acme/beta")];
         app.milestones.state.select(Some(1));
 
         dispatch(
@@ -4479,7 +4505,7 @@ mod tests {
         let dialog = app.submit_dialog.expect("close opens a confirm dialog");
         assert!(matches!(
             dialog.action,
-            crate::app::ConfirmAction::CloseMilestone(3)
+            crate::app::ConfirmAction::CloseMilestone(ref milestone) if milestone.id == 20
         ));
         assert_eq!(dialog.project_path, "acme/beta");
     }

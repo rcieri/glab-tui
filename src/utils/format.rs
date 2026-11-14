@@ -376,6 +376,7 @@ struct TraceLine<'a> {
 impl<'a> TraceLine<'a> {
     fn split(line: &'a str) -> Self {
         let (gl_ts, line) = strip_gl_ts(line);
+        let line = strip_section_marker(line);
         let (gh_prefix, content) = split_gh_prefix(line);
         Self {
             gl_ts,
@@ -385,7 +386,8 @@ impl<'a> TraceLine<'a> {
     }
 }
 
-/// What the job printed on `line`, without the GitLab Runner timestamp or the
+/// What the job printed on `line`, without the GitLab Runner timestamp, the
+/// GitLab section markers (and the escape sequences in front of them) or the
 /// `<job>\t<step>\t` prefix `gh run view --log` adds.
 pub fn trace_line_content(line: &str) -> &str {
     TraceLine::split(line).content
@@ -634,6 +636,53 @@ fn strip_gl_ts(line: &str) -> (Option<&str>, &str) {
         return (Some(ts), &rest[5..]);
     }
     (None, line)
+}
+
+/// Strips the markers GitLab Runner puts where a log section begins or ends:
+/// `section_start:<unix ts>:<name>[<options>]` or `section_end:<unix ts>:<name>`,
+/// each followed by `\r\x1b[0K`. Several markers can follow one another on a
+/// line, and escape sequences such as `\x1b[0K` or `\x1b[0;m` can come before
+/// each; those are dropped with the marker. Text and escape sequences after the
+/// last marker are kept. A line without a complete marker is returned unchanged.
+fn strip_section_marker(line: &str) -> &str {
+    let mut rest = line;
+    let mut stripped = line;
+    while let Some(after) = section_marker_tail(skip_csi_sequences(rest)) {
+        rest = after;
+        stripped = after;
+    }
+    stripped
+}
+
+/// Skips the CSI escape sequences (`\x1b[` parameters, final byte) at the start
+/// of `text`.
+fn skip_csi_sequences(mut text: &str) -> &str {
+    while let Some(body) = text.strip_prefix("\x1b[") {
+        let Some(end) = body.find(|c: char| ('\u{40}'..='\u{7e}').contains(&c)) else {
+            break;
+        };
+        text = &body[end + 1..];
+    }
+    text
+}
+
+/// What follows the complete section marker at the start of `text`, or `None`
+/// when `text` does not start with one.
+fn section_marker_tail(text: &str) -> Option<&str> {
+    let rest = text
+        .strip_prefix("section_start:")
+        .or_else(|| text.strip_prefix("section_end:"))?;
+    let after_ts = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+    if after_ts.len() == rest.len() {
+        return None;
+    }
+    let after_colon = after_ts.strip_prefix(':')?;
+    let end = after_colon.find('\r')?;
+    let (marker, tail) = after_colon.split_at(end);
+    if marker.is_empty() || marker.contains(char::is_whitespace) {
+        return None;
+    }
+    tail.strip_prefix("\r\x1b[0K")
 }
 
 /// Strips a GitHub Actions timestamp (`YYYY-MM-DDTHH:MM:SS.fffffffZ`) from
@@ -1074,6 +1123,104 @@ mod tests {
             text,
             "2026-08-18T16:54:49.475670Z ✓ src/foo.test.ts (19 tests)"
         );
+    }
+
+    fn rendered_trace_text(trace: &str) -> Vec<String> {
+        let theme = crate::config::Theme::default();
+        parse_ansi_trace(trace, &theme)
+            .iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_gitlab_section_markers_and_keeps_the_text_after_them() {
+        let trace = concat!(
+            "section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m\n",
+            "section_start:1715685561:prepare_executor[collapsed=true]\r\u{1b}[0K\u{1b}[0K\u{1b}[36;1mPreparing the executor\u{1b}[0m\n",
+            "section_end:1715685562:build_script\r\u{1b}[0K\n",
+            "section_end:1715685563:prepare_executor\r\u{1b}[0KJob succeeded",
+        );
+        assert_eq!(
+            rendered_trace_text(trace),
+            [
+                "$ cargo build",
+                "Preparing the executor",
+                "",
+                "Job succeeded"
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_a_gitlab_section_marker_after_the_runner_timestamp() {
+        let trace = "2026-08-18T16:54:49.475670Z 00O section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m";
+        assert_eq!(
+            rendered_trace_text(trace),
+            ["2026-08-18T16:54:49.475670Z $ cargo build"]
+        );
+    }
+
+    #[test]
+    fn trace_line_content_leaves_out_gitlab_section_markers() {
+        for line in [
+            "section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m",
+            "section_start:1715685560:build_script[collapsed=true]\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m",
+            "2026-08-18T16:54:49.475670Z 00O section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m",
+        ] {
+            let content = trace_line_content(line);
+            assert!(
+                !content.contains("section_start") && !content.contains('\r'),
+                "{content:?}"
+            );
+            assert!(content.ends_with("$ cargo build\u{1b}[0m"), "{content:?}");
+        }
+        for line in [
+            "section_end:1715685562:build_script\r\u{1b}[0K",
+            "2026-08-18T16:54:49.475670Z 00O section_end:1715685562:build_script\r\u{1b}[0K",
+        ] {
+            let content = trace_line_content(line);
+            assert!(
+                !content.contains("section_end") && !content.contains('\r'),
+                "{content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_every_gitlab_section_marker_chained_on_one_line() {
+        let trace = concat!(
+            "section_end:1506004957:prepare_script\r\u{1b}[0Ksection_start:1506004957:get_sources\r\u{1b}[0K\u{1b}[32;1mCloning repository...\u{1b}[0;m\n",
+            "section_end:1506004958:get_sources\r\u{1b}[0Ksection_start:1506004958:restore_cache\r\u{1b}[0Ksection_end:1506004958:restore_cache\r\u{1b}[0Ksection_start:1506004958:step_script\r\u{1b}[0Krunning",
+        );
+        assert_eq!(
+            rendered_trace_text(trace),
+            ["Cloning repository...", "running"]
+        );
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_a_gitlab_section_marker_after_an_erase_line_sequence() {
+        let trace = "\u{1b}[0Ksection_start:1715685560:my_section\r\u{1b}[0K\u{1b}[36;1mHeader\u{1b}[0m\n\u{1b}[0Ksection_end:1715685562:my_section\r\u{1b}[0K\n";
+        assert_eq!(rendered_trace_text(trace), ["Header", ""]);
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_a_gitlab_section_marker_after_a_reset_sequence() {
+        let trace = "\u{1b}[0;msection_start:1506004957:prepare_executor\r\u{1b}[0K\u{1b}[0;m\u{1b}[36;1mPreparing the executor\u{1b}[0;m";
+        assert_eq!(rendered_trace_text(trace), ["Preparing the executor"]);
+    }
+
+    #[test]
+    fn trace_line_content_leaves_out_chained_and_escape_prefixed_gitlab_section_markers() {
+        for line in [
+            "section_end:1506004957:a\r\u{1b}[0Ksection_start:1506004957:b\r\u{1b}[0Ktext",
+            "\u{1b}[0Ksection_start:1506004957:b\r\u{1b}[0Ktext",
+            "\u{1b}[0;msection_start:1506004957:b\r\u{1b}[0Ktext",
+            "2026-08-18T16:54:49.475670Z 00O \u{1b}[0Ksection_end:1506004957:a\r\u{1b}[0Ksection_start:1506004957:b\r\u{1b}[0Ktext",
+        ] {
+            assert_eq!(trace_line_content(line), "text", "{line:?}");
+        }
     }
 
     #[test]

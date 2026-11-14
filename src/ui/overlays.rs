@@ -1018,6 +1018,7 @@ fn submit_dialog_icon<'a>(action: &crate::app::ConfirmAction, icons: &'a Icons) 
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
 const START_MANUAL_JOB_ACTION: &str = "Start manual job";
+const TOGGLE_TRACE_FOLLOW_ACTION: &str = "Toggle trace auto-follow mode";
 /// GitHub deployments carry no job, so they have no log to open.
 const VIEW_DEPLOYMENT_LOG_ACTION: &str = "Open the selected deployment's job log in $EDITOR";
 
@@ -1559,7 +1560,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Jobs",
             key: d(app.config.keybindings.jobs.toggle_trace_follow.clone()),
-            action: "Toggle trace auto-follow mode",
+            action: TOGGLE_TRACE_FOLLOW_ACTION,
         },
         Shortcut {
             category: "Jobs",
@@ -1936,7 +1937,21 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Diff View",
             key: s("d"),
-            action: "Toggle unified / side-by-side layout",
+            action: "Toggle unified / side-by-side layout (pinned for the session)",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.diff.layout_side_by_side,
+                app.config.keybindings.diff.layout_unified
+            )),
+            action: "Pin side-by-side / unified layout for the session",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: d(app.config.keybindings.diff.layout_auto.clone()),
+            action: "Pick the layout from the diff pane width again (unified when narrow)",
         },
         Shortcut {
             category: "Diff View",
@@ -2131,7 +2146,9 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         shortcuts.retain(|shortcut| {
             !matches!(
                 (shortcut.category, shortcut.action),
-                ("Jobs", START_MANUAL_JOB_ACTION) | ("Environments", VIEW_DEPLOYMENT_LOG_ACTION)
+                ("Jobs", START_MANUAL_JOB_ACTION)
+                    | ("Jobs", TOGGLE_TRACE_FOLLOW_ACTION)
+                    | ("Environments", VIEW_DEPLOYMENT_LOG_ACTION)
             )
         });
     }
@@ -2433,6 +2450,45 @@ mod tests {
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related Actions for selected PR"));
         assert!(text.contains("Create new Pull Request"));
+    }
+
+    fn render_jobs_help(is_github: bool) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(160, 80)).unwrap();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github,
+            backend: create_backend(is_github),
+            tx: None,
+            page_size: 50,
+            api_per_page: 50,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.show_help = true;
+        app.active_tab = Tab::Jobs;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+        buffer_text(&terminal)
+    }
+
+    #[test]
+    fn render_help_offers_trace_follow_on_gitlab() {
+        let text = render_jobs_help(false);
+        assert!(text.contains("Toggle trace auto-follow mode"), "{text:?}");
+    }
+
+    #[test]
+    fn render_help_does_not_offer_trace_follow_on_github() {
+        let text = render_jobs_help(true);
+        assert!(text.contains("Toggle trace word wrap"), "{text:?}");
+        assert!(
+            !text.contains("Toggle trace auto-follow mode"),
+            "trace follow is not offered on GitHub: {text:?}"
+        );
     }
 
     #[test]

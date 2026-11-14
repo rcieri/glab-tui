@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 mod cli_contract;
 mod config;
 mod custom_keybindings;
+mod edit_people;
 mod environments;
 mod group_scope_actions;
 mod job_trace;
@@ -14,6 +15,7 @@ mod layout;
 mod list_tab;
 mod merge_dialog;
 mod modal_notices;
+mod open_cli;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;
@@ -424,12 +426,18 @@ impl Sandbox {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let mock_gh = manifest_dir.join("tests").join("mocks").join("gh");
         let mock_glab = manifest_dir.join("tests").join("mocks").join("glab");
+        let mock_browser = manifest_dir.join("tests").join("mocks").join("browser");
         std::fs::copy(&mock_gh, bin_dir.join("gh"))?;
         std::fs::copy(&mock_glab, bin_dir.join("glab"))?;
+        std::fs::copy(&mock_browser, bin_dir.join("browser"))?;
 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(bin_dir.join("gh"), std::fs::Permissions::from_mode(0o755))?;
         std::fs::set_permissions(bin_dir.join("glab"), std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(
+            bin_dir.join("browser"),
+            std::fs::Permissions::from_mode(0o755),
+        )?;
 
         let log_path = temp_dir.path().join("cli_calls.log");
 
@@ -489,6 +497,19 @@ impl Sandbox {
             ),
             ("TERM".to_string(), "xterm-256color".to_string()),
             ("SHELL".to_string(), "/bin/sh".to_string()),
+            // `git web--browse` runs the `browser` mock, which logs the URL
+            // instead of starting the developer's browser.
+            ("GIT_CONFIG_COUNT".to_string(), "2".to_string()),
+            ("GIT_CONFIG_KEY_0".to_string(), "web.browser".to_string()),
+            ("GIT_CONFIG_VALUE_0".to_string(), "mock".to_string()),
+            (
+                "GIT_CONFIG_KEY_1".to_string(),
+                "browser.mock.cmd".to_string(),
+            ),
+            (
+                "GIT_CONFIG_VALUE_1".to_string(),
+                format!("'{}'", self.bin_dir.join("browser").display()),
+            ),
         ]
     }
 

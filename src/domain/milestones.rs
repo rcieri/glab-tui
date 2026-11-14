@@ -23,6 +23,10 @@ pub struct Milestone {
     /// per-project issue listing commands.
     #[serde(default)]
     pub project_path: String,
+    /// The milestone's page as GitLab reports it. `None` on GitHub, whose
+    /// milestone page `GhBackend` builds from the project and number.
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 pub async fn list_milestones(
@@ -55,19 +59,19 @@ pub async fn list_milestone_issues(
 pub async fn update_milestone_state(
     client: &GitlabClient,
     project_path: &str,
-    milestone_iid: u64,
+    milestone: &Milestone,
     close: bool,
 ) -> Result<()> {
     client
         .backend
-        .update_milestone_state(project_path, milestone_iid, close)
+        .update_milestone_state(project_path, milestone, close)
         .await
 }
 
 pub async fn update_milestone(
     client: &GitlabClient,
     project_path: &str,
-    milestone_iid: u64,
+    milestone: &Milestone,
     title: &str,
     description: &str,
     start_date: Option<&str>,
@@ -77,7 +81,7 @@ pub async fn update_milestone(
         .backend
         .update_milestone(
             project_path,
-            milestone_iid,
+            milestone,
             title,
             description,
             start_date,
@@ -89,10 +93,10 @@ pub async fn update_milestone(
 pub async fn delete_milestone(
     client: &GitlabClient,
     project_path: &str,
-    milestone_iid: u64,
+    milestone: &Milestone,
 ) -> Result<()> {
     client
         .backend
-        .delete_milestone(project_path, milestone_iid)
+        .delete_milestone(project_path, milestone)
         .await
 }

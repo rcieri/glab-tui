@@ -258,6 +258,12 @@ pub fn sanitize_untrusted(s: &str) -> Cow<'_, str> {
     }
 }
 
+/// Text a user edits, as drawn: escape sequences removed, and tabs and
+/// carriage returns shown as one space so byte offsets past them do not move.
+pub fn displayable(text: &str) -> String {
+    sanitize_untrusted(text).replace(['\t', '\r'], " ")
+}
+
 /// Removes ECMA-48 escape sequences (CSI, OSC, DCS/SOS/PM/APC strings and
 /// short escapes, in 7-bit `ESC x` and 8-bit C1 form) and every remaining
 /// control character except `\n`, `\r` and `\t`.

@@ -35,3 +35,9 @@ diff_gutter_bg = "#1a1b26"
 diff_sep = "#5b638c"
 
 badge_group_bg = "#00bcd4"
+
+# ── Forms ──
+accent = "#bb9af7"
+key_hint = "#e0af68"
+danger_border = "#db4b5f"
+backdrop_dim = "#5b638c"

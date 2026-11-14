@@ -13,6 +13,7 @@ mod job_trace;
 mod keybindings;
 mod layout;
 mod list_tab;
+mod merge_dialog;
 mod modal_notices;
 mod open_cli;
 mod pagination;

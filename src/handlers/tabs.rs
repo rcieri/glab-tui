@@ -1308,7 +1308,8 @@ pub fn handle_active_tab_key(
                     .keybindings
                     .matches(Action::MrsMergeMr, key_event)
             {
-                let items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
+                let mut items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
+                items.sort_unstable();
                 app.open_submit_dialog(crate::app::SubmitDialog::build(
                     crate::app::ConfirmAction::BulkMergeMrs(items),
                     app,
@@ -4758,7 +4759,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
         let dialog = app.submit_dialog().expect("Delete dialog shown");
-        assert_eq!(dialog.title, "Delete Branch 'branch-00'");
+        assert_eq!(dialog.form.title, "Delete Branch 'branch-00'");
         if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
             assert_eq!(name, "branch-00");
         } else {
@@ -4788,7 +4789,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
         let dialog = app.submit_dialog().expect("Bulk delete dialog shown");
-        assert_eq!(dialog.title, "Delete 2 Branches");
+        assert_eq!(dialog.form.title, "Delete 2 Branches");
         if let crate::app::ConfirmAction::BulkDeleteBranches(names) = &dialog.action {
             assert_eq!(
                 names.as_slice(),

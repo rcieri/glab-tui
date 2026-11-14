@@ -36,9 +36,13 @@ pub struct FeedPage {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContributionHistory {
     pub contributions: Vec<Contribution>,
-    /// The oldest event read, when the feed ran out or the page cap stopped
-    /// the read before `since`. `None` when the history covers `since`.
+    /// The oldest event read, when the feed ran out, the page cap stopped
+    /// the read or a page failed before `since`. `None` when the history
+    /// covers `since`.
     pub cut_off_at: Option<String>,
+    /// Why reading stopped at `cut_off_at` when a page after the first
+    /// failed, so the history is short for a reason a retry may fix.
+    pub read_error: Option<String>,
 }
 
 impl ContributionHistory {
@@ -90,14 +94,38 @@ pub async fn list_contributions(
     } else {
         MAX_GITLAB_PAGES
     };
+    let day = since.date_naive();
+    read_history(max_pages, since, move |page| {
+        client.backend.list_contribution_page(scope, day, page)
+    })
+    .await
+}
+
+/// Reads up to `max_pages` pages back to `since`. A failed first page fails
+/// the read, while a later one ends it with the pages already read and the
+/// failure in `read_error`.
+async fn read_history<F, Fut>(
+    max_pages: usize,
+    since: DateTime<Utc>,
+    mut read_page: F,
+) -> anyhow::Result<ContributionHistory>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: Future<Output = anyhow::Result<FeedPage>>,
+{
     let mut history = ContributionHistory::default();
     for page in 1..=max_pages {
-        let feed = client
-            .backend
-            .list_contribution_page(scope, since.date_naive(), page)
-            .await?;
-        if history.add_page(feed, since) {
-            return Ok(history);
+        match read_page(page).await {
+            Ok(feed) => {
+                if history.add_page(feed, since) {
+                    return Ok(history);
+                }
+            }
+            Err(e) if page == 1 => return Err(e),
+            Err(e) => {
+                history.read_error = Some(e.to_string());
+                return Ok(history);
+            }
         }
     }
     Ok(history)
@@ -595,6 +623,41 @@ mod tests {
 
         assert!(is_done);
         assert_eq!(history.cut_off_at, None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_later_page_keeps_the_pages_read_and_says_why() {
+        let mut second = page(&["2026-10-04T00:00:00Z"], EVENTS_PER_PAGE);
+        second.contributions[0].id = "second".to_string();
+        let mut pages = vec![
+            Ok(page(&["2026-10-05T00:00:00Z"], EVENTS_PER_PAGE)),
+            Ok(second),
+            Err(anyhow::anyhow!("HTTP 502")),
+        ]
+        .into_iter();
+
+        let history = read_history(10, since(), |_| {
+            std::future::ready(pages.next().expect("no read past the failed page"))
+        })
+        .await
+        .expect("the pages before the failure");
+
+        assert_eq!(history.contributions.len(), 2);
+        assert_eq!(history.cut_off_at.as_deref(), Some("2026-10-04T00:00:00Z"));
+        assert_eq!(history.read_error.as_deref(), Some("HTTP 502"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_first_page_fails_the_read() {
+        let result = read_history(10, since(), |_| {
+            std::future::ready(Err::<FeedPage, _>(anyhow::anyhow!("HTTP 502")))
+        })
+        .await;
+
+        assert_eq!(
+            result.map_err(|e| e.to_string()),
+            Err("HTTP 502".to_string())
+        );
     }
 
     #[test]

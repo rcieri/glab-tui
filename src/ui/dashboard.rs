@@ -572,14 +572,21 @@ fn contributors_view_label(view: ContributorsView) -> String {
     }
 }
 
-/// Why activity counts may be short: the feed ended inside the window.
+/// Why activity counts may be short: the feed ended, or a page of it failed,
+/// inside the window.
 fn feed_cut_off_note(ctx: &Context) -> Option<String> {
     let since = ctx.app.dashboard.contributors_view.activity_since(ctx.now);
     let ContributorsView::Activity(_) = ctx.app.dashboard.contributors_view else {
         return None;
     };
-    let cut_off_at = ctx.app.dashboard.contributions.cut_off_after(since)?;
-    Some(format!("(feed ends {})", time_ago(cut_off_at)))
+    let feed = &ctx.app.dashboard.contributions;
+    let cut_off_at = feed.cut_off_after(since)?;
+    let what = if feed.read_error().is_some() {
+        "read failed past"
+    } else {
+        "feed ends"
+    };
+    Some(format!("({what} {})", time_ago(cut_off_at)))
 }
 
 /// Why a card's counts may be short.
@@ -832,6 +839,11 @@ fn item_list_title(ctx: &Context) -> String {
     if let ContributionFeed::Failed(reason) = &ctx.app.dashboard.contributions {
         label.push_str(&format!(
             " (no commits or comments: {})",
+            sanitize_untrusted(reason)
+        ));
+    } else if let Some(reason) = ctx.app.dashboard.contributions.read_error() {
+        label.push_str(&format!(
+            " (activity cut short: {})",
             sanitize_untrusted(reason)
         ));
     }

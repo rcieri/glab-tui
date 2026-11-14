@@ -71,6 +71,14 @@ impl ContributionFeed {
             .is_ok_and(|at| at.with_timezone(&Utc) > since)
             .then_some(cut_off_at)
     }
+
+    /// Why the shown feed stopped early, when a page after the first failed.
+    pub fn read_error(&self) -> Option<&str> {
+        match self {
+            ContributionFeed::Loaded(history) => history.read_error.as_deref(),
+            ContributionFeed::NotLoaded | ContributionFeed::Failed(_) => None,
+        }
+    }
 }
 
 /// Why a card's counts may leave out open MRs/PRs or issues.
@@ -692,9 +700,21 @@ impl App {
 
     /// A fetched activity feed replaces the shown one. A failed refresh over
     /// a feed already shown keeps it and marks the Dashboard stale, the way
-    /// a list tab keeps its rows.
+    /// a list tab keeps its rows, and so does a feed cut short by a failed
+    /// page over a complete one.
     pub fn apply_contributions(&mut self, result: Result<ContributionHistory, String>) {
+        let is_complete_feed_shown = matches!(
+            &self.dashboard.contributions,
+            ContributionFeed::Loaded(history) if history.read_error.is_none()
+        );
         match result {
+            Ok(history) if history.read_error.is_some() && is_complete_feed_shown => {
+                self.stale_tabs
+                    .insert(Tab::Dashboard, crate::app::StaleData::RefreshFailed);
+            }
+            Ok(history) if history.read_error.is_some() => {
+                self.dashboard.contributions = ContributionFeed::Loaded(history);
+            }
             Ok(history) => {
                 self.dashboard.contributions = ContributionFeed::Loaded(history);
                 self.stale_tabs.remove(&Tab::Dashboard);
@@ -1135,6 +1155,7 @@ mod tests {
         app.dashboard.contributions = ContributionFeed::Loaded(ContributionHistory {
             contributions: vec![commit("bob"), commit("cy"), commit("cy")],
             cut_off_at: None,
+            read_error: None,
         });
         app.dashboard.contributors_view = ContributorsView::Activity(ActivityWindow::Week);
         let contributors = |app: &App| -> Vec<String> {
@@ -1306,6 +1327,33 @@ mod tests {
 
         app.apply_contributions(Ok(ContributionHistory::default()));
         assert_eq!(app.stale_tabs.get(&Tab::Dashboard), None);
+    }
+
+    #[test]
+    fn a_feed_cut_short_by_a_failed_page_is_shown_but_never_replaces_a_complete_one() {
+        let cut_short = ContributionHistory {
+            cut_off_at: Some("2026-10-20T00:00:00Z".to_string()),
+            read_error: Some("HTTP 502".to_string()),
+            ..ContributionHistory::default()
+        };
+        let mut app = repository_app();
+        app.apply_contributions(Ok(cut_short.clone()));
+        assert!(matches!(
+            &app.dashboard.contributions,
+            ContributionFeed::Loaded(history) if history.read_error.is_some()
+        ));
+        assert_eq!(app.stale_tabs.get(&Tab::Dashboard), None);
+
+        app.apply_contributions(Ok(ContributionHistory::default()));
+        app.apply_contributions(Ok(cut_short));
+        assert!(matches!(
+            &app.dashboard.contributions,
+            ContributionFeed::Loaded(history) if history.read_error.is_none()
+        ));
+        assert_eq!(
+            app.stale_tabs.get(&Tab::Dashboard),
+            Some(&crate::app::StaleData::RefreshFailed)
+        );
     }
 
     #[test]

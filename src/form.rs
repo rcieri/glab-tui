@@ -765,9 +765,10 @@ impl Form {
     }
 
     /// Moves to the next (`step > 0`) or previous focus stop, the button row
-    /// being the last one, wrapping at both ends. Landing on a line input
-    /// starts editing it. A form with no stop steps across its buttons
-    /// instead, so `Tab` still reaches Cancel.
+    /// being the last one, wrapping at both ends. The button row is entered
+    /// on Cancel, so stepping past the options never arms the action.
+    /// Landing on a line input starts editing it. A form with no stop steps
+    /// across its buttons instead, so `Tab` still reaches Cancel.
     fn step_stop(&mut self, step: isize) {
         let stops = self.focus_stops();
         if stops.is_empty() {
@@ -787,13 +788,13 @@ impl Form {
                 self.enter_group(path, step);
                 self.start_editing();
             }
-            None => self.focus = Focus::Button(self.primary),
+            None => self.focus = Focus::Button(self.cancel),
         }
     }
 
     /// Moves one row down (`step > 0`) or up within the focused group, and
     /// past its last or first row into the neighbouring stop, without
-    /// wrapping around the form.
+    /// wrapping around the form. Past the last group it lands on Cancel.
     fn step_row(&mut self, step: isize) {
         let stops = self.focus_stops();
         match self.focus {
@@ -811,7 +812,7 @@ impl Form {
                 let position = stops.iter().position(|&p| p == path).unwrap_or(0);
                 match position.checked_add_signed(step) {
                     Some(next) if next < stops.len() => self.enter_group(stops[next], step),
-                    Some(_) => self.focus = Focus::Button(self.primary),
+                    Some(_) => self.focus = Focus::Button(self.cancel),
                     None => {}
                 }
             }
@@ -1076,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_walks_the_focusable_groups_then_the_buttons_and_wraps() {
+    fn tab_walks_the_focusable_groups_then_lands_on_cancel_and_wraps() {
         let mut form = merge_form();
         let mut visited = Vec::new();
         for _ in 0..4 {
@@ -1088,12 +1089,21 @@ mod tests {
             [
                 Focus::Group(GroupPath::top(1)),
                 Focus::Group(GroupPath::top(2)),
-                Focus::Button(0),
+                Focus::Button(1),
                 Focus::Group(GroupPath::top(1)),
             ]
         );
         press(&mut form, KeyCode::BackTab);
-        assert_eq!(form.focus(), Focus::Button(0));
+        assert_eq!(form.focus(), Focus::Button(1));
+    }
+
+    #[test]
+    fn stepping_down_past_the_options_lands_on_cancel_so_enter_cancels() {
+        let mut form = merge_form();
+        press(&mut form, KeyCode::Char('k'));
+        press(&mut form, KeyCode::Char('j'));
+        assert_eq!(form.focus(), Focus::Button(1));
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(1));
     }
 
     #[test]
@@ -1134,7 +1144,7 @@ mod tests {
         for _ in 0..5 {
             press(&mut form, KeyCode::Char('j'));
         }
-        assert_eq!(form.focus(), Focus::Button(0));
+        assert_eq!(form.focus(), Focus::Button(1));
     }
 
     #[test]
@@ -1446,7 +1456,7 @@ mod tests {
         press(&mut form, KeyCode::Char('a'));
         press(&mut form, KeyCode::Tab);
         press(&mut form, KeyCode::Tab);
-        assert_eq!(form.focus(), Focus::Button(0));
+        assert_eq!(form.focus(), Focus::Button(form.cancel()));
         press(&mut form, KeyCode::Char('a'));
         assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
         assert_eq!(

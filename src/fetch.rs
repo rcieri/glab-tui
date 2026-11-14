@@ -384,6 +384,21 @@ pub fn spawn_refresh_child_level(
     });
 }
 
+/// Jobs of the pipeline opened from the Pipelines tab, else of the newest
+/// pipeline for the checked-out branch.
+async fn fetch_jobs_tab(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+) -> Result<(u64, Vec<domain::pipelines::Job>), String> {
+    let Some(opened) = &client.opened_pipeline else {
+        return fetch_current_branch_jobs(client, project_path).await;
+    };
+    let jobs = domain::pipelines::list_pipeline_jobs(client, &opened.project, opened.id)
+        .await
+        .map_err(|e| format!("Failed to fetch jobs for pipeline {}: {e}", opened.id))?;
+    Ok((opened.id, jobs))
+}
+
 /// Jobs of the newest pipeline for the checked-out branch.
 async fn fetch_current_branch_jobs(
     client: &domain::client::GitlabClient,
@@ -440,7 +455,7 @@ pub fn spawn_refresh_active_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if tab.is_fetchable_in(scope) {
+    if tab.is_fetchable_in(scope, client.kind()) {
         fx.spawn(refresh_tab(client.clone(), scope.clone(), states, tab, tx));
     }
 }
@@ -455,7 +470,7 @@ pub async fn refresh_tab(
     tab: app::Tab,
     tx: ScopedSender,
 ) {
-    if !tab.is_fetchable_in(&scope) {
+    if !tab.is_fetchable_in(&scope, client.kind()) {
         return;
     }
     client.tx = None; // suppress terminal log for background fetches
@@ -579,9 +594,13 @@ pub async fn refresh_tab(
                 }
             }
         }
-        app::Tab::Jobs => match fetch_current_branch_jobs(&client, &repo_path).await {
+        app::Tab::Jobs => match fetch_jobs_tab(&client, &repo_path).await {
             Ok((pipeline_id, jobs)) => {
-                let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
+                let _ = tx.send(Event::JobsTabFetched(
+                    client.jobs_source(),
+                    pipeline_id,
+                    jobs,
+                ));
             }
             Err(message) => {
                 let _ = tx.send(Event::FetchFailed(tab, message));
@@ -921,6 +940,9 @@ fn prefetch_pipeline_jobs(
     fx: &mut Effects,
 ) {
     if let Some(client) = &app.gitlab_client {
+        if !app::Tab::Pipelines.is_fetchable_in(&app.scope, client.kind()) {
+            return;
+        }
         if let Some(idx) = app.pipelines.state.selected() {
             let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
             if let Some(pipe_id) = pipe_id {
@@ -1163,12 +1185,13 @@ mod tests {
             page_size: 100,
             api_per_page: 100,
             show_read_notifications: false,
+            opened_pipeline: None,
         }
     }
 
     #[test]
     fn dispatch_pending_related_mrs_returns_false_when_nothing_pending() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1182,7 +1205,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_returns_false_within_debounce_window() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1210,7 +1233,7 @@ mod tests {
 
     #[test]
     fn dispatch_pending_related_mrs_clears_state_when_iid_already_fetched() {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         let client = dummy_client();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1251,7 +1274,7 @@ mod tests {
 
     /// A GitHub app on the PRs tab with the inspector open on PR #11.
     fn app_inspecting_pr_11() -> app::App {
-        let mut app = app::App::new();
+        let mut app = app::App::default();
         app.gitlab_client = Some(crate::domain::client::GitlabClient {
             is_github: true,
             backend: crate::backend::create_backend(true),
@@ -1259,6 +1282,7 @@ mod tests {
             page_size: 100,
             api_per_page: 100,
             show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
         app.active_tab = app::Tab::MergeRequests;

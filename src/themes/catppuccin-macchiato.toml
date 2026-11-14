@@ -23,8 +23,10 @@ purple_bg = "#332544"
 # ── Diff ──
 diff_addition_fg = "#a6da95"
 diff_addition_bg = "#273b26"
+diff_addition_emph_bg = "#4d6b47"
 diff_deletion_fg = "#ed8796"
 diff_deletion_bg = "#3f2025"
+diff_deletion_emph_bg = "#733f47"
 diff_gutter_bg = "#24273a"
 diff_sep = "#5b6078"
 

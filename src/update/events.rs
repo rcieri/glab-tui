@@ -23,6 +23,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             // moved to another level.
             if app.current_parent_id() == Some(parent_id) {
                 let cursor = app.pipelines.state.selected();
+                app.drop_jobs_of_changed_children(&level.children);
                 app.pipelines.items = level.children;
                 app.pending_triggers = level.pending;
                 let selected = if app.pipelines.items.is_empty() {
@@ -37,18 +38,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.fetching_pipelines.remove(&id);
             app.pipeline_jobs.insert(id, jobs.clone());
 
-            let mut is_active = false;
             if app.active_tab == app::Tab::Jobs && app.active_pipeline_id == Some(id) {
-                is_active = true;
-            } else if app.active_tab == app::Tab::Pipelines {
-                if let Some(idx) = app.pipelines.state.selected() {
-                    if app.filtered_pipelines().get(idx).map(|p| p.id()) == Some(id) {
-                        is_active = true;
-                    }
-                }
-            }
-
-            if is_active {
                 app.jobs.items = jobs;
                 app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
             }
@@ -56,14 +46,54 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
-        Event::JobsTabFetched(pipeline_id, jobs) => {
+        Event::JobsTabFetched(source, pipeline_id, jobs) => {
+            // The reply is for another pipeline than the requested one.
+            // Checked before the loading flag is cleared, since that flag
+            // belongs to the current request.
+            let current = app
+                .gitlab_client
+                .as_ref()
+                .map(|client| client.jobs_source());
+            if current != Some(source) {
+                return;
+            }
             app.complete_loading_tab(app::Tab::Jobs, "Success");
             app.loaded_tabs.insert(app::Tab::Jobs);
-            app.jobs.items = jobs;
-            app.active_pipeline_id = Some(pipeline_id);
-            app.jobs.state.select(Some(0));
-            app.detail_scroll = 0;
-            app.job_trace = None;
+            if app.active_pipeline_id == Some(pipeline_id) {
+                let selected = app.selected_job().map(|job| {
+                    (
+                        job.id,
+                        job.stage.clone(),
+                        job.name.clone(),
+                        job.matrix.clone(),
+                    )
+                });
+                app.jobs.items = jobs;
+                let shown = app.filtered_jobs();
+                let same_run = shown
+                    .iter()
+                    .position(|job| selected.as_ref().is_some_and(|(id, ..)| job.id == *id));
+                // A retry lists the job under a new id, and its log belongs to
+                // the previous run.
+                let retried = shown.iter().position(|job| {
+                    selected.as_ref().is_some_and(|(_, stage, name, matrix)| {
+                        job.stage == *stage && job.name == *name && job.matrix == *matrix
+                    })
+                });
+                if same_run.is_none() {
+                    app.detail_scroll = 0;
+                    app.close_job_trace();
+                }
+                app.jobs
+                    .state
+                    .select(Some(same_run.or(retried).unwrap_or(0)));
+            } else {
+                app.jobs.items = jobs;
+                app.active_pipeline_id = Some(pipeline_id);
+                app.jobs.state.select(Some(0));
+                app.detail_scroll = 0;
+                app.close_job_trace();
+            }
         }
         Event::JobTraceFetched(job_id, result) => {
             app.job_trace_loading = false;
@@ -569,6 +599,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                         start_date: None,
                         created_at: String::new(),
                         project_path: project.clone(),
+                        web_url: None,
                     })
                     .collect();
                 cache_updated = true;

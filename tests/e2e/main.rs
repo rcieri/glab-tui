@@ -3,8 +3,10 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod cli_contract;
 mod config;
 mod custom_keybindings;
+mod edit_people;
 mod environments;
 mod group_scope_actions;
 mod job_trace;
@@ -12,6 +14,7 @@ mod keybindings;
 mod layout;
 mod list_tab;
 mod modal_notices;
+mod open_cli;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;
@@ -24,6 +27,7 @@ mod stacked_prs;
 mod state_filter;
 mod tabs;
 mod todos;
+mod unhandled_calls;
 mod workspace;
 
 // Declarations of libc functions
@@ -421,12 +425,18 @@ impl Sandbox {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let mock_gh = manifest_dir.join("tests").join("mocks").join("gh");
         let mock_glab = manifest_dir.join("tests").join("mocks").join("glab");
+        let mock_browser = manifest_dir.join("tests").join("mocks").join("browser");
         std::fs::copy(&mock_gh, bin_dir.join("gh"))?;
         std::fs::copy(&mock_glab, bin_dir.join("glab"))?;
+        std::fs::copy(&mock_browser, bin_dir.join("browser"))?;
 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(bin_dir.join("gh"), std::fs::Permissions::from_mode(0o755))?;
         std::fs::set_permissions(bin_dir.join("glab"), std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(
+            bin_dir.join("browser"),
+            std::fs::Permissions::from_mode(0o755),
+        )?;
 
         let log_path = temp_dir.path().join("cli_calls.log");
 
@@ -486,14 +496,87 @@ impl Sandbox {
             ),
             ("TERM".to_string(), "xterm-256color".to_string()),
             ("SHELL".to_string(), "/bin/sh".to_string()),
+            // `git web--browse` runs the `browser` mock, which logs the URL
+            // instead of starting the developer's browser.
+            ("GIT_CONFIG_COUNT".to_string(), "2".to_string()),
+            ("GIT_CONFIG_KEY_0".to_string(), "web.browser".to_string()),
+            ("GIT_CONFIG_VALUE_0".to_string(), "mock".to_string()),
+            (
+                "GIT_CONFIG_KEY_1".to_string(),
+                "browser.mock.cmd".to_string(),
+            ),
+            (
+                "GIT_CONFIG_VALUE_1".to_string(),
+                format!("'{}'", self.bin_dir.join("browser").display()),
+            ),
         ]
+    }
+
+    /// Waits until the call log has stopped growing: mocks glab-tui started
+    /// keep running after the app is killed, and may still log a call.
+    /// The log has to stay unchanged for `QUIET`, long enough for a mock forked
+    /// just before the kill to start up and log its call.
+    fn wait_for_running_mocks(&self, timeout: Duration) {
+        const POLL: Duration = Duration::from_millis(50);
+        const QUIET: Duration = Duration::from_millis(250);
+        let logged = || std::fs::metadata(&self.log_path).map_or(0, |m| m.len());
+        let deadline = Instant::now() + timeout;
+        let mut seen = logged();
+        let mut quiet_since = Instant::now();
+        while Instant::now() < deadline {
+            std::thread::sleep(POLL);
+            let now = logged();
+            if now != seen {
+                seen = now;
+                quiet_since = Instant::now();
+            } else if quiet_since.elapsed() >= QUIET {
+                return;
+            }
+        }
+    }
+}
+
+impl Drop for Sandbox {
+    /// Fails the test when glab-tui made a `glab` / `gh` call the mocks have no
+    /// case for, or called a subcommand or flag the real CLI does not have.
+    /// Both problems are reported in one failure. A test that already failed
+    /// keeps its own failure: panicking again while unwinding would abort the
+    /// run.
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        // The two waits watch different files: the call log a mock appends to
+        // first, and the argv record it renames once complete.
+        self.wait_for_running_mocks(Duration::from_secs(2));
+        cli_contract::wait_for_recorded_calls(&self.log_path, Duration::from_secs(2));
+        let mut problems = Vec::new();
+        let mut unhandled = self.log_path.clone().into_os_string();
+        unhandled.push(".unhandled");
+        let calls = std::fs::read_to_string(unhandled).unwrap_or_default();
+        if !calls.is_empty() {
+            problems.push(format!(
+                "the CLI mocks have no case for these calls (add one to tests/mocks/):\n{calls}"
+            ));
+        }
+        let refused = cli_contract::violations_in_log(&self.log_path);
+        if !refused.is_empty() {
+            problems.push(format!(
+                "the real CLI would refuse these calls (if a newer CLI has them, bump \
+                 the pins in scripts/gen-cli-reference.sh and rerun it):\n{}",
+                refused.join("\n")
+            ));
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 }
 
 pub struct TestSession {
-    pub sandbox: Sandbox,
+    // Dropped in this order: the app is killed before the sandbox checks the
+    // calls it made.
     pub pty: Pty,
     pub emulator: TerminalEmulator,
+    pub sandbox: Sandbox,
 }
 
 impl TestSession {
@@ -681,6 +764,28 @@ impl TestSession {
         }
         Err(format!(
             "Timeout waiting for a CLI call containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
+            self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
+    }
+
+    /// Feeds output to the emulator until the CLI mocks have logged `count`
+    /// calls containing `expected`. For calls the app makes more than once.
+    pub fn wait_for_cli_call_count(
+        &mut self,
+        expected: &str,
+        count: usize,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if self.get_cli_calls().matches(expected).count() >= count {
+                return Ok(());
+            }
+            self.settle(10);
+        }
+        Err(format!(
+            "Timeout waiting for {count} CLI calls containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
             self.get_cli_calls(),
             self.emulator.get_text()
         ))

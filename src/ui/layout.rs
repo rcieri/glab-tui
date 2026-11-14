@@ -2,6 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::Tab;
 use crate::config::UiConfig;
+use crate::ui::compaction::{self, PreviewPlacement};
 
 pub const MIN_TERMINAL_WIDTH: u16 = 54;
 pub const MIN_TERMINAL_HEIGHT: u16 = 10;
@@ -16,6 +17,105 @@ pub const DETAIL_MEDIUM_WIDTH: u16 = 45;
 pub const DETAIL_SMALL_WIDTH: u16 = 30;
 pub const TERMINAL_PANE_MIN_HEIGHT_THRESHOLD: u16 = 18;
 pub const TERMINAL_PANE_HEIGHT: u16 = 6;
+
+/// The panes of the main workspace below the header bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Workspace {
+    pub sidebar: Rect,
+    pub list: Rect,
+    /// The compact terminal log under the list, or under the list and the stacked preview.
+    pub terminal: Rect,
+    pub detail: Rect,
+}
+
+impl Workspace {
+    /// Lays out the sidebar (left out on a terminal narrower than
+    /// `SIDEBAR_MIN_WIDTH_THRESHOLD`), the list with the terminal log under
+    /// it, and, when `preview_columns` is set, the preview where
+    /// `compaction::place_preview` puts it: beside the list at that width or
+    /// narrowed, below the list (giving up the terminal log when both do not
+    /// fit), or hidden when neither fits.
+    pub fn split(
+        area: Rect,
+        sidebar_width: u16,
+        terminal_height: u16,
+        preview_columns: Option<u16>,
+    ) -> Self {
+        let shown_sidebar_width = if area.width >= SIDEBAR_MIN_WIDTH_THRESHOLD {
+            sidebar_width
+        } else {
+            0
+        };
+        let [sidebar, main] =
+            Layout::horizontal([Constraint::Length(shown_sidebar_width), Constraint::Min(0)])
+                .areas(area);
+        let placement = match preview_columns {
+            Some(preferred_columns) => {
+                // Measured as if the sidebar were shown, so leaving it out on a
+                // narrow terminal never moves the preview back beside the list.
+                compaction::place_preview(
+                    Rect {
+                        width: area.width.saturating_sub(sidebar_width),
+                        ..main
+                    },
+                    preferred_columns,
+                    terminal_height,
+                )
+            }
+            None => PreviewPlacement::Hidden,
+        };
+        let split_terminal = |column: Rect, terminal_rows: u16| -> [Rect; 2] {
+            Layout::vertical([Constraint::Min(0), Constraint::Length(terminal_rows)]).areas(column)
+        };
+        match placement {
+            PreviewPlacement::Beside { columns } => {
+                let [column, detail] =
+                    Layout::horizontal([Constraint::Min(0), Constraint::Length(columns)])
+                        .areas(main);
+                let [list, terminal] = split_terminal(column, terminal_height);
+                Self {
+                    sidebar,
+                    list,
+                    terminal,
+                    detail,
+                }
+            }
+            PreviewPlacement::Below { terminal_log } => {
+                let terminal_rows = if terminal_log { terminal_height } else { 0 };
+                let [column, terminal] = split_terminal(main, terminal_rows);
+                let [list, detail] =
+                    Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(column);
+                Self {
+                    sidebar,
+                    list,
+                    terminal,
+                    detail,
+                }
+            }
+            PreviewPlacement::Hidden => {
+                let [list, terminal] = split_terminal(main, terminal_height);
+                Self {
+                    sidebar,
+                    list,
+                    terminal,
+                    detail: Rect::default(),
+                }
+            }
+        }
+    }
+}
+
+/// Columns the preview asks for beside the list in a terminal `width` wide,
+/// before `compaction::place_preview` narrows it to keep the list readable.
+pub fn preview_columns(width: u16) -> u16 {
+    if width > DETAIL_LARGE_WIDTH_THRESHOLD {
+        (u32::from(width) * u32::from(DETAIL_LARGE_PERCENTAGE) / 100) as u16
+    } else if width > DETAIL_MEDIUM_WIDTH_THRESHOLD {
+        DETAIL_MEDIUM_WIDTH
+    } else {
+        compaction::MIN_PREVIEW_COLUMNS
+    }
+}
 
 /// Inputs required to compute a [`LayoutPlan`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,58 +210,11 @@ impl LayoutPlan {
         let banner_title = banner[0];
         let banner_mode = banner[1];
 
-        let sidebar_constraint =
-            if size.width >= SIDEBAR_MIN_WIDTH_THRESHOLD && inputs.sidebar_visible {
-                Constraint::Length(inputs.sidebar_width)
-            } else {
-                Constraint::Length(0)
-            };
-
-        let details_constraint =
-            if !inputs.detail_visible || size.width < DETAIL_MIN_WIDTH_THRESHOLD {
-                Constraint::Max(0)
-            } else if size.width > DETAIL_LARGE_WIDTH_THRESHOLD {
-                Constraint::Percentage(DETAIL_LARGE_PERCENTAGE)
-            } else if size.width > DETAIL_MEDIUM_WIDTH_THRESHOLD {
-                Constraint::Length(DETAIL_MEDIUM_WIDTH)
-            } else {
-                Constraint::Length(DETAIL_SMALL_WIDTH)
-            };
-
-        let is_zoomed = (inputs.details_zoomed && inputs.can_zoom) || inputs.edit_zoomed;
-
-        let middle_chunks = if is_zoomed {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(0),
-                    Constraint::Length(0),
-                    Constraint::Min(0),
-                ])
-                .split(workspace_area)
-        } else if inputs.active_tab == Tab::Terminal {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    sidebar_constraint,
-                    Constraint::Min(0),
-                    Constraint::Length(0),
-                ])
-                .split(workspace_area)
+        let sidebar_width = if inputs.sidebar_visible {
+            inputs.sidebar_width
         } else {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([sidebar_constraint, Constraint::Min(0), details_constraint])
-                .split(workspace_area)
+            0
         };
-
-        let sidebar_rect = middle_chunks[0];
-        let content_rect_raw = middle_chunks[1];
-        let mut detail_rect = middle_chunks[2];
-
-        if !inputs.detail_visible && !inputs.details_zoomed && !inputs.edit_zoomed {
-            detail_rect = Rect::default();
-        }
 
         let term_height = if inputs.active_tab != Tab::Terminal
             && size.height >= TERMINAL_PANE_MIN_HEIGHT_THRESHOLD
@@ -172,15 +225,25 @@ impl LayoutPlan {
             0
         };
 
-        let (content_area, term_area) = if term_height > 0 {
-            let tc = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(term_height)])
-                .split(content_rect_raw);
-            (tc[0], tc[1])
+        let is_zoomed = (inputs.details_zoomed && inputs.can_zoom) || inputs.edit_zoomed;
+
+        let workspace = if is_zoomed {
+            Workspace {
+                sidebar: Rect::default(),
+                list: Rect::default(),
+                terminal: Rect::default(),
+                detail: workspace_area,
+            }
         } else {
-            (content_rect_raw, Rect::default())
+            let show_preview = inputs.detail_visible && inputs.active_tab != Tab::Terminal;
+            let preview_cols = show_preview.then(|| preview_columns(workspace_area.width));
+            Workspace::split(workspace_area, sidebar_width, term_height, preview_cols)
         };
+
+        let sidebar_rect = workspace.sidebar;
+        let content_area = workspace.list;
+        let detail_rect = workspace.detail;
+        let term_area = workspace.terminal;
 
         Self {
             is_too_small: false,
@@ -306,16 +369,21 @@ mod tests {
         assert!(!plan.has_detail());
         assert_eq!(plan.detail_rect_opt(), None);
 
-        // Below 90 columns: detail hidden
+        // Below 90 columns with sidebar: preview placed below list
         let plan_89 = LayoutPlan::compute(base_inputs(89, 30));
-        assert!(!plan_89.has_detail());
+        assert!(plan_89.has_detail());
+        assert_eq!(plan_89.detail_rect.y, plan_89.content_area.bottom());
 
         // 90..=100 columns: 30 columns
         let plan_95 = LayoutPlan::compute(base_inputs(95, 30));
         assert!(plan_95.has_detail());
         assert_eq!(plan_95.detail_rect.width, 30);
 
-        // 101..=150 columns: 45 columns
+        // 101..=104 columns: narrowed to 30 columns to keep list readable
+        let plan_101 = LayoutPlan::compute(base_inputs(101, 30));
+        assert_eq!(plan_101.detail_rect.width, 30);
+
+        // 105..=150 columns: 45 columns
         let plan_120 = LayoutPlan::compute(base_inputs(120, 30));
         assert_eq!(plan_120.detail_rect.width, 45);
 
@@ -345,7 +413,7 @@ mod tests {
         assert_eq!(plan.content_area.width, 0);
         assert_eq!(plan.detail_rect, Rect::new(0, 2, 120, 28));
 
-        // Cannot zoom when can_zoom is false (e.g. Pipelines with no jobs)
+        // Cannot zoom when can_zoom is false (e.g. Pipelines)
         inputs.can_zoom = false;
         let plan_no_zoom = LayoutPlan::compute(inputs);
         assert!(plan_no_zoom.has_sidebar());

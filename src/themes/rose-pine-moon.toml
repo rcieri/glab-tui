@@ -37,8 +37,10 @@ purple_bg      = "#4b2f6d"
 # ── Diff ──
 diff_addition_fg = "#9ccfd8"
 diff_addition_bg = "#1f4248"
+diff_addition_emph_bg = "#456c73"
 diff_deletion_fg = "#eb6f92"
 diff_deletion_bg = "#5b2736"
+diff_deletion_emph_bg = "#863d52"
 diff_gutter_bg   = "#393552"  # overlay
 diff_sep         = "#56526e"  # highlight high
 

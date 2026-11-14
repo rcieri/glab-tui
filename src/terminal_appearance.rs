@@ -1,7 +1,9 @@
 use crate::config::Appearance;
 
+// crossterm waits this long for the same DA1 reply in its keyboard
+// enhancement query. A reply arriving after it is read as keypresses.
 #[cfg(unix)]
-const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The appearance `COLORFGBG` names, else the one the terminal's reply to a
 /// background-color query implies. `None` when neither says.
@@ -82,8 +84,7 @@ fn contains_da1_reply(bytes: &[u8]) -> bool {
 
 #[cfg(unix)]
 fn query_background() -> Option<Vec<u8>> {
-    use std::io::{Read, Write};
-    use std::os::fd::AsRawFd;
+    use std::io::Write;
 
     let mut tty = std::fs::OpenOptions::new()
         .read(true)
@@ -95,10 +96,22 @@ fn query_background() -> Option<Vec<u8>> {
     tty.write_all(b"\x1b]11;?\x1b\\\x1b[c").ok()?;
     tty.flush().ok()?;
 
-    let deadline = std::time::Instant::now() + REPLY_TIMEOUT;
+    Some(read_until_da1_reply(
+        &mut tty,
+        std::time::Instant::now() + REPLY_TIMEOUT,
+    ))
+}
+
+/// Reads one byte at a time so the read stops at the end of the DA1 reply and
+/// keys typed after it stay queued for the input thread.
+#[cfg(unix)]
+fn read_until_da1_reply<T>(tty: &mut T, deadline: std::time::Instant) -> Vec<u8>
+where
+    T: std::io::Read + std::os::fd::AsRawFd,
+{
     let mut reply = Vec::new();
-    let mut chunk = [0u8; 256];
-    while !contains_da1_reply(&reply) {
+    let mut byte = [0u8; 1];
+    while !(byte[0] == b'c' && contains_da1_reply(&reply)) {
         let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
             break;
         };
@@ -117,12 +130,12 @@ fn query_background() -> Option<Vec<u8>> {
         if ready <= 0 {
             break;
         }
-        match tty.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(read) => reply.extend_from_slice(&chunk[..read]),
+        match tty.read(&mut byte) {
+            Ok(1) => reply.push(byte[0]),
+            _ => break,
         }
     }
-    Some(reply)
+    reply
 }
 
 #[cfg(not(unix))]
@@ -204,5 +217,39 @@ mod tests {
         assert!(contains_da1_reply(b"\x1b]11;rgb:0/0/0\x07\x1b[?62;22c"));
         assert!(!contains_da1_reply(b"\x1b]11;rgb:0/0/0\x07\x1b[?62;2"));
         assert!(!contains_da1_reply(b"\x1b]11;rgb:0/0/0\x07"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reply_reader_leaves_keys_typed_after_the_da1_reply_unread() {
+        use std::io::{Read, Write};
+
+        let reply = b"\x1b]11;rgb:0/0/0\x1b\\\x1b[?62;22c";
+        let (mut reader, mut writer) = std::io::pipe().unwrap();
+        writer.write_all(reply).unwrap();
+        writer.write_all(b"jk").unwrap();
+        drop(writer);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert_eq!(read_until_da1_reply(&mut reader, deadline), reply);
+        let mut typed = Vec::new();
+        reader.read_to_end(&mut typed).unwrap();
+        assert_eq!(typed, b"jk");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reply_reader_gives_up_at_the_deadline_without_a_da1_reply() {
+        use std::io::Write;
+
+        let (mut reader, mut writer) = std::io::pipe().unwrap();
+        writer.write_all(b"\x1b]11;rgb:0/0/0\x07").unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+        assert_eq!(
+            read_until_da1_reply(&mut reader, deadline),
+            b"\x1b]11;rgb:0/0/0\x07"
+        );
+        drop(writer);
     }
 }

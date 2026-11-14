@@ -267,7 +267,15 @@ The generated file is fully annotated. Key sections:
 
 ```toml
 # Pick a built-in theme preset
-theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
+theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | terminal | auto | ...
+
+# "terminal" draws with your terminal's own ANSI palette, so it follows the
+# terminal or OS theme. "auto" picks theme_dark or theme_light from COLORFGBG,
+# else by asking the terminal for its background color at startup.
+# Set appearance to skip asking.
+# theme_dark = "default"
+# theme_light = "catppuccin-latte"
+# appearance = "light"   # dark | light
 
 # Tab to open on launch. Valid: issues, mrs, pr, pipelines, runners, releases,
 # todos, milestones, branches, environments, terminal. Case-insensitive.
@@ -354,6 +362,10 @@ search_previous = "Ctrl+p"
 ### Custom themes
 
 Drop any `<name>.toml` file into `~/.config/glab-tui/themes/` and set `theme_preset = "<name>"` in `config.toml`. The file must define the same 29 color tokens as the bundled themes: the 19 semantic tokens (backgrounds, borders, text, status colors) plus the 10-entry `label_palette_0`…`label_palette_9` used for label and fallback rendering. The theme's `bg` token paints the table backgrounds, popup overlays (edit menus, selectors, confirm dialogs), and the diff view, so custom themes render consistently even on terminals whose default background differs.
+
+A color is a hex value (`"#31bf67"`), an ANSI color name (`"red"`, `"light-blue"`, `"dark-gray"`), a palette index (`"8"`), or `""` for the terminal's default color. Names and indexes 0 to 15 take their value from the terminal's palette, as in the bundled `terminal` theme.
+
+The **Theme** row of the Configure View opens a picker that previews each preset on the whole screen as you move through it. `Enter` keeps the highlighted preset and `Esc` goes back to the one you had.
 
 ### Editor
 

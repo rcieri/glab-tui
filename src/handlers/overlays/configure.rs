@@ -4,7 +4,6 @@ use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
 use crate::keybinding::KeyPress;
 use crossterm::event::KeyCode;
-use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Keys while the Configure View is open.
@@ -183,28 +182,7 @@ pub fn handle_key(
             } else if idx == prefetch_idx {
                 app.config.prefetch_tabs = !app.config.prefetch_tabs;
             } else if idx == theme_idx {
-                let theme_list = crate::config::all_theme_presets();
-                if !theme_list.is_empty() {
-                    app.selector = Some(crate::app::Selector {
-                        title: " Select Theme ".to_string(),
-                        all_items: theme_list,
-                        selected_items: std::collections::HashSet::new(),
-                        cursor_idx: 0,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "theme_selector".to_string(),
-                        field_type: "theme_selector".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                        request: None,
-                    });
-                }
+                app.open_theme_picker();
             }
             if let Some(client) = app.gitlab_client.clone() {
                 app.start_loading_tab(app.active_tab);
@@ -295,28 +273,7 @@ pub fn handle_key(
             } else if idx == prefetch_idx {
                 app.config.prefetch_tabs = !app.config.prefetch_tabs;
             } else if idx == theme_idx {
-                let theme_list = crate::config::all_theme_presets();
-                if !theme_list.is_empty() {
-                    app.selector = Some(crate::app::Selector {
-                        title: " Select Theme ".to_string(),
-                        all_items: theme_list,
-                        selected_items: std::collections::HashSet::new(),
-                        cursor_idx: 0,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "theme_selector".to_string(),
-                        field_type: "theme_selector".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                        request: None,
-                    });
-                }
+                app.open_theme_picker();
             } else if idx == save_idx {
                 app.save_menu_open = true;
                 app.save_menu_selection = Some(SaveMenu::Local);

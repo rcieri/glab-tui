@@ -503,14 +503,10 @@ pub fn handle_key(
                     return;
                 }
 
-                if field_type == "theme_selector" {
-                    let filtered_items = selector.get_filtered_items();
-                    let mut selected_val = selector.selected_items.iter().next().cloned();
-                    if selected_val.is_none() && !filtered_items.is_empty() {
-                        selected_val = Some(filtered_items[selector.cursor_idx].clone());
-                    }
+                if field_type == crate::app::THEME_PICKER_FIELD_TYPE {
+                    let picked = selector.highlighted_theme();
                     app.selector = None;
-                    if let Some(name) = selected_val {
+                    if let Some(name) = picked {
                         app.config.theme_preset = Some(name);
                         app.apply_config();
                     }

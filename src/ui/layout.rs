@@ -239,7 +239,7 @@ impl LayoutPlan {
         self.sidebar_rect.width > 0
     }
 
-    /// Whether the detail pane is visible and has positive width.
+    /// Whether the detail pane is visible with a positive width and height.
     pub fn has_detail(&self) -> bool {
         self.detail_rect.width > 0 && self.detail_rect.height > 0
     }

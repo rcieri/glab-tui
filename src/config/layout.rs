@@ -398,7 +398,8 @@ mod tests {
     fn an_empty_tab_list_shows_every_tab() {
         let layout = toml::from_str::<LayoutConfig>("tabs = []").unwrap();
 
-        assert!(layout.tab_order().iter().all(|(_, shown)| *shown));
+        let every_tab_shown: Vec<(Tab, bool)> = Tab::ALL.iter().map(|&tab| (tab, true)).collect();
+        assert_eq!(layout.tab_order(), every_tab_shown);
     }
 
     #[test]

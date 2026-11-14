@@ -760,7 +760,7 @@ pub fn fetch_missing_merge_methods(
             let result = client.list_merge_methods(&project).await;
             let _ = tx.send(Event::MergeMethodsFetched {
                 project,
-                result: result.map_err(|e| e.to_string()),
+                result: result.map_err(|e| format!("{e:#}")),
             });
         });
     }

@@ -210,9 +210,23 @@ impl WrappedInput {
     }
 }
 
-/// One blank row between two groups that both take rows.
+/// One blank row between two groups that both take rows at their natural
+/// size, which is what a form sized to its content holds.
 fn gap_rows(natural: &[u16]) -> u16 {
     let shown = natural.iter().filter(|&&rows| rows > 0).count() as u16;
+    shown.saturating_sub(1)
+}
+
+/// The gaps `allocate` places: a Custom region sized by share or fill has a
+/// natural size of 0 but still takes rows, so it counts as a group too.
+fn allocated_gap_rows<F>(groups: &[Group<F>], natural: &[u16]) -> u16 {
+    let shown = groups
+        .iter()
+        .zip(natural)
+        .filter(|(group, rows)| {
+            **rows > 0 || matches!(group, Group::Custom(Rows::Percent(_) | Rows::Fill))
+        })
+        .count() as u16;
     shown.saturating_sub(1)
 }
 
@@ -230,7 +244,7 @@ fn allocate<F>(groups: &[Group<F>], natural: &[u16], body: Rect) -> Vec<Rect> {
             _ => 0,
         })
         .sum();
-    let fixed: u16 = natural.iter().sum::<u16>() + gap_rows(natural);
+    let fixed: u16 = natural.iter().sum::<u16>() + allocated_gap_rows(groups, natural);
     let fill = body.height.saturating_sub(fixed.saturating_add(flexible));
     let mut fill_left = fill;
 
@@ -685,5 +699,21 @@ mod tests {
         };
         assert_eq!(text(groups[0]), "title here");
         assert_eq!(text(groups[1]), "stderr red");
+    }
+
+    #[test]
+    fn a_fill_region_before_toggles_leaves_every_toggle_its_row() {
+        let toggle = |id| Toggle {
+            id,
+            label: "Flag".to_string(),
+            checked: false,
+        };
+        let groups = vec![
+            Group::Custom(Rows::Fill),
+            Group::Toggles(vec![toggle(Id::A), toggle(Id::B)]),
+        ];
+        let rects = allocate(&groups, &[0, 2], Rect::new(0, 0, 20, 10));
+        assert_eq!(rects[0], Rect::new(0, 0, 20, 7));
+        assert_eq!(rects[1], Rect::new(0, 8, 20, 2));
     }
 }

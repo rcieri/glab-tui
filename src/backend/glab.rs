@@ -1195,6 +1195,10 @@ impl Backend for GlabBackend {
         self.tx = Some(tx);
     }
 
+    fn max_listed_rows(&self, _scope: &Scope, page_size: usize, per_request: usize) -> usize {
+        page_count(page_size, per_request) * per_request.max(1)
+    }
+
     // ── Issues ──
 
     async fn list_issues(

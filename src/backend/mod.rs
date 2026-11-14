@@ -190,6 +190,10 @@ pub trait Backend: Send + Sync {
         StateQuery::All
     }
 
+    /// The most rows one `list_issues` or `list_mrs` call returns for these
+    /// arguments. A listing that long may have left older rows out.
+    fn max_listed_rows(&self, scope: &Scope, page_size: usize, per_request: usize) -> usize;
+
     // ── Issues ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects

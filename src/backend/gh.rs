@@ -399,6 +399,16 @@ pub(crate) fn map_gh_pr_state(raw: &str) -> &'static str {
     }
 }
 
+/// The rows one issue or PR listing returns at most: `gh issue list` and
+/// `gh pr list` take a total `--limit`, while an organization listing is one
+/// search page, which GitHub caps at 100 rows.
+fn gh_max_listed_rows(scope: &Scope, page_size: usize) -> usize {
+    match scope {
+        Scope::Repository(_) => page_size * 10,
+        Scope::Group(_) => (page_size * 10).clamp(1, 100),
+    }
+}
+
 /// `gh issue list --state` value. Issues are never merged, so a merged query
 /// lists every state and leaves the State column filter to the client.
 fn gh_issue_state_flag(state: StateQuery) -> &'static str {
@@ -1524,6 +1534,10 @@ impl Backend for GhBackend {
         }
     }
 
+    fn max_listed_rows(&self, scope: &Scope, page_size: usize, _per_request: usize) -> usize {
+        gh_max_listed_rows(scope, page_size)
+    }
+
     // ── Issues ──
 
     /// `_per_request` is unused in the GitHub backend (as with all `Backend`
@@ -1539,7 +1553,7 @@ impl Backend for GhBackend {
         match scope {
             Scope::Repository(project) => {
                 let state = gh_issue_state_flag(state);
-                let total = page_size * 10;
+                let total = gh_max_listed_rows(scope, page_size);
                 let raw = self
                     .run_gh(
                         &[
@@ -1567,7 +1581,7 @@ impl Backend for GhBackend {
                 Ok(issues)
             }
             Scope::Group(org) => {
-                let per_page = (page_size * 10).clamp(1, 100);
+                let per_page = gh_max_listed_rows(scope, page_size);
                 let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:issue")
                 } else {
@@ -1879,7 +1893,7 @@ impl Backend for GhBackend {
         match scope {
             Scope::Repository(project) => {
                 let state = gh_pr_state_flag(state);
-                let total = page_size * 10;
+                let total = gh_max_listed_rows(scope, page_size);
                 let raw = self
                     .run_gh(
                         &[
@@ -2057,7 +2071,7 @@ impl Backend for GhBackend {
                     .collect())
             }
             Scope::Group(org) => {
-                let per_page = (page_size * 10).clamp(1, 100);
+                let per_page = gh_max_listed_rows(scope, page_size);
                 let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:pr")
                 } else {

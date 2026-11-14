@@ -14,7 +14,7 @@ use crate::app::{App, StaleData, Tab};
 use crate::backend::BackendKind;
 use crate::config::{Icons, Theme};
 use crate::dashboard::{
-    ContributionFeed, ContributorsView, DashboardCard, DashboardFocus, DashboardItem,
+    ContributionFeed, ContributorsView, CountCut, DashboardCard, DashboardFocus, DashboardItem,
     DashboardPerson, DashboardRow,
 };
 use crate::domain::contributions::{ContributionKind, TargetKind};
@@ -264,6 +264,12 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
             header,
         )],
     };
+    if let Some(cut) = ctx.app.dashboard_count_cut(card) {
+        title.push(Span::styled(
+            format!("{} ", count_cut_note(cut)),
+            Style::default().fg(theme.yellow),
+        ));
+    }
     if let Some(stale) = card.tab().and_then(|tab| ctx.app.stale_tabs.get(&tab)) {
         title.push(Span::styled(
             match stale {
@@ -574,6 +580,14 @@ fn feed_cut_off_note(ctx: &Context) -> Option<String> {
     };
     let cut_off_at = ctx.app.dashboard.contributions.cut_off_after(since)?;
     Some(format!("(feed ends {})", time_ago(cut_off_at)))
+}
+
+/// Why a card's counts may be short.
+fn count_cut_note(cut: CountCut) -> String {
+    match cut {
+        CountCut::FetchLimit(limit) => format!("(newest {limit} only)"),
+        CountCut::StateFilter => "(State filter hides open)".to_string(),
+    }
 }
 
 fn pipelines_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {

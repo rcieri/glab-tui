@@ -9,6 +9,7 @@ use crate::domain::dashboard::{
 };
 use crate::domain::pipelines::Pipeline;
 use crate::domain::releases::Release;
+use crate::domain::state_query::StateQuery;
 use chrono::{DateTime, Utc};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -70,6 +71,16 @@ impl ContributionFeed {
             .is_ok_and(|at| at.with_timezone(&Utc) > since)
             .then_some(cut_off_at)
     }
+}
+
+/// Why a card's counts may leave out open MRs/PRs or issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountCut {
+    /// The list holds as many rows as one fetch returns, so older rows may
+    /// not have been read.
+    FetchLimit(usize),
+    /// The State filter had the server list no open rows.
+    StateFilter,
 }
 
 /// What the Contributors card counts per person.
@@ -575,6 +586,40 @@ impl App {
         }
     }
 
+    /// Why `card`'s counts may be short. Activity counts carry their own
+    /// note, `ContributionFeed::cut_off_after`.
+    pub fn dashboard_count_cut(&self, card: DashboardCard) -> Option<CountCut> {
+        match card {
+            DashboardCard::MergeRequests => self.listing_cut(Tab::MergeRequests),
+            DashboardCard::Issues => self.listing_cut(Tab::Issues),
+            DashboardCard::Contributors
+                if self.dashboard.contributors_view == ContributorsView::OpenWork =>
+            {
+                self.listing_cut(Tab::MergeRequests)
+                    .or_else(|| self.listing_cut(Tab::Issues))
+            }
+            _ => None,
+        }
+    }
+
+    /// Why `tab`'s list may be missing open rows the queues count.
+    fn listing_cut(&self, tab: Tab) -> Option<CountCut> {
+        if !self.requested_state_query(tab).includes(StateQuery::Open) {
+            return Some(CountCut::StateFilter);
+        }
+        let listed = match tab {
+            Tab::MergeRequests => self.mrs.items.len(),
+            Tab::Issues => self.issues.items.len(),
+            _ => return None,
+        };
+        let client = self.gitlab_client.as_ref()?;
+        let limit =
+            client
+                .backend
+                .max_listed_rows(&self.scope, client.page_size, client.api_per_page);
+        (listed >= limit).then_some(CountCut::FetchLimit(limit))
+    }
+
     /// The Contributors card's numbers for `person` in its current view.
     /// `None` for the signed-in user while their login is unknown.
     pub fn contributor_stats(
@@ -902,6 +947,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scope::Scope;
 
     /// Five cards on a grid two wide: MRs and Contributors with rows, then
     /// Pipelines, Milestones and Releases.
@@ -1335,5 +1381,105 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec![41]);
+    }
+
+    fn listing_app(is_github: bool, scope: Scope, page_size: usize) -> App {
+        let mut app = App::default();
+        app.scope = scope;
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github,
+            backend: crate::backend::create_backend(is_github),
+            tx: None,
+            page_size,
+            api_per_page: page_size,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app
+    }
+
+    fn open_mrs(count: u64) -> Vec<crate::domain::mr::MergeRequest> {
+        (1..=count)
+            .map(|iid| {
+                serde_json::from_value(serde_json::json!({
+                    "iid": iid,
+                    "title": format!("mr {iid}"),
+                    "state": "opened",
+                    "updated_at": "2026-10-28T00:00:00Z",
+                    "author": { "username": "bob" },
+                    "milestone": null,
+                    "target_branch": "main",
+                    "draft": false,
+                    "description": null,
+                }))
+                .expect("a valid merge request")
+            })
+            .collect()
+    }
+
+    fn filter_state(app: &mut App, tab: Tab, state: &str) {
+        app.set_column_filter(tab, "State", [state.to_string()].into());
+    }
+
+    #[test]
+    fn a_gitlab_list_as_long_as_its_fetch_budget_marks_its_counts_cut() {
+        let mut app = listing_app(false, Scope::Repository("g/r".to_string()), 2);
+        app.mrs.items = open_mrs(1);
+        assert_eq!(app.dashboard_count_cut(DashboardCard::MergeRequests), None);
+
+        app.mrs.items = open_mrs(2);
+        assert_eq!(
+            app.dashboard_count_cut(DashboardCard::MergeRequests),
+            Some(CountCut::FetchLimit(2))
+        );
+        assert_eq!(app.dashboard_count_cut(DashboardCard::Issues), None);
+        assert_eq!(
+            app.dashboard_count_cut(DashboardCard::Contributors),
+            Some(CountCut::FetchLimit(2))
+        );
+
+        app.dashboard.contributors_view = ContributorsView::Activity(ActivityWindow::Week);
+        assert_eq!(app.dashboard_count_cut(DashboardCard::Contributors), None);
+    }
+
+    #[test]
+    fn a_github_list_is_cut_only_at_its_own_limit() {
+        let mut repo = listing_app(true, Scope::Repository("o/r".to_string()), 2);
+        repo.mrs.items = open_mrs(2);
+        assert_eq!(repo.dashboard_count_cut(DashboardCard::MergeRequests), None);
+        repo.mrs.items = open_mrs(20);
+        assert_eq!(
+            repo.dashboard_count_cut(DashboardCard::MergeRequests),
+            Some(CountCut::FetchLimit(20))
+        );
+
+        let mut org = listing_app(true, Scope::Group("o".to_string()), 20);
+        org.mrs.items = open_mrs(100);
+        assert_eq!(
+            org.dashboard_count_cut(DashboardCard::MergeRequests),
+            Some(CountCut::FetchLimit(100))
+        );
+    }
+
+    #[test]
+    fn only_a_state_filter_the_server_applies_without_open_rows_cuts_the_counts() {
+        let mut github = listing_app(true, Scope::Repository("o/r".to_string()), 100);
+        filter_state(&mut github, Tab::MergeRequests, "MERGED");
+        assert_eq!(
+            github.dashboard_count_cut(DashboardCard::MergeRequests),
+            Some(CountCut::StateFilter)
+        );
+        filter_state(&mut github, Tab::MergeRequests, "OPEN");
+        assert_eq!(
+            github.dashboard_count_cut(DashboardCard::MergeRequests),
+            None
+        );
+
+        let mut gitlab = listing_app(false, Scope::Repository("g/r".to_string()), 100);
+        filter_state(&mut gitlab, Tab::MergeRequests, "merged");
+        assert_eq!(
+            gitlab.dashboard_count_cut(DashboardCard::MergeRequests),
+            None
+        );
     }
 }

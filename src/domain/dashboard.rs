@@ -134,7 +134,7 @@ fn is_blocked(mr: &MergeRequest) -> bool {
 }
 
 fn is_ready_to_merge(mr: &MergeRequest) -> bool {
-    is_approved(mr) && !mr.draft && !is_blocked(mr)
+    is_approved(mr) && !has_changes_requested(mr) && !mr.draft && !is_blocked(mr)
 }
 
 /// The fetch derived the signed-in user's workflow status, which alone knows
@@ -183,7 +183,8 @@ pub enum MrQueue {
     AwaitingReview,
     /// Changes requested, a person's only on the ones they authored.
     ChangesRequested,
-    /// Approved, not a draft, no conflict and no rebase needed.
+    /// Approved, not a draft, no change requested, no conflict and no rebase
+    /// needed.
     ReadyToMerge,
     /// A conflict or a needed rebase.
     Blocked,
@@ -857,6 +858,29 @@ mod tests {
             mr_queue(MrQueue::ReadyToMerge, &mrs, ADA),
             Vec::<u64>::new()
         );
+    }
+
+    #[test]
+    fn an_approved_mr_with_changes_requested_is_not_ready_to_merge() {
+        // GitLab sets `approved` from the approval rules and
+        // `changes_requested` from any reviewer's state, independently.
+        let mrs = [mr(
+            1,
+            json!({
+                "author": { "username": "ada" },
+                "approval": { "approved": true, "approved_by": ["cy"], "changes_requested": true },
+            }),
+        )];
+
+        assert_eq!(
+            mr_queue(MrQueue::ReadyToMerge, &mrs, ADA),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            mr_queue(MrQueue::ReadyToMerge, &mrs, Person::Everyone),
+            Vec::<u64>::new()
+        );
+        assert_eq!(mr_queue(MrQueue::ChangesRequested, &mrs, ADA), vec![1]);
     }
 
     #[test]

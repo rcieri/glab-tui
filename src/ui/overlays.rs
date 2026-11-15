@@ -494,9 +494,10 @@ const DATE_PICKER_WIDTH: u16 = 7 * DAY_COLUMNS + 6 * DAY_GAP_COLUMNS + 4;
 /// Columns of the previous and next month arrows at each end of the month line.
 const MONTH_ARROW_COLUMNS: u16 = 4;
 
-/// The previous-month arrow, the month and the next-month arrow, in the
+/// The previous-month arrow, the month and the next-month arrow on the
 /// date picker's month line; clicks resolve against the same cells.
-pub(crate) fn date_picker_month_cells(month_line: Rect) -> [Rect; 3] {
+pub(crate) fn date_picker_month_cells(calendar: Rect) -> [Rect; 3] {
+    let [month_line, _] = date_picker_calendar_rows(calendar);
     Layout::horizontal([
         Constraint::Length(MONTH_ARROW_COLUMNS),
         Constraint::Fill(1),
@@ -564,7 +565,6 @@ fn month_name(month: u32) -> &'static str {
 }
 
 fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
-    use chrono::Datelike;
     let Some(date_picker) = app.date_picker_mut() else {
         return;
     };
@@ -590,8 +590,8 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
     let calendar = layout.groups[0];
     let area = layout.area;
 
-    let [month_area, grid_area] = date_picker_calendar_rows(calendar);
-    let [prev_area, title_area, next_area] = date_picker_month_cells(month_area);
+    let [_, grid_area] = date_picker_calendar_rows(calendar);
+    let [prev_area, title_area, next_area] = date_picker_month_cells(calendar);
     let month_style = Style::default()
         .fg(ctx.theme.header_fg)
         .add_modifier(Modifier::BOLD);
@@ -617,13 +617,9 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
             .map(|day| Cell::from(Line::from(day).alignment(Alignment::Center))),
     )
     .style(Style::default().fg(ctx.theme.text_muted));
-    let start_weekday = chrono::NaiveDate::from_ymd_opt(date_picker.year, date_picker.month, 1)
-        .map_or(0, |first| first.weekday().num_days_from_sunday());
-    let total_days = crate::app::days_in_month(date_picker.year, date_picker.month);
     let rows = (0..6u32).map(|week| {
         Row::new((0..7u32).map(|weekday| {
-            let day = (week * 7 + weekday + 1).checked_sub(start_weekday);
-            match day.filter(|&day| (1..=total_days).contains(&day)) {
+            match date_picker.day_in_cell(weekday, week) {
                 Some(day) => {
                     let style = if day == date_picker.day {
                         Style::default()

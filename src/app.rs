@@ -3381,6 +3381,16 @@ impl DatePicker {
             self.day = max_days;
         }
     }
+
+    /// The day the grid shows in the cell at `weekday` (0 is Sunday) of
+    /// `week`, `None` for a cell before the first or after the last day.
+    pub fn day_in_cell(&self, weekday: u32, week: u32) -> Option<u32> {
+        use chrono::Datelike;
+        let first = chrono::NaiveDate::from_ymd_opt(self.year, self.month, 1)?;
+        (week * 7 + weekday + 1)
+            .checked_sub(first.weekday().num_days_from_sunday())
+            .filter(|day| (1..=days_in_month(self.year, self.month)).contains(day))
+    }
 }
 
 /// Prefix of every terminal-log entry written for a custom keybinding.

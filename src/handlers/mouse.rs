@@ -351,39 +351,19 @@ fn handle_save_menu_mouse(app: &mut App, row: u16, col: u16) {
 
 /// The arrows beside the month step it; a day in the grid is picked.
 fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
-    use chrono::Datelike;
     let Some(dp) = app.date_picker_mut() else {
         return;
     };
     let Some(calendar) = dp.layout.as_ref().map(|layout| layout.groups[0]) else {
         return;
     };
-    if !rect_contains(calendar, row, col) {
-        return;
-    }
-
-    if row == calendar.y {
-        let [prev, _, next] = crate::ui::date_picker_month_cells(ratatui::layout::Rect {
-            height: 1,
-            ..calendar
-        });
-        if rect_contains(prev, row, col) {
-            dp.move_month(-1);
-        } else if rect_contains(next, row, col) {
-            dp.move_month(1);
-        }
-        return;
-    }
-    let Some((weekday, week)) = crate::ui::date_picker_day_at(calendar, col, row) else {
-        return;
-    };
-    let Some(first) = chrono::NaiveDate::from_ymd_opt(dp.year, dp.month, 1) else {
-        return;
-    };
-    let cell = week * 7 + weekday + 1;
-    let day = cell.checked_sub(first.weekday().num_days_from_sunday());
-    if let Some(day) =
-        day.filter(|&d| (1..=crate::app::days_in_month(dp.year, dp.month)).contains(&d))
+    let [prev, _, next] = crate::ui::date_picker_month_cells(calendar);
+    if rect_contains(prev, row, col) {
+        dp.move_month(-1);
+    } else if rect_contains(next, row, col) {
+        dp.move_month(1);
+    } else if let Some((weekday, week)) = crate::ui::date_picker_day_at(calendar, col, row)
+        && let Some(day) = dp.day_in_cell(weekday, week)
     {
         dp.day = day;
     }

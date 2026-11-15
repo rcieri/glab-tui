@@ -656,8 +656,7 @@ fn selector_hints(selector: &crate::app::Selector) -> &'static str {
     }
 }
 
-/// Every selector, the column-filter picker and the repo switcher included,
-/// is drawn here: what differs between them is read from its purpose.
+/// Draws the open selector. What differs between selectors is read from its purpose.
 fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     let notice = app.modal_notice().cloned();
     let App {

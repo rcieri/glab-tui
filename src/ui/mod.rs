@@ -259,17 +259,26 @@ fn render_diff_line_content(
 ) -> Vec<Span<'static>> {
     let spans = render_highlighted_content(line, base_style, theme);
     match emphasis_bg {
-        Some(bg) => emphasize_ranges(spans, &line.changed_ranges, bg),
+        // A palette color or the terminal's own background cannot be blended
+        // into a stronger one, so the emphasis background can equal the row's
+        // and would mark nothing.
+        Some(bg) if base_style.bg == Some(bg) => {
+            emphasize_ranges(spans, &line.changed_ranges, |style| {
+                style.add_modifier(Modifier::REVERSED)
+            })
+        }
+        Some(bg) => emphasize_ranges(spans, &line.changed_ranges, |style| style.bg(bg)),
         None => spans,
     }
 }
 
 /// Splits `spans`, which together hold one line, at the edges of `ranges`
-/// (byte ranges of that line) and sets `bg` on the parts inside them.
+/// (byte ranges of that line) and restyles the parts inside them with
+/// `emphasize`.
 fn emphasize_ranges(
     spans: Vec<Span<'static>>,
     ranges: &[std::ops::Range<usize>],
-    bg: Color,
+    emphasize: impl Fn(Style) -> Style,
 ) -> Vec<Span<'static>> {
     if ranges.is_empty() {
         return spans;
@@ -287,7 +296,7 @@ fn emphasize_ranges(
             let start = range.start.max(span_start) - span_start;
             let end = range.end.min(span_end) - span_start;
             push_piece(&mut out, text, cut..start, span.style);
-            push_piece(&mut out, text, start..end, span.style.bg(bg));
+            push_piece(&mut out, text, start..end, emphasize(span.style));
             cut = end;
         }
         push_piece(&mut out, text, cut..text.len(), span.style);
@@ -2103,6 +2112,62 @@ diff --git a/a.rs b/a.rs
             .find(|s| s.content == "*")
             .expect("operator is its own span");
         assert_eq!(operator.style.fg, Some(theme.purple));
+    }
+
+    #[test]
+    fn every_bundled_preset_marks_the_changed_words() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1 +1 @@
+-let total = 1 + 2;
++let total = 3 * 4;
+";
+        let view = crate::app::DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let line = |content: &str| {
+            view.all_lines
+                .iter()
+                .find(|l| l.content == content)
+                .expect("diff line parsed")
+        };
+        let (removed, added) = (line("-let total = 1 + 2;"), line("+let total = 3 * 4;"));
+
+        for name in crate::config::all_theme_presets() {
+            let Some(theme) = Theme::preset(&name) else {
+                continue;
+            };
+            for (row, changed_word, fg, bg, emphasis_bg) in [
+                (
+                    removed,
+                    "1",
+                    theme.diff_deletion_fg,
+                    theme.diff_deletion_bg,
+                    theme.diff_deletion_emph_bg,
+                ),
+                (
+                    added,
+                    "3",
+                    theme.diff_addition_fg,
+                    theme.diff_addition_bg,
+                    theme.diff_addition_emph_bg,
+                ),
+            ] {
+                let base = Style::default().fg(fg).bg(bg);
+                let spans = render_diff_line_content(row, base, &theme, Some(emphasis_bg));
+                let marked = spans
+                    .iter()
+                    .find(|s| s.content == changed_word)
+                    .expect("changed word is its own span")
+                    .style;
+
+                assert!(
+                    marked.bg != Some(bg) || marked.add_modifier.contains(Modifier::REVERSED),
+                    "preset {name}: {changed_word:?} in {:?} is not marked",
+                    row.content
+                );
+            }
+        }
     }
 
     #[test]

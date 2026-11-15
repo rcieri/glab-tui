@@ -1,3 +1,4 @@
+use crate::ui::compaction::compact;
 use crate::ui::render_ctx::RenderCtx;
 use ratatui::{
     Frame,
@@ -27,15 +28,22 @@ use crate::domain::pipelines::Pipeline;
 use crate::domain::releases::Release;
 use crate::scope::Scope;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
+use std::ops::Range;
 
 /// Rows of one card, borders included.
 const CARD_HEIGHT: u16 = 9;
 const CARD_BODY_LINES: usize = CARD_HEIGHT as usize - 2;
-/// From this inner width on, cards sit three to a row instead of two.
-const THREE_COLUMN_MIN_WIDTH: u16 = 120;
 /// Below this many rows the item list is left out.
 const LIST_MIN_HEIGHT: u16 = 3;
 const COUNT_WIDTH: usize = 3;
+/// One of the two longest fixed queue labels (with "opened by you,
+/// unassigned"), which sets how narrow a card may get.
+const BLOCKED_QUEUE_LABEL: &str = "conflict or rebase needed";
+/// The marker, the count and the space-padded icon before a queue label.
+const QUEUE_LABEL_INDENT: usize = 2 + COUNT_WIDTH + 4;
+/// Columns a card needs to show `BLOCKED_QUEUE_LABEL`'s line inside its
+/// borders.
+const CARD_MIN_WIDTH: u16 = (QUEUE_LABEL_INDENT + BLOCKED_QUEUE_LABEL.len() + 2) as u16;
 /// Each milestone takes a title line and a progress line.
 const MILESTONES_SHOWN: usize = CARD_BODY_LINES / 2;
 /// Width of `[██████████] 100%`, the widest progress bar.
@@ -168,40 +176,114 @@ pub(crate) fn render_tab_dashboard(
         focus: app.dashboard.focus,
     };
     let cards = app.dashboard_cards();
-    let columns = if inner.width >= THREE_COLUMN_MIN_WIDTH {
-        3
-    } else {
-        2
-    };
-    app.dashboard.grid_columns.set(columns);
-    let grid_rows = u16::try_from(cards.len().div_ceil(columns)).unwrap_or(u16::MAX);
-    let [grid_area, list_area] = Layout::vertical([
-        Constraint::Length(grid_rows.saturating_mul(CARD_HEIGHT)),
-        Constraint::Min(0),
-    ])
-    .areas(inner);
-
-    if ctx.focus == DashboardFocus::List && list_area.height < LIST_MIN_HEIGHT {
+    let grid = card_grid(inner, cards.len());
+    app.dashboard.grid_columns.set(grid.columns);
+    if ctx.focus == DashboardFocus::List && !grid.shows_list {
         render_item_list(f, &ctx, inner);
         return;
     }
 
-    let row_areas = Layout::vertical(vec![
-        Constraint::Length(CARD_HEIGHT);
-        usize::from(grid_rows)
-    ])
-    .split(grid_area);
-    for (row_cards, row_area) in cards.chunks(columns).zip(row_areas.iter()) {
-        let column_areas = Layout::horizontal(vec![Constraint::Ratio(1, columns as u32); columns])
-            .split(*row_area);
+    let card_lines: Vec<&[DashboardCard]> = cards.chunks(grid.columns).collect();
+    let grid_height = if grid.shows_list {
+        card_rows(card_lines.len())
+    } else {
+        inner.height
+    };
+    let [grid_area, list_area] =
+        Layout::vertical([Constraint::Length(grid_height), Constraint::Min(0)]).areas(inner);
+    let selected_line = ctx
+        .selected_card
+        .and_then(|card| cards.iter().position(|c| *c == card))
+        .map_or(0, |index| index / grid.columns);
+    let shown = visible_card_lines(card_lines.len(), selected_line, grid_area.height);
+    let row_areas =
+        Layout::vertical(vec![Constraint::Length(CARD_HEIGHT); shown.len()]).split(grid_area);
+    for (row_cards, row_area) in card_lines[shown].iter().zip(row_areas.iter()) {
+        let column_areas = Layout::horizontal(vec![
+            Constraint::Ratio(1, grid.columns as u32);
+            grid.columns
+        ])
+        .split(*row_area);
         for (card, card_area) in row_cards.iter().zip(column_areas.iter()) {
             render_card(f, &ctx, *card, *card_area);
         }
     }
 
-    if list_area.height >= LIST_MIN_HEIGHT {
+    if grid.shows_list {
         render_item_list(f, &ctx, list_area);
     }
+}
+
+/// How the cards share the tab: how many sit on a line, and whether the
+/// item list keeps its rows below them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CardGrid {
+    columns: usize,
+    shows_list: bool,
+}
+
+#[derive(Clone, Copy)]
+enum GridWidthRule {
+    TwoColumns,
+    OneColumn,
+}
+
+const GRID_WIDTH_RULES: &[GridWidthRule] = &[GridWidthRule::TwoColumns, GridWidthRule::OneColumn];
+
+#[derive(Clone, Copy)]
+enum GridHeightRule {
+    DropList,
+}
+
+const GRID_HEIGHT_RULES: &[GridHeightRule] = &[GridHeightRule::DropList];
+
+/// Three cards to a line while each keeps `CARD_MIN_WIDTH` columns, then two,
+/// then one. The item list then keeps `LIST_MIN_HEIGHT` rows below the card
+/// lines while they all fit, and is dropped otherwise. Fewer columns would
+/// only add card lines, so the width alone picks them.
+fn card_grid(inner: Rect, card_count: usize) -> CardGrid {
+    let columns = compact(
+        3,
+        GRID_WIDTH_RULES,
+        |columns: usize| inner.width / columns as u16 >= CARD_MIN_WIDTH,
+        |_, rule| match rule {
+            GridWidthRule::TwoColumns => 2,
+            GridWidthRule::OneColumn => 1,
+        },
+    );
+    let cards_height = card_rows(card_count.div_ceil(columns));
+    compact(
+        CardGrid {
+            columns,
+            shows_list: true,
+        },
+        GRID_HEIGHT_RULES,
+        |grid| {
+            let list_height = if grid.shows_list { LIST_MIN_HEIGHT } else { 0 };
+            cards_height.saturating_add(list_height) <= inner.height
+        },
+        |grid, GridHeightRule::DropList| CardGrid {
+            shows_list: false,
+            ..grid
+        },
+    )
+}
+
+fn card_rows(card_lines: usize) -> u16 {
+    u16::try_from(card_lines)
+        .unwrap_or(u16::MAX)
+        .saturating_mul(CARD_HEIGHT)
+}
+
+/// The card lines drawn in `height` rows: all of them when they fit, else
+/// as many as fit (at least one, clipped) around `selected_line`, so the
+/// card `step_card` moves to is always on screen.
+fn visible_card_lines(total: usize, selected_line: usize, height: u16) -> Range<usize> {
+    let shown = usize::from(height / CARD_HEIGHT).max(1).min(total);
+    let first = selected_line
+        .saturating_sub(shown.saturating_sub(1))
+        .min(total - shown);
+    first..first + shown
 }
 
 /// What a card can say about its tab's list.
@@ -446,7 +528,7 @@ fn mr_queue_label(queue: MrQueue, who: Who, idle: IdleDays) -> String {
             format!("returned to @{}", sanitize_untrusted(login))
         }
         (MrQueue::ReadyToMerge, _) => "ready to merge".to_string(),
-        (MrQueue::Blocked, _) => "conflict or rebase needed".to_string(),
+        (MrQueue::Blocked, _) => BLOCKED_QUEUE_LABEL.to_string(),
         (MrQueue::Idle, _) => format!("idle {}+ days", idle.mrs),
         (MrQueue::Drafts, _) => "drafts".to_string(),
     }
@@ -992,6 +1074,7 @@ fn reference_width(items: &[DashboardItem]) -> u16 {
 /// Which optional item-list columns fit alongside the icon, reference and
 /// title: `author`, `people`, `note` and `updated` are dropped, least useful
 /// first, until the title keeps at least `LIST_TITLE_MIN_WIDTH` cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ListColumns {
     reference_width: u16,
     show_author: bool,
@@ -1000,32 +1083,53 @@ struct ListColumns {
     show_updated: bool,
 }
 
+/// The item-list column a compaction step gives up.
+#[derive(Clone, Copy)]
+enum ListColumnDrop {
+    Updated,
+    Note,
+    People,
+    Author,
+}
+
+const LIST_COLUMN_DROPS: &[ListColumnDrop] = &[
+    ListColumnDrop::Updated,
+    ListColumnDrop::Note,
+    ListColumnDrop::People,
+    ListColumnDrop::Author,
+];
+
 impl ListColumns {
     fn fit(available: u16, reference_width: u16) -> Self {
-        let mut columns = Self {
-            reference_width,
-            show_author: true,
-            show_people: true,
-            show_note: true,
-            show_updated: true,
-        };
-        while columns.title_width(available) < LIST_TITLE_MIN_WIDTH && columns.drop_one() {}
-        columns
-    }
-
-    fn drop_one(&mut self) -> bool {
-        if self.show_updated {
-            self.show_updated = false;
-        } else if self.show_note {
-            self.show_note = false;
-        } else if self.show_people {
-            self.show_people = false;
-        } else if self.show_author {
-            self.show_author = false;
-        } else {
-            return false;
-        }
-        true
+        compact(
+            Self {
+                reference_width,
+                show_author: true,
+                show_people: true,
+                show_note: true,
+                show_updated: true,
+            },
+            LIST_COLUMN_DROPS,
+            |columns| columns.title_width(available) >= LIST_TITLE_MIN_WIDTH,
+            |columns, drop| match drop {
+                ListColumnDrop::Updated => Self {
+                    show_updated: false,
+                    ..columns
+                },
+                ListColumnDrop::Note => Self {
+                    show_note: false,
+                    ..columns
+                },
+                ListColumnDrop::People => Self {
+                    show_people: false,
+                    ..columns
+                },
+                ListColumnDrop::Author => Self {
+                    show_author: false,
+                    ..columns
+                },
+            },
+        )
     }
 
     fn title_width(&self, available: u16) -> u16 {
@@ -1457,5 +1561,86 @@ mod tests {
 
         app.loaded_tabs.insert(Tab::MergeRequests);
         assert_eq!(contributors_availability(&app), ListAvailability::Ready);
+    }
+
+    #[test]
+    fn cards_sit_three_to_a_line_while_each_keeps_its_minimum_width() {
+        assert_eq!(
+            card_grid(Rect::new(0, 0, 3 * CARD_MIN_WIDTH, 30), 6),
+            CardGrid {
+                columns: 3,
+                shows_list: true
+            }
+        );
+        assert_eq!(
+            card_grid(Rect::new(0, 0, 3 * CARD_MIN_WIDTH - 1, 30), 6),
+            CardGrid {
+                columns: 2,
+                shows_list: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_80_by_24_terminal_stacks_the_cards_one_to_a_line_without_the_list() {
+        assert_eq!(
+            card_grid(Rect::new(0, 0, 56, 14), 6),
+            CardGrid {
+                columns: 1,
+                shows_list: false
+            }
+        );
+    }
+
+    #[test]
+    fn the_item_list_gives_way_when_the_card_lines_leave_it_too_few_rows() {
+        let cards_height = 2 * CARD_HEIGHT;
+        assert_eq!(
+            card_grid(
+                Rect::new(0, 0, 3 * CARD_MIN_WIDTH, cards_height + LIST_MIN_HEIGHT - 1),
+                6
+            ),
+            CardGrid {
+                columns: 3,
+                shows_list: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_grid_taller_than_its_rows_scrolls_to_keep_the_selected_line_drawn() {
+        assert_eq!(visible_card_lines(2, 1, 30), 0..2);
+        assert_eq!(visible_card_lines(6, 4, 14), 4..5);
+        assert_eq!(visible_card_lines(6, 5, 3 * CARD_HEIGHT), 3..6);
+        assert_eq!(visible_card_lines(6, 0, CARD_HEIGHT - 4), 0..1);
+    }
+
+    #[test]
+    fn the_item_list_drops_updated_first_to_keep_the_title_its_minimum() {
+        let reference_width = 7;
+        let all_columns = LIST_ICON_WIDTH
+            + reference_width
+            + LIST_AUTHOR_WIDTH
+            + LIST_PEOPLE_WIDTH
+            + LIST_NOTE_WIDTH
+            + LIST_UPDATED_WIDTH
+            + 6 * LIST_COLUMN_SPACING
+            + LIST_TITLE_MIN_WIDTH;
+        let every_column = ListColumns {
+            reference_width,
+            show_author: true,
+            show_people: true,
+            show_note: true,
+            show_updated: true,
+        };
+
+        assert_eq!(ListColumns::fit(all_columns, reference_width), every_column);
+        assert_eq!(
+            ListColumns::fit(all_columns - 1, reference_width),
+            ListColumns {
+                show_updated: false,
+                ..every_column
+            }
+        );
     }
 }

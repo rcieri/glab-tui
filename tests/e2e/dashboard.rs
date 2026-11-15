@@ -275,3 +275,23 @@ fn a_short_terminal_shows_the_focused_list_instead_of_hiding_it_under_the_cards(
         .wait_for_screen_contains("!2", 5000)
         .expect("the open MR is visible in the full-area list, not hidden for lack of room");
 }
+
+#[test]
+fn an_80_by_24_terminal_scrolls_the_cards_to_the_one_selected() {
+    let mut session =
+        TestSession::with_config_and_args(false, 24, 80, Some(CONFIG), &["--tab", "dashboard"]);
+    session
+        .wait_for_cli_call("release list", 15000)
+        .expect("the dashboard fetches its last source");
+    session
+        .wait_for_screen_contains("MRs ·", 15000)
+        .expect("the first card renders");
+
+    session.press_keys(b"\rjjjj");
+    wait_for_line(
+        &mut session,
+        "┏",
+        "Milestones",
+        "j walks the one-card-wide grid down to Milestones, scrolled into view",
+    );
+}

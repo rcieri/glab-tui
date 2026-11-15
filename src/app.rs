@@ -3667,8 +3667,6 @@ pub struct SubmitDialog {
     /// The projects a merge acts on, whose merge methods its form offers.
     /// Empty for every other action.
     pub merge_projects: Vec<String>,
-    /// Why the merge methods could not be read; the merge is refused.
-    merge_methods_failure: Option<String>,
     pub form: Form,
 }
 
@@ -3728,11 +3726,9 @@ impl SubmitDialog {
 
     /// A merge whose methods are neither known nor known to be unreadable.
     pub fn is_waiting_for_merge_methods(&self) -> bool {
-        self.merge_methods_failure.is_none()
-            && self
-                .form
-                .group(Self::METHODS)
-                .is_some_and(Group::is_loading)
+        self.form
+            .group(Self::METHODS)
+            .is_some_and(Group::is_loading)
     }
 
     /// Fills the method radio once the session knows the methods of every
@@ -3799,10 +3795,9 @@ impl SubmitDialog {
         self.form.apply_loaded(Self::METHODS, |kind| {
             *kind = GroupKind::Note(Note {
                 level: NoteLevel::Error,
-                text: failure.clone(),
+                text: failure,
             });
         });
-        self.merge_methods_failure = Some(failure);
     }
 
     /// Build the dialog for an action whose target carries no project of
@@ -4185,7 +4180,6 @@ impl SubmitDialog {
             squashes_every_merge: false,
             mr_asks_for_squash,
             merge_projects,
-            merge_methods_failure: None,
             form: if is_destructive { form.danger() } else { form },
         };
         dialog.refresh_merge_methods(&app.merge_methods);

@@ -86,8 +86,11 @@ if [[ "$*" == *"api"* ]]; then
     fi
     if [[ "$2" == runners/* ]]; then
         cat "$FIXTURES_DIR/runner_${2#runners/}.json"
-    elif [[ "$*" == *"/events?"* ]]; then
+    elif [[ "$*" =~ /events\?(.*\&)?page=1([^0-9]|$) ]]; then
         cat_relative "$FIXTURES_DIR/events.json"
+    elif [[ "$*" == *"/events?"* ]]; then
+        # GitLab ends its feed with an empty page.
+        echo '[]'
     elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then

@@ -26,8 +26,10 @@ const MAX_GITHUB_PAGES: usize = 3;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FeedPage {
     pub contributions: Vec<Contribution>,
-    /// Events on the page, contributions or not, so a short page is known.
-    pub event_count: usize,
+    /// The feed has nothing older. GitLab drops the events the token cannot
+    /// see after paging, so a short page can sit mid-feed and only an empty
+    /// page ends it. A short GitHub page does.
+    pub is_last: bool,
     /// RFC 3339 time of the page's oldest event.
     pub oldest_at: Option<String>,
 }
@@ -59,7 +61,7 @@ impl ContributionHistory {
             .as_deref()
             .and_then(parse_time)
             .is_some_and(|oldest| oldest <= since);
-        let is_last = page.event_count < EVENTS_PER_PAGE;
+        let is_last = page.is_last;
         let known_ids: HashSet<&str> = self.contributions.iter().map(|c| c.id.as_str()).collect();
         let kept: Vec<Contribution> = page
             .contributions
@@ -323,7 +325,7 @@ fn gitlab_contribution(event: GlEvent) -> Option<Contribution> {
 pub fn parse_gitlab_events(raw: &str) -> anyhow::Result<FeedPage> {
     let events: Vec<GlEvent> = serde_json::from_str(raw)?;
     Ok(FeedPage {
-        event_count: events.len(),
+        is_last: events.is_empty(),
         oldest_at: events.last().map(|e| e.created_at.clone()),
         contributions: events.into_iter().filter_map(gitlab_contribution).collect(),
     })
@@ -553,7 +555,7 @@ fn github_contributions(event: GhEvent) -> Vec<Contribution> {
 pub fn parse_github_events(raw: &str) -> anyhow::Result<FeedPage> {
     let events: Vec<GhEvent> = serde_json::from_str(raw)?;
     Ok(FeedPage {
-        event_count: events.len(),
+        is_last: events.len() < EVENTS_PER_PAGE,
         oldest_at: events.last().map(|e| e.created_at.clone()),
         contributions: events.into_iter().flat_map(github_contributions).collect(),
     })
@@ -563,7 +565,7 @@ pub fn parse_github_events(raw: &str) -> anyhow::Result<FeedPage> {
 mod tests {
     use super::*;
 
-    fn page(times: &[&str], event_count: usize) -> FeedPage {
+    fn page(times: &[&str]) -> FeedPage {
         FeedPage {
             contributions: times
                 .iter()
@@ -579,8 +581,15 @@ mod tests {
                     location: None,
                 })
                 .collect(),
-            event_count,
+            is_last: false,
             oldest_at: times.last().map(|at| at.to_string()),
+        }
+    }
+
+    fn last_page(times: &[&str]) -> FeedPage {
+        FeedPage {
+            is_last: true,
+            ..page(times)
         }
     }
 
@@ -593,10 +602,7 @@ mod tests {
         let mut history = ContributionHistory::default();
 
         let is_done = history.add_page(
-            page(
-                &["2026-10-05T00:00:00Z", "2026-09-30T00:00:00Z"],
-                EVENTS_PER_PAGE,
-            ),
+            page(&["2026-10-05T00:00:00Z", "2026-09-30T00:00:00Z"]),
             since(),
         );
 
@@ -609,17 +615,17 @@ mod tests {
     fn a_full_page_short_of_since_asks_for_more_and_records_where_it_stopped() {
         let mut history = ContributionHistory::default();
 
-        let is_done = history.add_page(page(&["2026-10-05T00:00:00Z"], EVENTS_PER_PAGE), since());
+        let is_done = history.add_page(page(&["2026-10-05T00:00:00Z"]), since());
 
         assert!(!is_done);
         assert_eq!(history.cut_off_at.as_deref(), Some("2026-10-05T00:00:00Z"));
     }
 
     #[test]
-    fn a_short_page_ends_the_feed_even_before_since_with_no_cut_off() {
+    fn the_last_page_ends_the_feed_even_before_since_with_no_cut_off() {
         let mut history = ContributionHistory::default();
 
-        let is_done = history.add_page(page(&["2026-10-05T00:00:00Z"], 1), since());
+        let is_done = history.add_page(last_page(&["2026-10-05T00:00:00Z"]), since());
 
         assert!(is_done);
         assert_eq!(history.cut_off_at, None);
@@ -627,10 +633,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_later_page_keeps_the_pages_read_and_says_why() {
-        let mut second = page(&["2026-10-04T00:00:00Z"], EVENTS_PER_PAGE);
+        let mut second = page(&["2026-10-04T00:00:00Z"]);
         second.contributions[0].id = "second".to_string();
         let mut pages = vec![
-            Ok(page(&["2026-10-05T00:00:00Z"], EVENTS_PER_PAGE)),
+            Ok(page(&["2026-10-05T00:00:00Z"])),
             Ok(second),
             Err(anyhow::anyhow!("HTTP 502")),
         ]
@@ -677,7 +683,7 @@ mod tests {
         history.add_page(
             FeedPage {
                 contributions: vec![commit("2", "2026-10-05T00:00:00Z")],
-                event_count: EVENTS_PER_PAGE,
+                is_last: false,
                 oldest_at: Some("2026-10-05T00:00:00Z".to_string()),
             },
             since(),
@@ -688,13 +694,34 @@ mod tests {
                     commit("2", "2026-10-05T00:00:00Z"),
                     commit("3", "2026-10-04T00:00:00Z"),
                 ],
-                event_count: EVENTS_PER_PAGE,
+                is_last: false,
                 oldest_at: Some("2026-10-04T00:00:00Z".to_string()),
             },
             since(),
         );
 
         assert_eq!(history.contributions.len(), 2);
+    }
+
+    #[test]
+    fn only_an_empty_gitlab_page_ends_the_feed() {
+        let short = r#"[
+            {"action_name": "opened", "author_username": "cy", "created_at": "2026-10-01T00:00:00Z",
+             "target_type": "Issue", "target_iid": 4}
+        ]"#;
+
+        assert!(!parse_gitlab_events(short).expect("valid events").is_last);
+        assert!(parse_gitlab_events("[]").expect("valid events").is_last);
+    }
+
+    #[test]
+    fn a_short_github_page_ends_the_feed() {
+        let short = r#"[
+            {"type": "PushEvent", "actor": {"login": "ada"}, "created_at": "2026-10-05T00:00:00Z",
+             "payload": {"ref": "refs/tags/v2.0.0", "head": "aaaaaaaaaa"}}
+        ]"#;
+
+        assert!(parse_github_events(short).expect("valid events").is_last);
     }
 
     #[test]

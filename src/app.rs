@@ -11377,8 +11377,10 @@ mod tests {
     #[test]
     fn a_merge_dialog_preselects_squash_for_an_mr_whose_author_asked_for_it() {
         use crate::domain::mr::MergeMethod::{Merge, Squash};
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("g/p".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("g/p".to_string()),
+            ..App::default()
+        };
         app.merge_methods
             .insert("g/p".to_string(), merge_methods(&[Merge, Squash], Merge));
         let mut flagged = mr_fixture(9, "opened", "alice", false, "Flagged");

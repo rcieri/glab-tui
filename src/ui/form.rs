@@ -996,10 +996,9 @@ struct WrappedInput {
 
 impl WrappedInput {
     fn new(buffer: &crate::app::TextBuffer, width: usize) -> Self {
-        let (before, after) = buffer.value().split_at(buffer.cursor_byte_offset());
-        let before = sanitize_untrusted(before);
-        let cursor = before.len();
-        let text = format!("{before}{}", sanitize_untrusted(after));
+        let value = buffer.value();
+        let text = displayable(value);
+        let cursor = displayable(&value[..buffer.cursor_byte_offset()]).len();
         let rows = wrap_ranges(&text, width.saturating_sub(1));
         Self { text, rows, cursor }
     }
@@ -1694,6 +1693,16 @@ mod tests {
         let row = line_input_row(&input, GroupPath::top(0), editing, &theme, 20);
         let spans: Vec<&str> = row.line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(spans[..3], ["ab", "c", "d"]);
+    }
+
+    #[test]
+    fn a_wrapped_input_with_the_cursor_inside_an_escape_sequence_does_not_reveal_its_tail() {
+        let mut input = LineInput::new("ab\u{1b}[31mcd\te".into(), None);
+        for _ in 0..7 {
+            input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
+        }
+        let wrapped = WrappedInput::new(&input.buffer, 20);
+        assert_eq!((wrapped.text.as_str(), wrapped.cursor), ("abcd e", 2));
     }
 
     #[test]

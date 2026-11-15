@@ -218,6 +218,93 @@ fn parse_runner_gid(gid: &str) -> Option<u64> {
     gid.rsplit('/').next()?.parse().ok()
 }
 
+/// GitLab refuses more than 20 ids in one `pipelines(ids:)` argument.
+const PIPELINE_IDS_PER_ALIAS: usize = 20;
+
+/// Aliased `pipelines(ids:)` fields per query: 5 × 20 covers one page of 100.
+const PIPELINE_ALIASES_PER_QUERY: usize = 5;
+
+const PIPELINE_DETAILS_QUERY_BATCH_SIZE: usize =
+    PIPELINE_IDS_PER_ALIAS * PIPELINE_ALIASES_PER_QUERY;
+
+/// A pipeline's duration and the user who ran it, both missing from
+/// `GET /projects/:id/pipelines`. `duration` is null until a pipeline finishes.
+#[derive(Debug, Default, Clone, PartialEq)]
+struct GiPipelineDetails {
+    duration_seconds: Option<u64>,
+    actor: Option<String>,
+}
+
+/// The GraphQL query reading duration and user for `ids` (at most
+/// `PIPELINE_DETAILS_QUERY_BATCH_SIZE`), one alias `p<N>` per 20 ids.
+fn pipeline_details_query(project: &str, ids: &[u64]) -> String {
+    let aliases = ids
+        .chunks(PIPELINE_IDS_PER_ALIAS)
+        .enumerate()
+        .map(|(alias, chunk)| {
+            let gids = chunk
+                .iter()
+                .map(|id| format!("\"gid://gitlab/Ci::Pipeline/{id}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "p{alias}: pipelines(ids: [{gids}]) {{ nodes {{ id duration user {{ username name }} }} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("query {{ project(fullPath: \"{project}\") {{ {aliases} }} }}")
+}
+
+/// Parse the pipeline-details GraphQL response into pipeline id -> details.
+///
+/// A top-level `errors` array or a missing `data.project` yields `None`, so
+/// every pipeline keeps unknown details. A malformed pipeline id drops only
+/// that node.
+fn parse_pipeline_details_response(json: &str) -> Option<HashMap<u64, GiPipelineDetails>> {
+    let root: serde_json::Value = serde_json::from_str(json).ok()?;
+    if root.get("errors").and_then(|e| e.as_array()).is_some() {
+        return None;
+    }
+    let project = root.get("data")?.get("project")?.as_object()?;
+
+    let mut details = HashMap::new();
+    let nodes = project
+        .values()
+        .filter_map(|alias| alias.get("nodes").and_then(|n| n.as_array()))
+        .flatten();
+    for node in nodes {
+        let Some(id) = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .and_then(parse_runner_gid)
+        else {
+            continue;
+        };
+        let duration_seconds = node
+            .get("duration")
+            .and_then(|d| d.as_f64())
+            .map(|d| d.max(0.0) as u64);
+        let user = node.get("user");
+        let actor = ["username", "name"]
+            .iter()
+            .find_map(|field| {
+                user.and_then(|u| u.get(field))
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+            })
+            .map(String::from);
+        details.insert(
+            id,
+            GiPipelineDetails {
+                duration_seconds,
+                actor,
+            },
+        );
+    }
+    Some(details)
+}
+
 /// Parse the bulk MR-state GraphQL response.
 ///
 /// A top-level `errors` array is a hard error: GraphQL is all-or-nothing, so a
@@ -732,6 +819,45 @@ impl GlabBackend {
             runner.contacted_at = details.contacted_at.clone();
             runner.version = details.version.clone();
             runner.ip_address = details.ip_address.clone();
+        }
+    }
+
+    /// Fill duration and actor, which the pipeline list does not return, from
+    /// GraphQL queries over the listed ids, 100 per query. A query that fails
+    /// leaves its pipelines' fields unknown.
+    async fn fill_pipeline_details(&self, project: &str, pipelines: &mut [Pipeline]) {
+        if pipelines.is_empty() || validate_project_path(project).is_err() {
+            return;
+        }
+        let ids: Vec<u64> = pipelines.iter().map(|p| p.id).collect();
+        let requests: Vec<Vec<String>> = chunk_iids(&ids, PIPELINE_DETAILS_QUERY_BATCH_SIZE)
+            .into_iter()
+            .map(|batch| {
+                vec![
+                    "api".to_string(),
+                    "graphql".to_string(),
+                    "-f".to_string(),
+                    format!("query={}", pipeline_details_query(project, batch)),
+                ]
+            })
+            .collect();
+        let responses =
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipeline Details").await;
+
+        let details: HashMap<u64, GiPipelineDetails> = responses
+            .into_iter()
+            .filter_map(|(_, raw)| raw.ok())
+            .filter_map(|raw| parse_pipeline_details_response(&raw))
+            .flatten()
+            .collect();
+        for pipeline in pipelines.iter_mut() {
+            let Some(details) = details.get(&pipeline.id) else {
+                continue;
+            };
+            pipeline.duration_seconds = details.duration_seconds;
+            if let Some(actor) = &details.actor {
+                pipeline.actor_login = actor.clone();
+            }
         }
     }
 
@@ -2223,11 +2349,6 @@ impl Backend for GlabBackend {
                 )?;
 
                 #[derive(Deserialize)]
-                struct GiUser {
-                    username: Option<String>,
-                    name: Option<String>,
-                }
-                #[derive(Deserialize)]
                 struct GiPipe {
                     id: u64,
                     status: String,
@@ -2235,10 +2356,8 @@ impl Backend for GlabBackend {
                     pipe_ref: String,
                     updated_at: String,
                     created_at: Option<String>,
-                    duration: Option<f64>,
                     source: Option<String>,
                     sha: Option<String>,
-                    user: Option<GiUser>,
                     #[serde(default)]
                     web_url: Option<String>,
                 }
@@ -2246,29 +2365,25 @@ impl Backend for GlabBackend {
                 let mut all: Vec<Pipeline> = Vec::new();
                 for raw in responses {
                     let pipes: Vec<GiPipe> = serde_json::from_str(&raw)?;
-                    all.extend(pipes.into_iter().map(|p| {
-                        Pipeline {
-                            id: p.id,
-                            status: p.status,
-                            r#ref: p.pipe_ref,
-                            updated_at: p.updated_at,
-                            name: String::new(),
-                            display_title: String::new(),
-                            event: p.source.clone().unwrap_or_default(),
-                            head_sha: p.sha.unwrap_or_default(),
-                            actor_login: p
-                                .user
-                                .and_then(|u| u.username.or(u.name))
-                                .unwrap_or_default(),
-                            duration_seconds: p.duration.map(|d| d.max(0.0) as u64),
-                            created_at: p.created_at,
-                            source: p.source,
-                            project_path: project.to_string(),
-                            web_url: p.web_url,
-                            commit: None,
-                        }
+                    all.extend(pipes.into_iter().map(|p| Pipeline {
+                        id: p.id,
+                        status: p.status,
+                        r#ref: p.pipe_ref,
+                        updated_at: p.updated_at,
+                        name: String::new(),
+                        display_title: String::new(),
+                        event: p.source.clone().unwrap_or_default(),
+                        head_sha: p.sha.unwrap_or_default(),
+                        actor_login: String::new(),
+                        duration_seconds: None,
+                        created_at: p.created_at,
+                        source: p.source,
+                        project_path: project.to_string(),
+                        web_url: p.web_url,
+                        commit: None,
                     }));
                 }
+                self.fill_pipeline_details(project, &mut all).await;
                 Ok(all)
             }
             Scope::Group(_) => Err(anyhow::anyhow!("Group-level pipelines not supported")),
@@ -4384,6 +4499,55 @@ mod tests {
         let details = parse_runner_details_response(malformed).unwrap();
         assert!(!details.contains_key(&0));
         assert_eq!(details.get(&9876).unwrap().tag_list, ["docker"]);
+    }
+
+    #[test]
+    fn pipeline_details_are_read_from_every_alias_by_global_id() {
+        let body = r#"{"data":{"project":{
+            "p0":{"nodes":[
+                {"id":"gid://gitlab/Ci::Pipeline/12345","duration":125,
+                 "user":{"username":"grace","name":"Grace Hopper"}},
+                {"id":"gid://gitlab/Ci::Pipeline/12346","duration":null,"user":null}]},
+            "p1":{"nodes":[
+                {"id":"gid://gitlab/Ci::Pipeline/12399","duration":7,
+                 "user":{"username":null,"name":"Ada Lovelace"}},
+                {"id":"not-a-gid","duration":3,"user":null}]}
+        }}}"#;
+        let details = parse_pipeline_details_response(body).unwrap();
+
+        let first = details.get(&12345).unwrap();
+        assert_eq!(first.duration_seconds, Some(125));
+        assert_eq!(first.actor.as_deref(), Some("grace"));
+
+        let running = details.get(&12346).unwrap();
+        assert_eq!(running.duration_seconds, None);
+        assert_eq!(running.actor, None);
+
+        let other_alias = details.get(&12399).unwrap();
+        assert_eq!(other_alias.duration_seconds, Some(7));
+        assert_eq!(other_alias.actor.as_deref(), Some("Ada Lovelace"));
+
+        assert_eq!(details.len(), 3, "a malformed id is skipped");
+    }
+
+    #[test]
+    fn pipeline_details_graphql_errors_yield_none() {
+        let errors =
+            r#"{"errors":[{"message":"Cannot query more than 20 pipelines by ID at once."}]}"#;
+        assert!(parse_pipeline_details_response(errors).is_none());
+    }
+
+    #[test]
+    fn pipeline_details_query_puts_at_most_twenty_ids_under_each_alias() {
+        let ids: Vec<u64> = (1..=41).collect();
+        let query = pipeline_details_query("group/project", &ids);
+
+        assert!(query.contains("project(fullPath: \"group/project\")"));
+        assert!(query.contains("p0: pipelines(ids: [\"gid://gitlab/Ci::Pipeline/1\""));
+        assert!(query.contains("p1: pipelines(ids: [\"gid://gitlab/Ci::Pipeline/21\""));
+        assert!(query.contains("p2: pipelines(ids: [\"gid://gitlab/Ci::Pipeline/41\"]"));
+        assert!(!query.contains("p3:"));
+        assert!(query.contains("nodes { id duration user { username name } }"));
     }
 
     #[test]

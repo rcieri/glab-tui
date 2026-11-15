@@ -207,3 +207,19 @@ fn esc_back_to_the_pipelines_tab_returns_the_jobs_tab_to_the_branch_pipeline() {
         .wait_for_screen_without("› #12345", 5000)
         .expect("the Jobs tab title no longer names the opened pipeline");
 }
+
+/// GitLab's pipeline list carries no duration and no user, so both come
+/// from one GraphQL query over the listed pipelines.
+#[test]
+fn gitlab_pipelines_show_the_duration_and_user_from_graphql() {
+    let mut session = session_on_pipelines(&[]);
+
+    session
+        .wait_for_screen_contains("2m 5s", 5000)
+        .expect("the Duration column shows the pipeline's duration");
+
+    session.press_keys(b"i");
+    session
+        .wait_for_screen_contains("@grace", 5000)
+        .expect("the inspector names the user who ran the pipeline");
+}

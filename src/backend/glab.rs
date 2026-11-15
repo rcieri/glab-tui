@@ -2077,14 +2077,16 @@ impl Backend for GlabBackend {
             && !squashes_every_merge
             && self.mr_squash_flag(project, iid).await?;
         if clears_squash {
-            self.toggle_mr_squash(project, iid, "CLEARING MR SQUASH").await?;
+            self.toggle_mr_squash(project, iid, "CLEARING MR SQUASH")
+                .await?;
         }
         let args = Self::merge_args(project, iid, method, delete_branch, auto_merge, sha);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         if let Err(merge_error) = self.run_glab(&args_refs, "MERGING MR").await {
             if clears_squash
-                && let Err(restore_error) =
-                    self.toggle_mr_squash(project, iid, "RESTORING MR SQUASH").await
+                && let Err(restore_error) = self
+                    .toggle_mr_squash(project, iid, "RESTORING MR SQUASH")
+                    .await
             {
                 return Err(merge_error.context(format!(
                     "restoring the squash flag of !{iid} also failed: {restore_error:#}"

@@ -3776,12 +3776,12 @@ impl SubmitDialog {
             .iter()
             .map(|&method| shared.label(method).to_string())
             .collect();
-        let preselected = if self.mr_asks_for_squash && shared.allowed().contains(&MergeMethod::Squash)
-        {
-            MergeMethod::Squash
-        } else {
-            shared.preferred()
-        };
+        let preselected =
+            if self.mr_asks_for_squash && shared.allowed().contains(&MergeMethod::Squash) {
+                MergeMethod::Squash
+            } else {
+                shared.preferred()
+            };
         let preferred = shared
             .allowed()
             .iter()
@@ -11385,7 +11385,9 @@ mod tests {
         flagged.squash = true;
         app.mrs.items = vec![flagged, mr_fixture(10, "opened", "alice", false, "Plain")];
 
-        let picked = |action| SubmitDialog::build_with_project(action, "g/p".to_string(), &app).merge_method();
+        let picked = |action| {
+            SubmitDialog::build_with_project(action, "g/p".to_string(), &app).merge_method()
+        };
 
         assert_eq!(picked(ConfirmAction::MergeMr(9)), Some(Squash));
         assert_eq!(picked(ConfirmAction::MergeMr(10)), Some(Merge));

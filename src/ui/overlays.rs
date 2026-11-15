@@ -1,12 +1,11 @@
 use super::form::{Extent, FormFrame, FormSize, render_form};
 use super::helpers::highlight_fuzzy_match;
-use crate::utils::format::sanitize_untrusted;
-use std::borrow::Cow;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::Icons;
 use crate::keymap::{Action, KeyContext};
 use crate::ui::render_ctx::RenderCtx;
+use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -14,6 +13,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
+use std::borrow::Cow;
 
 /// Word-wrap text to a target width, returning a multi-line `Text` suitable for
 /// a table cell. ratatui's `Table` expands the row height to fit multi-line
@@ -609,8 +609,8 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
     )
     .style(Style::default().fg(ctx.theme.text_muted));
     let rows = (0..6u32).map(|week| {
-        Row::new((0..7u32).map(|weekday| {
-            match date_picker.day_in_cell(weekday, week) {
+        Row::new(
+            (0..7u32).map(|weekday| match date_picker.day_in_cell(weekday, week) {
                 Some(day) => {
                     let style = if day == date_picker.day {
                         Style::default()
@@ -627,8 +627,8 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
                     )
                 }
                 None => Cell::from(""),
-            }
-        }))
+            }),
+        )
     });
     f.render_widget(
         Table::new(rows, [Constraint::Length(DAY_COLUMNS); 7])

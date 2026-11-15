@@ -81,8 +81,7 @@ fn pick(session: &mut TestSession, keys: &[u8], shown: &[&str]) {
 
 #[test]
 fn gitlab_merge_dialog_squashes_and_removes_the_source_branch_by_default() {
-    let mut session =
-        open_merge_dialog(false, &[], GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
+    let mut session = open_merge_dialog(false, &[], GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
     session.send_input(b"\r");
 
     assert_eq!(
@@ -93,8 +92,13 @@ fn gitlab_merge_dialog_squashes_and_removes_the_source_branch_by_default() {
 
 #[test]
 fn github_merge_dialog_squashes_and_deletes_the_branch_by_default() {
-    let mut session =
-        open_merge_dialog(true, &[], GITHUB_FIRST_PR_TITLE, b"jj", "Merge Pull Request #12");
+    let mut session = open_merge_dialog(
+        true,
+        &[],
+        GITHUB_FIRST_PR_TITLE,
+        b"jj",
+        "Merge Pull Request #12",
+    );
     session.send_input(b"\r");
 
     assert_eq!(
@@ -107,8 +111,7 @@ fn github_merge_dialog_squashes_and_deletes_the_branch_by_default() {
 /// commit and Squash, not Rebase.
 #[test]
 fn gitlab_merge_dialog_sends_the_picked_method_and_options() {
-    let mut session =
-        open_merge_dialog(false, &[], GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
+    let mut session = open_merge_dialog(false, &[], GITLAB_MR_TITLE, b"", "Merge Merge Request #2");
     pick(&mut session, b"\th ", &["* Merge commit"]);
     pick(&mut session, b"\t ", &["- Delete source branch"]);
     pick(&mut session, b"j ", &["+ Auto-merge"]);
@@ -146,8 +149,13 @@ fn gitlab_merge_dialog_rebases_on_a_fast_forward_project() {
 
 #[test]
 fn github_merge_dialog_sends_the_picked_method_and_options() {
-    let mut session =
-        open_merge_dialog(true, &[], GITHUB_FIRST_PR_TITLE, b"jj", "Merge Pull Request #12");
+    let mut session = open_merge_dialog(
+        true,
+        &[],
+        GITHUB_FIRST_PR_TITLE,
+        b"jj",
+        "Merge Pull Request #12",
+    );
     pick(&mut session, b"\th ", &["* Merge commit"]);
     pick(&mut session, b"\t ", &["- Delete source branch"]);
     pick(&mut session, b"j ", &["+ Auto-merge"]);

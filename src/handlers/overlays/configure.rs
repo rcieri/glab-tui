@@ -197,9 +197,11 @@ pub(crate) fn activate_row(
                 app.show_notice("The last shown tab cannot be hidden".to_string());
                 return;
             }
-            app.land_on_available_tab();
-            if app.active_tab != tab {
-                crate::handlers::tabs::load_entered_tab(app, tx, fx);
+            if shown_tab == tab {
+                app.land_on_available_tab();
+                if app.active_tab != tab {
+                    crate::handlers::tabs::load_entered_tab(app, tx, fx);
+                }
             }
             refocus(app, row);
         }
@@ -393,6 +395,18 @@ mod tests {
         assert!(!app.available_tabs().contains(&Tab::Issues));
         assert_eq!(app.active_tab, Tab::MergeRequests);
         assert_eq!(focused(&app), ConfigureRow::Tab(Tab::Issues));
+    }
+
+    #[test]
+    fn hiding_another_tab_keeps_a_hidden_active_tab() {
+        let mut app = configure_open_on(Tab::Jobs);
+        app.config.layout.tabs = Some(vec![Tab::Issues, Tab::Pipelines, Tab::Todos]);
+        focus_row(&mut app, ConfigureRow::Tab(Tab::Todos));
+
+        press(&mut app, KeyCode::Char(' '));
+
+        assert_eq!(app.available_tabs(), [Tab::Issues, Tab::Pipelines]);
+        assert_eq!(app.active_tab, Tab::Jobs);
     }
 
     #[test]

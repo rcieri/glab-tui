@@ -2,6 +2,7 @@
 //! selectable row lists.
 
 use crate::app::{App, Tab};
+use crate::backend::BackendKind;
 use crate::domain::contributions::{Contribution, ContributionHistory, TargetKind};
 use crate::domain::dashboard::{
     self, Activity, ActivityWindow, IssueQueue, MilestoneProgress, MrQueue, Now, Person,
@@ -115,9 +116,14 @@ impl ContributorsView {
         Self::ALL[(current + 1) % Self::ALL.len()]
     }
 
-    pub fn columns(self) -> [&'static str; Self::COLUMN_COUNT] {
+    pub fn columns(self, kind: BackendKind) -> [&'static str; Self::COLUMN_COUNT] {
         match self {
-            ContributorsView::OpenWork => ["MRs", "rev", "iss", "ovd"],
+            ContributorsView::OpenWork => [
+                if kind.is_github() { "PRs" } else { "MRs" },
+                "rev",
+                "iss",
+                "ovd",
+            ],
             ContributorsView::Activity(_) => ["cmt", "com", "thr", "rvw"],
         }
     }
@@ -1124,6 +1130,18 @@ mod tests {
         assert_eq!(
             DashboardPerson::from_config("@Everyone"),
             DashboardPerson::Everyone
+        );
+    }
+
+    #[test]
+    fn the_open_work_header_names_prs_on_github_and_mrs_on_gitlab() {
+        assert_eq!(
+            ContributorsView::OpenWork.columns(BackendKind::GitHub),
+            ["PRs", "rev", "iss", "ovd"]
+        );
+        assert_eq!(
+            ContributorsView::OpenWork.columns(BackendKind::GitLab),
+            ["MRs", "rev", "iss", "ovd"]
         );
     }
 

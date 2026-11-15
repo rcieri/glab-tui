@@ -492,9 +492,9 @@ fn contributors_body(ctx: &Context, width: usize, height: usize) -> Vec<Line<'st
         .saturating_sub(2 + 2 + ContributorsView::COLUMN_COUNT * CONTRIBUTOR_COLUMN_CHARS)
         .max(4);
     let w = CONTRIBUTOR_COLUMN_CHARS;
-    let sort_label = sort.map(|sort| (view.columns()[sort.column], !sort.is_descending));
-    let header: String = view
-        .columns()
+    let columns = view.columns(ctx.kind);
+    let sort_label = sort.map(|sort| (columns[sort.column], !sort.is_descending));
+    let header: String = columns
         .iter()
         .map(|column| format!("{:>w$}", sort_header_label(column, sort_label, ctx.icons)))
         .collect();

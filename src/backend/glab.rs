@@ -3212,8 +3212,12 @@ impl Backend for GlabBackend {
             return Err(anyhow::anyhow!("Group-level activity not supported"));
         };
         let encoded = Self::encode_path(project);
-        // `after` is exclusive and day-granular: the day before keeps `since`.
-        let after = since.pred_opt().unwrap_or(since);
+        // GitLab keeps events after the end of the `after` day, which it may
+        // read in the instance's time zone. Two days back covers any UTC
+        // offset, and `add_page` drops what predates `since`.
+        let after = since
+            .checked_sub_days(chrono::Days::new(2))
+            .unwrap_or(since);
         let endpoint = format!(
             "/projects/{encoded}/events?after={after}&per_page={}&page={page}",
             crate::domain::contributions::EVENTS_PER_PAGE

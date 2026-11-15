@@ -103,12 +103,15 @@ pub struct NewMr<'a> {
 /// that require it for the merge API. GitLab-only: `GhBackend` ignores it.
 /// `None` skips the flag and lets `glab` fall back to its own heuristic on
 /// legacy installs (older GitLab returns 400 otherwise).
+/// `squashes_every_merge` says the project squashes whatever is asked, so a
+/// GitLab merge leaves the MR's squash flag alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MergeOptions<'a> {
     pub method: crate::domain::mr::MergeMethod,
     pub delete_branch: bool,
     pub auto_merge: bool,
     pub sha: Option<&'a str>,
+    pub squashes_every_merge: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

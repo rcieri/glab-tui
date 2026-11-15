@@ -2549,11 +2549,13 @@ impl Backend for GhBackend {
     ) -> Result<()> {
         // GitHub's `gh pr merge` has no `--sha` equivalent — the CLI works
         // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
+        // GitHub has no project-wide forced squash either.
         let super::MergeOptions {
             method,
             delete_branch,
             auto_merge,
             sha: _,
+            squashes_every_merge: _,
         } = *options;
         let args = Self::merge_args(project, iid, method, delete_branch, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();

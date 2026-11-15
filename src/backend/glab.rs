@@ -145,7 +145,7 @@ enum SquashOption {
 /// `Merge` is `glab mr merge` without a method flag, a fast-forward on `ff`
 /// projects. `Rebase` stands for `glab mr merge --rebase`, which projects
 /// requiring a linear history (`ff`, `rebase_merge`) need for a branch
-/// behind its target.
+/// behind its target, so it stays offered when the project always squashes.
 fn parse_project_merge_methods(raw: &str) -> Result<MergeMethods> {
     #[derive(Deserialize)]
     struct ProjectMergeSettings {
@@ -168,7 +168,7 @@ fn parse_project_merge_methods(raw: &str) -> Result<MergeMethods> {
     let allowed: Vec<MergeMethod> = [
         (MergeMethod::Merge, !squashes_always),
         (MergeMethod::Squash, squash_option != SquashOption::Never),
-        (MergeMethod::Rebase, allows_rebase && !squashes_always),
+        (MergeMethod::Rebase, allows_rebase),
     ]
     .into_iter()
     .filter_map(|(method, is_allowed)| is_allowed.then_some(method))
@@ -181,9 +181,14 @@ fn parse_project_merge_methods(raw: &str) -> Result<MergeMethods> {
         ProjectMergeMethod::Ff => PlainMerge::FastForward,
         ProjectMergeMethod::Merge | ProjectMergeMethod::RebaseMerge => PlainMerge::MergeCommit,
     };
-    MergeMethods::new(&allowed, Some(preferred))
-        .map(|methods| methods.with_plain_merge(plain_merge))
-        .ok_or_else(|| anyhow::anyhow!("the project allows no merge method"))
+    let methods = MergeMethods::new(&allowed, Some(preferred))
+        .ok_or_else(|| anyhow::anyhow!("the project allows no merge method"))?
+        .with_plain_merge(plain_merge);
+    Ok(if squashes_always {
+        methods.squashing_every_merge()
+    } else {
+        methods
+    })
 }
 
 /// One runner's details from the bulk GraphQL query: its tags, when it was
@@ -2056,12 +2061,15 @@ impl Backend for GlabBackend {
             delete_branch,
             auto_merge,
             sha,
+            squashes_every_merge,
         } = *options;
         // GitLab squashes whenever the MR's own squash flag is set (the
         // default on `default_on` projects), and its merge endpoint can only
         // turn the flag on, so a merge that must not squash clears it first,
         // and sets it again when the merge fails so the MR is left as it was.
-        let clears_squash = method != MergeMethod::Squash && self.mr_squash_flag(project, iid).await?;
+        let clears_squash = method != MergeMethod::Squash
+            && !squashes_every_merge
+            && self.mr_squash_flag(project, iid).await?;
         if clears_squash {
             self.toggle_mr_squash(project, iid, "CLEARING MR SQUASH").await?;
         }
@@ -4136,7 +4144,8 @@ mod tests {
             ),
             ("ff", "default_off", &[Merge, Squash, Rebase], Merge),
             ("ff", "never", &[Merge, Rebase], Merge),
-            ("ff", "always", &[Squash], Squash),
+            ("ff", "always", &[Squash, Rebase], Squash),
+            ("rebase_merge", "always", &[Squash, Rebase], Squash),
         ];
         for &(merge_method, squash_option, allowed, preferred) in cases {
             let methods = merge_settings(merge_method, squash_option);
@@ -4159,6 +4168,20 @@ mod tests {
                 .intersect(&merge_commit)
                 .map(|shared| shared.label(MergeMethod::Merge)),
             Some("Merge commit or fast-forward")
+        );
+    }
+
+    #[test]
+    fn a_rebase_on_a_project_that_always_squashes_is_named_rebase_and_squash() {
+        let always = merge_settings("ff", "always");
+        let encouraged = merge_settings("ff", "default_on");
+        assert_eq!(always.label(MergeMethod::Rebase), "Rebase and squash");
+        assert_eq!(encouraged.label(MergeMethod::Rebase), "Rebase");
+        assert_eq!(
+            always
+                .intersect(&encouraged)
+                .map(|shared| shared.label(MergeMethod::Rebase)),
+            Some("Rebase")
         );
     }
 

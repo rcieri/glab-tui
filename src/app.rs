@@ -3617,6 +3617,8 @@ pub struct MergeChoices {
     pub method: MergeMethod,
     pub delete_branch: bool,
     pub auto_merge: bool,
+    /// Every project of the merge squashes whatever method it picks.
+    pub squashes_every_merge: bool,
 }
 
 impl MergeChoices {
@@ -3628,6 +3630,7 @@ impl MergeChoices {
             delete_branch: self.delete_branch,
             auto_merge: self.auto_merge,
             sha,
+            squashes_every_merge: self.squashes_every_merge,
         }
     }
 }
@@ -3668,6 +3671,8 @@ pub struct SubmitDialog {
     /// The merge methods the method radio offers, in its order. Empty until
     /// the methods of every project in `merge_projects` are known.
     methods: Vec<MergeMethod>,
+    /// Whether every project in `merge_projects` squashes whatever is asked.
+    squashes_every_merge: bool,
     /// The projects a merge acts on, whose merge methods its form offers.
     /// Empty for every other action.
     pub merge_projects: Vec<String>,
@@ -3712,6 +3717,7 @@ impl SubmitDialog {
             method: self.merge_method()?,
             delete_branch: is_on(MergeToggle::DeleteSourceBranch),
             auto_merge: is_on(MergeToggle::AutoMerge),
+            squashes_every_merge: self.squashes_every_merge,
         })
     }
 
@@ -3780,6 +3786,7 @@ impl SubmitDialog {
             .position(|&method| method == shared.preferred())
             .unwrap_or(0);
         self.methods = shared.allowed().to_vec();
+        self.squashes_every_merge = shared.squashes_every_merge();
         self.form.apply_loaded(Self::METHODS, |kind| {
             *kind = GroupKind::Radio(Radio::new(labels, preferred));
         });
@@ -4176,6 +4183,7 @@ impl SubmitDialog {
             project_path,
             extra_buttons,
             methods: Vec::new(),
+            squashes_every_merge: false,
             merge_projects,
             merge_methods_failure: None,
             form: if is_destructive { form.danger() } else { form },
@@ -11380,6 +11388,7 @@ mod tests {
                 method: Squash,
                 delete_branch: true,
                 auto_merge: false,
+                squashes_every_merge: false,
             })
         );
 
@@ -11403,6 +11412,7 @@ mod tests {
                 method: Merge,
                 delete_branch: false,
                 auto_merge: true,
+                squashes_every_merge: false,
             }
         );
         assert_eq!(
@@ -11412,6 +11422,7 @@ mod tests {
                 delete_branch: false,
                 auto_merge: true,
                 sha: Some("abc123"),
+                squashes_every_merge: false,
             }
         );
     }
@@ -11446,6 +11457,7 @@ mod tests {
                 method: Squash,
                 delete_branch: false,
                 auto_merge: false,
+                squashes_every_merge: false,
             })
         );
         assert_eq!(dialog.form.focus(), options);

@@ -172,6 +172,8 @@ pub struct MergeMethods {
     allowed: Vec<MergeMethod>,
     preferred: MergeMethod,
     plain_merge: PlainMerge,
+    /// GitLab projects that always squash do so whatever a merge asks for.
+    squashes_every_merge: bool,
 }
 
 impl MergeMethods {
@@ -195,6 +197,7 @@ impl MergeMethods {
             allowed,
             preferred,
             plain_merge: PlainMerge::MergeCommit,
+            squashes_every_merge: false,
         })
     }
 
@@ -203,6 +206,19 @@ impl MergeMethods {
             plain_merge,
             ..self
         }
+    }
+
+    pub fn squashing_every_merge(self) -> Self {
+        Self {
+            squashes_every_merge: true,
+            ..self
+        }
+    }
+
+    /// Whether every merge squashes whatever method it picks, so the MR's own
+    /// squash flag decides nothing.
+    pub fn squashes_every_merge(&self) -> bool {
+        self.squashes_every_merge
     }
 
     pub fn allowed(&self) -> &[MergeMethod] {
@@ -218,12 +234,14 @@ impl MergeMethods {
         match (method, self.plain_merge) {
             (MergeMethod::Merge, PlainMerge::FastForward) => "Fast-forward",
             (MergeMethod::Merge, PlainMerge::Mixed) => "Merge commit or fast-forward",
+            (MergeMethod::Rebase, _) if self.squashes_every_merge => "Rebase and squash",
             _ => method.label(),
         }
     }
 
     /// The methods both accept, for a merge spanning several projects.
-    /// `None` when they share none.
+    /// `None` when they share none. It squashes every merge only when both
+    /// projects do.
     pub fn intersect(&self, other: &MergeMethods) -> Option<Self> {
         let shared: Vec<MergeMethod> = self
             .allowed
@@ -236,8 +254,11 @@ impl MergeMethods {
         } else {
             PlainMerge::Mixed
         };
-        Self::new(&shared, Some(self.preferred))
-            .map(|methods| methods.with_plain_merge(plain_merge))
+        Self::new(&shared, Some(self.preferred)).map(|methods| Self {
+            plain_merge,
+            squashes_every_merge: self.squashes_every_merge && other.squashes_every_merge,
+            ..methods
+        })
     }
 }
 

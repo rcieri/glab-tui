@@ -458,10 +458,11 @@ impl Form {
     }
 
     /// A form without buttons, for an overlay that handles its own keys and
-    /// draws its content into [`GroupKind::Custom`] regions.
-    pub fn panel(title: impl Into<String>, groups: Vec<Group>) -> Self {
+    /// draws its content into [`GroupKind::Custom`] regions. Its title is the
+    /// one the overlay's `FormFrame` draws.
+    pub fn panel(groups: Vec<Group>) -> Self {
         Self {
-            title: title.into(),
+            title: String::new(),
             tone: FormTone::Normal,
             groups,
             buttons: Vec::new(),

@@ -1793,14 +1793,11 @@ mod tests {
 
     #[test]
     fn regions_sized_by_share_and_fill_take_the_rows_the_rest_leaves() {
-        let mut form = Form::panel(
-            "Panel",
-            vec![
-                Group::new(GroupKind::Custom(Rows::Fixed(1))),
-                Group::new(GroupKind::Custom(Rows::Percent(50))),
-                Group::new(GroupKind::Custom(Rows::Fill)),
-            ],
-        );
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::Custom(Rows::Fixed(1))),
+            Group::new(GroupKind::Custom(Rows::Percent(50))),
+            Group::new(GroupKind::Custom(Rows::Fill)),
+        ]);
         let size = FormSize {
             width: Extent::Fixed(40),
             height: Extent::Fixed(16),
@@ -1817,16 +1814,13 @@ mod tests {
 
     #[test]
     fn a_fill_region_before_toggles_leaves_every_toggle_its_row() {
-        let mut form = Form::panel(
-            "Panel",
-            vec![
-                Group::new(GroupKind::Custom(Rows::Fill)),
-                Group::new(GroupKind::Toggles(Toggles::new(vec![
-                    Toggle::new("Flag", false),
-                    Toggle::new("Flag", false),
-                ]))),
-            ],
-        );
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::Custom(Rows::Fill)),
+            Group::new(GroupKind::Toggles(Toggles::new(vec![
+                Toggle::new("Flag", false),
+                Toggle::new("Flag", false),
+            ]))),
+        ]);
         let size = FormSize {
             width: Extent::Fixed(40),
             height: Extent::Fixed(10),
@@ -1841,13 +1835,10 @@ mod tests {
 
     #[test]
     fn a_panel_sized_to_its_content_gives_a_fill_region_no_rows() {
-        let mut form = Form::panel(
-            "Panel",
-            vec![
-                Group::note(NoteLevel::Info, "body"),
-                Group::new(GroupKind::Custom(Rows::Fill)),
-            ],
-        );
+        let mut form = Form::panel(vec![
+            Group::note(NoteLevel::Info, "body"),
+            Group::new(GroupKind::Custom(Rows::Fill)),
+        ]);
         let size = FormSize {
             width: Extent::Fixed(40),
             height: Extent::Content,
@@ -1860,7 +1851,7 @@ mod tests {
 
     #[test]
     fn the_notice_gets_its_own_row_below_the_body() {
-        let mut form = Form::panel("Panel", vec![Group::new(GroupKind::Custom(Rows::Fixed(2)))]);
+        let mut form = Form::panel(vec![Group::new(GroupKind::Custom(Rows::Fixed(2)))]);
         let notice = Notice::error("Could not load the labels");
         let size = FormSize {
             width: Extent::Fixed(40),
@@ -1878,13 +1869,9 @@ mod tests {
     fn a_wrapped_line_input_keeps_its_spaces_and_wraps_a_long_word_with_the_cursor_shown() {
         const INPUT: crate::form::GroupId = crate::form::GroupId("input");
         let value = format!("a   b {}", "x".repeat(40));
-        let mut form = Form::panel(
-            "Text",
-            vec![
-                Group::new(GroupKind::LineInput(LineInput::new(value, None).wrapped()))
-                    .with_id(INPUT),
-            ],
-        );
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::LineInput(LineInput::new(value, None).wrapped())).with_id(INPUT),
+        ]);
         form.edit(INPUT);
         let size = FormSize {
             width: Extent::Fixed(40),

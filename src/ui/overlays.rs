@@ -374,12 +374,9 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             tab.title(kind, ctx.icons)
         );
         let list_rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-        let mut form = crate::form::Form::panel(
-            title.clone(),
-            vec![crate::form::Group::region(crate::form::Rows::Fixed(
-                list_rows,
-            ))],
-        );
+        let mut form = crate::form::Form::panel(vec![crate::form::Group::region(
+            crate::form::Rows::Fixed(list_rows),
+        )]);
         let hints = if editing_page_size {
             CONFIGURE_PAGE_SIZE_HINTS
         } else {
@@ -440,12 +437,9 @@ fn render_save_menu(
     selection: Option<SaveMenu>,
 ) {
     let title = format!("{} Save to Config", ctx.icons.label_save);
-    let mut form = crate::form::Form::panel(
-        title.clone(),
-        vec![crate::form::Group::region(crate::form::Rows::Fixed(
-            SAVE_MENU_CHOICES.len() as u16,
-        ))],
-    );
+    let mut form = crate::form::Form::panel(vec![crate::form::Group::region(
+        crate::form::Rows::Fixed(SAVE_MENU_CHOICES.len() as u16),
+    )]);
     let frame = FormFrame {
         title: &title,
         size: FormSize {
@@ -568,12 +562,9 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
     let Some(date_picker) = app.date_picker_mut() else {
         return;
     };
-    let mut form = crate::form::Form::panel(
-        date_picker.title.clone(),
-        vec![crate::form::Group::region(crate::form::Rows::Fixed(
-            CALENDAR_ROWS,
-        ))],
-    );
+    let mut form = crate::form::Form::panel(vec![crate::form::Group::region(
+        crate::form::Rows::Fixed(CALENDAR_ROWS),
+    )]);
     let frame = FormFrame {
         title: &date_picker.title,
         size: FormSize {
@@ -692,7 +683,7 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
         )));
     }
     groups.push(crate::form::Group::region(crate::form::Rows::Fill));
-    let mut form = crate::form::Form::panel(selector.title.trim(), groups);
+    let mut form = crate::form::Form::panel(groups);
     let frame = FormFrame {
         title: selector.title.trim(),
         size: FormSize {
@@ -1125,13 +1116,10 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
     };
 
     let title = format!("{} Keyboard Shortcuts", icons.label_keyboard);
-    let mut form = crate::form::Form::panel(
-        title.clone(),
-        vec![
-            crate::form::Group::region(crate::form::Rows::Fixed(HELP_SEARCH_ROWS)),
-            crate::form::Group::region(crate::form::Rows::Fill),
-        ],
-    );
+    let mut form = crate::form::Form::panel(vec![
+        crate::form::Group::region(crate::form::Rows::Fixed(HELP_SEARCH_ROWS)),
+        crate::form::Group::region(crate::form::Rows::Fill),
+    ]);
     let frame = FormFrame {
         title: &title,
         size: FormSize {

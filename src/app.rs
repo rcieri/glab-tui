@@ -3218,10 +3218,9 @@ impl TextInput {
     pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
         let title = title.into();
         let input = crate::form::LineInput::new(value, None).wrapped();
-        let mut form = Form::panel(
-            title.clone(),
-            vec![Group::new(GroupKind::LineInput(input)).with_id(Self::INPUT)],
-        );
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::LineInput(input)).with_id(Self::INPUT),
+        ]);
         form.edit(Self::INPUT);
         Self {
             title,

@@ -7,8 +7,9 @@
 //! then `staging`) for the environments list and
 //! `tests/fixtures/deployments.json` for every deployments request: the
 //! newest deployment has SHA `f00dcafe`, which nothing else on the
-//! Environments tab shows, and the older one, run by job 500, carries the
-//! note `Hotfix rollout for the login outage`.
+//! Environments tab shows, and the older one deployed tag `v1.0.1` with job
+//! 500, `deploy-hotfix`. Like GitLab's API, the fixture names the tag on the
+//! deploy job (`deployable.tag`), not on the deployment.
 //!
 //! On GitHub the mock `gh` serves `tests/fixtures/gh_environments.json` and
 //! `tests/fixtures/gh_deployments.json` (deployment 100, then 99), and the
@@ -62,7 +63,7 @@ fn selecting_another_environment_clears_the_shown_deployments() {
     assert_deployments_hidden(&mut session);
 }
 
-const OLDER_DEPLOYMENT_NOTE: &str = "Hotfix rollout for the login outage";
+const OLDER_DEPLOYMENT_JOB: &str = "deploy-hotfix (#500)";
 
 fn confirm_dialog(session: &mut TestSession, title: &str) {
     session
@@ -77,12 +78,18 @@ fn focused_deployments_select_an_older_deployment_and_show_its_details() {
 
     session.press_keys(b"j");
     session
-        .wait_for_screen_contains(OLDER_DEPLOYMENT_NOTE, 5000)
-        .expect("j moves to the older deployment and the pane shows its notes");
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_JOB, 5000)
+        .expect("j moves to the older deployment and the pane shows its job");
     let screen = session.emulator.get_text();
     assert!(
         screen.contains(DEPLOYMENT_SHA),
         "the deployments of production stay listed:\n{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Tag") && line.contains("v1.0.1")),
+        "a deployment of a tag names its ref a tag:\n{screen}"
     );
 }
 
@@ -92,7 +99,7 @@ fn rollback_reruns_the_job_of_the_selected_deployment() {
 
     session.press_keys(b"j");
     session
-        .wait_for_screen_contains(OLDER_DEPLOYMENT_NOTE, 5000)
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_JOB, 5000)
         .expect("j selects the older deployment");
     session.press_keys(b"R");
     confirm_dialog(&mut session, "Roll Back 'production' to 0ldc0de1");

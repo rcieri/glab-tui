@@ -14880,9 +14880,6 @@ index 123456..789012 100644
 
     #[test]
     fn theme_picker_previews_the_highlighted_preset_until_it_closes() {
-        let _lock = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = crate::config::EnvGuard::isolate_home(temp_dir.path());
         let mut app = app_with_theme_picker_open_on("nord");
         let nord = Theme::preset("nord").unwrap();
 
@@ -14904,9 +14901,6 @@ index 123456..789012 100644
 
     #[test]
     fn theme_picker_previews_auto_with_the_reported_appearance() {
-        let _lock = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = crate::config::EnvGuard::isolate_home(temp_dir.path());
         let mut app = app_with_theme_picker_open_on("nord");
         app.config.theme_light = "solarized-light".to_string();
         app.terminal_appearance = Some(crate::config::Appearance::Light);
@@ -14919,9 +14913,6 @@ index 123456..789012 100644
 
     #[test]
     fn theme_picker_search_row_keeps_the_configured_theme() {
-        let _lock = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = crate::config::EnvGuard::isolate_home(temp_dir.path());
         let mut app = app_with_theme_picker_open_on("nord");
         highlight_theme(&mut app, "dracula");
         app.sync_theme_preview();

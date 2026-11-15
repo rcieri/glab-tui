@@ -1069,7 +1069,6 @@ impl GlabBackend {
     async fn mr_squash_flag(&self, project: &str, iid: u64) -> Result<bool> {
         #[derive(Deserialize)]
         struct GiMr {
-            #[serde(default)]
             squash: bool,
         }
         let raw = self

@@ -206,7 +206,7 @@ elif [[ "$*" == *"mr diff"* ]]; then
     cat "$FIXTURES_DIR/mr_diff.txt"
 elif [[ "$*" == *"mr view"* && -n "$TEST_GLAB_MR_SQUASH" ]]; then
     # The MR's own squash flag, which GitLab follows on merge.
-    sed '1s/{/{"squash": true,/' "$FIXTURES_DIR/mr_view.json"
+    sed 's/"squash": false/"squash": true/' "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then

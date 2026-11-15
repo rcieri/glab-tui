@@ -5,7 +5,8 @@
 cat_relative() {
     local text hours at
     text=$(cat "$1")
-    for hours in $(grep -o 'HOURS_AGO_[0-9]*' "$1" | sort -u | sed 's/HOURS_AGO_//'); do
+    # Largest first: `HOURS_AGO_1` is a prefix of `HOURS_AGO_10`.
+    for hours in $(grep -o 'HOURS_AGO_[0-9]*' "$1" | sed 's/HOURS_AGO_//' | sort -rnu); do
         at=$(( $(date +%s) - hours * 3600 ))
         at=$(date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ)
         text=${text//HOURS_AGO_$hours/$at}

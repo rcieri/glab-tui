@@ -6,4 +6,4 @@ What is the bug and how does this fix it?
 
 ## Verification
 
-- [ ] Added/updated tests
+- [ ] Added a test that fails without this fix

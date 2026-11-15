@@ -468,6 +468,35 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
         });
     });
 }
+
+/// After the user moved to another tab: fetch it unless it is loading or
+/// fresh, and the related items its highlighted row previews.
+pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    if let Some(client) = &app.gitlab_client {
+        if !app.loading_tabs.contains(&app.active_tab)
+            && !app.refreshed_tabs.contains(&app.active_tab)
+        {
+            if !app.loaded_tabs.contains(&app.active_tab) {
+                app.loading_tabs.insert(app.active_tab);
+            }
+            spawn_refresh_active_tab(
+                fx,
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
+    }
+    if app.active_tab == Tab::Issues {
+        maybe_fetch_related_mrs(app, tx);
+    }
+    if app.active_tab == Tab::MergeRequests {
+        maybe_fetch_mr_related_issues(app, tx);
+    }
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -1395,7 +1424,7 @@ pub fn handle_active_tab_key(
                                     .find(|p| p.ref_branch() == mr.source_branch)
                                     .map(|p| p.id())
                             });
-                            app.active_tab = crate::app::Tab::Pipelines;
+                            app.set_active_tab_keeping_preview(crate::app::Tab::Pipelines);
                             app.pending_pipeline_select = pipe_id;
                             if let Some(client) = &app.gitlab_client {
                                 crate::fetch::spawn_refresh_active_tab(
@@ -2836,7 +2865,7 @@ pub fn handle_active_tab_key(
                         app.close_job_trace();
                     } else {
                         app.close_opened_pipeline();
-                        app.active_tab = crate::app::Tab::Pipelines;
+                        app.set_active_tab(crate::app::Tab::Pipelines);
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
                     app.ascend();
@@ -3032,29 +3061,7 @@ pub fn handle_active_tab_key(
                 .matches(Action::GlobalNextTab, key_event) =>
             {
                 app.next_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            fx,
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, tx);
-                }
+                load_entered_tab(app, tx, fx);
             }
             _ if app
                 .config
@@ -3062,29 +3069,7 @@ pub fn handle_active_tab_key(
                 .matches(Action::GlobalPrevTab, key_event) =>
             {
                 app.previous_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            fx,
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, tx);
-                }
+                load_entered_tab(app, tx, fx);
             }
             _ if app
                 .config
@@ -3457,7 +3442,7 @@ pub fn apply_opened_pipeline(
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
                 app.close_job_trace();
-                app.active_tab = crate::app::Tab::Jobs;
+                app.set_active_tab_keeping_preview(crate::app::Tab::Jobs);
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }
@@ -4547,6 +4532,23 @@ pub(crate) mod tests {
         .expect("merge request fixture")
     }
 
+    #[tokio::test]
+    async fn following_an_mr_pipeline_from_an_open_preview_keeps_the_preview_open() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::MergeRequests;
+        app.detail_visible = true;
+        app.mrs.items = vec![mr_in("acme/app", 3, "alice")];
+        app.mrs.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Pipelines);
+        assert!(app.detail_visible);
+    }
+
     fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {
         HashMap::from([(column.to_string(), HashSet::from([value.to_string()]))])
     }
@@ -4685,6 +4687,24 @@ pub(crate) mod tests {
         assert_eq!(app.active_pipeline_project, None);
         assert_eq!(app.jobs_project(), None);
         assert_eq!(app.project_path_for_jobs(), "acme");
+    }
+
+    #[test]
+    fn opening_a_pipeline_from_an_open_inspector_keeps_the_preview_open_on_jobs() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.detail_visible = true;
+        app.pipelines.items = vec![listed_pipeline(7)];
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Jobs);
+        assert!(app.detail_visible);
     }
 
     /// Enter pressed twice before the first reply: the first reply descends,

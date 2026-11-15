@@ -214,6 +214,22 @@ pub(super) fn handle_key(
         app.reverse_sort_order();
         return;
     }
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalToggleNav, key_event)
+    {
+        app.config.layout.nav_visible = !app.config.layout.nav_visible;
+        return;
+    }
+    if app
+        .config
+        .keybindings
+        .matches(Action::GlobalToggleTerminalPane, key_event)
+    {
+        app.config.layout.terminal_pane_visible = !app.config.layout.terminal_pane_visible;
+        return;
+    }
 
     if app
         .config

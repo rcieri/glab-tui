@@ -1,5 +1,7 @@
 use super::form::{Extent, FormFrame, FormSize, render_form};
 use super::helpers::highlight_fuzzy_match;
+use crate::utils::format::sanitize_untrusted;
+use std::borrow::Cow;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::Icons;
@@ -816,11 +818,13 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
                         Style::default().fg(theme.text_muted).bg(item_bg),
                     ));
                 }
-                match indices {
-                    Some(indices) => {
+                // The fuzzy indices count characters of the raw item, so the
+                // highlight is only kept when sanitizing changed nothing.
+                match (indices, sanitize_untrusted(item)) {
+                    (Some(indices), Cow::Borrowed(_)) => {
                         spans.extend(highlight_fuzzy_match(item, indices, style, match_style))
                     }
-                    None => spans.push(Span::styled(item.clone(), style)),
+                    (_, clean) => spans.push(Span::styled(clean.into_owned(), style)),
                 }
                 // Repos sharing a basename are told apart by their path.
                 if is_switch_repo && !is_group {
@@ -1756,6 +1760,45 @@ command = "true"
                 std::collections::HashSet::from(["beta".to_string()]),
                 "{purpose:?}"
             );
+        }
+    }
+
+    /// Selector rows carry third-party text (comment bodies, titles): an
+    /// escape sequence in one never reaches the terminal, highlighted or not.
+    #[test]
+    fn a_selector_row_draws_no_escape_sequence() {
+        use crate::app::{Selector, SelectorField, SelectorPurpose};
+        for query in ["", "evil"] {
+            let mut app = App::default();
+            app.open_selector(Selector {
+                title: "Pick".to_string(),
+                all_items: vec!["evil\x1b]0;pwned\x07 body".to_string()],
+                selected_items: std::collections::HashSet::new(),
+                cursor_idx: 0,
+                search_query: query.to_string(),
+                is_filtering: false,
+                is_loading: false,
+                entity_iid: 0,
+                entity_type: String::new(),
+                purpose: SelectorPurpose::Field(SelectorField::Labels),
+                multi_select: true,
+                state: ListState::default(),
+                request: None,
+            });
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            let icons = crate::config::Icons::ascii();
+            let ctx = &crate::ui::render_ctx::RenderCtx {
+                theme: crate::config::Theme::default(),
+                icons: &icons,
+                kind: crate::backend::BackendKind::GitLab,
+            };
+            terminal
+                .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+                .unwrap();
+            let text = snapshot_text(&terminal);
+            assert!(text.contains("evil body"), "query {query:?}:\n{text}");
+            assert!(!text.contains("pwned"), "query {query:?}:\n{text}");
+            assert!(!text.contains('\x1b'), "query {query:?}:\n{text}");
         }
     }
 

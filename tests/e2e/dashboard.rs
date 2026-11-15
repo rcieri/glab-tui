@@ -16,6 +16,9 @@
 //! ago, timed relative to now by the mock.
 
 use crate::TestSession;
+use std::time::{Duration, Instant};
+
+const LINE_WAIT: Duration = Duration::from_secs(5);
 
 const CONFIG: &str = "icons = \"ascii\"\n[dashboard]\nenabled = true\n";
 
@@ -47,6 +50,18 @@ fn screen_line_with(session: &TestSession, needle: &str) -> String {
         .find(|line| line.contains(needle))
         .unwrap_or_default()
         .to_string()
+}
+
+fn wait_for_line(session: &mut TestSession, needle: &str, expected: &str, why: &str) {
+    let deadline = Instant::now() + LINE_WAIT;
+    while !screen_line_with(session, needle).contains(expected) {
+        assert!(
+            Instant::now() < deadline,
+            "{why}: {}",
+            session.emulator.get_text()
+        );
+        session.settle(50);
+    }
 }
 
 #[test]
@@ -161,27 +176,28 @@ fn the_window_key_counts_each_contributors_activity_in_the_last_day_and_week() {
     session
         .wait_for_screen_contains("Contributors · last 24h", 5000)
         .expect("w switches the card to the last day of activity");
-    session.settle(300);
-    assert!(
-        screen_line_with(&session, "@test-user").contains("    1    0    0    0"),
-        "only the push of 2 hours ago is inside the last day: {}",
-        session.emulator.get_text()
+    wait_for_line(
+        &mut session,
+        "@test-user",
+        "    1    0    0    0",
+        "only the push of 2 hours ago is inside the last day",
     );
 
     session.press_keys(b"w");
     session
         .wait_for_screen_contains("Contributors · last 7 days", 5000)
         .expect("w again widens the window to a week");
-    session.settle(300);
-    assert!(
-        screen_line_with(&session, "@test-user").contains("    1    1    0    0"),
-        "the week adds test-user's comment: {}",
-        session.emulator.get_text()
+    wait_for_line(
+        &mut session,
+        "@test-user",
+        "    1    1    0    0",
+        "the week adds test-user's comment",
     );
-    assert!(
-        screen_line_with(&session, "@reviewer-user").contains("    0    0    1    1"),
-        "and reviewer-user's diff comment and approval: {}",
-        session.emulator.get_text()
+    wait_for_line(
+        &mut session,
+        "@reviewer-user",
+        "    0    0    1    1",
+        "and reviewer-user's diff comment and approval",
     );
 }
 

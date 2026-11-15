@@ -1100,7 +1100,7 @@ fn pipeline_row(ctx: &Context, pipeline: &Pipeline, columns: &ListColumns) -> Ro
     };
     let duration = pipeline
         .duration_seconds
-        .map(|seconds| format!("{}m {:02}s", seconds / 60, seconds % 60))
+        .map(|seconds| format!("{}m {}s", seconds / 60, seconds % 60))
         .unwrap_or_default();
     list_row(
         ctx,

@@ -105,6 +105,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic and creation form helpers.
 * [src/ui/](src/ui/): Ratatui render functions.
     * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
+    * [layout.rs](src/ui/layout.rs): `LayoutPlan::compute` pure geometry engine for top-level regions (header, sidebar, content, detail preview, compact terminal pane).
     * [compaction.rs](src/ui/compaction.rs): `compact`, the ordered compaction pipeline new size-dependent layouts go through, with the workspace's preview placement (`place_preview`) and the diff view's split/unified choice (`fits_side_by_side_diff`) as its rule lists.
     * [render_ctx.rs](src/ui/render_ctx.rs): `RenderCtx`, the theme, icons and backend kind `render` resolves once per frame and passes to every render function.
     * [inspector.rs](src/ui/inspector.rs): Unified entity inspector component (`render_entity_inspector`, `EntityDocument`, `InspectorMode`). Drives both read-only detail previews and interactive edit/create forms in a single-column layout.

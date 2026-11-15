@@ -150,17 +150,14 @@ pub fn handle_mouse_event(
             }
 
             // Fallback: content area scrolling
-            let content_rect = app.layout.map(|l| l.content_area).or(app.content_rect);
+            let content_rect = app.layout.map(|l| l.content_area);
             if let Some(content_rect) = content_rect {
                 if rect_contains(content_rect, row, col) {
                     app.scroll_active_table(scroll_down);
                     return;
                 }
             }
-            let detail_rect = app
-                .layout
-                .and_then(|l| l.detail_rect_opt())
-                .or(app.detail_rect);
+            let detail_rect = app.layout.and_then(|l| l.detail_rect_opt());
             if let Some(detail_rect) = detail_rect {
                 if rect_contains(detail_rect, row, col) {
                     if scroll_down {
@@ -252,10 +249,7 @@ pub fn handle_mouse_event(
             }
 
             // Fallback: sidebar / content clicks
-            let sidebar_rect = app
-                .layout
-                .and_then(|l| l.sidebar_rect_opt())
-                .or(app.sidebar_rect);
+            let sidebar_rect = app.layout.and_then(|l| l.sidebar_rect_opt());
             if let Some(sidebar_rect) = sidebar_rect {
                 if rect_contains(sidebar_rect, row, col) {
                     let tab_idx = (row - sidebar_rect.y - 1) as usize;
@@ -267,7 +261,7 @@ pub fn handle_mouse_event(
                 }
             }
 
-            let content_rect = app.layout.map(|l| l.content_area).or(app.content_rect);
+            let content_rect = app.layout.map(|l| l.content_area);
             if let Some(content_rect) = content_rect {
                 if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
                     let row_idx = (row - content_rect.y).saturating_sub(3) as usize;

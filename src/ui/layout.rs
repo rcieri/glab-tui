@@ -160,13 +160,13 @@ pub struct LayoutState {
 /// The computed geometry for all top-level UI regions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LayoutPlan {
-    /// Whether the terminal size is below minimum dimensions (54x10).
+    /// Whether the terminal is below [`MIN_TERMINAL_WIDTH`] x [`MIN_TERMINAL_HEIGHT`].
     pub is_too_small: bool,
-    /// Top header bar area (height 2).
+    /// Top header bar area ([`HEADER_HEIGHT`] rows).
     pub header_area: Rect,
     /// Left portion of the header bar (title, scope, search/filter, header notices).
     pub banner_title: Rect,
-    /// Right portion of the header bar (mode indicator, width 12).
+    /// Right portion of the header bar (mode indicator, [`BANNER_MODE_WIDTH`] columns).
     pub banner_mode: Rect,
     /// Middle workspace area (between header and bottom).
     pub workspace_area: Rect,

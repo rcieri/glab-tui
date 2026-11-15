@@ -942,6 +942,82 @@ fn merge_toml_values(base: &mut toml::Value, overrides: toml::Value) {
     }
 }
 
+/// The checkout holding the working directory: the nearest ancestor with a
+/// `.git` entry.
+fn find_git_root() -> Option<PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+/// The repo-local config files of the checkout holding the working
+/// directory, in the order `Config::load` merges them.
+fn repo_local_config_paths() -> Vec<PathBuf> {
+    find_git_root()
+        .map(|root| {
+            vec![
+                root.join(".glab-tui").join("config.toml"),
+                root.join(".config").join("glab-tui").join("config.toml"),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+/// The top-level keys `save_layout` writes.
+const SAVED_KEYS: [&str; 14] = [
+    "theme_preset",
+    "page_size",
+    "prefetch_tabs",
+    "layout",
+    "issues",
+    "mrs",
+    "pipelines",
+    "jobs",
+    "runners",
+    "releases",
+    "todos",
+    "milestones",
+    "branches",
+    "environments",
+];
+
+/// For each value `repo_local` sets, puts back in `written` what `global`
+/// (the global file before the save) held there, or removes it. The loaded
+/// config merges the repo-local files over the global one, so without this
+/// a Global save would copy their values into every repository's config.
+fn mask_repo_local_values(
+    written: &mut toml::Table,
+    global: Option<&toml::Table>,
+    repo_local: &toml::Table,
+) {
+    for (key, set) in repo_local {
+        let kept = global.and_then(|global| global.get(key));
+        if let toml::Value::Table(nested) = set
+            && written.get(key).is_none_or(toml::Value::is_table)
+        {
+            let mut inner = match written.remove(key) {
+                Some(toml::Value::Table(inner)) => inner,
+                _ => toml::Table::new(),
+            };
+            mask_repo_local_values(&mut inner, kept.and_then(toml::Value::as_table), nested);
+            if !inner.is_empty() {
+                written.insert(key.clone(), toml::Value::Table(inner));
+            }
+            continue;
+        }
+        match kept {
+            Some(value) => written.insert(key.clone(), value.clone()),
+            None => written.remove(key),
+        };
+    }
+}
+
 /// Rewrites one parsed config file into the shape `Config` reads, before it
 /// is merged with the others.
 fn normalize_config_file(file: &mut toml::Value) {
@@ -1563,36 +1639,12 @@ page_size = 100
             }
         }
 
-        fn find_git_root() -> Option<PathBuf> {
-            let mut current = std::env::current_dir().ok()?;
-            loop {
-                let git_dir = current.join(".git");
-                if git_dir.exists() {
-                    return Some(current);
-                }
-                if !current.pop() {
-                    break;
-                }
-            }
-            None
-        }
-
-        if let Some(root) = find_git_root() {
-            let paths = [
-                root.join(".glab-tui").join("config.toml"),
-                root.join(".config").join("glab-tui").join("config.toml"),
-            ];
-            for p in &paths {
-                if p.exists() {
-                    if let Ok(workspace_contents) = std::fs::read_to_string(p) {
-                        if let Ok(mut workspace_val) =
-                            toml::from_str::<toml::Value>(&workspace_contents)
-                        {
-                            normalize_config_file(&mut workspace_val);
-                            layout_problems.extend(layout::drop_invalid_values(&mut workspace_val));
-                            merge_toml_values(&mut merged_value, workspace_val);
-                        }
-                    }
+        for p in repo_local_config_paths() {
+            if let Ok(workspace_contents) = std::fs::read_to_string(&p) {
+                if let Ok(mut workspace_val) = toml::from_str::<toml::Value>(&workspace_contents) {
+                    normalize_config_file(&mut workspace_val);
+                    layout_problems.extend(layout::drop_invalid_values(&mut workspace_val));
+                    merge_toml_values(&mut merged_value, workspace_val);
                 }
             }
         }
@@ -1691,25 +1743,13 @@ impl Config {
         Config::deserialize(merged_value).unwrap_or_default()
     }
 
-    /// Save layout state (columns, grouping, filters) back to config.toml.
-    /// If inside a git repo, saves to repo-level config, otherwise global.
+    /// Writes the view settings (theme, page size, prefetch, `[layout]`,
+    /// each pane's columns, filters and grouping) that differ from what the
+    /// `target` file sits on top of. A Global save leaves out the values a
+    /// repo-local file sets, keeping the global file's own value there.
     pub fn save_layout(&self, target: SaveMenu) -> anyhow::Result<()> {
         if target == SaveMenu::Cancel {
             return Ok(());
-        }
-
-        fn find_git_root() -> Option<std::path::PathBuf> {
-            let mut current = std::env::current_dir().ok()?;
-            loop {
-                let git_dir = current.join(".git");
-                if git_dir.exists() {
-                    return Some(current);
-                }
-                if !current.pop() {
-                    break;
-                }
-            }
-            None
         }
 
         // Determine target path
@@ -1748,6 +1788,11 @@ impl Config {
         if !merged_value.is_table() {
             merged_value = toml::Value::Table(toml::Table::new());
         }
+        let global_before = (actual_target == SaveMenu::Global).then(|| {
+            let mut file = merged_value.clone();
+            layout::migrate_legacy_keys(&mut file);
+            file
+        });
 
         let table = merged_value.as_table_mut().unwrap();
 
@@ -1854,6 +1899,26 @@ impl Config {
                 }
             } else {
                 table.remove(*tab_name);
+            }
+        }
+
+        if let Some(global_before) = &global_before {
+            for path in repo_local_config_paths() {
+                let Ok(contents) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(mut repo_local) = toml::from_str::<toml::Value>(&contents) else {
+                    continue;
+                };
+                layout::migrate_legacy_keys(&mut repo_local);
+                let saved: toml::Table = repo_local
+                    .as_table()
+                    .into_iter()
+                    .flatten()
+                    .filter(|(key, _)| SAVED_KEYS.contains(&key.as_str()))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+                mask_repo_local_values(table, global_before.as_table(), &saved);
             }
         }
 
@@ -2226,6 +2291,38 @@ page_size = 250
             .map(|problem| problem.binding.as_str())
             .collect();
         assert_eq!(reported, ["preview", "tabs: \"pipeline\""]);
+    }
+
+    #[test]
+    fn saving_globally_leaves_out_repo_local_values() {
+        let _config = isolate_config();
+        let repo = std::env::current_dir().unwrap().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir(repo.join(".glab-tui")).unwrap();
+        let _cwd = CurrentDirGuard::enter(&repo);
+        private_fs::write(
+            &repo.join(".glab-tui").join("config.toml"),
+            "page_size = 77\ndisabled_tabs = [\"Runners\", \"Releases\"]\n[issues]\ngroup_by_column = \"State\"\n",
+        )
+        .unwrap();
+        private_fs::write(
+            &Config::config_path(),
+            "page_size = 50\n[layout]\npreview = \"bottom\"\n",
+        )
+        .unwrap();
+
+        let mut config = Config::load();
+        assert_eq!(config.page_size, 77);
+        config.prefetch_tabs = true;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let written: toml::Table =
+            toml::from_str(&std::fs::read_to_string(Config::config_path()).unwrap()).unwrap();
+        let expected: toml::Table = toml::from_str(
+            "page_size = 50\nprefetch_tabs = true\n[layout]\npreview = \"bottom\"\n",
+        )
+        .unwrap();
+        assert_eq!(written, expected);
     }
 
     #[test]

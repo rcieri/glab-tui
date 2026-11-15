@@ -256,7 +256,7 @@ and hosts serving both platforms require the override.
 
 ### Config file
 
-The config file is optional; the app boots from in-memory defaults when none exists. To create one, open the **Configure View** popup (default `Tab`) and submit **Save View**, which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
+The config file is optional; the app boots from in-memory defaults when none exists. To create one, open the **Configure View** popup (default `Tab`) and submit **Save View**, which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). A global save leaves out every setting the repo-local config sets, so one repository's overrides never reach the others: the global file keeps its own value there, and a change to such a setting is only saved by a repo-local save. Locations:
 
 ```
 ~/.config/glab-tui/config.toml          # Linux / macOS (XDG)

@@ -150,16 +150,17 @@ pub enum DashboardPerson {
 }
 
 impl DashboardPerson {
-    /// `me`, `everyone` or a login (with or without its `@`), as
-    /// `dashboard.person` takes it.
+    /// `me`, `everyone` or a login, each with or without an `@` (`@me` is
+    /// how `gh` and `glab` spell the signed-in user), as `dashboard.person`
+    /// takes it.
     pub fn from_config(value: &str) -> Self {
-        let value = value.trim();
+        let value = value.trim().trim_start_matches('@');
         if value.is_empty() || value.eq_ignore_ascii_case("me") {
             DashboardPerson::Me
         } else if value.eq_ignore_ascii_case("everyone") {
             DashboardPerson::Everyone
         } else {
-            DashboardPerson::User(value.trim_start_matches('@').to_string())
+            DashboardPerson::User(value.to_string())
         }
     }
 
@@ -1118,6 +1119,11 @@ mod tests {
         assert_eq!(
             DashboardPerson::from_config("@ada"),
             DashboardPerson::User("ada".to_string())
+        );
+        assert_eq!(DashboardPerson::from_config("@me"), DashboardPerson::Me);
+        assert_eq!(
+            DashboardPerson::from_config("@Everyone"),
+            DashboardPerson::Everyone
         );
     }
 

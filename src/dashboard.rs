@@ -411,12 +411,16 @@ impl DashboardState {
         }
     }
 
-    /// Move the list cursor one item, staying within `len` items.
+    /// Move the list cursor one item, staying within `len` items. A refresh
+    /// can shrink the list under a cursor the readers only clamp, so the
+    /// step starts from the clamped position.
     pub fn step_list(&mut self, len: usize, forward: bool) {
+        let last = len.saturating_sub(1);
+        let cursor = self.list_cursor.min(last);
         self.list_cursor = if forward {
-            (self.list_cursor + 1).min(len.saturating_sub(1))
+            (cursor + 1).min(last)
         } else {
-            self.list_cursor.saturating_sub(1)
+            cursor.saturating_sub(1)
         };
     }
 
@@ -1137,6 +1141,10 @@ mod tests {
         state.step_list(2, false);
         state.step_list(2, false);
         assert_eq!(state.list_cursor, 0);
+
+        state.list_cursor = 9;
+        state.step_list(3, false);
+        assert_eq!(state.list_cursor, 1);
     }
 
     #[test]

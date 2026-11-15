@@ -3,7 +3,7 @@ use super::helpers::highlight_fuzzy_match;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::Icons;
-use crate::keymap::{Action, KeyContext};
+use crate::keymap::{Action, KeyContext, Keymap};
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::sanitize_untrusted;
 use ratatui::{
@@ -644,16 +644,40 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
 /// The bordered filter box above a selector's list.
 const SELECTOR_FILTER_ROWS: u16 = 3;
 
-fn selector_hints(selector: &crate::app::Selector) -> &'static str {
+/// The selector's key footer, naming the first key bound to each action so
+/// it stays true after a remap. Filtering reads raw keys, so its hint is fixed.
+fn selector_hints(selector: &crate::app::Selector, keys: &Keymap) -> String {
     if selector.is_filtering {
-        return "Type to filter · Enter / Esc done";
+        return "Type to filter · Enter / Esc done".to_string();
     }
-    match (selector.multi_select, selector.purpose.has_filter_bar()) {
-        (true, true) => "j/k move · Space select · / filter · Enter confirm · Esc close",
-        (true, false) => "j/k move · Space select · Enter confirm · Esc close",
-        (false, true) => "j/k move · / filter · Enter pick · Esc close",
-        (false, false) => "j/k move · Enter pick · Esc close",
-    }
+    let first = |action| {
+        keys.bindings(action)
+            .iter()
+            .map(|key| key.trim())
+            .find(|key| !key.is_empty())
+    };
+    let movement = match (first(Action::SelectorNext), first(Action::SelectorPrevious)) {
+        (Some(next), Some(previous)) => Some(format!("{next}/{previous}")),
+        (next, previous) => next.or(previous).map(str::to_string),
+    };
+    let confirm = if selector.multi_select {
+        "confirm"
+    } else {
+        "pick"
+    };
+    let toggle = first(Action::SelectorToggle).filter(|_| selector.multi_select);
+    let filter = first(Action::SelectorFilter).filter(|_| selector.purpose.has_filter_bar());
+    [
+        movement.map(|keys| format!("{keys} move")),
+        toggle.map(|key| format!("{key} select")),
+        filter.map(|key| format!("{key} filter")),
+        first(Action::SelectorConfirm).map(|key| format!("{key} {confirm}")),
+        first(Action::SelectorClose).map(|key| format!("{key} close")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// Draws the open selector. What differs between selectors is read from its purpose.
@@ -665,6 +689,7 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
         switch_repo_groups,
         switch_repo_paths,
         selector_layout,
+        config,
         ..
     } = app;
     let Some(crate::app::Modal::Selector(selector)) = modal_stack
@@ -683,6 +708,7 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
     }
     groups.push(crate::form::Group::region(crate::form::Rows::Fill));
     let mut form = crate::form::Form::panel(groups);
+    let hints = selector_hints(selector, &config.keybindings);
     let frame = FormFrame {
         title: selector.title.trim(),
         size: FormSize {
@@ -695,7 +721,7 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
                 min: 8,
             },
         },
-        hints: Some(selector_hints(selector)),
+        hints: Some(&hints),
         notice: notice.as_ref(),
     };
     render_form(f, ctx, size, &frame, &mut form);
@@ -1822,6 +1848,40 @@ command = "true"
             assert!(!text.contains("pwned"), "query {query:?}:\n{text}");
             assert!(!text.contains('\x1b'), "query {query:?}:\n{text}");
         }
+    }
+
+    /// The footer names the keys that work, also after a remap.
+    #[test]
+    fn the_selector_footer_names_the_remapped_keys() {
+        use crate::app::{Selector, SelectorField, SelectorPurpose};
+        let selector = Selector {
+            title: "Pick".to_string(),
+            all_items: vec!["alpha".to_string()],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 0,
+            entity_type: String::new(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
+            multi_select: true,
+            state: ListState::default(),
+            request: None,
+        };
+        let mut keys = App::default().config.keybindings;
+        assert_eq!(
+            selector_hints(&selector, &keys),
+            "j/k move · Space select · f filter · Enter confirm · Esc close"
+        );
+
+        keys.set(Action::SelectorFilter, &["s"]);
+        keys.set(Action::SelectorClose, &["q"]);
+        keys.set(Action::SelectorToggle, &[]);
+        assert_eq!(
+            selector_hints(&selector, &keys),
+            "j/k move · s filter · Enter confirm · q close"
+        );
     }
 
     /// While the save menu or the page size field owns the keys, a click on

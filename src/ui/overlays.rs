@@ -3,7 +3,7 @@ use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
 use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
-use crate::app::{App, Tab};
+use crate::app::{App, ConfigureRowHit, Tab};
 use crate::config::Icons;
 use crate::keymap::{Action, KeyContext};
 use crate::notice::{Notice, NoticeLevel};
@@ -548,12 +548,17 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_stateful_widget(List::new(items), inner_area, &mut state);
 
         let offset = state.offset();
-        let row_hits: Vec<(u16, usize)> = line_rows
+        let row_hits: Vec<ConfigureRowHit> = line_rows
             .iter()
             .enumerate()
             .skip(offset)
             .take(inner_area.height as usize)
-            .filter_map(|(line, row)| Some((inner_area.y + (line - offset) as u16, (*row)?)))
+            .filter_map(|(line, row)| {
+                Some(ConfigureRowHit {
+                    screen_row: inner_area.y + (line - offset) as u16,
+                    row: (*row)?,
+                })
+            })
             .collect();
         if let Some(configure) = app.configure_mut() {
             configure.row_hits = row_hits;

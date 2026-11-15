@@ -3290,14 +3290,20 @@ pub enum ModalKind {
     Help,
 }
 
+/// A Configure View row the last frame drew, for clicks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfigureRowHit {
+    pub screen_row: u16,
+    pub row: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ConfigureOverlay {
     pub focused_row: usize,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub editing_page_size: bool,
-    /// Screen row and row index of every row the last frame drew, for clicks.
-    pub row_hits: Vec<(u16, usize)>,
+    pub row_hits: Vec<ConfigureRowHit>,
 }
 
 #[derive(Debug)]

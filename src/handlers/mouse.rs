@@ -463,8 +463,8 @@ fn handle_configure_mouse(app: &mut App, row: u16, tx: &UnboundedSender<Event>, 
     let Some(idx) = app.configure().and_then(|c| {
         c.row_hits
             .iter()
-            .find(|(y, _)| *y == row)
-            .map(|(_, idx)| *idx)
+            .find(|hit| hit.screen_row == row)
+            .map(|hit| hit.row)
     }) else {
         return;
     };

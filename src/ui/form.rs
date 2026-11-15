@@ -1,5 +1,5 @@
 //! Draws a [`Form`]: title, body, notice, button row and key footer inside
-//! one frame. Every overlay goes through [`render_form`].
+//! one frame.
 //!
 //! The title, the notice, the buttons and the footer are laid out first and
 //! always keep their rows. The body gets what is left, and the compaction

@@ -1,8 +1,7 @@
 //! A dialog built from typed groups of fields and a row of buttons, with one
-//! focus model for all of them. `ui::form` draws it. Every overlay is drawn
-//! from one: an overlay that draws a list, a table or a calendar itself puts
-//! a [`GroupKind::Custom`] region in its form and reads the region's rect
-//! back from [`FormLayout::groups`].
+//! focus model for all of them. `ui::form` draws it. An overlay that draws a
+//! list, a table or a calendar itself puts a [`GroupKind::Custom`] region in
+//! its form and reads the region's rect back from [`FormLayout::groups`].
 
 use crate::app::TextBuffer;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

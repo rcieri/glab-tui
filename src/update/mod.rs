@@ -915,4 +915,28 @@ mod tests {
 
         assert_eq!(app.issues.state.selected(), Some(0));
     }
+
+    #[test]
+    fn sidebar_clicks_switch_tabs_inside_the_border_only() {
+        use crossterm::event::MouseEventKind;
+        let click = |row: u16, column: u16| {
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let mut app = app_with_client();
+        app.active_tab = Tab::Issues;
+        app.sidebar_rect = Some(ratatui::layout::Rect::new(0, 0, 22, 12));
+
+        update(&mut app, click(11, 5));
+        assert_eq!(app.active_tab, Tab::Issues, "bottom border row");
+        update(&mut app, click(2, 0));
+        assert_eq!(app.active_tab, Tab::Issues, "left border column");
+
+        update(&mut app, click(2, 5));
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+    }
 }

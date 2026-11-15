@@ -322,7 +322,9 @@ pub fn handle_key(
                                 crate::utils::cache::add_recent_repo(&target_path_str);
                                 app.config = crate::config::Config::load();
                                 app.apply_config();
-                                app.load_keybindings();
+                                app.land_on_available_tab();
+                                let problems = app.load_keybindings();
+                                app.report_config_problems(problems);
                                 crate::config::reload_command_timeout();
 
                                 if let Ok(context) = domain::client::get_project_context() {

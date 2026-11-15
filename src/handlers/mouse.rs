@@ -264,16 +264,17 @@ pub fn handle_mouse_event(
 /// A click in the filter box starts filtering; a click on a row moves the
 /// cursor there and selects it.
 fn handle_selector_mouse(app: &mut App, row: u16, col: u16) {
-    let Some(layout) = app.selector_layout.clone() else {
+    let Some(layout) = app.selector_layout.as_ref() else {
+        return;
+    };
+    let filter = (layout.groups.len() > 1).then(|| layout.groups[0]);
+    let Some(&list) = layout.groups.last() else {
         return;
     };
     let Some(sel) = app.selector_mut() else {
         return;
     };
-    let Some(&list) = layout.groups.last() else {
-        return;
-    };
-    if layout.groups.len() > 1 && rect_contains(layout.groups[0], row, col) {
+    if filter.is_some_and(|filter| rect_contains(filter, row, col)) {
         sel.is_filtering = true;
         return;
     }

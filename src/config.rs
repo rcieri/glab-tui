@@ -1477,8 +1477,8 @@ impl Config {
 # "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"
 
-# Tab to open on launch. Valid values: issues, mrs, pr, pipelines, runners, releases,
-# todos, milestones, branches, environments, terminal. Case-insensitive.
+# Tab to open on launch. Valid values: dashboard, issues, mrs, pr, pipelines, runners,
+# releases, todos, milestones, branches, environments, terminal. Case-insensitive.
 # Overridden by the --tab CLI flag.
 # active_tab = "mrs"
 
@@ -1530,6 +1530,10 @@ page_size = 100
 # purple_bg = "{purple_bg}"
 
 
+# Tabs to disable/hide from the sidebar.
+# Uncomment to disable specific tabs:
+# disabled_tabs = ["Runners", "Terminal"]
+
 [dashboard]
 # The Dashboard tab is off until enabled here.
 enabled = false
@@ -1537,10 +1541,6 @@ enabled = false
 person = "me"
 mr_idle_days = 7
 issue_idle_days = 14
-
-# Tabs to disable/hide from the sidebar.
-# Uncomment to disable specific tabs:
-# disabled_tabs = ["Runners", "Terminal"]
 
 # Per-pane column config (unset = show all columns)
 # [issues]

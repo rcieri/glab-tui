@@ -58,16 +58,14 @@ fn merge_the_listed_mr(extra: &[(&str, &str)], pick: Pick) -> TestSession {
     session
 }
 
-fn calls(session: &TestSession) -> Vec<String> {
+/// Every squash-flag update and merge call, in the order they were made.
+fn merge_calls(session: &TestSession) -> Vec<String> {
     session
         .get_cli_calls()
         .lines()
+        .filter(|call| call.starts_with("glab mr update") || call.starts_with("glab mr merge"))
         .map(str::to_string)
         .collect()
-}
-
-fn position(calls: &[String], prefix: &str) -> Option<usize> {
-    calls.iter().position(|call| call.starts_with(prefix))
 }
 
 #[test]
@@ -79,21 +77,22 @@ fn a_merge_commit_clears_the_mr_squash_flag_before_merging() {
         ],
         Pick::MergeCommit,
     );
-    let calls = calls(&session);
-    let update = position(&calls, "glab mr update 2 --squash-before-merge -R ")
-        .unwrap_or_else(|| panic!("no squash flag update in {calls:#?}"));
-    let merge = position(&calls, "glab mr merge 2 ").unwrap();
-    assert!(update < merge, "{calls:#?}");
-    assert!(!calls[merge].contains("--squash"), "{}", calls[merge]);
+    assert_eq!(
+        merge_calls(&session),
+        [
+            "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
+            "glab mr merge 2 -R test-owner/test-repo --remove-source-branch --yes",
+        ]
+    );
 }
 
 #[test]
 fn a_squash_merge_leaves_the_mr_squash_flag_alone() {
     let session = merge_the_listed_mr(&[("TEST_GLAB_MR_SQUASH", "1")], Pick::Preselected);
-    let calls = calls(&session);
-    assert_eq!(position(&calls, "glab mr update "), None, "{calls:#?}");
-    let merge = position(&calls, "glab mr merge 2 ").unwrap();
-    assert!(calls[merge].contains(" --squash"), "{}", calls[merge]);
+    assert_eq!(
+        merge_calls(&session),
+        ["glab mr merge 2 -R test-owner/test-repo --squash --remove-source-branch --yes"]
+    );
 }
 
 #[test]
@@ -102,8 +101,10 @@ fn a_merge_commit_of_an_mr_without_the_squash_flag_sends_no_update() {
         &[("TEST_GLAB_SQUASH_OPTION", "default_off")],
         Pick::Preselected,
     );
-    let calls = calls(&session);
-    assert_eq!(position(&calls, "glab mr update "), None, "{calls:#?}");
+    assert_eq!(
+        merge_calls(&session),
+        ["glab mr merge 2 -R test-owner/test-repo --remove-source-branch --yes"]
+    );
 }
 
 #[test]
@@ -115,12 +116,8 @@ fn an_mr_whose_author_asked_for_a_squash_is_squashed_by_default() {
         ],
         Pick::Preselected,
     );
-    let calls: Vec<String> = calls(&session)
-        .into_iter()
-        .filter(|call| call.starts_with("glab mr update") || call.starts_with("glab mr merge"))
-        .collect();
     assert_eq!(
-        calls,
+        merge_calls(&session),
         ["glab mr merge 2 -R test-owner/test-repo --squash --remove-source-branch --yes"]
     );
 }
@@ -138,12 +135,8 @@ fn a_failed_merge_sets_the_cleared_squash_flag_again() {
     session
         .wait_for_cli_call_count("glab mr update 2 --squash-before-merge", 2, 15000)
         .expect("the failed merge should set the squash flag again");
-    let calls: Vec<String> = calls(&session)
-        .into_iter()
-        .filter(|call| call.starts_with("glab mr update") || call.starts_with("glab mr merge"))
-        .collect();
     assert_eq!(
-        calls,
+        merge_calls(&session),
         [
             "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
             "glab mr merge 2 -R test-owner/test-repo --remove-source-branch --yes",

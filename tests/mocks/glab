@@ -60,10 +60,11 @@ if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"
 fi
 
-# Merge settings the merge dialog reads: merge commits, squash preselected
+# Merge settings the merge dialog reads: merge commits unless
+# TEST_GLAB_MERGE_METHOD names another merge_method, squash preselected
 # unless TEST_GLAB_SQUASH_OPTION names another squash_option.
 if [[ "$*" == "repo view --output json"* ]]; then
-    echo "{\"id\":1,\"merge_method\":\"merge\",\"squash_option\":\"${TEST_GLAB_SQUASH_OPTION:-default_on}\"}"
+    echo "{\"id\":1,\"merge_method\":\"${TEST_GLAB_MERGE_METHOD:-merge}\",\"squash_option\":\"${TEST_GLAB_SQUASH_OPTION:-default_on}\"}"
     exit 0
 fi
 

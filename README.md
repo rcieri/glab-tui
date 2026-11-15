@@ -334,7 +334,8 @@ toggle_side_by_side = "d"
 search_previous = "Ctrl+p"
 # ...
 
-# Tabs and panes (see "Layout" below). The Configure View edits these too.
+# Tabs and panes (see "Layout" below). The Configure View edits all but the
+# *_min_* thresholds.
 # [layout]
 # tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
 # preview = "auto"
@@ -359,7 +360,7 @@ search_previous = "Ctrl+p"
 
 ### Layout
 
-The `[layout]` section decides which tabs show and in what order, and where the panes go. The Configure View's **TABS** and **LAYOUT** sections change the same settings at runtime, and **Save View** writes them to the global or repo-local file.
+The `[layout]` section decides which tabs show and in what order, and where the panes go. The Configure View's **TABS** and **LAYOUT** sections change all of it at runtime except the three `*_min_*` thresholds, and **Save View** writes them to the global or repo-local file.
 
 ```toml
 [layout]

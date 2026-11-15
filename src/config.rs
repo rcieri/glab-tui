@@ -2166,9 +2166,7 @@ page_size = 250
 
     #[test]
     fn save_layout_writes_layout_and_drops_deprecated_keys() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let _config = isolate_config();
         let path = Config::config_path();
         private_fs::write(
             &path,
@@ -2204,9 +2202,7 @@ page_size = 250
 
     #[test]
     fn an_unknown_tab_name_is_left_out_without_resetting_the_config() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let _config = isolate_config();
         private_fs::write(
             &Config::config_path(),
             "theme_preset = \"nord\"\n[layout]\ntabs = [\"mrs\", \"pipeline\"]\n",

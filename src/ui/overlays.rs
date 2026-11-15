@@ -1929,6 +1929,40 @@ command = "true"
         }
     }
 
+    /// A click on a Configure setting acts on the setting drawn under it.
+    #[test]
+    fn a_click_on_a_configure_setting_acts_on_the_setting_drawn_there() {
+        let mut app = App::default();
+        app.open_configure();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let icons = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &icons,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let text = snapshot_text(&terminal);
+        let (row, column) = text
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                let byte = line.find("Theme")?;
+                Some((row as u16, line[..byte].chars().count() as u16))
+            })
+            .expect("the Theme setting is drawn");
+
+        click(&mut app, column, row);
+
+        assert_eq!(
+            app.selector().map(|selector| &selector.purpose),
+            Some(&crate::app::SelectorPurpose::Theme),
+            "{text}"
+        );
+    }
+
     /// The footer is drawn unwrapped on one row, and it is the visible way
     /// out of the overlay, so a fixed-width overlay's footer fits inside it.
     #[test]
@@ -2021,6 +2055,47 @@ command = "true"
             .expect("August 2026 starts on the last weekday of the first week");
         click(&mut app, first_day_column as u16, header_row as u16);
         assert_eq!(app.date_picker().unwrap().day, 13);
+    }
+
+    /// A click on the arrows drawn beside the month steps the month.
+    #[test]
+    fn a_click_on_a_date_picker_arrow_steps_the_month() {
+        let mut app = App::default();
+        app.open_date_picker(crate::app::DatePicker::new(
+            "Pick".to_string(),
+            "2026-08-23",
+            crate::app::DatePickerAction::EditNewField { field_idx: 0 },
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        for (month_line, arrow, month) in [
+            ("August 2026", &ascii.nav_prev, 7),
+            ("July 2026", &ascii.nav_next, 8),
+            ("August 2026", &ascii.nav_next, 9),
+        ] {
+            terminal
+                .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+                .unwrap();
+            let text = snapshot_text(&terminal);
+            let (row, column) = text
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains(month_line))
+                .and_then(|(row, line)| {
+                    let byte = line.find(arrow.as_str())?;
+                    Some((row as u16, line[..byte].chars().count() as u16))
+                })
+                .unwrap_or_else(|| panic!("{arrow} beside {month_line} is drawn:\n{text}"));
+
+            click(&mut app, column, row);
+
+            assert_eq!(app.date_picker().unwrap().month, month, "{text}");
+        }
     }
 
     #[test]

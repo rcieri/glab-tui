@@ -3389,7 +3389,7 @@ pub(crate) fn focus_or_fetch_mr(
 /// Start what a tab needs once switched to: its list, unless it is loading
 /// or was already refreshed this session, and the linked MRs/issues of the
 /// highlighted issue or MR.
-fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+pub(crate) fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     if let Some(client) = app.gitlab_client.clone()
         && !app.loading_tabs.contains(&app.active_tab)
         && !app.refreshed_tabs.contains(&app.active_tab)

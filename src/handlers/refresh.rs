@@ -21,6 +21,8 @@ pub fn handle_refresh(
     let can_refresh = match app.top_modal() {
         None => true,
         Some(crate::app::Modal::Diff(d)) => !d.search_active,
+        Some(crate::app::Modal::ReviewThreads(_)) => true,
+        Some(crate::app::Modal::Configure(c)) => !c.editing_page_size,
         _ => false,
     };
 

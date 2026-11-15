@@ -47,7 +47,21 @@ pub(super) fn handle_key(
         return;
     }
 
+    if matches!(app.top_modal(), Some(Modal::ReviewSubmit(_))) {
+        handlers::review_submit::handle_key(app, key_event, tx, fx);
+        return;
+    }
+
     if handle_help_keybinding(app, key_event) {
+        return;
+    }
+
+    if matches!(
+        app.top_modal(),
+        Some(Modal::Diff(_) | Modal::ReviewThreads(_) | Modal::Configure(_))
+    ) && !app.captures_text()
+        && handle_refresh(app, key_event, tx, fx)
+    {
         return;
     }
 
@@ -78,7 +92,7 @@ pub(super) fn handle_key(
                 overlays::edit_menu::handle_key(app, key_event, tx, fx);
             }
             Modal::Diff(_) => {
-                if handle_switch_repo(app, key_event) || handle_refresh(app, key_event, tx, fx) {
+                if handle_switch_repo(app, key_event) {
                     return;
                 }
                 handlers::diff_view::handle_key(app, key_event, tx, fx);
@@ -90,11 +104,11 @@ pub(super) fn handle_key(
         return;
     }
 
-    if handlers::terminal::handle_inspector_key(app, key_event) {
+    if handle_switch_repo(app, key_event) || handle_refresh(app, key_event, tx, fx) {
         return;
     }
 
-    if handle_switch_repo(app, key_event) || handle_refresh(app, key_event, tx, fx) {
+    if handlers::terminal::handle_inspector_key(app, key_event) {
         return;
     }
 

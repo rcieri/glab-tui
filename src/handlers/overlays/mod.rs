@@ -466,15 +466,28 @@ diff --git a/src/lib.rs b/src/lib.rs
             review_note(2, "thread", Some(line_position("src/lib.rs", 2))),
         ]);
 
-        assert!(press(&mut app, KeyCode::Char('a')));
+        crate::update::update(
+            &mut app,
+            crate::event::Event::KeyPress(KeyPress::from(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::NONE,
+            ))),
+        );
 
         let selector = app.selector().expect("a opens the comment picker");
         assert_eq!(selector.field_type, "comment_select");
         assert_eq!(selector.all_items.len(), 2);
-        assert!(
-            !press(&mut app, KeyCode::Char('j')),
-            "keys belong to the selector on top"
+        assert_eq!(selector.cursor_idx, 0);
+
+        crate::update::update(
+            &mut app,
+            crate::event::Event::KeyPress(KeyPress::from(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::NONE,
+            ))),
         );
+        let selector = app.selector().expect("selector is still open");
+        assert_eq!(selector.cursor_idx, 1, "j moved selector cursor");
         assert!(app.review_threads().is_some());
     }
 
@@ -680,7 +693,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         let diff_view = app.pop_diff_view().expect("fixture opens a diff");
         assert_eq!(app.restore_draft_comments(&diff_view), 2);
-        app.open_diff_view(diff_view);
+        app.open_diff_view(*diff_view);
         assert_eq!(bodies(&app.draft_comments), ["nit"]);
 
         app.draft_comments.push(draft("new"));

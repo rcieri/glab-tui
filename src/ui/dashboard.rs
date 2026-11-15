@@ -205,11 +205,14 @@ pub(crate) fn render_tab_dashboard(
 }
 
 /// What a card can say about its tab's list.
+#[derive(Debug, PartialEq, Eq)]
 enum ListAvailability<'a> {
     Ready,
     Loading,
     Failed(&'a str),
     NotLoaded,
+    /// A group or org has no activity feed to count.
+    NoActivityFeed,
 }
 
 fn list_availability(app: &App, tab: Tab) -> ListAvailability<'_> {
@@ -227,6 +230,45 @@ fn list_availability(app: &App, tab: Tab) -> ListAvailability<'_> {
     } else {
         ListAvailability::NotLoaded
     }
+}
+
+/// The open-work view counts the MR/PR and Issues lists, the activity views
+/// the feed, so the card waits for or explains what its view reads instead
+/// of drawing every contributor as zero.
+fn contributors_availability(app: &App) -> ListAvailability<'_> {
+    match (
+        app.dashboard.contributors_view,
+        &app.dashboard.contributions,
+    ) {
+        (ContributorsView::OpenWork, _) => open_work_availability(app),
+        (_, ContributionFeed::Loaded(_)) => ListAvailability::Ready,
+        _ if !app.scope.is_repository() => ListAvailability::NoActivityFeed,
+        _ if app.loading_tabs.contains(&Tab::Dashboard) => ListAvailability::Loading,
+        (_, ContributionFeed::Failed(reason)) => ListAvailability::Failed(reason),
+        (_, ContributionFeed::NotLoaded) => ListAvailability::NotLoaded,
+    }
+}
+
+/// Loading while a shown source loads with no rows. A failure only once no
+/// source is ready, since one loaded list already has counts to show.
+fn open_work_availability(app: &App) -> ListAvailability<'_> {
+    let sources: Vec<ListAvailability> = app
+        .dashboard_cards()
+        .into_iter()
+        .filter(|card| matches!(card, DashboardCard::MergeRequests | DashboardCard::Issues))
+        .filter_map(DashboardCard::tab)
+        .map(|tab| list_availability(app, tab))
+        .collect();
+    if sources.contains(&ListAvailability::Loading) {
+        return ListAvailability::Loading;
+    }
+    if sources.is_empty() || sources.contains(&ListAvailability::Ready) {
+        return ListAvailability::Ready;
+    }
+    sources
+        .into_iter()
+        .find(|source| matches!(source, ListAvailability::Failed(_)))
+        .unwrap_or(ListAvailability::NotLoaded)
 }
 
 fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
@@ -306,7 +348,7 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
     let (body_width, body_height) = (usize::from(body_area.width), usize::from(body_area.height));
 
     let availability = match card {
-        DashboardCard::Contributors => ListAvailability::Ready,
+        DashboardCard::Contributors => contributors_availability(ctx.app),
         _ => card.tab().map_or(ListAvailability::Ready, |tab| {
             list_availability(ctx.app, tab)
         }),
@@ -334,6 +376,11 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
                     .keybindings
                     .display(crate::keymap::Action::GlobalRefresh)
             ),
+            Style::default().fg(theme.text_muted),
+        ))
+        .wrap(Wrap { trim: true }),
+        ListAvailability::NoActivityFeed => Paragraph::new(Line::styled(
+            "No activity feed in this scope.",
             Style::default().fg(theme.text_muted),
         ))
         .wrap(Wrap { trim: true }),
@@ -1341,4 +1388,74 @@ fn issue_note(ctx: &Context, issue: &Issue) -> Vec<Span<'static>> {
     }
     notes.extend(idle_note(ctx, &issue.updated_at, ctx.now.idle.issues));
     notes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::contributions::ContributionHistory;
+    use crate::domain::dashboard::ActivityWindow;
+
+    fn dashboard_app(scope: Scope) -> App {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = scope;
+        app
+    }
+
+    fn repository() -> Scope {
+        Scope::Repository("group/project".to_string())
+    }
+
+    fn in_activity_view(mut app: App) -> App {
+        app.dashboard.contributors_view = ContributorsView::Activity(ActivityWindow::Week);
+        app
+    }
+
+    #[test]
+    fn an_activity_view_in_a_group_says_there_is_no_feed() {
+        let app = in_activity_view(dashboard_app(Scope::Group("group".to_string())));
+
+        assert_eq!(
+            contributors_availability(&app),
+            ListAvailability::NoActivityFeed
+        );
+    }
+
+    #[test]
+    fn an_activity_view_waits_for_the_feed_then_shows_why_it_failed() {
+        let mut app = in_activity_view(dashboard_app(repository()));
+        assert_eq!(contributors_availability(&app), ListAvailability::NotLoaded);
+
+        app.loading_tabs.insert(Tab::Dashboard);
+        assert_eq!(contributors_availability(&app), ListAvailability::Loading);
+
+        app.loading_tabs.clear();
+        app.dashboard.contributions = ContributionFeed::Failed("HTTP 502".to_string());
+        assert_eq!(
+            contributors_availability(&app),
+            ListAvailability::Failed("HTTP 502")
+        );
+
+        app.dashboard.contributions = ContributionFeed::Loaded(ContributionHistory::default());
+        assert_eq!(contributors_availability(&app), ListAvailability::Ready);
+    }
+
+    #[test]
+    fn open_work_waits_for_a_loading_list_and_counts_once_one_list_loaded() {
+        let mut app = dashboard_app(repository());
+        app.loading_tabs.insert(Tab::MergeRequests);
+        assert_eq!(contributors_availability(&app), ListAvailability::Loading);
+
+        app.loading_tabs.clear();
+        app.fetch_failures
+            .insert(Tab::Issues, "HTTP 500".to_string());
+        assert_eq!(
+            contributors_availability(&app),
+            ListAvailability::Failed("HTTP 500")
+        );
+
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        assert_eq!(contributors_availability(&app), ListAvailability::Ready);
+    }
 }

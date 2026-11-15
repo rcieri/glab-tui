@@ -1477,7 +1477,8 @@ page_size = 100
 # except the *_min_* thresholds, and its Save View button writes them here.
 # [layout]
 # Tabs to show, in order. A tab left out is hidden; unset or empty shows every
-# tab, and a name that is no tab is skipped (reported in the Terminal tab).
+# tab, and a name that is no tab is skipped (reported in the Terminal tab). A
+# [layout] value its key cannot hold keeps the default and is reported too.
 # Names: issues, mrs, pipelines, jobs, runners, releases, todos, milestones,
 # branches, environments, terminal.
 # tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
@@ -1551,13 +1552,13 @@ page_size = 100
         let default_toml = Self::generate_default_toml();
         let mut merged_value: toml::Value = toml::from_str(&default_toml)
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
-        let mut unknown_tabs = Vec::new();
+        let mut layout_problems = Vec::new();
 
         let path = Self::config_path();
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
                 normalize_config_file(&mut global_val);
-                unknown_tabs.extend(layout::unknown_tab_names(&global_val));
+                layout_problems.extend(layout::drop_invalid_values(&mut global_val));
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
@@ -1588,7 +1589,7 @@ page_size = 100
                             toml::from_str::<toml::Value>(&workspace_contents)
                         {
                             normalize_config_file(&mut workspace_val);
-                            unknown_tabs.extend(layout::unknown_tab_names(&workspace_val));
+                            layout_problems.extend(layout::drop_invalid_values(&mut workspace_val));
                             merge_toml_values(&mut merged_value, workspace_val);
                         }
                     }
@@ -1600,7 +1601,7 @@ page_size = 100
             eprintln!("Error deserializing merged config: {e}. Using defaults.");
             Config::default()
         });
-        config.layout.unknown_tabs = unknown_tabs;
+        config.layout.problems = layout_problems;
         config
     }
 
@@ -1682,6 +1683,7 @@ impl Config {
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
                 normalize_config_file(&mut global_val);
+                layout::drop_invalid_values(&mut global_val);
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
@@ -2201,11 +2203,11 @@ page_size = 250
     }
 
     #[test]
-    fn an_unknown_tab_name_is_left_out_without_resetting_the_config() {
+    fn a_bad_layout_value_or_tab_name_is_left_out_without_resetting_the_config() {
         let _config = isolate_config();
         private_fs::write(
             &Config::config_path(),
-            "theme_preset = \"nord\"\n[layout]\ntabs = [\"mrs\", \"pipeline\"]\n",
+            "theme_preset = \"nord\"\n[layout]\ntabs = [\"mrs\", \"pipeline\"]\npreview = \"left\"\nnav_width = 30\n",
         )
         .unwrap();
 
@@ -2215,7 +2217,15 @@ page_size = 250
             config.layout.tabs,
             Some(vec![crate::app::Tab::MergeRequests])
         );
-        assert_eq!(config.layout.unknown_tabs, vec!["pipeline".to_string()]);
+        assert_eq!(config.layout.preview, PreviewPlacement::Auto);
+        assert_eq!(config.layout.nav_width, 30);
+        let reported: Vec<&str> = config
+            .layout
+            .problems
+            .iter()
+            .map(|problem| problem.binding.as_str())
+            .collect();
+        assert_eq!(reported, ["preview", "tabs: \"pipeline\""]);
     }
 
     #[test]

@@ -366,7 +366,8 @@ The `[layout]` section decides which tabs show and in what order, and where the 
 [layout]
 # Tabs to show, in order: the sidebar, the next_tab / prev_tab keys and the
 # sidebar clicks all follow it. A tab left out is hidden; unset or empty shows
-# every tab. A name that is no tab is skipped and reported in the Terminal tab.
+# every tab. A name that is no tab is skipped and reported in the Terminal tab,
+# and so is any [layout] value its key cannot hold, which keeps the default.
 tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
 nav_visible = true             # navigation sidebar, toggled with Alt+n (toggle_nav)
 nav_width = 22

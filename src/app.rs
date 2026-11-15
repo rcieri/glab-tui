@@ -6290,23 +6290,15 @@ impl App {
             .collect()
     }
 
-    /// Logs `problems` and each `layout.tabs` name that names no tab (which
-    /// `Config::load` left out) as failed Terminal-tab entries, with one
+    /// Logs `problems` and what `Config::load` left out of `[layout]` (bad
+    /// values, unknown tab names) as failed Terminal-tab entries, with one
     /// toast for all of them: a second toast would replace the first before
     /// it is drawn.
     pub fn report_config_problems(&mut self, mut problems: Vec<(&'static str, ConfigProblem)>) {
         problems.extend(
-            std::mem::take(&mut self.config.layout.unknown_tabs)
+            std::mem::take(&mut self.config.layout.problems)
                 .into_iter()
-                .map(|name| {
-                    (
-                        "Layout",
-                        ConfigProblem {
-                            binding: format!("tabs: {name:?}"),
-                            problem: "no tab has this name, so it was left out".to_string(),
-                        },
-                    )
-                }),
+                .map(|problem| ("Layout", problem)),
         );
         if problems.is_empty() {
             return;
@@ -15346,7 +15338,10 @@ index 123456..789012 100644
                 .expect("config with a stray keybinding entry parses"),
             ..App::default()
         };
-        app.config.layout.unknown_tabs = vec!["pipeline".to_string()];
+        app.config.layout.problems = vec![ConfigProblem {
+            binding: "tabs: \"pipeline\"".to_string(),
+            problem: "no tab has this name, so it was left out".to_string(),
+        }];
 
         let problems = app.load_keybindings();
         app.report_config_problems(problems);

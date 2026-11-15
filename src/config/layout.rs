@@ -2,6 +2,7 @@
 //! the navigation, preview and terminal panes go, and how big they are.
 
 use crate::app::Tab;
+use crate::custom_commands::ConfigProblem;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Where the preview pane sits next to the list. On a tab that cannot zoom
@@ -110,16 +111,19 @@ impl<'de> Deserialize<'de> for PaneSize {
         enum Raw {
             Cells(i64),
             Text(String),
+            Other(serde::de::IgnoredAny),
         }
+        let invalid = |value: String| {
+            serde::de::Error::custom(format!("invalid pane size {value}; {PANE_SIZE_HINT}"))
+        };
         match Raw::deserialize(deserializer)? {
             Raw::Cells(cells) => u16::try_from(cells)
                 .ok()
                 .filter(|&cells| cells > 0)
                 .map(PaneSize::Cells)
-                .ok_or_else(|| {
-                    serde::de::Error::custom(format!("invalid pane size {cells}; {PANE_SIZE_HINT}"))
-                }),
+                .ok_or_else(|| invalid(cells.to_string())),
             Raw::Text(text) => text.parse().map_err(serde::de::Error::custom),
+            Raw::Other(_) => Err(invalid("(neither a number nor a string)".to_string())),
         }
     }
 }
@@ -148,10 +152,11 @@ pub struct LayoutConfig {
     pub terminal_pane_height: u16,
     /// The terminal pane hides while the terminal is shorter.
     pub terminal_pane_min_height: u16,
-    /// Names in `tabs` that name no tab. `Config::load` drops them instead
-    /// of failing the whole config, and the app reports them at startup.
+    /// What `Config::load` left out of `[layout]`: values their key cannot
+    /// hold (the key keeps its default) and `tabs` names that name no tab.
+    /// The app reports them at startup instead of failing the whole config.
     #[serde(skip)]
-    pub unknown_tabs: Vec<String>,
+    pub problems: Vec<ConfigProblem>,
 }
 
 pub const DEFAULT_NAV_WIDTH: u16 = 22;
@@ -176,7 +181,7 @@ impl Default for LayoutConfig {
             terminal_pane_visible: true,
             terminal_pane_height: DEFAULT_TERMINAL_PANE_HEIGHT,
             terminal_pane_min_height: DEFAULT_TERMINAL_PANE_MIN_HEIGHT,
-            unknown_tabs: Vec::new(),
+            problems: Vec::new(),
         }
     }
 }
@@ -249,17 +254,58 @@ fn parse_tab_name(name: &str) -> Option<Tab> {
     })
 }
 
-/// The names in one parsed config file's `layout.tabs` that name no tab.
-pub(super) fn unknown_tab_names(file: &toml::Value) -> Vec<String> {
-    file.get("layout")
-        .and_then(|layout| layout.get("tabs"))
-        .and_then(toml::Value::as_array)
+/// Removes from one parsed config file's `[layout]` every value its key
+/// cannot hold, so that key keeps its default instead of the whole config
+/// falling back to the defaults, and describes what it removed and every
+/// `tabs` name that names no tab (which deserializing skips).
+pub(super) fn drop_invalid_values(file: &mut toml::Value) -> Vec<ConfigProblem> {
+    let Some(root) = file.as_table_mut() else {
+        return Vec::new();
+    };
+    let Some(layout_value) = root.get_mut("layout") else {
+        return Vec::new();
+    };
+    let Some(layout) = layout_value.as_table_mut() else {
+        root.remove("layout");
+        return vec![ConfigProblem {
+            binding: "layout".to_string(),
+            problem: "not a table, kept the defaults".to_string(),
+        }];
+    };
+    let invalid: Vec<(String, String)> = layout
+        .iter()
+        .filter_map(|(key, value)| {
+            let alone = toml::Table::from_iter([(key.clone(), value.clone())]);
+            toml::Value::Table(alone)
+                .try_into::<LayoutConfig>()
+                .err()
+                .map(|error| (key.clone(), error.message().to_string()))
+        })
+        .collect();
+    let mut problems: Vec<ConfigProblem> = invalid
         .into_iter()
-        .flatten()
-        .filter_map(toml::Value::as_str)
-        .filter(|name| parse_tab_name(name).is_none())
-        .map(str::to_string)
-        .collect()
+        .map(|(key, error)| {
+            layout.remove(&key);
+            ConfigProblem {
+                binding: key,
+                problem: format!("{error}, kept the default"),
+            }
+        })
+        .collect();
+    problems.extend(
+        layout
+            .get("tabs")
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(toml::Value::as_str)
+            .filter(|name| parse_tab_name(name).is_none())
+            .map(|name| ConfigProblem {
+                binding: format!("tabs: {name:?}"),
+                problem: "no tab has this name, so it was left out".to_string(),
+            }),
+    );
+    problems
 }
 
 mod tab_names {
@@ -395,11 +441,87 @@ mod tests {
 
     #[test]
     fn unknown_tab_names_are_left_out_and_reported() {
-        let file: toml::Value = toml::from_str("[layout]\ntabs = [\"issues\", \"wiki\"]").unwrap();
+        let mut file: toml::Value =
+            toml::from_str("[layout]\ntabs = [\"issues\", \"wiki\"]").unwrap();
 
-        assert_eq!(unknown_tab_names(&file), vec!["wiki".to_string()]);
+        assert_eq!(
+            drop_invalid_values(&mut file),
+            vec![ConfigProblem {
+                binding: "tabs: \"wiki\"".to_string(),
+                problem: "no tab has this name, so it was left out".to_string(),
+            }]
+        );
         let layout = toml::from_str::<LayoutConfig>(r#"tabs = ["issues", "wiki"]"#).unwrap();
         assert_eq!(layout.tabs, Some(vec![Tab::Issues]));
+    }
+
+    #[test]
+    fn a_value_its_key_cannot_hold_is_dropped_and_reported() {
+        let mut file: toml::Value = toml::from_str(
+            r#"
+            [layout]
+            preview = "left"
+            preview_width = "40px"
+            preview_height = true
+            nav_width = -1
+            nav_visible = false
+            "#,
+        )
+        .unwrap();
+
+        let problems = drop_invalid_values(&mut file);
+
+        let described: Vec<(&str, &str)> = problems
+            .iter()
+            .map(|p| (p.binding.as_str(), p.problem.as_str()))
+            .collect();
+        let kept = |reason: &str| format!("{reason}, kept the default");
+        assert_eq!(
+            described,
+            [
+                (
+                    "nav_width",
+                    kept("invalid value: integer `-1`, expected u16").as_str()
+                ),
+                (
+                    "preview",
+                    kept(
+                        "unknown variant `left`, expected one of `right`, `bottom`, `auto`, `off`"
+                    )
+                    .as_str()
+                ),
+                (
+                    "preview_height",
+                    kept(&format!(
+                        "invalid pane size (neither a number nor a string); {PANE_SIZE_HINT}"
+                    ))
+                    .as_str()
+                ),
+                (
+                    "preview_width",
+                    kept(&format!("invalid pane size \"40px\"; {PANE_SIZE_HINT}")).as_str()
+                ),
+            ]
+        );
+        let layout: LayoutConfig = file.get("layout").cloned().unwrap().try_into().unwrap();
+        assert_eq!(
+            layout,
+            LayoutConfig {
+                nav_visible: false,
+                ..LayoutConfig::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_layout_that_is_not_a_table_is_dropped_and_reported() {
+        let mut file: toml::Value = toml::from_str("layout = 5").unwrap();
+
+        let problems = drop_invalid_values(&mut file);
+
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].binding, "layout");
+        assert!(file.get("layout").is_none());
     }
 
     #[test]

@@ -1424,7 +1424,7 @@ pub fn handle_active_tab_key(
                                     .find(|p| p.ref_branch() == mr.source_branch)
                                     .map(|p| p.id())
                             });
-                            app.set_active_tab(crate::app::Tab::Pipelines);
+                            app.set_active_tab_keeping_preview(crate::app::Tab::Pipelines);
                             app.pending_pipeline_select = pipe_id;
                             if let Some(client) = &app.gitlab_client {
                                 crate::fetch::spawn_refresh_active_tab(
@@ -3442,7 +3442,7 @@ pub fn apply_opened_pipeline(
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
                 app.close_job_trace();
-                app.set_active_tab(crate::app::Tab::Jobs);
+                app.set_active_tab_keeping_preview(crate::app::Tab::Jobs);
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }
@@ -4532,6 +4532,23 @@ pub(crate) mod tests {
         .expect("merge request fixture")
     }
 
+    #[tokio::test]
+    async fn following_an_mr_pipeline_from_an_open_preview_keeps_the_preview_open() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::MergeRequests;
+        app.detail_visible = true;
+        app.mrs.items = vec![mr_in("acme/app", 3, "alice")];
+        app.mrs.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Pipelines);
+        assert!(app.detail_visible);
+    }
+
     fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {
         HashMap::from([(column.to_string(), HashSet::from([value.to_string()]))])
     }
@@ -4670,6 +4687,24 @@ pub(crate) mod tests {
         assert_eq!(app.active_pipeline_project, None);
         assert_eq!(app.jobs_project(), None);
         assert_eq!(app.project_path_for_jobs(), "acme");
+    }
+
+    #[test]
+    fn opening_a_pipeline_from_an_open_inspector_keeps_the_preview_open_on_jobs() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.detail_visible = true;
+        app.pipelines.items = vec![listed_pipeline(7)];
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Jobs);
+        assert!(app.detail_visible);
     }
 
     /// Enter pressed twice before the first reply: the first reply descends,

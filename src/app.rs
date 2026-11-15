@@ -5045,9 +5045,7 @@ impl App {
     /// select `iid` (in `project` when given). A preview open on the tab
     /// being left stays open. Returns whether the item is already loaded.
     pub fn focus_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
-        let preview_was_open = self.detail_visible;
-        self.set_active_tab(Tab::Issues);
-        self.detail_visible |= preview_was_open;
+        self.set_active_tab_keeping_preview(Tab::Issues);
         self.clear_tab_filters(Tab::Issues);
         let found = self.select_visible_issue(project, iid);
         if found {
@@ -5062,9 +5060,7 @@ impl App {
     /// the tab being left stays open. Returns whether the item is already
     /// loaded.
     pub fn focus_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
-        let preview_was_open = self.detail_visible;
-        self.set_active_tab(Tab::MergeRequests);
-        self.detail_visible |= preview_was_open;
+        self.set_active_tab_keeping_preview(Tab::MergeRequests);
         self.clear_tab_filters(Tab::MergeRequests);
         let found = self.select_visible_mr(project, iid);
         if found {
@@ -7126,6 +7122,15 @@ impl App {
             .copied()
             .unwrap_or(false);
         self.active_tab = tab;
+    }
+
+    /// `set_active_tab` for a jump from the tab being left to related data:
+    /// a preview open there stays open on `tab`, while the tab being left
+    /// keeps its own remembered visibility.
+    pub fn set_active_tab_keeping_preview(&mut self, tab: Tab) {
+        let preview_was_open = self.detail_visible;
+        self.set_active_tab(tab);
+        self.detail_visible |= preview_was_open;
     }
 
     pub fn filter_issues_list<'a>(

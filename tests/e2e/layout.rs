@@ -38,7 +38,7 @@ fn unknown_tab_name_is_reported_and_the_rest_of_the_list_applies() {
     let config = "[layout]\ntabs = [\"mrs\", \"pipeline\"]\n";
     let mut session = TestSession::with_config(false, 24, 120, Some(config));
     session
-        .wait_for_screen_contains("1 unknown tab name(s) in layout.tabs", 5000)
+        .wait_for_screen_contains("1 config problem(s)", 5000)
         .expect("the unknown name is reported");
 
     session.settle(300);

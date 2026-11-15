@@ -1,6 +1,7 @@
 use crate::backend::BackendKind;
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
 use crate::config::{Config, Icons, Theme};
+use crate::custom_commands::ConfigProblem;
 use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
@@ -6268,15 +6269,14 @@ impl App {
         self.terminal_scroll = 0;
     }
 
-    /// Rebuilds `custom_commands` from the current config, logging every
-    /// `[keybindings]` entry that binds nothing and every ignored or shadowed
-    /// custom keybinding in the terminal log.
-    pub fn load_keybindings(&mut self) {
+    /// Rebuilds `custom_commands` from the current config. Returns every
+    /// `[keybindings]` entry that binds nothing and every ignored or
+    /// shadowed custom keybinding, for `report_config_problems`.
+    pub fn load_keybindings(&mut self) -> Vec<(&'static str, ConfigProblem)> {
         let (commands, custom_problems) =
             crate::custom_commands::CustomCommands::load(&self.config);
         self.custom_commands = commands;
-        let problems: Vec<_> = self
-            .config
+        self.config
             .keybindings
             .problems()
             .iter()
@@ -6287,7 +6287,30 @@ impl App {
                     .into_iter()
                     .map(|problem| ("Custom keybinding", problem)),
             )
-            .collect();
+            .collect()
+    }
+
+    /// Logs `problems` and each `layout.tabs` name that names no tab (which
+    /// `Config::load` left out) as failed Terminal-tab entries, with one
+    /// toast for all of them: a second toast would replace the first before
+    /// it is drawn.
+    pub fn report_config_problems(&mut self, mut problems: Vec<(&'static str, ConfigProblem)>) {
+        problems.extend(
+            std::mem::take(&mut self.config.layout.unknown_tabs)
+                .into_iter()
+                .map(|name| {
+                    (
+                        "Layout",
+                        ConfigProblem {
+                            binding: format!("tabs: {name:?}"),
+                            problem: "no tab has this name, so it was left out".to_string(),
+                        },
+                    )
+                }),
+        );
+        if problems.is_empty() {
+            return;
+        }
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         for (kind, problem) in &problems {
             self.terminal_commands.push(TerminalCommand {
@@ -6297,33 +6320,9 @@ impl App {
                 ..Default::default()
             });
         }
-        if !problems.is_empty() {
-            self.raise_error_toast(format!(
-                "{} keybinding problem(s); see the Terminal tab",
-                problems.len()
-            ));
-        }
-    }
-
-    /// Logs each `layout.tabs` name that names no tab, which `Config::load`
-    /// left out, as a failed Terminal-tab entry, with one toast.
-    pub fn report_unknown_tabs(&mut self) {
-        let unknown = std::mem::take(&mut self.config.layout.unknown_tabs);
-        if unknown.is_empty() {
-            return;
-        }
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        for name in &unknown {
-            self.terminal_commands.push(TerminalCommand {
-                timestamp: timestamp.clone(),
-                command: format!("layout.tabs: {name:?}"),
-                status: "Failed: no tab has this name, so it was left out".to_string(),
-                ..Default::default()
-            });
-        }
         self.raise_error_toast(format!(
-            "{} unknown tab name(s) in layout.tabs; see the Terminal tab",
-            unknown.len()
+            "{} config problem(s); see the Terminal tab",
+            problems.len()
         ));
     }
 
@@ -6832,8 +6831,8 @@ impl App {
         }
         app.apply_config();
         app.land_on_available_tab();
-        app.load_keybindings();
-        app.report_unknown_tabs();
+        let problems = app.load_keybindings();
+        app.report_config_problems(problems);
         app
     }
 
@@ -15316,7 +15315,8 @@ index 123456..789012 100644
             ..App::default()
         };
 
-        app.load_keybindings();
+        let problems = app.load_keybindings();
+        app.report_config_problems(problems);
 
         assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
         let logged: Vec<(&str, &str)> = app
@@ -15336,6 +15336,33 @@ index 123456..789012 100644
                     "Failed: not a keybinding table glab-tui knows, ignored"
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn keybinding_and_tab_name_problems_share_one_toast() {
+        let mut app = App {
+            config: toml::from_str("[keybindings]\nquit = \"x\"\n")
+                .expect("config with a stray keybinding entry parses"),
+            ..App::default()
+        };
+        app.config.layout.unknown_tabs = vec!["pipeline".to_string()];
+
+        let problems = app.load_keybindings();
+        app.report_config_problems(problems);
+
+        let logged: Vec<&str> = app
+            .terminal_commands
+            .iter()
+            .map(|entry| entry.command.as_str())
+            .collect();
+        assert_eq!(
+            logged,
+            ["Keybinding: keybindings.quit", "Layout: tabs: \"pipeline\""]
+        );
+        assert_eq!(
+            app.toast_notice().map(|notice| notice.text()),
+            Some("2 config problem(s); see the Terminal tab")
         );
     }
 

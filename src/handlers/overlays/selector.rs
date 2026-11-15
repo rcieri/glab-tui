@@ -323,8 +323,8 @@ pub fn handle_key(
                                 app.config = crate::config::Config::load();
                                 app.apply_config();
                                 app.land_on_available_tab();
-                                app.load_keybindings();
-                                app.report_unknown_tabs();
+                                let problems = app.load_keybindings();
+                                app.report_config_problems(problems);
                                 crate::config::reload_command_timeout();
 
                                 if let Ok(context) = domain::client::get_project_context() {

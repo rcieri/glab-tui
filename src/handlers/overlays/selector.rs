@@ -8,7 +8,6 @@ use crate::keymap::{Action, KeyContext};
 use crate::templates::list_templates;
 use crate::{app, domain, handlers};
 use crossterm::event::KeyCode;
-use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
 const SELECTOR_HALF_PAGE_ROWS: usize = 5;
@@ -458,53 +457,13 @@ pub fn handle_key(
                                 desc_val = content.clone();
                             }
                         }
-                        if let Some(ref mut menu) = app.edit_menu_mut() {
-                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                        if let Some(menu) = app.edit_menu_mut()
+                            && let Some(f) = menu.fields.iter_mut().find(|f| {
                                 (f.label == "Description" || f.label == "Release Notes")
                                     && f.kind == crate::app::FieldType::Text
-                            }) {
-                                f.value = desc_val.clone();
-                            }
-                        } else {
-                            let is_github = app.is_github();
-                            let project = if app.scope.is_group() {
-                                Some(String::new())
-                            } else {
-                                None
-                            };
-                            let fields = crate::entity_editor::issue_fields(
-                                crate::entity_editor::IssueFieldValues {
-                                    confidential: "No".to_string(),
-                                    weight: "0".to_string(),
-                                    description: desc_val,
-                                    ..Default::default()
-                                },
-                                is_github,
-                                project,
-                            );
-                            app.open_edit_menu(crate::app::EditMenu {
-                                title: "Create Issue".to_string(),
-                                fields,
-                                initial_fields: std::collections::HashMap::new(),
-                                selected_idx: 0,
-                                entity_iid: 0,
-                                entity_project: if app.scope.is_group() {
-                                    String::new()
-                                } else {
-                                    app.scope.as_str().to_string()
-                                },
-                                entity_kind: crate::app::EditEntityKind::CreateIssue,
-                                state: {
-                                    let mut s = ListState::default();
-                                    s.select(Some(0));
-                                    s
-                                },
-                                workflow_inputs: vec![],
-                                cursor_pos: 0,
-                                editing: false,
-                                desc_scroll: 0,
-                                source_on_forge: false,
-                            });
+                            })
+                        {
+                            f.value = desc_val;
                         }
                     }
 
@@ -1317,6 +1276,7 @@ pub fn handle_key(
 mod tests {
     use super::*;
     use crate::app::{EditEntityKind, EditMenu, Field, Selector, SelectorPurpose, TemplateKind};
+    use ratatui::widgets::ListState;
 
     fn new_mr_menu() -> EditMenu {
         EditMenu {

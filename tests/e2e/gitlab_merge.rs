@@ -19,6 +19,8 @@ enum Pick {
     Preselected,
     /// Pick Merge commit, the first of the radio, then Submit.
     MergeCommit,
+    /// Pick Rebase and squash, right of the preselected Squash, then Submit.
+    RebaseAndSquash,
 }
 
 fn merge_the_listed_mr(extra: &[(&str, &str)], pick: Pick) -> TestSession {
@@ -41,11 +43,16 @@ fn merge_the_listed_mr(extra: &[(&str, &str)], pick: Pick) -> TestSession {
     session
         .wait_for_screen_without("loading…", 15000)
         .expect("the merge dialog should list the methods the project allows");
-    if let Pick::MergeCommit = pick {
-        session.press_keys(b"\th ");
+    let picked = match pick {
+        Pick::Preselected => None,
+        Pick::MergeCommit => Some((b"\th ", "* Merge commit")),
+        Pick::RebaseAndSquash => Some((b"\tl ", "* Rebase and squash")),
+    };
+    if let Some((keys, shown)) = picked {
+        session.press_keys(keys);
         session
-            .wait_for_screen_contains("* Merge commit", 5000)
-            .expect("Merge commit should be picked");
+            .wait_for_screen_contains(shown, 5000)
+            .expect("the method should be picked");
         session.press_keys(b"\t\th");
         session
             .wait_for_screen_contains("Enter merge", 5000)
@@ -142,5 +149,21 @@ fn a_failed_merge_sets_the_cleared_squash_flag_again() {
             "glab mr merge 2 -R test-owner/test-repo --remove-source-branch --yes",
             "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
         ]
+    );
+}
+
+#[test]
+fn a_rebase_on_a_project_that_always_squashes_leaves_the_squash_flag_alone() {
+    let session = merge_the_listed_mr(
+        &[
+            ("TEST_GLAB_MERGE_METHOD", "ff"),
+            ("TEST_GLAB_SQUASH_OPTION", "always"),
+            ("TEST_GLAB_MR_SQUASH", "1"),
+        ],
+        Pick::RebaseAndSquash,
+    );
+    assert_eq!(
+        merge_calls(&session),
+        ["glab mr merge 2 -R test-owner/test-repo --remove-source-branch --rebase --yes"]
     );
 }

@@ -5,12 +5,6 @@
 
 use crate::TestSession;
 
-const SETTLE_MS: u64 = 1500;
-
-fn settle(session: &mut TestSession) {
-    session.settle(SETTLE_MS);
-}
-
 #[test]
 fn runners_tab_renders_typed_columns_and_filters_through_the_view() {
     let config = "active_tab = \"runners\"\n";
@@ -28,16 +22,15 @@ fn runners_tab_renders_typed_columns_and_filters_through_the_view() {
 
     session.send_input(b"/");
     session.send_input(b"no such runner");
-    settle(&mut session);
-    assert!(
-        !session.emulator.get_text().contains("Shared Runner 1"),
-        "search must filter the runners view"
-    );
+    session
+        .wait_for_screen_without("Shared Runner 1", 5000)
+        .expect("search must filter the runners view");
 
     session.send_input(b"\x15"); // Ctrl+U clears the search bar
     session.send_input(b"\x1b"); // Esc closes it
-    settle(&mut session);
-    assert!(session.emulator.get_text().contains("Shared Runner 1"));
+    session
+        .wait_for_screen_contains("Shared Runner 1", 5000)
+        .expect("clearing the search lists every runner again");
 }
 
 #[test]
@@ -50,7 +43,9 @@ fn releases_search_matches_the_release_notes_column() {
 
     session.send_input(b"/");
     session.send_input(b"pagination");
-    settle(&mut session);
+    session
+        .wait_for_screen_without("v1.0.0", 5000)
+        .expect("search must match the Release Notes column");
     let screen = session.emulator.get_text();
     assert!(
         screen.contains("v1.1.0") && !screen.contains("v1.0.0"),
@@ -72,9 +67,7 @@ fn branches_tab_shows_flag_badges_from_typed_columns() {
     );
     session.send_input(b"/");
     session.send_input(b"feature");
-    settle(&mut session);
-    assert!(
-        !session.emulator.get_text().contains("main"),
-        "search must filter the branches view"
-    );
+    session
+        .wait_for_screen_without("main", 5000)
+        .expect("search must filter the branches view");
 }

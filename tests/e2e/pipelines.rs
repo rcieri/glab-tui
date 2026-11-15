@@ -117,17 +117,38 @@ fn test_retry_failed_on_github_reruns_the_failed_jobs_of_the_run() {
 fn test_status_filter_key_steps_through_running_failed_success_and_all() {
     let mut session = session_on_pipelines(&[]);
 
-    let mut visible_after_each_step = Vec::new();
-    for expected_notice in ["RUNNING", "FAILED", "SUCCESS", "ALL"] {
-        session.press_keys(b"s");
-        session
-            .wait_for_screen_contains(&format!("Status filter: {expected_notice}"), 5000)
-            .expect("the filter step is announced");
-        session.settle(300);
-        visible_after_each_step.push(session.emulator.get_text().contains(PIPELINE_ROW));
-    }
+    step_status_filter(&mut session, "RUNNING");
+    session
+        .wait_for_screen_without(PIPELINE_ROW, 5000)
+        .expect("Running hides the succeeded pipeline");
 
-    assert_eq!(visible_after_each_step, vec![false, false, true, true]);
+    step_status_filter(&mut session, "FAILED");
+    session.settle(300);
+    assert!(
+        !session.emulator.get_text().contains(PIPELINE_ROW),
+        "Failed keeps the succeeded pipeline hidden"
+    );
+
+    step_status_filter(&mut session, "SUCCESS");
+    session
+        .wait_for_screen_contains(PIPELINE_ROW, 5000)
+        .expect("Success shows the succeeded pipeline again");
+
+    step_status_filter(&mut session, "ALL");
+    session.settle(300);
+    assert!(
+        session.emulator.get_text().contains(PIPELINE_ROW),
+        "clearing the filter keeps the pipeline listed"
+    );
+}
+
+/// Presses the status filter key and waits for the step it announces. The
+/// filter is applied in the same update as the notice.
+fn step_status_filter(session: &mut TestSession, notice: &str) {
+    session.press_keys(b"s");
+    session
+        .wait_for_screen_contains(&format!("Status filter: {notice}"), 5000)
+        .expect("the filter step is announced");
 }
 
 /// A refresh of the Jobs tab fetches the pipeline opened from the Pipelines

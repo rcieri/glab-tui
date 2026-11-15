@@ -549,7 +549,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.label_colors = colors
                         .iter()
                         .filter_map(|(name, hex)| {
-                            crate::config::hex_to_color(hex).map(|c| (name.clone(), c))
+                            crate::config::parse_color(hex).map(|c| (name.clone(), c))
                         })
                         .collect();
                 }

@@ -48,6 +48,10 @@ pub struct Deployable {
     pub name: String,
     #[serde(default)]
     pub status: Option<String>,
+    /// Whether the job ran for a tag. GitLab reports it on the deploy job,
+    /// not on the deployment.
+    #[serde(default)]
+    pub tag: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

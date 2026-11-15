@@ -6509,12 +6509,21 @@ impl App {
         Some((col, self.group_ascending.get(&tab).copied().unwrap_or(true)))
     }
 
-    /// Moves the active tab's sort to the next (or previous) visible column.
-    /// "Unsorted" sits between the last and the first column.
+    /// Moves the active tab's sort to the next (or previous) visible column,
+    /// in the order the table draws them. "Unsorted" sits between the last
+    /// and the first column.
     pub fn cycle_sort_column(&mut self, forward: bool) {
         let tab = self.active_tab;
         let mut options: Vec<Option<&str>> = vec![None];
-        options.extend(self.shown_columns(tab).labels().iter().copied().map(Some));
+        let shown = self.shown_columns(tab);
+        options.extend(
+            crate::column_order::order_columns(
+                shown.labels(),
+                self.column_order.get(&tab).map(Vec::as_slice),
+            )
+            .into_iter()
+            .map(Some),
+        );
         if options.len() == 1 {
             return;
         }
@@ -10067,6 +10076,28 @@ mod tests {
         assert_eq!(sort(&app), None);
         app.cycle_sort_column(false);
         assert_eq!(sort(&app).as_deref(), Some("Default"));
+    }
+
+    #[test]
+    fn cycle_sort_column_follows_the_saved_column_order() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.enabled_columns.insert(
+            Tab::Branches,
+            ["Name", "Default"].map(String::from).into_iter().collect(),
+        );
+        app.column_order
+            .insert(Tab::Branches, vec!["Default".into(), "Name".into()]);
+        let sort = |app: &App| app.group_by_column.get(&Tab::Branches).cloned().flatten();
+
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Default"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Name"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app), None);
     }
 
     #[test]

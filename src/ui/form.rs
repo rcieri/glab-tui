@@ -8,6 +8,7 @@
 //! visible. [`GroupKind::Custom`] regions sized by share or fill take the
 //! rows the rest of the body leaves.
 
+use super::diff::centered_rect_fixed;
 use super::modal::{button_style, clear_area};
 use crate::config::{Icons, Theme};
 use crate::form::{
@@ -249,11 +250,7 @@ pub(crate) fn render_form(
         Extent::Content => rows.len().min(body_capacity),
         _ => body_capacity,
     } as u16;
-    let area = centered(
-        width,
-        (chrome_rows + body_height).min(screen.height),
-        screen,
-    );
+    let area = centered_rect_fixed(width, chrome_rows + body_height, screen);
 
     dim_backdrop(f.buffer_mut(), screen, area, ctx.theme.backdrop_dim);
     clear_area(f, ctx, area);
@@ -370,15 +367,6 @@ fn outer_extent(extent: Extent, available: u16, content: u16) -> u16 {
         Extent::Content => content,
     };
     wanted.min(available)
-}
-
-fn centered(width: u16, height: u16, screen: Rect) -> Rect {
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
 }
 
 fn is_flexible(group: &Group) -> bool {

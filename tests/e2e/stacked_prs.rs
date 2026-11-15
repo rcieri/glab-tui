@@ -115,7 +115,9 @@ fn view_stack_opens_the_selector_for_a_stacked_pr_and_refuses_a_lone_one() {
 
     session.send_input(b"\x1b");
     // A lone ESC followed at once by `j` reads as Alt+j.
-    session.settle(300);
+    session
+        .wait_for_screen_without("Stack #7 — 2 PRs", 5000)
+        .expect("Esc closes the stack selector");
     session.send_input(b"jj");
     session.settle(300);
     session.send_input(b"Y");

@@ -29,7 +29,7 @@ pub fn handle_key(
             file_suffix: ".md".to_string(),
             purpose: EditPurpose::TextInput,
         });
-        app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+        app.push_modal(crate::app::Modal::Text(text_input));
         return;
     }
     match key_event.code {
@@ -38,23 +38,23 @@ pub fn handle_key(
         }
         KeyCode::Backspace => {
             text_input.buffer.delete_char_before_cursor();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Delete => {
             text_input.buffer.delete_char_at_cursor();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Left => {
             text_input.buffer.move_cursor_left();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Right => {
             text_input.buffer.move_cursor_right();
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Char(c) => {
             text_input.buffer.insert_char(c);
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Enter => {
             let value = text_input.buffer.value().to_string();
@@ -284,7 +284,7 @@ pub fn handle_key(
             }
         }
         _ => {
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
     }
 }

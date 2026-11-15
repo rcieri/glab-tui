@@ -66,7 +66,7 @@ fn step_search(diff_view: &mut crate::app::DiffView, forward: bool) {
 
 /// Asks to submit the pending review drafts, or closes the diff when there
 /// are none.
-fn leave_diff_view(app: &mut App, diff_view: crate::app::DiffView) {
+fn leave_diff_view(app: &mut App, diff_view: Box<crate::app::DiffView>) {
     if app.draft_comments.is_empty() {
         app.close_diff_view();
         return;
@@ -76,7 +76,7 @@ fn leave_diff_view(app: &mut App, diff_view: crate::app::DiffView) {
         diff_view.project_path.clone(),
         app,
     );
-    app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+    app.push_modal(crate::app::Modal::Diff(diff_view));
     app.open_submit_dialog(dialog);
 }
 
@@ -126,7 +126,7 @@ pub fn handle_key(
                 _ => {}
             }
         }
-        app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+        app.push_modal(crate::app::Modal::Diff(diff_view));
         return;
     }
 
@@ -137,7 +137,7 @@ pub fn handle_key(
     {
         let rows = (diff_view.viewport_height / 2).max(1);
         diff_view.move_by(true, rows, in_selection);
-        app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+        app.push_modal(crate::app::Modal::Diff(diff_view));
         return;
     }
     if app
@@ -147,7 +147,7 @@ pub fn handle_key(
     {
         let rows = (diff_view.viewport_height / 2).max(1);
         diff_view.move_by(false, rows, in_selection);
-        app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+        app.push_modal(crate::app::Modal::Diff(diff_view));
         return;
     }
 
@@ -158,11 +158,11 @@ pub fn handle_key(
     {
         Some(Action::DiffSearchNext) => {
             step_search(&mut diff_view, true);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffSearchPrevious) => {
             step_search(&mut diff_view, false);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffBack) => {
             if in_selection {
@@ -178,19 +178,19 @@ pub fn handle_key(
                 leave_diff_view(app, diff_view);
                 return;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffLayoutSideBySide) => {
             set_layout(app, &mut diff_view, app::DiffLayout::SideBySide);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffLayoutUnified) => {
             set_layout(app, &mut diff_view, app::DiffLayout::Unified);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffLayoutAuto) => {
             set_layout(app, &mut diff_view, app::DiffLayout::Auto);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffClose) => {
             if in_selection {
@@ -200,11 +200,11 @@ pub fn handle_key(
                 leave_diff_view(app, diff_view);
                 return;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffToggleFocus) => {
             diff_view.focus_on_files = !diff_view.focus_on_files;
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffFocusFiles) => {
             if diff_view.focus_on_files {
@@ -219,7 +219,7 @@ pub fn handle_key(
             } else {
                 diff_view.focus_on_files = true;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffFocusDiff) => {
             if diff_view.focus_on_files && !diff_view.visible_nodes.is_empty() {
@@ -231,7 +231,7 @@ pub fn handle_key(
                     diff_view.focus_on_files = false;
                 }
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffOpen) => {
             if diff_view.focus_on_files {
@@ -250,19 +250,19 @@ pub fn handle_key(
                 diff_view.file_tree_visible = true;
                 diff_view.focus_on_files = true;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffCollapseAll) => {
             if diff_view.focus_on_files {
                 diff_view.collapse_all();
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffExpandAll) => {
             if diff_view.focus_on_files {
                 diff_view.expand_all();
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffToggleReviewed) => {
             if !diff_view.focus_on_files {
@@ -288,7 +288,7 @@ pub fn handle_key(
                     total
                 ));
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffToggleHideReviewed) => {
             let hidden = diff_view.toggle_hide_reviewed();
@@ -299,7 +299,7 @@ pub fn handle_key(
             } else {
                 format!("Showing all {total} file(s)")
             });
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffPreviousHunk) => {
             if !diff_view.focus_on_files {
@@ -310,7 +310,7 @@ pub fn handle_key(
                     diff_view.update_selected_file_from_cursor();
                 }
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffNextHunk) => {
             if !diff_view.focus_on_files {
@@ -321,7 +321,7 @@ pub fn handle_key(
                     diff_view.update_selected_file_from_cursor();
                 }
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffToggleSideBySide) => {
             let other = if diff_view.side_by_side {
@@ -330,7 +330,7 @@ pub fn handle_key(
                 app::DiffLayout::SideBySide
             };
             set_layout(app, &mut diff_view, other);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffNextLine) => {
             if diff_view.focus_on_files {
@@ -360,7 +360,7 @@ pub fn handle_key(
                     diff_view.update_selected_file_from_cursor();
                 }
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffPreviousLine) => {
             if diff_view.focus_on_files {
@@ -382,22 +382,22 @@ pub fn handle_key(
                 diff_view.cursor_idx = new_idx;
                 diff_view.update_selected_file_from_cursor();
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffPageDown) => {
             diff_view.move_by(true, 10, in_selection);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffPageUp) => {
             diff_view.move_by(false, 10, in_selection);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffSearch) => {
             if !diff_view.focus_on_files && !diff_view.search_active {
                 diff_view.clear_search();
                 diff_view.search_active = true;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffToggleSelection) => {
             if !diff_view.focus_on_files {
@@ -419,7 +419,7 @@ pub fn handle_key(
                     app.show_notice(notice);
                 }
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffCommentActions) => {
             let mut selector_to_open = None;
@@ -525,7 +525,7 @@ pub fn handle_key(
                     }
                 }
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
             if let Some(selector) = selector_to_open {
                 app.open_selector(selector);
             }
@@ -533,7 +533,7 @@ pub fn handle_key(
         Some(Action::DiffReviewThreads) => {
             let overview =
                 crate::app::ReviewThreadsOverview::new(&app.current_comments, &diff_view);
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
             app.open_review_threads(overview);
         }
         Some(Action::DiffComment) => {
@@ -554,7 +554,7 @@ pub fn handle_key(
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
             if let Some(input) = input_to_open {
                 app.open_text_input(input);
             }
@@ -572,12 +572,19 @@ pub fn handle_key(
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffSubmitReview) => {
+            if key_event
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                app.push_modal(crate::app::Modal::Diff(diff_view));
+                return;
+            }
             let mr_iid = diff_view.mr_iid;
             let project_path = diff_view.project_path.clone();
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
             crate::handlers::review_submit::open(app, mr_iid, project_path);
         }
         Some(Action::DiffSuggest) => {
@@ -604,10 +611,10 @@ pub fn handle_key(
                 diff_view.selection_start = None;
                 diff_view.selection_end = None;
             }
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         _ => {
-            app.push_modal(crate::app::Modal::Diff(Box::new(diff_view)));
+            app.push_modal(crate::app::Modal::Diff(diff_view));
             handlers::custom_commands::run_bound_diff_command(app, key_event, tx, fx);
         }
     }

@@ -6,9 +6,6 @@ use crossterm::event::KeyCode;
 /// Keys for the review threads overlay. Selectors and text inputs opened from
 /// it (comment actions, replies) sit on top and take their keys first.
 pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
-    if app.selector().is_some() || app.text_input().is_some() {
-        return false;
-    }
     let Some(mut overview) = app.pop_review_threads() else {
         return false;
     };
@@ -62,11 +59,20 @@ pub fn handle_review_threads(app: &mut App, key_event: &KeyPress) -> bool {
         KeyCode::Char('K') => overview.preview_scroll = overview.preview_scroll.saturating_sub(1),
         KeyCode::Char('u') => overview.toggle_unresolved_only(),
         KeyCode::Enter => keep_open = !jump_to_review_thread(app, &overview),
-        KeyCode::Char('a') => open_review_thread_actions(app, &overview),
+        KeyCode::Char('a') => {
+            let selector = review_thread_actions_selector(app, &overview);
+            app.push_modal(crate::app::Modal::ReviewThreads(overview));
+            match selector {
+                Some(Ok(selector)) => app.open_selector(selector),
+                Some(Err(error)) => app.show_error(error.to_string()),
+                None => {}
+            }
+            return true;
+        }
         _ => {}
     }
     if keep_open {
-        app.push_modal(crate::app::Modal::ReviewThreads(Box::new(overview)));
+        app.push_modal(crate::app::Modal::ReviewThreads(overview));
     }
     true
 }
@@ -117,13 +123,12 @@ fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOver
     false
 }
 
-fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThreadsOverview) {
-    let Some(thread) = overview.selected_thread() else {
-        return;
-    };
-    let Some(mr_iid) = app.diff_view().map(|d| d.mr_iid) else {
-        return;
-    };
+fn review_thread_actions_selector(
+    app: &App,
+    overview: &crate::app::ReviewThreadsOverview,
+) -> Option<Result<crate::app::Selector, &'static str>> {
+    let thread = overview.selected_thread()?;
+    let mr_iid = app.diff_view().map(|d| d.mr_iid)?;
     let selector = if thread.notes.len() == 1 {
         crate::app::Selector::comment_actions(thread.root(), mr_iid, app.is_github())
     } else {
@@ -136,10 +141,5 @@ fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThread
             mr_iid,
         ))
     };
-    match selector {
-        Some(selector) => app.open_selector(selector),
-        None => app.show_error(
-            "Review summaries cannot be replied to, edited or deleted from glab-tui.".to_string(),
-        ),
-    }
+    Some(selector.ok_or("Review summaries cannot be replied to, edited or deleted from glab-tui."))
 }

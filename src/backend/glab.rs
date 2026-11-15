@@ -3225,7 +3225,6 @@ impl Backend for GlabBackend {
             iid: u64,
             #[serde(rename = "ref")]
             ref_name: String,
-            tag: bool,
             sha: String,
             status: String,
             created_at: String,
@@ -3251,7 +3250,7 @@ impl Backend for GlabBackend {
                     id: d.id,
                     iid: d.iid,
                     ref_name: d.ref_name,
-                    tag: d.tag,
+                    tag: d.deployable.as_ref().is_some_and(|job| job.tag),
                     sha: d.sha,
                     status: d.status,
                     created_at: d.created_at,
@@ -3292,7 +3291,6 @@ impl Backend for GlabBackend {
             iid: u64,
             #[serde(rename = "ref")]
             ref_name: String,
-            tag: bool,
             sha: String,
             status: String,
             created_at: String,
@@ -3313,7 +3311,7 @@ impl Backend for GlabBackend {
                 id: d.id,
                 iid: d.iid,
                 ref_name: d.ref_name,
-                tag: d.tag,
+                tag: d.deployable.as_ref().is_some_and(|job| job.tag),
                 sha: d.sha,
                 status: d.status,
                 created_at: d.created_at,

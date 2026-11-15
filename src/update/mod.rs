@@ -111,6 +111,40 @@ mod tests {
     }
 
     #[test]
+    fn diff_fetched_updates_diff_in_place_without_lifting_it_above_review_threads() {
+        let mut app = with_open_diff(app_with_client());
+        let overview = crate::app::ReviewThreadsOverview::new(&[], app.diff_view().unwrap());
+        app.open_review_threads(overview);
+        assert!(matches!(
+            app.top_modal(),
+            Some(crate::app::Modal::ReviewThreads(_))
+        ));
+
+        let updated_diff = crate::app::DiffView::new(
+            4,
+            "group/project".to_string(),
+            "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+        );
+        update(
+            &mut app,
+            Event::DiffFetched {
+                diff_view: Box::new(updated_diff),
+                comments: Ok(vec![]),
+            },
+        );
+
+        assert!(
+            matches!(app.top_modal(), Some(crate::app::Modal::ReviewThreads(_))),
+            "top modal must remain ReviewThreads, not Diff"
+        );
+        assert_eq!(
+            app.diff_view().map(|d| d.lines.len()),
+            Some(6),
+            "diff view content was updated in place"
+        );
+    }
+
+    #[test]
     fn a_tick_does_not_fetch_the_highlighted_pipelines_jobs_but_a_new_list_does() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();

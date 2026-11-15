@@ -16,27 +16,27 @@ pub fn handle_date_picker(
             KeyCode::Esc | KeyCode::Char('q') => {}
             KeyCode::Char('h') | KeyCode::Left => {
                 date_picker.move_day(-1);
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
             KeyCode::Char('l') | KeyCode::Right => {
                 date_picker.move_day(1);
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 date_picker.move_day(-7);
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 date_picker.move_day(7);
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
             KeyCode::Char('[') | KeyCode::PageUp => {
                 date_picker.move_month(-1);
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
             KeyCode::Char(']') | KeyCode::PageDown => {
                 date_picker.move_month(1);
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
             KeyCode::Enter => {
                 let selected_val = date_picker.value_string();
@@ -67,7 +67,7 @@ pub fn handle_date_picker(
                 }
             }
             _ => {
-                app.push_modal(crate::app::Modal::Date(Box::new(date_picker)));
+                app.push_modal(crate::app::Modal::Date(date_picker));
             }
         }
         return true;

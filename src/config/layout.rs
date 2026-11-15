@@ -9,15 +9,15 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[serde(rename_all = "lowercase")]
 pub enum PreviewPlacement {
     /// Right of the list, narrowed to keep the list readable, and hidden
-    /// while the workspace is narrower than `preview_min_width` or the list
-    /// would still be too narrow.
+    /// while the room beside the sidebar is narrower than
+    /// `preview_min_width` or the list would still be too narrow.
     Right,
     /// Below the list. The terminal pane gives way first, then the preview,
     /// on terminals too short for both.
     Bottom,
     /// Right of the list, narrowed to keep the list readable, moving below
-    /// it while the workspace is narrower than `preview_min_width` or the
-    /// list would still be too narrow.
+    /// it while the room beside the sidebar is narrower than
+    /// `preview_min_width` or the list would still be too narrow.
     #[default]
     Auto,
     /// Never beside the list. A zoomed preview or an edit form still fills
@@ -138,8 +138,9 @@ pub struct LayoutConfig {
     pub preview_width: PaneSize,
     /// Height of a preview below the list. `auto` is half the list column.
     pub preview_height: PaneSize,
-    /// Below this terminal width a `right` preview hides and an `auto`
-    /// preview moves below the list.
+    /// Below this many columns beside the navigation sidebar (the whole
+    /// terminal while the sidebar is toggled off) a `right` preview hides
+    /// and an `auto` preview moves below the list.
     pub preview_min_width: u16,
     pub terminal_pane_visible: bool,
     pub terminal_pane_height: u16,
@@ -153,7 +154,9 @@ pub struct LayoutConfig {
 
 pub const DEFAULT_NAV_WIDTH: u16 = 22;
 pub const DEFAULT_NAV_MIN_WIDTH: u16 = 80;
-pub const DEFAULT_PREVIEW_MIN_WIDTH: u16 = 90;
+/// The narrowest room that holds a 30-column preview beside a 38-column
+/// list, so by default only the panes' own minimums decide the placement.
+pub const DEFAULT_PREVIEW_MIN_WIDTH: u16 = 68;
 pub const DEFAULT_TERMINAL_PANE_HEIGHT: u16 = 6;
 pub const DEFAULT_TERMINAL_PANE_MIN_HEIGHT: u16 = 18;
 

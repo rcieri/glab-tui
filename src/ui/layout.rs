@@ -259,9 +259,11 @@ impl LayoutPlan {
     }
 }
 
-/// Where the preview goes in `workspace` for the configured placement. The
-/// room beside the list is measured as if the sidebar were shown, so leaving
-/// it out on a narrow terminal never moves the preview back beside the list.
+/// Where the preview goes in `workspace` for the configured placement. Both
+/// `preview_min_width` and the panes' fit are measured on the room the
+/// configured sidebar leaves: toggling the sidebar off frees its columns,
+/// while the sidebar leaving on its own under `nav_min_width` never moves
+/// the preview back beside the list.
 fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Placement {
     let nav_width = if panes.nav_visible {
         panes.nav_width
@@ -272,7 +274,7 @@ fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Pl
         width: workspace.width.saturating_sub(nav_width),
         ..workspace
     };
-    let is_wide = workspace.width >= panes.preview_min_width;
+    let is_wide = room.width >= panes.preview_min_width;
     let columns = preview_columns(panes.preview_width, workspace.width);
     match panes.preview {
         PreviewPlacement::Right if is_wide => {
@@ -439,6 +441,21 @@ mod tests {
         let narrow = LayoutPlan::compute(with_preview(80, PreviewPlacement::Auto));
         assert_eq!(narrow.detail_rect, Rect::new(22, 13, 58, 11));
         assert_eq!(narrow.content_area.width, 58);
+    }
+
+    #[test]
+    fn preview_min_width_is_measured_beside_the_sidebar() {
+        let mut no_sidebar = base_inputs(85, 30);
+        no_sidebar.panes.nav_visible = false;
+        assert_eq!(
+            LayoutPlan::compute(no_sidebar).detail_rect,
+            Rect::new(55, 2, 30, 28)
+        );
+
+        let mut raised = base_inputs(110, 30);
+        raised.panes.preview_min_width = 90;
+        let plan = LayoutPlan::compute(raised);
+        assert_eq!(plan.detail_rect.y, plan.content_area.bottom());
     }
 
     #[test]

@@ -1155,10 +1155,16 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
     let Some(layout) = form.layout else {
         return;
     };
-    let (search_area, table_area) = (layout.groups[0], layout.groups[1]);
+    let (search_area, list_area) = (layout.groups[0], layout.groups[1]);
     app.overlay_stack
         .push((crate::app::OverlayKind::Help, layout.area));
 
+    // The scrollbar is drawn on the region's last column, so the table stops
+    // one column short of it and a full Action line keeps its last character.
+    let table_area = Rect {
+        width: list_area.width.saturating_sub(1),
+        ..list_area
+    };
     // Action column width: the table width minus the two fixed columns
     // (20 + 24) and the inter-column spacing (2 gaps of 2).
     let action_width = table_area.width.saturating_sub(20 + 24 + 4).max(8);
@@ -1271,9 +1277,9 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
     f.render_stateful_widget(
         ratatui::widgets::Scrollbar::new(ratatui::widgets::ScrollbarOrientation::VerticalRight),
         Rect {
-            y: table_area.y.saturating_add(1),
-            height: table_area.height.saturating_sub(1),
-            ..table_area
+            y: list_area.y.saturating_add(1),
+            height: list_area.height.saturating_sub(1),
+            ..list_area
         },
         &mut scrollbar_state,
     );
@@ -1451,6 +1457,39 @@ command = "true"
             !on_issues.contains("worktree + devbox shell"),
             "{on_issues:?}"
         );
+    }
+
+    /// The scrollbar sits right of the table, so an action line that fills
+    /// the whole help region keeps its last character.
+    #[test]
+    fn the_help_scrollbar_hides_no_action_character() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        let mut app = App::default();
+        app.open_help();
+        app.active_tab = Tab::MergeRequests;
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let list = app.help_layout.as_ref().unwrap().groups[1];
+        // A line exactly as wide as the Action column would be if the table
+        // took the whole region, ending in a marker.
+        let region_action_columns = usize::from(list.width) - (20 + 24 + 4);
+        let name = format!("{} §", "x".repeat(region_action_columns - 2));
+        app.config.custom_keybindings = toml::from_str(&format!(
+            "[[mrs]]\nkey = \"w\"\nname = \"{name}\"\ncommand = \"true\"\n"
+        ))
+        .unwrap();
+        app.custom_commands = crate::custom_commands::CustomCommands::load(&app.config).0;
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let marker_drawn = (list.y..list.bottom())
+            .any(|y| (list.x..list.right()).any(|x| buffer[(x, y)].symbol() == "§"));
+        assert!(marker_drawn, "{:?}", buffer_text(&terminal));
     }
 
     #[test]

@@ -388,7 +388,7 @@ fn is_flexible(group: &Group) -> bool {
 /// The rows each [`GroupKind::Custom`] region sized by share or fill gets,
 /// by top-level group index. `natural` is the body with one row in each of
 /// them, so its spacers are counted; the `capacity - natural` rows left
-/// over go to the shares first, in order, then to the fills.
+/// over go to the shares first, in order, then all of them to the first fill.
 fn flexible_rows(groups: &[Group], capacity: usize, natural: usize) -> Vec<u16> {
     let mut left = u16::try_from(capacity.saturating_sub(natural)).unwrap_or(u16::MAX);
     let total = u32::try_from(capacity).unwrap_or(u32::MAX);
@@ -1813,6 +1813,30 @@ mod tests {
         assert_eq!(heights, [1, 6, 4]);
         assert_eq!(layout.groups[1].y, layout.groups[0].bottom() + 1);
         assert!(buffer_rows(&terminal)[layout.area.bottom() as usize - 2].contains("j/k move"));
+    }
+
+    #[test]
+    fn a_fill_region_before_toggles_leaves_every_toggle_its_row() {
+        let mut form = Form::panel(
+            "Panel",
+            vec![
+                Group::new(GroupKind::Custom(Rows::Fill)),
+                Group::new(GroupKind::Toggles(Toggles::new(vec![
+                    Toggle::new("Flag", false),
+                    Toggle::new("Flag", false),
+                ]))),
+            ],
+        );
+        let size = FormSize {
+            width: Extent::Fixed(40),
+            height: Extent::Fixed(10),
+        };
+        draw_panel(&mut form, size, None);
+        let layout = form.layout.unwrap();
+        // 10 rows less border, footer: 7 body rows, 1 of them a spacer.
+        let heights: Vec<u16> = layout.groups.iter().map(|rect| rect.height).collect();
+        assert_eq!(heights, [4, 2]);
+        assert_eq!(layout.groups[1].y, layout.groups[0].bottom() + 1);
     }
 
     #[test]

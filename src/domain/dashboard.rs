@@ -13,8 +13,8 @@ use std::collections::BTreeSet;
 
 /// How many of the newest pipelines the health summary looks at.
 pub const PIPELINE_HISTORY_LEN: usize = 20;
-/// How many refs the pipeline card lists with their latest status.
-pub const LATEST_REFS_SHOWN: usize = 3;
+/// How many runs the pipeline card lists with their latest status.
+pub const LATEST_RUNS_SHOWN: usize = 3;
 /// An open issue due within this many days counts as due soon.
 pub const DUE_SOON_DAYS: i64 = 7;
 /// How many days without an update make an open MR/PR or issue idle.
@@ -530,8 +530,10 @@ pub struct PipelineHealth<'a> {
     pub success_rate_percent: Option<u8>,
     pub in_progress: usize,
     pub failed: usize,
-    /// The newest pipeline of each ref, in the order the refs last ran.
-    pub latest_per_ref: Vec<&'a Pipeline>,
+    /// The newest pipeline of each workflow on each ref of each project, in
+    /// the order they last ran. A GitHub org mixes every repository's runs,
+    /// and each GitHub workflow runs on its own on the same branch.
+    pub latest_runs: Vec<&'a Pipeline>,
 }
 
 /// `pipelines` must be newest first, the order both backends list them in.
@@ -548,13 +550,18 @@ pub fn assess_pipelines(pipelines: &[Pipeline]) -> PipelineHealth<'_> {
     let finished = succeeded + failed;
     let success_rate_percent = (finished > 0).then(|| (succeeded * 100 / finished).min(100) as u8);
 
-    let mut latest_per_ref: Vec<&Pipeline> = Vec::with_capacity(LATEST_REFS_SHOWN);
+    let mut latest_runs: Vec<&Pipeline> = Vec::with_capacity(LATEST_RUNS_SHOWN);
     for pipeline in pipelines {
-        if latest_per_ref.len() == LATEST_REFS_SHOWN {
+        if latest_runs.len() == LATEST_RUNS_SHOWN {
             break;
         }
-        if !latest_per_ref.iter().any(|p| p.r#ref == pipeline.r#ref) {
-            latest_per_ref.push(pipeline);
+        let is_same_run_line = |p: &&Pipeline| {
+            p.project_path == pipeline.project_path
+                && p.r#ref == pipeline.r#ref
+                && p.name == pipeline.name
+        };
+        if !latest_runs.iter().any(is_same_run_line) {
+            latest_runs.push(pipeline);
         }
     }
 
@@ -563,7 +570,7 @@ pub fn assess_pipelines(pipelines: &[Pipeline]) -> PipelineHealth<'_> {
         success_rate_percent,
         in_progress,
         failed,
-        latest_per_ref,
+        latest_runs,
     }
 }
 
@@ -1129,11 +1136,39 @@ mod tests {
         assert_eq!(health.success_rate_percent, Some(2 * 100 / 17));
         assert_eq!(
             health
-                .latest_per_ref
+                .latest_runs
                 .iter()
                 .map(|p| (p.id, p.r#ref.as_str()))
                 .collect::<Vec<_>>(),
             vec![(30, "main"), (29, "feature"), (27, "fix")]
+        );
+    }
+
+    #[test]
+    fn the_latest_runs_keep_each_workflow_and_each_project_on_a_shared_ref() {
+        let run = |id: u64, status: &str, project: &str, workflow: &str| -> Pipeline {
+            serde_json::from_value(json!({
+                "id": id,
+                "status": status,
+                "ref": "main",
+                "name": workflow,
+                "project_path": project,
+                "updated_at": "2026-10-01T00:00:00Z",
+            }))
+            .expect("a valid pipeline")
+        };
+        let pipelines = [
+            run(4, "success", "acme/api", "Lint"),
+            run(3, "failed", "acme/api", "CI"),
+            run(2, "success", "acme/api", "Lint"),
+            run(1, "success", "acme/web", "CI"),
+        ];
+
+        let health = assess_pipelines(&pipelines);
+
+        assert_eq!(
+            health.latest_runs.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![4, 3, 1]
         );
     }
 

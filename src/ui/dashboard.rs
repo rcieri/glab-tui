@@ -25,6 +25,7 @@ use crate::domain::issues::Issue;
 use crate::domain::mr::MergeRequest;
 use crate::domain::pipelines::Pipeline;
 use crate::domain::releases::Release;
+use crate::scope::Scope;
 use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 
 /// Rows of one card, borders included.
@@ -648,7 +649,7 @@ fn pipelines_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
             ),
         ]),
     ];
-    for pipeline in &health.latest_per_ref {
+    for pipeline in &health.latest_runs {
         let (fg, _, _, badge) =
             badge_style_for("Status", &pipeline.status, false, theme.bg, theme, icons);
         let when = pipeline.created_at().unwrap_or(pipeline.updated_at());
@@ -658,7 +659,7 @@ fn pipelines_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
                 Style::default().fg(fg).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                sanitize_untrusted(&format_ref(&pipeline.r#ref)).into_owned(),
+                sanitize_untrusted(&run_line_label(pipeline, &ctx.app.scope)).into_owned(),
                 Style::default().fg(theme.text_normal),
             ),
             Span::styled(
@@ -668,6 +669,19 @@ fn pipelines_body(ctx: &Context, width: usize) -> Vec<Line<'static>> {
         ]));
     }
     lines
+}
+
+/// The ref, the workflow when the run has one (GitHub) and, in a group or
+/// org, the project in front: one ref can carry several run lines.
+fn run_line_label(pipeline: &Pipeline, scope: &Scope) -> String {
+    let mut label = format_ref(&pipeline.r#ref);
+    if !pipeline.name.is_empty() {
+        label = format!("{label} · {}", pipeline.name);
+    }
+    if scope.is_group() && !pipeline.project_path.is_empty() {
+        label = format!("{} {label}", pipeline.project_path);
+    }
+    label
 }
 
 /// The newest runs that fit in `max_width` cells, oldest to newest left to

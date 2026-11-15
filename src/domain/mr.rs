@@ -62,6 +62,10 @@ pub struct MergeRequest {
     #[serde(default)]
     pub sha: Option<String>,
     pub draft: bool,
+    /// The MR's own "Squash commits" flag from the GitLab response. Always
+    /// false on GitHub, which has no per-PR flag, and for older cached entries.
+    #[serde(default)]
+    pub squash: bool,
     pub description: Option<String>,
     #[serde(default)]
     pub head_pipeline: Option<crate::domain::pipelines::Pipeline>,

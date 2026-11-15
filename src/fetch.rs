@@ -1156,6 +1156,7 @@ mod tests {
             source_branch: "feature".to_string(),
             sha: None,
             draft: false,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,

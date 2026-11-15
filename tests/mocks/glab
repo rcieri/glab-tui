@@ -190,7 +190,9 @@ elif [[ "$*" == *"mr list"* && "$*" == *"--source-branch"* ]]; then
 elif [[ "$*" == *"mr list"* ]]; then
     # Pages are requested concurrently; only the first carries the fixture so
     # the MR is not duplicated once per page.
-    if [[ " $* " == *" --page 1 "* ]]; then
+    if [[ " $* " == *" --page 1 "* && -n "$TEST_GLAB_MR_SQUASH" ]]; then
+        sed 's/"squash": false/"squash": true/' "$FIXTURES_DIR/mrs.json"
+    elif [[ " $* " == *" --page 1 "* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
     else
         echo "[]"

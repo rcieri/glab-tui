@@ -2048,6 +2048,7 @@ impl Backend for GhBackend {
                             // plumbing simply ignores this at the backend.
                             sha: None,
                             draft: gp.is_draft.unwrap_or(false),
+                            squash: false,
                             description: gp.body,
                             head_pipeline: None,
                             blocking_discussions_resolved: None,
@@ -2160,6 +2161,7 @@ impl Backend for GhBackend {
                             // GitHub has no equivalent of GitLab's diff head SHA.
                             sha: None,
                             draft: item.draft,
+                            squash: false,
                             description: item.body,
                             head_pipeline: None,
                             blocking_discussions_resolved: None,
@@ -2296,6 +2298,7 @@ impl Backend for GhBackend {
             // GitHub has no equivalent of GitLab's diff head SHA.
             sha: None,
             draft: gp.is_draft.unwrap_or(false),
+            squash: false,
             description: gp.body,
             head_pipeline: None,
             blocking_discussions_resolved: None,

@@ -1638,6 +1638,8 @@ impl Backend for GlabBackend {
                         #[serde(default)]
                         sha: Option<String>,
                         draft: bool,
+                        #[serde(default)]
+                        squash: bool,
                         description: Option<String>,
                         #[serde(default)]
                         head_pipeline: Option<GiPipeline>,
@@ -1704,6 +1706,7 @@ impl Backend for GlabBackend {
                             source_branch: m.source_branch,
                             sha: m.sha,
                             draft: m.draft,
+                            squash: m.squash,
                             description: m.description,
                             head_pipeline: m.head_pipeline.map(|p| Pipeline {
                                 id: p.id,
@@ -1816,6 +1819,8 @@ impl Backend for GlabBackend {
             sha: Option<String>,
             draft: bool,
             #[serde(default)]
+            squash: bool,
+            #[serde(default)]
             description: Option<String>,
             #[serde(default)]
             head_pipeline: Option<GiPipeline>,
@@ -1881,6 +1886,7 @@ impl Backend for GlabBackend {
             source_branch: m.source_branch,
             sha: m.sha,
             draft: m.draft,
+            squash: m.squash,
             description: m.description,
             head_pipeline: m.head_pipeline.map(|p| Pipeline {
                 id: p.id,

@@ -3673,6 +3673,9 @@ pub struct SubmitDialog {
     methods: Vec<MergeMethod>,
     /// Whether every project in `merge_projects` squashes whatever is asked.
     squashes_every_merge: bool,
+    /// The merged MR's own squash flag: its author asked for a squash, so
+    /// the radio preselects Squash when the project allows it.
+    mr_asks_for_squash: bool,
     /// The projects a merge acts on, whose merge methods its form offers.
     /// Empty for every other action.
     pub merge_projects: Vec<String>,
@@ -3780,10 +3783,16 @@ impl SubmitDialog {
             .iter()
             .map(|&method| shared.label(method).to_string())
             .collect();
+        let preselected = if self.mr_asks_for_squash && shared.allowed().contains(&MergeMethod::Squash)
+        {
+            MergeMethod::Squash
+        } else {
+            shared.preferred()
+        };
         let preferred = shared
             .allowed()
             .iter()
-            .position(|&method| method == shared.preferred())
+            .position(|&method| method == preselected)
             .unwrap_or(0);
         self.methods = shared.allowed().to_vec();
         self.squashes_every_merge = shared.squashes_every_merge();
@@ -4145,6 +4154,8 @@ impl SubmitDialog {
             }
             _ => Vec::new(),
         };
+        let mr_asks_for_squash = matches!(action, ConfirmAction::MergeMr(iid)
+            if app.mr_index(&project_path, iid).is_some_and(|pos| app.mrs.items[pos].squash));
         let extra_buttons = match &action {
             ConfirmAction::SubmitReview(_) => {
                 vec![DialogChoice::KeepDrafts, DialogChoice::DiscardDrafts]
@@ -4184,6 +4195,7 @@ impl SubmitDialog {
             extra_buttons,
             methods: Vec::new(),
             squashes_every_merge: false,
+            mr_asks_for_squash,
             merge_projects,
             merge_methods_failure: None,
             form: if is_destructive { form.danger() } else { form },
@@ -11372,6 +11384,27 @@ mod tests {
     }
 
     #[test]
+    fn a_merge_dialog_preselects_squash_for_an_mr_whose_author_asked_for_it() {
+        use crate::domain::mr::MergeMethod::{Merge, Squash};
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("g/p".to_string());
+        app.merge_methods
+            .insert("g/p".to_string(), merge_methods(&[Merge, Squash], Merge));
+        let mut flagged = mr_fixture(9, "opened", "alice", false, "Flagged");
+        flagged.squash = true;
+        app.mrs.items = vec![flagged, mr_fixture(10, "opened", "alice", false, "Plain")];
+
+        let picked = |action| SubmitDialog::build_with_project(action, "g/p".to_string(), &app).merge_method();
+
+        assert_eq!(picked(ConfirmAction::MergeMr(9)), Some(Squash));
+        assert_eq!(picked(ConfirmAction::MergeMr(10)), Some(Merge));
+        assert_eq!(
+            picked(ConfirmAction::BulkMergeMrs(vec![(String::new(), 9)])),
+            Some(Merge)
+        );
+    }
+
+    #[test]
     fn the_merge_dialog_sends_the_method_and_options_the_user_picked() {
         use crate::domain::mr::MergeMethod::{Merge, Rebase, Squash};
         use crossterm::event::KeyCode::{Char, Tab};
@@ -12074,6 +12107,7 @@ diff --git a/VERSION b/VERSION
             title: "Some MR title".to_string(),
             state: "opened".to_string(),
             draft: true,
+            squash: false,
             author: author.clone(),
             updated_at: "2026-06-02T21:00:00Z".to_string(),
             target_branch: "main".to_string(),
@@ -12101,6 +12135,7 @@ diff --git a/VERSION b/VERSION
             title: "WIP: Another MR title".to_string(),
             state: "opened".to_string(),
             draft: false,
+            squash: false,
             author: author.clone(),
             updated_at: "2026-06-02T21:00:00Z".to_string(),
             target_branch: "main".to_string(),
@@ -12128,6 +12163,7 @@ diff --git a/VERSION b/VERSION
             title: "Finished MR title".to_string(),
             state: "opened".to_string(),
             draft: false,
+            squash: false,
             author: author.clone(),
             updated_at: "2026-06-02T21:00:00Z".to_string(),
             target_branch: "main".to_string(),
@@ -14027,6 +14063,7 @@ index 123456..789012 100644
             source_branch: "feature".to_string(),
             sha: None,
             draft,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,
@@ -16143,6 +16180,7 @@ index 123456..789012 100644
             source_branch: "feat".into(),
             sha: None,
             draft: false,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,
@@ -16176,6 +16214,7 @@ index 123456..789012 100644
             source_branch: "feat2".into(),
             sha: None,
             draft: false,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,

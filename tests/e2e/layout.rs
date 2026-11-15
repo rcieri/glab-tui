@@ -1,6 +1,5 @@
 use crate::TestSession;
 
-/// The row of `screen` holding `text`, to compare where sidebar entries sit.
 fn row_of(screen: &str, text: &str) -> usize {
     screen
         .lines()
@@ -8,10 +7,8 @@ fn row_of(screen: &str, text: &str) -> usize {
         .unwrap_or_else(|| panic!("no {text:?} on screen:\n{screen}"))
 }
 
-/// `[layout] tabs` orders the sidebar, hides the tabs it leaves out, and the
-/// next-tab key walks the same order.
 #[test]
-fn tab_list_orders_the_sidebar_and_the_tab_keys() {
+fn tab_list_orders_the_sidebar_and_the_tab_keys_and_hides_the_tabs_it_leaves_out() {
     let config = "[layout]\ntabs = [\"mrs\", \"issues\", \"todos\"]\n";
     let mut session = TestSession::with_config(false, 24, 120, Some(config));
     session
@@ -36,8 +33,6 @@ fn tab_list_orders_the_sidebar_and_the_tab_keys() {
         .expect("l from Issues lands on Todos, the next listed tab");
 }
 
-/// A typo in `[layout] tabs` leaves that name out and raises a toast, while
-/// the rest of the list still applies.
 #[test]
 fn unknown_tab_name_is_reported_and_the_rest_of_the_list_applies() {
     let config = "[layout]\ntabs = [\"mrs\", \"pipeline\"]\n";

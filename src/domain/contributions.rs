@@ -38,9 +38,9 @@ pub struct FeedPage {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContributionHistory {
     pub contributions: Vec<Contribution>,
-    /// The oldest event read, when the feed ran out, the page cap stopped
-    /// the read or a page failed before `since`. `None` when the history
-    /// covers `since`.
+    /// The oldest event read when the page cap or a failed page stopped the
+    /// read short of `since`. `None` when the history covers `since` or holds
+    /// the whole feed.
     pub cut_off_at: Option<String>,
     /// Why reading stopped at `cut_off_at` when a page after the first
     /// failed, so the history is short for a reason a retry may fix.

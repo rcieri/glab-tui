@@ -9387,9 +9387,16 @@ impl App {
     /// The tab's enabled columns in display order, as `columns = [...]`
     /// stores them, each under the name it was enabled with (`MRs` on
     /// GitHub). A column this host or scope lacks keeps its stored place.
-    /// Enabled names that are in no order follow, alphabetically.
+    /// Enabled names that are in no order follow, alphabetically. A tab
+    /// with no stored order saves its columns sorted, the form `apply_config`
+    /// reads as no order, so a save never pins the built-in order.
     fn saved_columns(&self, tab: Tab) -> Option<Vec<String>> {
         let enabled = self.enabled_columns.get(&tab)?;
+        if !self.column_order.contains_key(&tab) {
+            let mut names: Vec<String> = enabled.iter().cloned().collect();
+            names.sort();
+            return Some(names);
+        }
         let same_column = crate::column_order::same_column;
         let mut saved: Vec<String> = self
             .stored_column_order(tab, &self.ordered_columns(tab))
@@ -15442,8 +15449,26 @@ index 123456..789012 100644
         assert_eq!(app.column_permutation(Tab::Issues), vec![0, 1, 2]);
         assert_eq!(
             app.saved_columns(Tab::Issues).unwrap(),
-            ["ID", "Title", "Author"].map(String::from)
+            ["Author", "ID", "Title"].map(String::from)
         );
+    }
+
+    #[test]
+    fn saving_a_tab_never_reordered_keeps_the_built_in_order_after_a_reload() {
+        let mut app = App::default();
+        app.enabled_columns.insert(
+            Tab::Issues,
+            ["ID", "Title", "Labels"]
+                .map(String::from)
+                .into_iter()
+                .collect(),
+        );
+
+        let mut reloaded = App::default();
+        reloaded.config.issues.columns = app.saved_columns(Tab::Issues);
+        reloaded.apply_config();
+
+        assert!(!reloaded.column_order.contains_key(&Tab::Issues));
     }
 
     #[test]
@@ -15505,17 +15530,19 @@ index 123456..789012 100644
             .get_mut(&Tab::Pipelines)
             .unwrap()
             .insert("Project".to_string());
+        assert!(app.move_column(Tab::Pipelines, "Ref", false));
+        assert!(app.move_column(Tab::Jobs, "Matrix", false));
 
         assert_eq!(
             app.saved_columns(Tab::Pipelines).unwrap(),
             [
-                "Project", "ID", "Status", "Stages", "Source", "Created", "Duration", "Ref"
+                "Project", "ID", "Status", "Stages", "Source", "Created", "Ref", "Duration"
             ]
             .map(String::from)
         );
         assert_eq!(
             app.saved_columns(Tab::Jobs).unwrap(),
-            ["ID", "Stage", "Status", "Name", "Matrix"].map(String::from)
+            ["ID", "Stage", "Status", "Matrix", "Name"].map(String::from)
         );
     }
 
@@ -15523,15 +15550,19 @@ index 123456..789012 100644
     fn saving_on_gitlab_keeps_the_github_stack_column_next_to_its_built_in_neighbours() {
         let mut app = App::default();
         app.config.mrs.columns = Some(
-            ["Author", "ID", "Pipeline", "Stack", "Title"]
+            ["Title", "ID", "Pipeline", "Author"]
                 .map(String::from)
                 .to_vec(),
         );
         app.apply_config();
+        app.enabled_columns
+            .get_mut(&Tab::MergeRequests)
+            .unwrap()
+            .insert("Stack".to_string());
 
         assert_eq!(
             app.saved_columns(Tab::MergeRequests).unwrap(),
-            ["ID", "Title", "Pipeline", "Stack", "Author"].map(String::from)
+            ["Title", "ID", "Pipeline", "Stack", "Author"].map(String::from)
         );
     }
 

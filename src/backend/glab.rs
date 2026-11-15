@@ -1090,6 +1090,24 @@ impl GlabBackend {
             .squash)
     }
 
+    /// Flips the MR's squash flag: glab's `--squash-before-merge` toggles it
+    /// and cannot set a value.
+    async fn toggle_mr_squash(&self, project: &str, iid: u64, label: &str) -> Result<()> {
+        self.run_glab(
+            &[
+                "mr",
+                "update",
+                &iid.to_string(),
+                "--squash-before-merge",
+                "-R",
+                project,
+            ],
+            label,
+        )
+        .await
+        .map(drop)
+    }
+
     /// Creates one draft note per comment, then publishes them. `created`
     /// collects the notes this attempt posted, so a failure after some were
     /// created can delete them again.
@@ -2041,26 +2059,25 @@ impl Backend for GlabBackend {
         } = *options;
         // GitLab squashes whenever the MR's own squash flag is set (the
         // default on `default_on` projects), and its merge endpoint can only
-        // turn the flag on, so a merge that must not squash clears it first.
-        // glab's --squash-before-merge flips the flag instead of setting it,
-        // hence the read.
-        if method != MergeMethod::Squash && self.mr_squash_flag(project, iid).await? {
-            self.run_glab(
-                &[
-                    "mr",
-                    "update",
-                    &iid.to_string(),
-                    "--squash-before-merge",
-                    "-R",
-                    project,
-                ],
-                "CLEARING MR SQUASH",
-            )
-            .await?;
+        // turn the flag on, so a merge that must not squash clears it first,
+        // and sets it again when the merge fails so the MR is left as it was.
+        let clears_squash = method != MergeMethod::Squash && self.mr_squash_flag(project, iid).await?;
+        if clears_squash {
+            self.toggle_mr_squash(project, iid, "CLEARING MR SQUASH").await?;
         }
         let args = Self::merge_args(project, iid, method, delete_branch, auto_merge, sha);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "MERGING MR").await?;
+        if let Err(merge_error) = self.run_glab(&args_refs, "MERGING MR").await {
+            if clears_squash
+                && let Err(restore_error) =
+                    self.toggle_mr_squash(project, iid, "RESTORING MR SQUASH").await
+            {
+                return Err(merge_error.context(format!(
+                    "restoring the squash flag of !{iid} also failed: {restore_error:#}"
+                )));
+            }
+            return Err(merge_error);
+        }
         Ok(())
     }
 

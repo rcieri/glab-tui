@@ -1,6 +1,7 @@
-//! A GitLab merge that must not squash clears the MR's own squash flag first:
-//! GitLab follows that flag whatever `glab mr merge` is asked, and glab's
-//! `--squash-before-merge` flips it rather than setting it.
+//! A GitLab merge that must not squash clears the MR's own squash flag first,
+//! and sets it again when the merge fails: GitLab follows that flag whatever
+//! `glab mr merge` is asked, and glab's `--squash-before-merge` flips it
+//! rather than setting it.
 //!
 //! The mock `glab` lists `mrs.json` (!2 "Feature: Add pagination support"),
 //! sets the MR's squash flag with `TEST_GLAB_MR_SQUASH`, and takes the
@@ -74,4 +75,28 @@ fn a_merge_commit_of_an_mr_without_the_squash_flag_sends_no_update() {
     let session = merge_the_listed_mr(&[("TEST_GLAB_SQUASH_OPTION", "default_off")]);
     let calls = calls(&session);
     assert_eq!(position(&calls, "glab mr update "), None, "{calls:#?}");
+}
+
+#[test]
+fn a_failed_merge_sets_the_cleared_squash_flag_again() {
+    let mut session = merge_the_listed_mr(&[
+        ("TEST_GLAB_SQUASH_OPTION", "default_off"),
+        ("TEST_GLAB_MR_SQUASH", "1"),
+        ("TEST_GLAB_FAIL_MATCH", "mr merge"),
+    ]);
+    session
+        .wait_for_cli_call_count("glab mr update 2 --squash-before-merge", 2, 15000)
+        .expect("the failed merge should set the squash flag again");
+    let calls: Vec<String> = calls(&session)
+        .into_iter()
+        .filter(|call| call.starts_with("glab mr update") || call.starts_with("glab mr merge"))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
+            "glab mr merge 2 -R test-owner/test-repo --remove-source-branch --yes",
+            "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
+        ]
+    );
 }

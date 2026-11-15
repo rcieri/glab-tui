@@ -27,7 +27,7 @@ pub fn compact<L: Copy, R: Copy>(
 }
 
 /// Columns the list keeps when the preview sits beside it.
-const MIN_LIST_COLUMNS: u16 = 38;
+pub(crate) const MIN_LIST_COLUMNS: u16 = 38;
 
 /// Rows each of the list and the preview keeps when they are stacked: borders,
 /// a table header and a few rows.

@@ -380,7 +380,7 @@ terminal_pane_height = 6
 terminal_pane_min_height = 18  # the terminal pane hides on shorter terminals
 ```
 
-Each tab remembers whether its preview was open, so switching away and back restores it. Whatever the sizes, the list keeps at least 30 columns and 5 rows: the sidebar, preview and terminal pane shrink first.
+Each tab remembers whether its preview was open, so switching away and back restores it. Whatever the sizes, the list keeps at least 30 columns and 5 rows: the sidebar, preview and terminal pane shrink first. A `preview_width` set in cells or percent that does not fit beside the list shrinks to the widest that does.
 
 **Deprecated keys.** `disabled_tabs = [...]` and the `[ui]` keys `sidebar_visible`, `sidebar_width` and `terminal_pane_visible` are still read for this release and will be removed in the next minor release. They apply to the file they are written in, and only where that file's `[layout]` does not set the same thing: `disabled_tabs` becomes a `tabs` list of every other tab, and the `[ui]` keys map to `nav_visible`, `nav_width` and `terminal_pane_visible`. A repo-local `disabled_tabs` therefore still overrides a global `layout.tabs`. Saving from the Configure View writes `[layout]` and removes the deprecated keys from the file it saves to. Toggling the sidebar or terminal pane with their keys changes only the running session until you save.
 

@@ -275,7 +275,7 @@ fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Pl
         ..workspace
     };
     let is_wide = room.width >= panes.preview_min_width;
-    let columns = preview_columns(panes.preview_width, workspace.width);
+    let columns = preview_columns(panes.preview_width, workspace.width, room.width);
     match panes.preview {
         PreviewPlacement::Right if is_wide => {
             compaction::place_preview_beside(room, columns, terminal_rows)
@@ -291,12 +291,17 @@ fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Pl
 }
 
 /// Columns the preview asks for beside the list in a workspace `width` wide,
-/// before compaction narrows it to keep the list readable.
-fn preview_columns(size: PaneSize, width: u16) -> u16 {
+/// before compaction narrows it to keep the list readable. A configured
+/// width is capped at what fits beside the list in `room_width`, so it
+/// stays as wide as fits instead of dropping to compaction's 30 columns.
+fn preview_columns(size: PaneSize, width: u16, room_width: u16) -> u16 {
     let share = |percent: u16| (u32::from(width) * u32::from(percent) / 100) as u16;
+    let fits_beside = room_width
+        .saturating_sub(compaction::MIN_LIST_COLUMNS)
+        .max(compaction::MIN_PREVIEW_COLUMNS);
     match size {
-        PaneSize::Cells(cells) => cells,
-        PaneSize::Percent(percent) => share(percent),
+        PaneSize::Cells(cells) => cells.min(fits_beside),
+        PaneSize::Percent(percent) => share(percent).min(fits_beside),
         PaneSize::Auto if width > AUTO_PREVIEW_LARGE_WIDTH_THRESHOLD => {
             share(AUTO_PREVIEW_LARGE_PERCENTAGE)
         }
@@ -422,6 +427,17 @@ mod tests {
         let mut percent = base_inputs(200, 30);
         percent.panes.preview_width = PaneSize::Percent(50);
         assert_eq!(LayoutPlan::compute(percent).detail_rect.width, 100);
+    }
+
+    #[test]
+    fn a_configured_preview_width_that_does_not_fit_shrinks_to_what_fits() {
+        let mut percent = base_inputs(140, 30);
+        percent.panes.preview_width = PaneSize::Percent(60);
+        assert_eq!(LayoutPlan::compute(percent).detail_rect.width, 80);
+
+        let mut cells = base_inputs(100, 30);
+        cells.panes.preview_width = PaneSize::Cells(60);
+        assert_eq!(LayoutPlan::compute(cells).detail_rect.width, 40);
     }
 
     #[test]

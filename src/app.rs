@@ -368,6 +368,11 @@ impl Tab {
     pub fn available_on_platform(&self, _kind: BackendKind) -> bool {
         true
     }
+
+    /// Whether the config turns this tab on: the Dashboard is opt-in.
+    pub fn is_enabled_in(&self, config: &crate::config::Config) -> bool {
+        *self != Tab::Dashboard || config.dashboard.enabled
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -6166,7 +6171,7 @@ impl App {
         let mut tabs: Vec<Tab> = Tab::ALL
             .iter()
             .filter(|t| t.available_on_platform(kind))
-            .filter(|t| **t != Tab::Dashboard || self.config.dashboard.enabled)
+            .filter(|t| t.is_enabled_in(&self.config))
             .copied()
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {

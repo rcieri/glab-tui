@@ -821,13 +821,7 @@ impl Selector {
         self.state.select(Some(self.cursor_idx));
     }
 
-    fn single_choice(
-        title: String,
-        items: Vec<String>,
-        entity_iid: u64,
-        entity_type: String,
-        purpose: SelectorPurpose,
-    ) -> Self {
+    fn single_choice(title: String, items: Vec<String>, purpose: SelectorPurpose) -> Self {
         Self {
             title,
             all_items: items,
@@ -836,8 +830,8 @@ impl Selector {
             search_query: String::new(),
             is_filtering: false,
             is_loading: false,
-            entity_iid,
-            entity_type,
+            entity_iid: 0,
+            entity_type: String::new(),
             purpose,
             multi_select: false,
             state: ListState::default(),
@@ -865,38 +859,32 @@ impl Selector {
         Some(Self::single_choice(
             format!(" Actions for Comment {comment_id} "),
             actions,
-            comment_id,
-            mr_iid.to_string(),
             SelectorPurpose::CommentActions { comment_id, mr_iid },
         ))
     }
 
-    /// Actions on a local draft; `entity_iid` is the 0-based draft index.
+    /// Actions on a local draft.
     pub fn draft_actions(draft_idx: usize) -> Self {
         Self::single_choice(
             format!(" Actions for Draft #{} ", draft_idx + 1),
             vec!["Edit Draft".to_string(), "Delete Draft".to_string()],
-            draft_idx as u64,
-            "draft".to_string(),
             SelectorPurpose::DraftActions { index: draft_idx },
         )
     }
 
     /// Picker over several comments/drafts built from `comment_choice_item`
-    /// and `draft_choice_item`, whose prefixes the `comment_select` handler
-    /// parses.
+    /// and `draft_choice_item`, whose prefixes the
+    /// [`SelectorPurpose::CommentChoice`] submit parses.
     pub fn comment_choice(items: Vec<String>, mr_iid: u64) -> Self {
         Self::single_choice(
             " Select Comment to Interact ".to_string(),
             items,
-            mr_iid,
-            "mr".to_string(),
             SelectorPurpose::CommentChoice { mr_iid },
         )
     }
 
-    /// `None` for a note without a REST id, which the `comment_select`
-    /// handler could not find again.
+    /// `None` for a note without a REST id, which the
+    /// [`SelectorPurpose::CommentChoice`] submit could not find again.
     pub fn comment_choice_item(comment: &DiscussionNote) -> Option<String> {
         Some(format!(
             "ID: {} | @{}: {}",

@@ -2516,10 +2516,6 @@ diff_addition_emph_bg = "#123456"
 
     #[test]
     fn terminal_preset_draws_only_with_the_terminal_palette() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
-
         let theme = Theme::preset("terminal").expect("terminal preset parses");
 
         assert!(!format!("{theme:?}").contains("Rgb"), "{theme:?}");
@@ -2531,10 +2527,6 @@ diff_addition_emph_bg = "#123456"
 
     #[test]
     fn every_bundled_preset_keeps_diff_search_matches_readable() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
-
         for (name, _) in BUNDLED_THEMES {
             let theme = Theme::preset(name).expect("bundled preset parses");
             for (token, color) in [
@@ -2557,9 +2549,6 @@ diff_addition_emph_bg = "#123456"
 
     #[test]
     fn auto_preset_follows_the_terminal_appearance() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
         let config: Config = toml::from_str(
             "theme_preset = \"auto\"\ntheme_dark = \"nord\"\ntheme_light = \"nord-light\"\n",
         )
@@ -2579,9 +2568,6 @@ diff_addition_emph_bg = "#123456"
 
     #[test]
     fn configured_appearance_wins_over_the_terminal() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
         let config: Config =
             toml::from_str("theme_preset = \"auto\"\nappearance = \"light\"\n").unwrap();
 
@@ -2594,9 +2580,6 @@ diff_addition_emph_bg = "#123456"
 
     #[test]
     fn a_named_preset_ignores_the_terminal_appearance() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _guard = EnvGuard::isolate_home(temp_dir.path());
         let config: Config = toml::from_str("theme_preset = \"nord\"\n").unwrap();
 
         assert!(!config.follows_terminal_appearance());

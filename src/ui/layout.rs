@@ -132,24 +132,8 @@ impl LayoutPlan {
         };
 
         let state = inputs.state;
-        let is_zoomed = (state.details_zoomed && state.can_zoom) || state.edit_zoomed;
-        if is_zoomed {
-            return Self {
-                sidebar_rect: Rect::new(
-                    workspace_area.x,
-                    workspace_area.y,
-                    0,
-                    workspace_area.height,
-                ),
-                content_area: Rect::new(
-                    workspace_area.x,
-                    workspace_area.y,
-                    0,
-                    workspace_area.height,
-                ),
-                detail_rect: workspace_area,
-                ..plan
-            };
+        if (state.details_zoomed && state.can_zoom) || state.edit_zoomed {
+            return plan.zoomed();
         }
 
         let panes = inputs.panes;
@@ -166,11 +150,17 @@ impl LayoutPlan {
         } else {
             0
         };
-        let placement = if state.detail_visible && state.active_tab != Tab::Terminal {
+        let wants_preview = state.detail_visible && state.active_tab != Tab::Terminal;
+        let placement = if wants_preview {
             place_preview(panes, workspace_area, term_height)
         } else {
             Placement::Hidden
         };
+        // A tab that cannot zoom has no other way to show its preview, so one
+        // the placement leaves out fills the workspace as a zoom would.
+        if wants_preview && !state.can_zoom && placement == Placement::Hidden {
+            return plan.zoomed();
+        }
 
         let beside_columns = match placement {
             Placement::Beside { columns } => columns,
@@ -225,6 +215,19 @@ impl LayoutPlan {
             detail_rect,
             term_area,
             ..plan
+        }
+    }
+
+    /// This plan with the detail pane filling the workspace, the list and
+    /// the sidebar left zero wide.
+    fn zoomed(self) -> Self {
+        let workspace = self.workspace_area;
+        let collapsed = Rect::new(workspace.x, workspace.y, 0, workspace.height);
+        Self {
+            sidebar_rect: collapsed,
+            content_area: collapsed,
+            detail_rect: workspace,
+            ..self
         }
     }
 
@@ -472,6 +475,27 @@ mod tests {
         raised.panes.preview_min_width = 90;
         let plan = LayoutPlan::compute(raised);
         assert_eq!(plan.detail_rect.y, plan.content_area.bottom());
+    }
+
+    #[test]
+    fn a_preview_that_cannot_zoom_fills_the_workspace_when_it_has_no_place() {
+        let mut off = with_preview(120, PreviewPlacement::Off);
+        off.state.can_zoom = false;
+        assert_eq!(
+            LayoutPlan::compute(off).detail_rect,
+            Rect::new(0, 2, 120, 28)
+        );
+
+        let mut narrow_right = with_preview(80, PreviewPlacement::Right);
+        narrow_right.state.can_zoom = false;
+        let plan = LayoutPlan::compute(narrow_right);
+        assert_eq!(plan.detail_rect, Rect::new(0, 2, 80, 28));
+        assert_eq!(plan.content_area.width, 0);
+
+        let mut closed = with_preview(120, PreviewPlacement::Off);
+        closed.state.can_zoom = false;
+        closed.state.detail_visible = false;
+        assert!(!LayoutPlan::compute(closed).has_detail());
     }
 
     #[test]

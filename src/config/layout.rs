@@ -4,7 +4,9 @@
 use crate::app::Tab;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Where the preview pane sits next to the list.
+/// Where the preview pane sits next to the list. On a tab that cannot zoom
+/// its preview (Pipelines), an open preview the placement leaves out fills
+/// the workspace instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PreviewPlacement {

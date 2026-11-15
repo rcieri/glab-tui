@@ -248,28 +248,68 @@ fn render_mode_indicator(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Re
     f.render_widget(indicator, area);
 }
 
-/// Render a diff line's content: syntax colors, fuzzy search matches and,
-/// with an `emphasis_bg`, that background on the words that differ from its
-/// paired line.
+/// What sets a diff row apart from the rows around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowHighlight {
+    Plain,
+    Selected,
+    SearchMatch,
+}
+
+impl RowHighlight {
+    fn row_bg(self, theme: &Theme) -> Option<Color> {
+        match self {
+            RowHighlight::Plain => None,
+            RowHighlight::Selected => Some(theme.highlight_bg),
+            RowHighlight::SearchMatch => Some(theme.diff_search_bg),
+        }
+    }
+
+    /// The foreground of every token on the row. Diff and syntax colors are
+    /// picked for the row's own background, and on a search background
+    /// (often a bright palette yellow) they can be unreadable.
+    fn row_fg(self, theme: &Theme) -> Option<Color> {
+        (self == RowHighlight::SearchMatch).then_some(theme.diff_search_fg)
+    }
+}
+
+/// Render a diff line's content: syntax colors (not on a search match), fuzzy
+/// search matches and, on an unhighlighted row, the emphasis background on the
+/// words that differ from its paired line.
 fn render_diff_line_content(
     line: &DiffLine,
     base_style: Style,
     theme: &Theme,
-    emphasis_bg: Option<Color>,
+    highlight: RowHighlight,
 ) -> Vec<Span<'static>> {
-    let spans = render_highlighted_content(line, base_style, theme);
-    match emphasis_bg {
-        Some(bg) => emphasize_ranges(spans, &line.changed_ranges, bg),
-        None => spans,
+    let spans = render_highlighted_content(line, base_style, theme, highlight);
+    if highlight != RowHighlight::Plain {
+        return spans;
+    }
+    let emphasis_bg = match line.line_type {
+        crate::app::DiffLineType::Addition => theme.diff_addition_emph_bg,
+        crate::app::DiffLineType::Deletion => theme.diff_deletion_emph_bg,
+        _ => return spans,
+    };
+    // A palette color or the terminal's own background cannot be blended into
+    // a stronger one, so the emphasis background can equal the row's and would
+    // mark nothing.
+    if base_style.bg == Some(emphasis_bg) {
+        emphasize_ranges(spans, &line.changed_ranges, |style| {
+            style.add_modifier(Modifier::REVERSED)
+        })
+    } else {
+        emphasize_ranges(spans, &line.changed_ranges, |style| style.bg(emphasis_bg))
     }
 }
 
 /// Splits `spans`, which together hold one line, at the edges of `ranges`
-/// (byte ranges of that line) and sets `bg` on the parts inside them.
+/// (byte ranges of that line) and restyles the parts inside them with
+/// `emphasize`.
 fn emphasize_ranges(
     spans: Vec<Span<'static>>,
     ranges: &[std::ops::Range<usize>],
-    bg: Color,
+    emphasize: impl Fn(Style) -> Style,
 ) -> Vec<Span<'static>> {
     if ranges.is_empty() {
         return spans;
@@ -287,7 +327,7 @@ fn emphasize_ranges(
             let start = range.start.max(span_start) - span_start;
             let end = range.end.min(span_end) - span_start;
             push_piece(&mut out, text, cut..start, span.style);
-            push_piece(&mut out, text, start..end, span.style.bg(bg));
+            push_piece(&mut out, text, start..end, emphasize(span.style));
             cut = end;
         }
         push_piece(&mut out, text, cut..text.len(), span.style);
@@ -312,25 +352,32 @@ fn render_highlighted_content(
     line: &DiffLine,
     base_style: Style,
     theme: &Theme,
+    highlight: RowHighlight,
 ) -> Vec<Span<'static>> {
     let code = line.code();
-
-    let Some(indices) = &line.fuzzy_indices else {
-        return render_content_normal(line, base_style, theme, code);
+    let syntax = match highlight {
+        RowHighlight::SearchMatch => None,
+        RowHighlight::Plain | RowHighlight::Selected => line.syntax_spans(theme),
     };
 
-    let code_indices: HashSet<usize> = indices.iter().filter(|&&i| i > 0).map(|&i| i - 1).collect();
+    let code_indices: HashSet<usize> = line
+        .fuzzy_indices
+        .iter()
+        .flatten()
+        .filter(|&&i| i > 0)
+        .map(|&i| i - 1)
+        .collect();
 
     if code_indices.is_empty() {
-        return render_content_normal(line, base_style, theme, code);
+        return render_content_normal(syntax, base_style, code);
     }
 
     let match_style = base_style
-        .fg(theme.yellow)
+        .fg(theme.diff_search_fg)
         .add_modifier(Modifier::BOLD)
         .add_modifier(Modifier::UNDERLINED);
 
-    if let Some(highlighted) = line.syntax_spans(theme) {
+    if let Some(highlighted) = syntax {
         merge_syntax_with_fuzzy(highlighted, &code_indices, base_style, match_style)
     } else {
         let mut indices_vec: Vec<usize> = code_indices.into_iter().collect();
@@ -339,19 +386,29 @@ fn render_highlighted_content(
     }
 }
 
-fn render_content_normal(
-    line: &DiffLine,
+fn render_content_normal<'a>(
+    syntax: Option<impl Iterator<Item = (Style, &'a str)>>,
     base_style: Style,
-    theme: &Theme,
     code: &str,
 ) -> Vec<Span<'static>> {
-    if let Some(highlighted) = line.syntax_spans(theme) {
+    if let Some(highlighted) = syntax {
         highlighted
-            .map(|(s, t)| Span::styled(t.to_string(), base_style.patch(s)))
+            .map(|(s, t)| Span::styled(t.to_string(), syntax_style_on_row(base_style, s)))
             .collect()
     } else {
         vec![Span::styled(code.to_string(), base_style)]
     }
+}
+
+/// A syntax color equal to the row background would hide the token, so the
+/// token keeps the row's foreground instead.
+fn syntax_style_on_row(row_style: Style, syntax: Style) -> Style {
+    let syntax = if syntax.fg == row_style.bg {
+        Style { fg: None, ..syntax }
+    } else {
+        syntax
+    };
+    row_style.patch(syntax)
 }
 
 fn merge_syntax_with_fuzzy<'a>(
@@ -363,13 +420,13 @@ fn merge_syntax_with_fuzzy<'a>(
     let mut result = Vec::new();
     let mut pos: usize = 0;
     for (syn_style, text) in highlighted {
-        // Keep the fuzzy match color (yellow) so matches stay visible over
-        // syntax coloring.
+        // Keep the search match color so matches stay visible over syntax
+        // coloring.
         let style_for = |in_match: bool| {
             if in_match {
                 match_style.add_modifier(syn_style.add_modifier)
             } else {
-                base_style.patch(syn_style)
+                syntax_style_on_row(base_style, syn_style)
             }
         };
         let mut buf = String::new();
@@ -1136,13 +1193,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let num_style = Style::default().fg(ctx.theme.text_muted).bg(gutter_bg);
                     let sep_style = Style::default().fg(ctx.theme.diff_sep).bg(gutter_bg);
 
-                    let sel_bg = if in_selection {
-                        Some(ctx.theme.highlight_bg)
+                    let highlight = if in_selection {
+                        RowHighlight::Selected
                     } else if updated_diff_view.search_matches.contains(&idx) {
-                        Some(ctx.theme.yellow_bg)
+                        RowHighlight::SearchMatch
                     } else {
-                        None
+                        RowHighlight::Plain
                     };
+                    let sel_bg = highlight.row_bg(&ctx.theme);
+                    let search_fg = highlight.row_fg(&ctx.theme);
 
                     // LEFT PANEL (OLD / DELETION)
                     let mut left_spans = Vec::new();
@@ -1184,12 +1243,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 left_spans.push(Span::styled(
                                     prefix,
                                     Style::default()
-                                        .fg(prefix_fg)
+                                        .fg(search_fg.unwrap_or(prefix_fg))
                                         .add_modifier(Modifier::BOLD)
                                         .bg(actual_bg),
                                 ));
 
-                                let content_base = Style::default().fg(code_fg).bg(actual_bg);
+                                let content_base = Style::default()
+                                    .fg(search_fg.unwrap_or(code_fg))
+                                    .bg(actual_bg);
                                 let final_style = if is_cursor {
                                     content_base
                                         .add_modifier(Modifier::UNDERLINED)
@@ -1198,10 +1259,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
-                                let emphasis_bg =
-                                    sel_bg.is_none().then_some(theme.diff_deletion_emph_bg);
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, emphasis_bg);
+                                    render_diff_line_content(line, final_style, theme, highlight);
                                 left_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Normal => {
@@ -1217,8 +1276,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
                                 ));
 
-                                let content_base =
-                                    Style::default().fg(ctx.theme.text_normal).bg(actual_bg);
+                                let content_base = Style::default()
+                                    .fg(search_fg.unwrap_or(ctx.theme.text_normal))
+                                    .bg(actual_bg);
                                 let final_style = if is_cursor {
                                     content_base
                                         .add_modifier(Modifier::UNDERLINED)
@@ -1229,12 +1289,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                                 let theme = &ctx.theme;
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, None);
+                                    render_diff_line_content(line, final_style, theme, highlight);
                                 left_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Meta => {
                                 let mut s = Style::default()
-                                    .fg(ctx.theme.blue)
+                                    .fg(search_fg.unwrap_or(ctx.theme.blue))
                                     .add_modifier(Modifier::BOLD);
                                 if let Some(bg) = sel_bg {
                                     s = s.bg(bg);
@@ -1249,7 +1309,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             }
                             crate::app::DiffLineType::HunkHeader => {
                                 let mut s = Style::default()
-                                    .fg(ctx.theme.purple)
+                                    .fg(search_fg.unwrap_or(ctx.theme.purple))
                                     .add_modifier(Modifier::BOLD);
                                 if let Some(bg) = sel_bg {
                                     s = s.bg(bg);
@@ -1322,12 +1382,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 right_spans.push(Span::styled(
                                     prefix,
                                     Style::default()
-                                        .fg(prefix_fg)
+                                        .fg(search_fg.unwrap_or(prefix_fg))
                                         .add_modifier(Modifier::BOLD)
                                         .bg(actual_bg),
                                 ));
 
-                                let content_base = Style::default().fg(code_fg).bg(actual_bg);
+                                let content_base = Style::default()
+                                    .fg(search_fg.unwrap_or(code_fg))
+                                    .bg(actual_bg);
                                 let final_style = if is_cursor {
                                     content_base
                                         .add_modifier(Modifier::UNDERLINED)
@@ -1336,10 +1398,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
-                                let emphasis_bg =
-                                    sel_bg.is_none().then_some(theme.diff_addition_emph_bg);
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, emphasis_bg);
+                                    render_diff_line_content(line, final_style, theme, highlight);
                                 right_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Normal => {
@@ -1355,8 +1415,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
                                 ));
 
-                                let content_base =
-                                    Style::default().fg(ctx.theme.text_normal).bg(actual_bg);
+                                let content_base = Style::default()
+                                    .fg(search_fg.unwrap_or(ctx.theme.text_normal))
+                                    .bg(actual_bg);
                                 let final_style = if is_cursor {
                                     content_base
                                         .add_modifier(Modifier::UNDERLINED)
@@ -1367,12 +1428,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                                 let theme = &ctx.theme;
                                 let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, None);
+                                    render_diff_line_content(line, final_style, theme, highlight);
                                 right_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Meta => {
                                 let mut s = Style::default()
-                                    .fg(ctx.theme.blue)
+                                    .fg(search_fg.unwrap_or(ctx.theme.blue))
                                     .add_modifier(Modifier::BOLD);
                                 if let Some(bg) = sel_bg {
                                     s = s.bg(bg);
@@ -1387,7 +1448,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             }
                             crate::app::DiffLineType::HunkHeader => {
                                 let mut s = Style::default()
-                                    .fg(ctx.theme.purple)
+                                    .fg(search_fg.unwrap_or(ctx.theme.purple))
                                     .add_modifier(Modifier::BOLD);
                                 if let Some(bg) = sel_bg {
                                     s = s.bg(bg);
@@ -1643,13 +1704,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         Span::styled("│ ", sep_style),
                     ];
 
-                    let sel_bg = if in_selection {
-                        Some(ctx.theme.highlight_bg)
+                    let highlight = if in_selection {
+                        RowHighlight::Selected
                     } else if updated_diff_view.search_matches.contains(&idx) {
-                        Some(ctx.theme.yellow_bg)
+                        RowHighlight::SearchMatch
                     } else {
-                        None
+                        RowHighlight::Plain
                     };
+                    let sel_bg = highlight.row_bg(&ctx.theme);
+                    let search_fg = highlight.row_fg(&ctx.theme);
 
                     match line.line_type {
                         crate::app::DiffLineType::Addition | crate::app::DiffLineType::Deletion => {
@@ -1681,12 +1744,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             line_spans.push(Span::styled(
                                 prefix,
                                 Style::default()
-                                    .fg(prefix_fg)
+                                    .fg(search_fg.unwrap_or(prefix_fg))
                                     .add_modifier(Modifier::BOLD)
                                     .bg(actual_bg),
                             ));
 
-                            let content_base = Style::default().fg(code_fg).bg(actual_bg);
+                            let content_base = Style::default()
+                                .fg(search_fg.unwrap_or(code_fg))
+                                .bg(actual_bg);
                             let final_style = if is_cursor {
                                 content_base
                                     .add_modifier(Modifier::UNDERLINED)
@@ -1695,13 +1760,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 content_base
                             };
 
-                            let emphasis_bg = sel_bg.is_none().then_some(if is_add {
-                                theme.diff_addition_emph_bg
-                            } else {
-                                theme.diff_deletion_emph_bg
-                            });
                             let mut content_spans =
-                                render_diff_line_content(line, final_style, theme, emphasis_bg);
+                                render_diff_line_content(line, final_style, theme, highlight);
                             line_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
@@ -1717,8 +1777,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
                             ));
 
-                            let content_base =
-                                Style::default().fg(ctx.theme.text_normal).bg(actual_bg);
+                            let content_base = Style::default()
+                                .fg(search_fg.unwrap_or(ctx.theme.text_normal))
+                                .bg(actual_bg);
                             let final_style = if is_cursor {
                                 content_base
                                     .add_modifier(Modifier::UNDERLINED)
@@ -1729,12 +1790,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                             let theme = &ctx.theme;
                             let mut content_spans =
-                                render_diff_line_content(line, final_style, theme, None);
+                                render_diff_line_content(line, final_style, theme, highlight);
                             line_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Meta => {
                             let mut s = Style::default()
-                                .fg(ctx.theme.blue)
+                                .fg(search_fg.unwrap_or(ctx.theme.blue))
                                 .add_modifier(Modifier::BOLD);
                             if let Some(bg) = sel_bg {
                                 s = s.bg(bg);
@@ -1749,7 +1810,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                         crate::app::DiffLineType::HunkHeader => {
                             let mut s = Style::default()
-                                .fg(ctx.theme.purple)
+                                .fg(search_fg.unwrap_or(ctx.theme.purple))
                                 .add_modifier(Modifier::BOLD);
                             if let Some(bg) = sel_bg {
                                 s = s.bg(bg);
@@ -2076,8 +2137,7 @@ diff --git a/a.rs b/a.rs
             .expect("added line parsed");
         let theme = Theme::default();
         let base = Style::default().bg(theme.diff_addition_bg);
-        let spans =
-            render_diff_line_content(added, base, &theme, Some(theme.diff_addition_emph_bg));
+        let spans = render_diff_line_content(added, base, &theme, RowHighlight::Plain);
 
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, added.code());
@@ -2092,6 +2152,123 @@ diff --git a/a.rs b/a.rs
             .find(|s| s.content == "*")
             .expect("operator is its own span");
         assert_eq!(operator.style.fg, Some(theme.purple));
+    }
+
+    #[test]
+    fn every_bundled_preset_marks_the_changed_words() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1 +1 @@
+-let total = 1 + 2;
++let total = 3 * 4;
+";
+        let view = crate::app::DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let line = |content: &str| {
+            view.all_lines
+                .iter()
+                .find(|l| l.content == content)
+                .expect("diff line parsed")
+        };
+        let (removed, added) = (line("-let total = 1 + 2;"), line("+let total = 3 * 4;"));
+
+        for name in crate::config::all_theme_presets() {
+            let Some(theme) = Theme::preset(&name) else {
+                continue;
+            };
+            for (row, changed_word, fg, bg) in [
+                (removed, "1", theme.diff_deletion_fg, theme.diff_deletion_bg),
+                (added, "3", theme.diff_addition_fg, theme.diff_addition_bg),
+            ] {
+                let base = Style::default().fg(fg).bg(bg);
+                let spans = render_diff_line_content(row, base, &theme, RowHighlight::Plain);
+                let marked = spans
+                    .iter()
+                    .find(|s| s.content == changed_word)
+                    .expect("changed word is its own span")
+                    .style;
+
+                assert!(
+                    marked.bg != Some(bg) || marked.add_modifier.contains(Modifier::REVERSED),
+                    "preset {name}: {changed_word:?} in {:?} is not marked",
+                    row.content
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_syntax_color_matching_the_row_background_falls_back_to_the_row_foreground() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -0,0 +1 @@
++fn total() {}
+";
+        let view = crate::app::DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let added = view
+            .all_lines
+            .iter()
+            .find(|l| l.content == "+fn total() {}")
+            .expect("added line parsed");
+        let theme = Theme::default();
+        let function_fg = |row_bg: Color| {
+            let base = Style::default().fg(theme.text_normal).bg(row_bg);
+            render_diff_line_content(added, base, &theme, RowHighlight::Plain)
+                .into_iter()
+                .find(|s| s.content == "total")
+                .expect("function name is its own span")
+                .style
+                .fg
+        };
+
+        assert_eq!(function_fg(theme.bg), Some(theme.yellow));
+        assert_eq!(function_fg(theme.yellow), Some(theme.text_normal));
+    }
+
+    #[test]
+    fn a_search_matched_row_draws_every_token_in_the_search_foreground() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -0,0 +1 @@
++fn total() { let n = 3 * 4; }
+";
+        let mut view = crate::app::DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let added = view
+            .all_lines
+            .iter_mut()
+            .find(|l| l.content == "+fn total() { let n = 3 * 4; }")
+            .expect("added line parsed");
+        added.fuzzy_indices = Some(vec![4, 5, 6, 7, 8]);
+        let theme = Theme::preset("terminal").expect("terminal preset parses");
+        let base = Style::default()
+            .fg(theme.diff_search_fg)
+            .bg(theme.diff_search_bg);
+
+        let spans = render_diff_line_content(added, base, &theme, RowHighlight::SearchMatch);
+
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, added.code());
+        assert!(
+            spans
+                .iter()
+                .all(|s| s.style.fg == Some(theme.diff_search_fg)),
+            "{spans:?}"
+        );
+        let matched: String = spans
+            .iter()
+            .filter(|s| {
+                s.style
+                    .add_modifier
+                    .contains(Modifier::BOLD | Modifier::UNDERLINED)
+            })
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(matched, "total");
     }
 
     fn rendered_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {

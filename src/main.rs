@@ -123,6 +123,9 @@ async fn main() -> Result<()> {
 
     // Create app and event handler
     let mut app = App::new();
+    if app.config.follows_terminal_appearance() {
+        app.set_terminal_appearance(crate::terminal_appearance::detect());
+    }
     if let Some(ref tab_str) = cli.tab {
         match crate::app::Tab::from_str(tab_str) {
             Some(tab) => app.active_tab = tab,
@@ -180,7 +183,7 @@ async fn main() -> Result<()> {
         app.label_colors = cache
             .label_colors
             .iter()
-            .filter_map(|(name, hex)| crate::config::hex_to_color(hex).map(|c| (name.clone(), c)))
+            .filter_map(|(name, hex)| crate::config::parse_color(hex).map(|c| (name.clone(), c)))
             .collect();
     }
     app.cached_members = cache.members;
@@ -308,6 +311,7 @@ async fn main() -> Result<()> {
             break;
         }
         app.sync_list_views();
+        app.sync_theme_preview();
         app.discard_stale_deployments();
         terminal.draw(|f| ui::render(f, &mut app))?;
 

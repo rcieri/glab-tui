@@ -164,6 +164,12 @@ impl Ledger {
         Ledger { lists, hits }
     }
 
+    /// Lists from `json`, with no hit recorded.
+    pub fn with_lists(json: &str) -> Ledger {
+        let lists = Lists::parse(json).unwrap_or_else(|e| panic!("lists: {e}"));
+        Ledger { lists, hits: None }
+    }
+
     /// The entry a check may excuse a mismatch with, recording that a test
     /// needed it. Call it only once the check has found a mismatch: every
     /// lookup that finds an entry counts as a hit.

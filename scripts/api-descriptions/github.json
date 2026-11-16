@@ -95,7 +95,7 @@
         "GhBackend::cancel_job (response unread)"
       ],
       "read": {},
-      "spec_absent_ok": "GitHub REST has no per-job cancel; only runs/{run_id}/cancel and force-cancel exist"
+      "spec_absent_ok": "GitHub REST has no per-job cancel; only runs/{run_id}/cancel and force-cancel exist. The request check needs the operation marked here to report the call as known but missing; the finding with its issue (#781) is in tests/api-lists.json"
     },
     {
       "method": "get",

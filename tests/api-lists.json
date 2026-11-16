@@ -1,4 +1,32 @@
 {
-  "exceptions": [],
-  "findings": []
+  "exceptions": [
+    {
+      "key": "gitlab GET /api/v4/projects/{id}/issues/{issue_iid}/closed_by query per_page",
+      "reason": "the description lists no query parameter for closed_by, and glab-tui sends per_page to cap the list; whether GitLab honours it is not confirmed"
+    },
+    {
+      "key": "github GET /repos/{owner}/{repo}/git/refs/{ref}",
+      "reason": "GhBackend::create_branch resolves the base branch with git/refs/heads/<branch>; the description documents GET only as git/ref/{ref} (singular) and git/matching-refs/{ref}, so it cannot confirm the plural form"
+    },
+    {
+      "key": "gitlab POST /api/v4/projects/{id}/repository/branches query branch",
+      "reason": "GlabBackend::create_branch sends branch and ref as query parameters; the description lists them as required JSON body fields and no query parameter, and whether GitLab reads them from the query is not confirmed"
+    },
+    {
+      "key": "gitlab POST /api/v4/projects/{id}/repository/branches query ref",
+      "reason": "GlabBackend::create_branch sends branch and ref as query parameters; the description lists them as required JSON body fields and no query parameter, and whether GitLab reads them from the query is not confirmed"
+    }
+  ],
+  "findings": [
+    {
+      "key": "github POST /repos/{owner}/{repo}/actions/jobs/{job_id}/cancel",
+      "reason": "GhBackend::cancel_job posts to an endpoint GitHub's REST API does not have: only runs/{run_id}/cancel and force-cancel exist",
+      "issue": "https://github.com/rcieri/glab-tui/issues/781"
+    },
+    {
+      "key": "gitlab DELETE /api/v4/projects/{id}/repository/branches/{branch} unencoded slash",
+      "reason": "GlabBackend::delete_branch puts the branch name into the path without URL-encoding it, so a name such as feature/x does not fit {branch}",
+      "issue": "https://github.com/rcieri/glab-tui/issues/782"
+    }
+  ]
 }

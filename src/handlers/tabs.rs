@@ -639,7 +639,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
         is_loading: false,
         entity_iid: pr_number,
         entity_type: "mr".to_string(),
-        field_type: "stack_entries".to_string(),
+        purpose: crate::app::SelectorPurpose::StackEntries,
         multi_select: false,
         state: {
             let mut s = ListState::default();
@@ -994,7 +994,7 @@ pub fn handle_active_tab_key(
                                 is_loading: false,
                                 entity_iid: issue_iid,
                                 entity_type: String::new(),
-                                field_type: "related_mrs".to_string(),
+                                purpose: crate::app::SelectorPurpose::RelatedMrs,
                                 multi_select: false,
                                 state: {
                                     let mut s = ListState::default();
@@ -1555,7 +1555,7 @@ pub fn handle_active_tab_key(
                                             is_loading: false,
                                             entity_iid: mr_iid,
                                             entity_type: String::new(),
-                                            field_type: "linked_issues".to_string(),
+                                            purpose: crate::app::SelectorPurpose::LinkedIssues,
                                             multi_select: false,
                                             state: {
                                                 let mut s = ListState::default();
@@ -1875,7 +1875,7 @@ pub fn handle_active_tab_key(
                     is_loading: false,
                     entity_iid: 0,
                     entity_type: String::new(),
-                    field_type: "pipeline_select".to_string(),
+                    purpose: crate::app::SelectorPurpose::PipelineSelect,
                     multi_select: false,
                     state: {
                         let mut s = ratatui::widgets::ListState::default();

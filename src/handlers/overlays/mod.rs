@@ -196,7 +196,7 @@ mod tests {
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
             request: None,
@@ -475,7 +475,10 @@ diff --git a/src/lib.rs b/src/lib.rs
         );
 
         let selector = app.selector().expect("a opens the comment picker");
-        assert_eq!(selector.field_type, "comment_select");
+        assert!(matches!(
+            selector.purpose,
+            crate::app::SelectorPurpose::CommentChoice { .. }
+        ));
         assert_eq!(selector.all_items.len(), 2);
         assert_eq!(selector.cursor_idx, 0);
 

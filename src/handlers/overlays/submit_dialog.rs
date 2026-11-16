@@ -56,7 +56,8 @@ pub fn click_submit_dialog(
     apply_form_action(app, action, tx, fx);
 }
 
-/// Every outcome but a button press or Cancel keeps the dialog open.
+/// Every outcome but a button press or Cancel keeps the dialog open, and so
+/// does Submit while the merge has no method to merge with.
 fn apply_form_action(
     app: &mut App,
     action: FormAction,
@@ -74,6 +75,12 @@ fn apply_form_action(
             app.pop_submit_dialog();
         }
         FormAction::Activate(button) => {
+            if button == SubmitDialog::SUBMIT_BUTTON_INDEX {
+                if let Some(blocker) = app.submit_dialog().and_then(SubmitDialog::merge_blocker) {
+                    app.show_error(blocker);
+                    return;
+                }
+            }
             let Some(dialog) = app.pop_submit_dialog() else {
                 return;
             };
@@ -144,13 +151,15 @@ async fn stacked_prs(
     }
     stacked
 }
-/// Runs `confirm_action` against `project_path`, the project the dialog was
-/// opened for, never one re-resolved from the iid.
+
+/// Runs the dialog's action against its `project_path`, the project the
+/// dialog was opened for, never one re-resolved from the iid. `merge` is
+/// `None` for actions that do not merge.
 fn run_submit_action(
     app: &mut App,
     confirm_action: crate::app::ConfirmAction,
     project_path: String,
-    merge: MergeChoices,
+    merge: Option<MergeChoices>,
     tx: UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
@@ -427,6 +436,9 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
+            let Some(merge) = merge else {
+                return;
+            };
             // Capture the source-branch head SHA before removing the row so
             // `glab mr merge --sha=<sha>` can satisfy GitLab 19.2+ merge
             // requirements (#470). Pre-19.2 instances ignore it; GitHub's
@@ -460,7 +472,9 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeStack(pr_number) => {
-            let method = merge.method;
+            let Some(MergeChoices { method, .. }) = merge else {
+                return;
+            };
             let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
                 Some(crate::domain::mr::StackLookup::Full(stack)) => {
                     stack.downstack_open_entries().map(|e| e.number).collect()
@@ -483,6 +497,9 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
+            let Some(merge) = merge else {
+                return;
+            };
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
             let mut items_with_sha: Vec<(String, u64, Option<String>)> =
@@ -497,11 +514,7 @@ fn run_submit_action(
                             && (project_path.is_empty() || m.project_path == *project_path)
                     })
                     .and_then(|m| m.sha.clone());
-                let project = if project_path.is_empty() {
-                    app.scope.as_str().to_string()
-                } else {
-                    project_path.clone()
-                };
+                let project = app.scope.project_of(project_path).to_string();
                 items_with_sha.push((project, *mr_iid, sha));
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)

@@ -172,6 +172,11 @@ pub enum Event {
         pr_numbers: Vec<u64>,
         stacks: std::collections::HashMap<u64, crate::domain::mr::StackInfo>,
     },
+    /// The merge methods `project` allows, read for an open merge dialog.
+    MergeMethodsFetched {
+        project: String,
+        result: Result<crate::domain::mr::MergeMethods, String>,
+    },
     /// A optimistic UI mutation for `runner_id` failed; restore the row's
     /// prior `status`/`active` fields. Sender fills `status`/`active` with
     /// the values that were on screen before the user pressed pause/resume.

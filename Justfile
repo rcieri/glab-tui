@@ -44,6 +44,14 @@ deny:
 fuzz target seconds="60":
     cargo +nightly fuzz run {{target}} -- -max_total_time={{seconds}}
 
+# Regenerate tests/api-descriptions from the pinned API descriptions (requires python3, curl, PyYAML)
+gen-api-descriptions:
+    python3 scripts/gen-api-descriptions.py
+
+# Test the API description generator (requires python3)
+test-api-descriptions:
+    python3 -m unittest discover -s scripts -p 'test_*.py'
+
 # Run all CI checks locally (fmt check, clippy, unit tests, e2e tests)
 check: fmt-check lint test e2e
 

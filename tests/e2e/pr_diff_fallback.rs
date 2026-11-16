@@ -200,14 +200,14 @@ fn move_cursor_to(session: &mut TestSession, code: &str) {
 
 /// The review payload `gh api` received on stdin when the review was submitted.
 fn wait_for_review_payload(session: &mut TestSession) -> String {
-    let bodies = format!("{}.stdin", session.sandbox.log_path.display());
     for _ in 0..200 {
-        if let Some(line) = std::fs::read_to_string(&bodies)
-            .unwrap_or_default()
-            .lines()
-            .find(|line| line.contains(r#""event":"#))
+        if let Some(body) = session
+            .sandbox
+            .request_bodies()
+            .into_iter()
+            .find(|body| body.contains(r#""event":"#))
         {
-            return line.to_string();
+            return body;
         }
         session.settle(50);
     }

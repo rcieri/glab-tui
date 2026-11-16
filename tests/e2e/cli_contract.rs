@@ -13,10 +13,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The mocks end each argument of a recorded call with this byte.
 const ARG_END: char = '\u{1f}';
+
+/// A call's request body sits next to its record, under the record's name
+/// with this suffix.
+const BODY_SUFFIX: &str = ".stdin";
 
 /// Placeholders a usage line writes for the subcommand itself, not for an
 /// argument of the command.
@@ -279,23 +283,51 @@ fn sorted_record_names(log_path: &Path) -> Vec<String> {
     names
 }
 
-/// Every call recorded in `<log_path>.argv.d/`, each as its arguments with
-/// the program name first.
-pub fn recorded_argvs(log_path: &Path) -> Vec<Vec<String>> {
+/// One call a mock recorded.
+pub struct RecordedCall {
+    /// The arguments, with the program name first.
+    pub argv: Vec<String>,
+    /// The request body the call read with `--input -`.
+    pub stdin: Option<String>,
+}
+
+/// Every call recorded in `<log_path>.argv.d/`, in the order the mocks wrote
+/// their records. Calls that ran at the same time come in no set order.
+pub fn recorded_calls(log_path: &Path) -> Vec<RecordedCall> {
     let dir = argv_dir(log_path);
-    record_names(log_path)
+    let mut records: Vec<(SystemTime, String)> = record_names(log_path)
         .into_iter()
-        .filter(|name| !name.starts_with('.'))
-        .filter_map(|name| std::fs::read(dir.join(name)).ok())
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-        .map(|record| {
-            record
+        .filter(|name| !name.starts_with('.') && !name.ends_with(BODY_SUFFIX))
+        .filter_map(|name| {
+            let written = std::fs::metadata(dir.join(&name)).ok()?.modified().ok()?;
+            Some((written, name))
+        })
+        .collect();
+    records.sort();
+    records
+        .into_iter()
+        .filter_map(|(_, name)| {
+            let record =
+                String::from_utf8_lossy(&std::fs::read(dir.join(&name)).ok()?).into_owned();
+            let argv = record
                 .strip_suffix(ARG_END)
                 .unwrap_or(&record)
                 .split(ARG_END)
                 .map(str::to_string)
-                .collect()
+                .collect();
+            let stdin = std::fs::read(dir.join(format!("{name}{BODY_SUFFIX}")))
+                .ok()
+                .map(|body| String::from_utf8_lossy(&body).into_owned());
+            Some(RecordedCall { argv, stdin })
         })
+        .collect()
+}
+
+/// The arguments of every call recorded in `<log_path>.argv.d/`.
+pub fn recorded_argvs(log_path: &Path) -> Vec<Vec<String>> {
+    recorded_calls(log_path)
+        .into_iter()
+        .map(|call| call.argv)
         .collect()
 }
 
@@ -475,6 +507,49 @@ fn a_recorded_call_glab_does_not_have_is_reported_by_name() {
         refused[0].starts_with("glab job view 1 -w: "),
         "{refused:?}"
     );
+}
+
+#[test]
+fn recorded_calls_come_in_call_order_with_their_bodies() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cli_calls.log");
+    std::fs::create_dir(argv_dir(&log_path)).unwrap();
+    let started = std::time::SystemTime::now();
+    let record = |name: &str, argv: &str, body: Option<&str>, at: Duration| {
+        if let Some(body) = body {
+            std::fs::write(argv_dir(&log_path).join(format!("{name}.stdin")), body).unwrap();
+        }
+        let path = argv_dir(&log_path).join(name);
+        std::fs::write(&path, argv).unwrap();
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(started + at).unwrap();
+    };
+    record(
+        "b",
+        "gh\u{1f}api\u{1f}--input\u{1f}-\u{1f}",
+        Some(r#"{"n":1}"#),
+        Duration::ZERO,
+    );
+    record(
+        "a",
+        "gh\u{1f}api\u{1f}--input\u{1f}-\u{1f}",
+        Some(r#"{"n":2}"#),
+        Duration::from_secs(1),
+    );
+    record(
+        "c",
+        "gh\u{1f}pr\u{1f}list\u{1f}",
+        None,
+        Duration::from_secs(2),
+    );
+    // A body whose call record a killed mock never wrote: no call.
+    std::fs::write(argv_dir(&log_path).join("d.stdin"), "{}").unwrap();
+
+    let calls = recorded_calls(&log_path);
+
+    let bodies: Vec<Option<&str>> = calls.iter().map(|call| call.stdin.as_deref()).collect();
+    assert_eq!(bodies, [Some(r#"{"n":1}"#), Some(r#"{"n":2}"#), None]);
+    assert_eq!(calls[2].argv, ["gh", "pr", "list"]);
 }
 
 #[test]

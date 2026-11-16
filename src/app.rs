@@ -839,6 +839,32 @@ impl Selector {
         }
     }
 
+    pub fn theme_picker(presets: Vec<String>, current: &str) -> Self {
+        let cursor = presets
+            .iter()
+            .position(|preset| preset == current)
+            .or_else(|| presets.iter().position(|preset| preset == "default"))
+            .unwrap_or(0);
+        let mut picker = Self::single_choice(
+            " Select Theme ".to_string(),
+            presets,
+            SelectorPurpose::Theme,
+        );
+        picker.cursor_idx = cursor;
+        picker.state.select(Some(cursor));
+        picker
+    }
+
+    /// The preset under a theme picker's cursor. `None` for any other
+    /// selector and on the `+ Create` row a search appends.
+    pub fn highlighted_theme(&self) -> Option<String> {
+        if self.purpose != SelectorPurpose::Theme {
+            return None;
+        }
+        let item = self.get_filtered_items().into_iter().nth(self.cursor_idx)?;
+        self.all_items.contains(&item).then_some(item)
+    }
+
     /// Actions on one pushed review comment. `None` for a note without a
     /// REST id (a GitHub review summary): nothing can be done with it.
     pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
@@ -4312,9 +4338,15 @@ impl EnvironmentDeployments {
 
 pub struct App {
     pub config: Config,
-    /// Resolved from `config.theme_preset` and `config.theme`. Only
-    /// `apply_config` refreshes it.
+    /// Resolved from `config.theme_preset`, `config.theme` and
+    /// `terminal_appearance`. Only `apply_config`, `set_terminal_appearance`
+    /// and the theme picker's preview (`sync_theme_preview`) refresh it.
     pub theme: Theme,
+    /// What the terminal reported about its background at startup. Only
+    /// asked when the startup config follows it.
+    pub terminal_appearance: Option<crate::config::Appearance>,
+    /// The preset the open theme picker paints `theme` with.
+    pub theme_preview: Option<String>,
     /// Built from `config.icons`. Only `apply_config` refreshes it.
     pub icons: Arc<Icons>,
     /// Keys typed towards a key sequence. The event loop feeds every
@@ -4558,7 +4590,9 @@ impl App {
     fn with_config(config: Config) -> Self {
         let key_buffer = crate::keybinding::KeyBuffer::new(key_sequences(&config.keybindings));
         Self {
-            theme: config.resolve_theme(),
+            theme: config.resolve_theme(None),
+            terminal_appearance: None,
+            theme_preview: None,
             icons: Arc::new(config.icons.icons()),
             config: config.clone(),
             key_buffer,
@@ -4817,6 +4851,47 @@ fn ids_with_changed_status<'a>(
         .map(|pipeline| pipeline.id())
 }
 
+macro_rules! define_modal_accessors {
+    ($getter:ident, $getter_mut:ident, $closer:ident, $popper:ident, $variant:ident, $kind:ident, $ty:ty) => {
+        pub fn $getter(&self) -> Option<&$ty> {
+            self.modal_stack.iter().rev().find_map(|m| match m {
+                Modal::$variant(val) => Some(val.as_ref()),
+                _ => None,
+            })
+        }
+
+        pub fn $getter_mut(&mut self) -> Option<&mut $ty> {
+            self.modal_stack.iter_mut().rev().find_map(|m| match m {
+                Modal::$variant(val) => Some(val.as_mut()),
+                _ => None,
+            })
+        }
+
+        pub fn $closer(&mut self) {
+            self.close_modal_kind(ModalKind::$kind);
+        }
+
+        pub fn $popper(&mut self) -> Option<Box<$ty>> {
+            let idx = self
+                .modal_stack
+                .iter()
+                .rposition(|m| matches!(m, Modal::$variant(_)))?;
+            match self.modal_stack.remove(idx) {
+                Modal::$variant(val) => Some(val),
+                _ => None,
+            }
+        }
+    };
+    ($getter:ident, $getter_mut:ident, $opener:ident, $closer:ident, $popper:ident, $variant:ident, $kind:ident, $ty:ty) => {
+        define_modal_accessors!($getter, $getter_mut, $closer, $popper, $variant, $kind, $ty);
+
+        pub fn $opener(&mut self, val: $ty) {
+            self.$closer();
+            self.push_modal(Modal::$variant(Box::new(val)));
+        }
+    };
+}
+
 impl App {
     pub fn captures_text(&self) -> bool {
         self.modal_stack.last().is_some_and(|m| m.captures_text())
@@ -4846,131 +4921,93 @@ impl App {
         self.modal_stack.retain(|m| m.kind() != kind);
     }
 
-    pub fn edit_menu(&self) -> Option<&EditMenu> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::EditMenu(menu) => Some(menu.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn edit_menu_mut(&mut self) -> Option<&mut EditMenu> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::EditMenu(menu) => Some(menu.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn selector(&self) -> Option<&Selector> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::Selector(s) => Some(s.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn selector_mut(&mut self) -> Option<&mut Selector> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::Selector(s) => Some(s.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn text_input(&self) -> Option<&TextInput> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::Text(t) => Some(t.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn text_input_mut(&mut self) -> Option<&mut TextInput> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::Text(t) => Some(t.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn date_picker(&self) -> Option<&DatePicker> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::Date(d) => Some(d.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn date_picker_mut(&mut self) -> Option<&mut DatePicker> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::Date(d) => Some(d.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn submit_dialog(&self) -> Option<&SubmitDialog> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::Submit(s) => Some(s.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn submit_dialog_mut(&mut self) -> Option<&mut SubmitDialog> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::Submit(s) => Some(s.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn review_threads(&self) -> Option<&ReviewThreadsOverview> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::ReviewThreads(r) => Some(r.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn review_threads_mut(&mut self) -> Option<&mut ReviewThreadsOverview> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::ReviewThreads(r) => Some(r.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn diff_view(&self) -> Option<&DiffView> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::Diff(d) => Some(d.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn diff_view_mut(&mut self) -> Option<&mut DiffView> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::Diff(d) => Some(d.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn review_submit(&self) -> Option<&crate::review_submit::ReviewSubmit> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::ReviewSubmit(r) => Some(r.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn review_submit_mut(&mut self) -> Option<&mut crate::review_submit::ReviewSubmit> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::ReviewSubmit(r) => Some(r.as_mut()),
-            _ => None,
-        })
-    }
-
-    pub fn configure(&self) -> Option<&ConfigureOverlay> {
-        self.modal_stack.iter().rev().find_map(|m| match m {
-            Modal::Configure(c) => Some(c.as_ref()),
-            _ => None,
-        })
-    }
-
-    pub fn configure_mut(&mut self) -> Option<&mut ConfigureOverlay> {
-        self.modal_stack.iter_mut().rev().find_map(|m| match m {
-            Modal::Configure(c) => Some(c.as_mut()),
-            _ => None,
-        })
-    }
+    define_modal_accessors!(
+        edit_menu,
+        edit_menu_mut,
+        close_edit_menu,
+        pop_edit_menu,
+        EditMenu,
+        EditMenu,
+        EditMenu
+    );
+    define_modal_accessors!(
+        selector,
+        selector_mut,
+        open_selector,
+        close_selector,
+        pop_selector,
+        Selector,
+        Selector,
+        Selector
+    );
+    define_modal_accessors!(
+        text_input,
+        text_input_mut,
+        open_text_input,
+        close_text_input,
+        pop_text_input,
+        Text,
+        Text,
+        TextInput
+    );
+    define_modal_accessors!(
+        date_picker,
+        date_picker_mut,
+        open_date_picker,
+        close_date_picker,
+        pop_date_picker,
+        Date,
+        Date,
+        DatePicker
+    );
+    define_modal_accessors!(
+        submit_dialog,
+        submit_dialog_mut,
+        open_submit_dialog,
+        close_submit_dialog,
+        pop_submit_dialog,
+        Submit,
+        Submit,
+        SubmitDialog
+    );
+    define_modal_accessors!(
+        review_threads,
+        review_threads_mut,
+        open_review_threads,
+        close_review_threads,
+        pop_review_threads,
+        ReviewThreads,
+        ReviewThreads,
+        ReviewThreadsOverview
+    );
+    define_modal_accessors!(
+        diff_view,
+        diff_view_mut,
+        close_diff_view,
+        pop_diff_view,
+        Diff,
+        Diff,
+        DiffView
+    );
+    define_modal_accessors!(
+        review_submit,
+        review_submit_mut,
+        open_review_submit,
+        close_review_submit,
+        pop_review_submit,
+        ReviewSubmit,
+        ReviewSubmit,
+        crate::review_submit::ReviewSubmit
+    );
+    define_modal_accessors!(
+        configure,
+        configure_mut,
+        close_configure,
+        pop_configure,
+        Configure,
+        Configure,
+        ConfigureOverlay
+    );
 
     pub fn show_help(&self) -> bool {
         self.modal_stack.iter().any(|m| matches!(m, Modal::Help))
@@ -4993,102 +5030,6 @@ impl App {
         self.prev_details_zoomed = self.details_zoomed;
         self.close_edit_menu();
         self.push_modal(Modal::EditMenu(Box::new(menu)));
-    }
-
-    pub fn close_edit_menu(&mut self) {
-        self.close_modal_kind(ModalKind::EditMenu);
-    }
-
-    pub fn pop_edit_menu(&mut self) -> Option<EditMenu> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::EditMenu(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::EditMenu(m) => Some(*m),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn open_selector(&mut self, selector: Selector) {
-        self.close_selector();
-        self.push_modal(Modal::Selector(Box::new(selector)));
-    }
-
-    pub fn close_selector(&mut self) {
-        self.close_modal_kind(ModalKind::Selector);
-    }
-
-    pub fn pop_selector(&mut self) -> Option<Selector> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::Selector(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::Selector(s) => Some(*s),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn open_text_input(&mut self, input: TextInput) {
-        self.close_text_input();
-        self.push_modal(Modal::Text(Box::new(input)));
-    }
-
-    pub fn close_text_input(&mut self) {
-        self.close_modal_kind(ModalKind::Text);
-    }
-
-    pub fn pop_text_input(&mut self) -> Option<TextInput> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::Text(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::Text(t) => Some(*t),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn open_date_picker(&mut self, picker: DatePicker) {
-        self.close_date_picker();
-        self.push_modal(Modal::Date(Box::new(picker)));
-    }
-
-    pub fn close_date_picker(&mut self) {
-        self.close_modal_kind(ModalKind::Date);
-    }
-
-    pub fn pop_date_picker(&mut self) -> Option<DatePicker> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::Date(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::Date(d) => Some(*d),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn open_submit_dialog(&mut self, dialog: SubmitDialog) {
-        self.close_submit_dialog();
-        self.push_modal(Modal::Submit(Box::new(dialog)));
     }
 
     /// Takes the answer to a merge-methods read: remembers a success for the
@@ -5143,94 +5084,10 @@ impl App {
         missing
     }
 
-    pub fn close_submit_dialog(&mut self) {
-        self.close_modal_kind(ModalKind::Submit);
-    }
-
-    pub fn pop_submit_dialog(&mut self) -> Option<SubmitDialog> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::Submit(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::Submit(s) => Some(*s),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
     pub fn open_diff_view(&mut self, diff: DiffView) {
-        self.close_diff_view();
-        self.push_modal(Modal::Diff(Box::new(diff)));
-    }
-
-    pub fn close_diff_view(&mut self) {
-        self.close_modal_kind(ModalKind::Diff);
-    }
-
-    pub fn pop_diff_view(&mut self) -> Option<DiffView> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::Diff(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::Diff(d) => Some(*d),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn open_review_threads(&mut self, overview: ReviewThreadsOverview) {
-        self.close_review_threads();
-        self.push_modal(Modal::ReviewThreads(Box::new(overview)));
-    }
-
-    pub fn close_review_threads(&mut self) {
-        self.close_modal_kind(ModalKind::ReviewThreads);
-    }
-
-    pub fn pop_review_threads(&mut self) -> Option<ReviewThreadsOverview> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::ReviewThreads(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::ReviewThreads(r) => Some(*r),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn open_review_submit(&mut self, review_submit: crate::review_submit::ReviewSubmit) {
-        self.close_review_submit();
-        self.push_modal(Modal::ReviewSubmit(Box::new(review_submit)));
-    }
-
-    pub fn close_review_submit(&mut self) {
-        self.close_modal_kind(ModalKind::ReviewSubmit);
-    }
-
-    pub fn pop_review_submit(&mut self) -> Option<crate::review_submit::ReviewSubmit> {
-        if let Some(idx) = self
-            .modal_stack
-            .iter()
-            .rposition(|m| matches!(m, Modal::ReviewSubmit(_)))
-        {
-            match self.modal_stack.remove(idx) {
-                Modal::ReviewSubmit(rs) => Some(*rs),
-                _ => None,
-            }
-        } else {
-            None
+        match self.diff_view_mut() {
+            Some(open) => *open = diff,
+            None => self.push_modal(Modal::Diff(Box::new(diff))),
         }
     }
 
@@ -5238,10 +5095,6 @@ impl App {
         if !self.focus_column_checklist() {
             self.push_modal(Modal::Configure(Box::default()));
         }
-    }
-
-    pub fn close_configure(&mut self) {
-        self.close_modal_kind(ModalKind::Configure);
     }
 
     pub fn open_help(&mut self) {
@@ -7130,7 +6983,7 @@ impl App {
     pub fn apply_config(&mut self) {
         self.key_buffer
             .set_sequences(key_sequences(&self.config.keybindings));
-        self.theme = self.config.resolve_theme();
+        self.theme = self.config.resolve_theme(self.terminal_appearance);
         self.icons = Arc::new(self.config.icons.icons());
 
         for tab in Tab::ALL {
@@ -7164,10 +7017,42 @@ impl App {
         }
     }
 
+    pub fn set_terminal_appearance(&mut self, appearance: Option<crate::config::Appearance>) {
+        self.terminal_appearance = appearance;
+        self.theme = self.config.resolve_theme(appearance);
+    }
+
+    /// Opens the theme picker on the configured preset.
+    pub fn open_theme_picker(&mut self) {
+        let current = self.config.theme_preset.as_deref().unwrap_or("default");
+        self.open_selector(Selector::theme_picker(
+            crate::config::all_theme_presets(),
+            current,
+        ));
+    }
+
+    /// Paints `theme` with the preset highlighted in the open theme picker,
+    /// and with the configured one again once the picker closes, whichever
+    /// key or click closed it. Runs before each draw.
+    pub fn sync_theme_preview(&mut self) {
+        let highlighted = self.selector().and_then(Selector::highlighted_theme);
+        if highlighted == self.theme_preview {
+            return;
+        }
+        self.theme = match highlighted.as_deref() {
+            Some(preset) => self
+                .config
+                .resolve_theme_with_preset(Some(preset), self.terminal_appearance),
+            None => self.config.resolve_theme(self.terminal_appearance),
+        };
+        self.theme_preview = highlighted;
+    }
+
     pub fn tick(&mut self) {
         let open_request = self.open_modal_request();
         self.notices.expire(std::time::Instant::now(), open_request);
     }
+
     pub fn unresolved_threads_count(&self) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -15734,6 +15619,70 @@ index 123456..789012 100644
         assert_eq!(app.theme.bg, ratatui::style::Color::Rgb(0x12, 0x34, 0x56));
         assert_eq!(app.theme.border, nord.border);
         assert_ne!(nord.bg, app.theme.bg);
+    }
+
+    fn app_with_theme_picker_open_on(preset: &str) -> App {
+        let mut app = App::default();
+        app.config.theme_preset = Some(preset.to_string());
+        app.apply_config();
+        app.open_theme_picker();
+        app
+    }
+
+    fn highlight_theme(app: &mut App, preset: &str) {
+        let selector = app.selector_mut().expect("theme picker is open");
+        selector.cursor_idx = selector
+            .get_filtered_items()
+            .iter()
+            .position(|item| item == preset)
+            .expect("preset is listed");
+    }
+
+    #[test]
+    fn theme_picker_previews_the_highlighted_preset_until_it_closes() {
+        let mut app = app_with_theme_picker_open_on("nord");
+        let nord = Theme::preset("nord").unwrap();
+
+        assert_eq!(
+            app.selector().and_then(Selector::highlighted_theme),
+            Some("nord".to_string())
+        );
+
+        highlight_theme(&mut app, "dracula");
+        app.sync_theme_preview();
+        assert_eq!(app.theme, Theme::preset("dracula").unwrap());
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+
+        app.close_selector();
+        app.sync_theme_preview();
+        assert_eq!(app.theme, nord);
+        assert_eq!(app.theme_preview, None);
+    }
+
+    #[test]
+    fn theme_picker_previews_auto_with_the_reported_appearance() {
+        let mut app = app_with_theme_picker_open_on("nord");
+        app.config.theme_light = "solarized-light".to_string();
+        app.terminal_appearance = Some(crate::config::Appearance::Light);
+
+        highlight_theme(&mut app, crate::config::AUTO_THEME_PRESET);
+        app.sync_theme_preview();
+
+        assert_eq!(app.theme, Theme::preset("solarized-light").unwrap());
+    }
+
+    #[test]
+    fn theme_picker_search_row_keeps_the_configured_theme() {
+        let mut app = app_with_theme_picker_open_on("nord");
+        highlight_theme(&mut app, "dracula");
+        app.sync_theme_preview();
+
+        let selector = app.selector_mut().unwrap();
+        selector.search_query = "no-such-theme".to_string();
+        selector.cursor_idx = 0;
+        app.sync_theme_preview();
+
+        assert_eq!(app.theme, Theme::preset("nord").unwrap());
     }
 
     #[test]

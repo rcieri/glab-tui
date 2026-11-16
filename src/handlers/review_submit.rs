@@ -26,7 +26,7 @@ pub fn handle_key(
         return false;
     };
     if overlay.is_submitting() {
-        app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+        app.push_modal(crate::app::Modal::ReviewSubmit(overlay));
         return true;
     }
     match key_event.code {
@@ -37,7 +37,7 @@ pub fn handle_key(
                 purpose: EditPurpose::ReviewSummary,
             });
             overlay.focus = ReviewSubmitFocus::Summary;
-            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+            app.push_modal(crate::app::Modal::ReviewSubmit(overlay));
         }
         KeyCode::Esc => {
             app.close_review_submit();
@@ -45,24 +45,24 @@ pub fn handle_key(
         }
         KeyCode::Tab => {
             overlay.focus = overlay.focus.stepped(1);
-            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+            app.push_modal(crate::app::Modal::ReviewSubmit(overlay));
         }
         KeyCode::BackTab => {
             overlay.focus = overlay.focus.stepped(-1);
-            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+            app.push_modal(crate::app::Modal::ReviewSubmit(overlay));
         }
         KeyCode::Enter if overlay.focus == ReviewSubmitFocus::CancelButton => {
             app.close_review_submit();
             return true;
         }
         KeyCode::Enter => {
-            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+            app.push_modal(crate::app::Modal::ReviewSubmit(overlay));
             submit(app, tx, fx);
             return true;
         }
         code => {
             move_or_edit(&mut overlay, code, key_event.modifiers);
-            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+            app.push_modal(crate::app::Modal::ReviewSubmit(overlay));
         }
     }
     true
@@ -204,25 +204,28 @@ pub fn finish(app: &mut App, mr_iid: u64, result: Result<(), String>) -> bool {
     if !matches {
         return false;
     }
-    let Some(mut overlay) = app.pop_review_submit() else {
+    let Some(overlay) = app.review_submit_mut() else {
         return false;
     };
     let SubmissionState::Submitting { log_row, drafts } = std::mem::take(&mut overlay.state) else {
         return false;
     };
+    let project_path = overlay.project_path.clone();
     app.settle_command(log_row, &result, None);
     match result {
         Ok(()) => {
             app.drop_sent_drafts(&drafts);
-            app.persist_draft_comments(&overlay.project_path, mr_iid);
+            app.persist_draft_comments(&project_path, mr_iid);
             app.in_review_mode = false;
             let mr_short = app.kind().term("mr_short");
             app.show_notice(format!("Review submitted on {mr_short} #{mr_iid}"));
+            app.close_review_submit();
             true
         }
         Err(error) => {
-            overlay.state = SubmissionState::Failed(error);
-            app.push_modal(crate::app::Modal::ReviewSubmit(Box::new(overlay)));
+            if let Some(overlay) = app.review_submit_mut() {
+                overlay.state = SubmissionState::Failed(error);
+            }
             false
         }
     }

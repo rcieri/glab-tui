@@ -29,7 +29,7 @@ pub fn handle_key(
             file_suffix: ".md".to_string(),
             purpose: EditPurpose::TextInput,
         });
-        app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+        app.push_modal(crate::app::Modal::Text(text_input));
         return;
     }
     match key_event.code {
@@ -44,7 +44,7 @@ pub fn handle_key(
             if let Some(buffer) = text_input.buffer_mut() {
                 buffer.apply_edit_key(key_event.code);
             }
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Enter => {
             let value = text_input.value().to_string();
@@ -274,7 +274,7 @@ pub fn handle_key(
             }
         }
         _ => {
-            app.push_modal(crate::app::Modal::Text(Box::new(text_input)));
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
     }
 }

@@ -62,22 +62,22 @@ pub fn handle_key(
         match key_event.code {
             KeyCode::Enter | KeyCode::Esc => {
                 selector.is_filtering = false;
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             KeyCode::Backspace => {
                 selector.search_query.pop();
                 selector.cursor_idx = 0;
                 selector.state.select(Some(0));
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             KeyCode::Char(c) => {
                 selector.search_query.push(c);
                 selector.cursor_idx = 0;
                 selector.state.select(Some(0));
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             _ => {
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
         }
     } else {
@@ -95,7 +95,7 @@ pub fn handle_key(
                     selector.search_query.clear();
                     selector.cursor_idx = 0;
                     selector.state.select(Some(0));
-                    app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                    app.push_modal(crate::app::Modal::Selector(selector));
                 }
                 // else: leave the selector taken out so the
                 // caller closes it (EditMenu stays open).
@@ -104,14 +104,14 @@ pub fn handle_key(
                 if selector.purpose.has_filter_bar() {
                     selector.is_filtering = true;
                 }
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorNext) => {
                 if !filtered_items.is_empty() {
                     selector.cursor_idx = (selector.cursor_idx + 1) % filtered_items.len();
                     selector.state.select(Some(selector.cursor_idx));
                 }
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorPrevious) => {
                 if !filtered_items.is_empty() {
@@ -122,7 +122,7 @@ pub fn handle_key(
                     }
                     selector.state.select(Some(selector.cursor_idx));
                 }
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             // The selector does not store its list height, so a
             // half page is a fixed number of rows.
@@ -132,7 +132,7 @@ pub fn handle_key(
                 .matches(Action::GlobalScrollHalfPageDown, key_event) =>
             {
                 selector.move_by(true, SELECTOR_HALF_PAGE_ROWS);
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             _ if app
                 .config
@@ -140,7 +140,7 @@ pub fn handle_key(
                 .matches(Action::GlobalScrollHalfPageUp, key_event) =>
             {
                 selector.move_by(false, SELECTOR_HALF_PAGE_ROWS);
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorToggle) => {
                 if !filtered_items.is_empty() {
@@ -172,7 +172,7 @@ pub fn handle_key(
                         selector.selected_items.insert(item.clone());
                     }
                 }
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorConfirm) => {
                 match selector.purpose.clone() {
@@ -468,13 +468,9 @@ pub fn handle_key(
                     }
 
                     app::SelectorPurpose::Theme => {
-                        let filtered_items = selector.get_filtered_items();
-                        let mut selected_val = selector.selected_items.iter().next().cloned();
-                        if selected_val.is_none() && !filtered_items.is_empty() {
-                            selected_val = Some(filtered_items[selector.cursor_idx].clone());
-                        }
+                        let picked = selector.highlighted_theme();
                         app.close_selector();
-                        if let Some(name) = selected_val {
+                        if let Some(name) = picked {
                             app.config.theme_preset = Some(name);
                             app.apply_config();
                         }
@@ -1266,7 +1262,7 @@ pub fn handle_key(
                 }
             }
             _ => {
-                app.push_modal(crate::app::Modal::Selector(Box::new(selector)));
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
         }
     }

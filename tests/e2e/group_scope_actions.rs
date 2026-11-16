@@ -111,19 +111,19 @@ fn own_jobs_key_in_github_org_scope_fetches_from_the_runs_repository() {
         .expect("the org's run is listed");
     // Highlighting a run already fetches its jobs for the preview, so only
     // the calls made after Alt+j count.
-    session.settle(1000);
     let row_project_jobs = "run view 12345 --json jobs --jq .jobs -R acme/project-b";
+    session
+        .wait_for_cli_call(row_project_jobs, 5000)
+        .expect("the preview fetches the highlighted run's jobs");
     let before = session.get_cli_calls().matches(row_project_jobs).count();
 
     session.send_input(b"\x1bj"); // Alt+j
-    session.settle(1500);
+    session
+        .wait_for_cli_call_count(row_project_jobs, before + 1, 5000)
+        .expect("Alt+j fetches jobs from the run's repository");
+    session.settle(300);
 
     let calls = session.get_cli_calls();
-    let after = calls.matches(row_project_jobs).count();
-    assert!(
-        after > before,
-        "Alt+j fetches jobs from the run's repository (before {before}, after {after}); calls:\n{calls}"
-    );
     assert!(
         !calls
             .lines()

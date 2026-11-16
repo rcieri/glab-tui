@@ -2,12 +2,16 @@
   {
     "id": 100,
     "iid": 2,
-    "status": "success",
     "ref": "main",
-    "tag": false,
     "sha": "f00dcafe",
     "created_at": "2026-07-06T10:00:00Z",
     "updated_at": "2026-07-06T10:05:00Z",
+    "user": {
+      "id": 2,
+      "username": "alice",
+      "name": "Alice",
+      "state": "active"
+    },
     "environment": {
       "id": 1,
       "name": "production",
@@ -15,22 +19,27 @@
     },
     "deployable": {
       "id": 501,
+      "status": "success",
+      "stage": "deploy",
       "name": "deploy-production",
-      "status": "success"
+      "ref": "main",
+      "tag": false
     },
-    "user": {
-      "username": "alice"
-    }
+    "status": "success"
   },
   {
     "id": 99,
     "iid": 1,
-    "status": "failed",
-    "ref": "release-1.0",
-    "tag": false,
+    "ref": "v1.0.1",
     "sha": "0ldc0de1",
     "created_at": "2026-07-01T09:00:00Z",
     "updated_at": "2026-07-01T09:05:00Z",
+    "user": {
+      "id": 3,
+      "username": "bob",
+      "name": "Bob",
+      "state": "active"
+    },
     "environment": {
       "id": 1,
       "name": "production",
@@ -38,12 +47,12 @@
     },
     "deployable": {
       "id": 500,
-      "name": "deploy-production",
-      "status": "failed"
+      "status": "failed",
+      "stage": "deploy",
+      "name": "deploy-hotfix",
+      "ref": "v1.0.1",
+      "tag": true
     },
-    "description": "Hotfix rollout for the login outage",
-    "user": {
-      "username": "bob"
-    }
+    "status": "failed"
   }
 ]

@@ -552,7 +552,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.label_colors = colors
                         .iter()
                         .filter_map(|(name, hex)| {
-                            crate::config::hex_to_color(hex).map(|c| (name.clone(), c))
+                            crate::config::parse_color(hex).map(|c| (name.clone(), c))
                         })
                         .collect();
                 }
@@ -875,12 +875,12 @@ fn refetch_after_mutation(
             app.scoped_sender(tx.clone()),
         );
     }
-    let (Some(diff_view), Some(client)) = (app.diff_view().cloned(), app.gitlab_client.clone())
-    else {
+    let (Some((project_context, mr_iid)), Some(client)) = (
+        app.diff_view().map(|d| (d.project_path.clone(), d.mr_iid)),
+        app.gitlab_client.clone(),
+    ) else {
         return;
     };
-    let project_context = diff_view.project_path.clone();
-    let mr_iid = diff_view.mr_iid;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
         if let Ok((diff_view, comments)) =

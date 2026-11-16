@@ -97,7 +97,7 @@ pub fn handle_key(
         match key_event.code {
             KeyCode::Esc | KeyCode::Enter => {
                 menu.editing = false;
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Left => {
                 if menu.selected_idx < menu.fields.len()
@@ -113,7 +113,7 @@ pub fn handle_key(
                         }
                     }
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Right => {
                 if menu.selected_idx < menu.fields.len()
@@ -130,7 +130,7 @@ pub fn handle_key(
                         }
                     }
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Home => {
                 if menu.selected_idx < menu.fields.len()
@@ -138,7 +138,7 @@ pub fn handle_key(
                 {
                     menu.cursor_pos = 0;
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::End => {
                 if menu.selected_idx < menu.fields.len()
@@ -146,7 +146,7 @@ pub fn handle_key(
                 {
                     menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Backspace => {
                 if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
@@ -158,7 +158,7 @@ pub fn handle_key(
                         menu.cursor_pos = byte_idx;
                     }
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Delete => {
                 if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
@@ -167,7 +167,7 @@ pub fn handle_key(
                         f.value.remove(menu.cursor_pos);
                     }
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Char(c) if key_event.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' => {
                 let field_name = if menu.selected_idx < menu.fields.len() {
@@ -184,14 +184,14 @@ pub fn handle_key(
                     } else {
                         String::new()
                     };
-                    app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                    app.push_modal(crate::app::Modal::EditMenu(menu));
                     fx.suspend(ForegroundJob::Edit {
                         text: desc,
                         file_suffix: ".md".to_string(),
                         purpose: EditPurpose::MenuDescription,
                     });
                 } else {
-                    app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                    app.push_modal(crate::app::Modal::EditMenu(menu));
                 }
             }
             KeyCode::Char(c) => {
@@ -203,11 +203,11 @@ pub fn handle_key(
                         menu.cursor_pos += c.len_utf8();
                     }
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             _ => {
                 // Disable all navigation buttons in edit mode
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
         }
         return;
@@ -250,16 +250,16 @@ pub fn handle_key(
             if menu.selected_idx < menu.fields.len() {
                 menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
             }
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         // J/K: scroll description pane
         KeyCode::Char('J') => {
             menu.desc_scroll = menu.desc_scroll.saturating_add(1);
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         KeyCode::Char('K') => {
             menu.desc_scroll = menu.desc_scroll.saturating_sub(1);
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
             let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
@@ -290,7 +290,7 @@ pub fn handle_key(
             if menu.selected_idx < menu.fields.len() {
                 menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
             }
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         _ if is_submit_edit || key_event.code == KeyCode::Enter => {
             if is_submit_edit {
@@ -306,7 +306,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -396,7 +396,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -701,7 +701,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -773,7 +773,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -866,7 +866,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -923,7 +923,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -1581,7 +1581,7 @@ pub fn handle_key(
                         Ok(milestone) => milestone,
                         Err(e) => {
                             app.show_error(e.to_string());
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -1632,12 +1632,12 @@ pub fn handle_key(
                 if f.kind == crate::app::FieldType::ReadOnly
                     || f.kind == crate::app::FieldType::Section
                 {
-                    app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                    app.push_modal(crate::app::Modal::EditMenu(menu));
                     return;
                 }
             } else if menu.selected_idx != menu.fields.len() + 1 {
                 // Spacer row between fields and submit.
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 return;
             }
 
@@ -1659,7 +1659,7 @@ pub fn handle_key(
                         menu.cursor_pos = f.value.len();
                     }
                 }
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 return;
             }
 
@@ -2064,7 +2064,7 @@ pub fn handle_key(
                     request,
                 };
 
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 app.open_selector(sel);
 
                 if let (Some(request), Some(client)) = (request, &app.gitlab_client) {
@@ -2145,14 +2145,14 @@ pub fn handle_key(
                                 },
                                 request: None,
                             };
-                            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             app.open_selector(sel);
                             return;
                         }
                     }
                 }
                 // Otherwise inline editing handles Description — Enter does nothing
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 return;
             }
 
@@ -2197,7 +2197,7 @@ pub fn handle_key(
                     &current_val,
                     action,
                 );
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 app.open_date_picker(dp);
                 return;
             }
@@ -2260,7 +2260,7 @@ pub fn handle_key(
                 let ti =
                     crate::app::TextInput::new(format!("Edit {field_name}"), current_val, action);
 
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 app.open_text_input(ti);
             }
         }
@@ -2288,7 +2288,7 @@ pub fn handle_key(
                     }
                 }
             }
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         KeyCode::Char(c) if key_event.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' => {
             let field_name = if menu.selected_idx < menu.fields.len() {
@@ -2305,14 +2305,14 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 fx.suspend(ForegroundJob::Edit {
                     text: desc,
                     file_suffix: ".md".to_string(),
                     purpose: EditPurpose::MenuDescription,
                 });
             } else {
-                app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
         }
         KeyCode::Char(c) => {
@@ -2335,10 +2335,10 @@ pub fn handle_key(
                     }
                 }
             }
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         _ => {
-            app.push_modal(crate::app::Modal::EditMenu(Box::new(menu)));
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
     }
 }

@@ -1,19 +1,25 @@
 //! Checks the raw `gh api` / `glab api` calls the CLI mocks record against
 //! the pinned API descriptions in `tests/api-descriptions/`: the endpoint
-//! must exist, the method must be one the description gives it, and every
-//! query parameter must be one the operation takes. `ApiRequest::read` reads
-//! each call once and hands a GraphQL call to `api_graphql`; request bodies
-//! are not read.
+//! must exist, the method must be one the description gives it, every
+//! query parameter must be one the operation takes, and the request body must
+//! fit the operation's: no field the description lacks where it lists the
+//! fields, and every value of a type it allows. The body is what the call read
+//! with `--input -`, else its `-f` / `-F` fields when it is not a GET.
+//! `ApiRequest::read` reads each call once and hands a GraphQL call to
+//! `api_graphql`.
 //!
 //! What the description cannot confirm is excused through the shared
 //! `Ledger`, by the keys `<host> <METHOD> <template>` (an operation the
 //! description lacks, the ones the generator inputs mark `spec_absent_ok`) and
 //! `<host> <METHOD> <template> query <name>` (a query parameter it does not
-//! list). Both are looked up as finding first, then as exception.
+//! list) and `<host> <METHOD> <template> body <field>` (a body field it
+//! lacks or types otherwise, `comments[].path` for a field of an array's
+//! items; `body` alone for a body the operation does not take). All are
+//! looked up as finding first, then as exception.
 
 use crate::api_graphql;
 use crate::api_lists::{Kind, Ledger};
-use crate::cli_contract::recorded_argvs;
+use crate::cli_contract::recorded_calls;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -95,6 +101,8 @@ impl Host {
 enum Operation {
     Described {
         query: BTreeSet<String>,
+        /// The schema of the JSON request body, when the operation takes one.
+        body: Option<Value>,
     },
     /// The generator inputs mark it `spec_absent_ok`: it exists, the
     /// description lacks it.
@@ -120,10 +128,13 @@ impl Description {
                     .filter_map(|parameter| parameter["name"].as_str())
                     .map(str::to_string)
                     .collect();
+                let body = operation
+                    .pointer("/requestBody/content/application~1json/schema")
+                    .cloned();
                 paths
                     .entry(template.clone())
                     .or_default()
-                    .insert(method.to_uppercase(), Operation::Described { query });
+                    .insert(method.to_uppercase(), Operation::Described { query, body });
             }
         }
         let input: Value = serde_json::from_str(generator_input).expect("input is JSON");
@@ -229,6 +240,9 @@ pub struct ApiCall {
     /// The endpoint's path, with the host's prefix and without its query.
     path: String,
     query: Vec<String>,
+    /// The `-f` / `-F` fields of a call that is not a GET, as JSON values.
+    fields: Vec<(String, Value)>,
+    reads_body_from_input: bool,
 }
 
 impl<'a> ApiRequest<'a> {
@@ -242,7 +256,7 @@ impl<'a> ApiRequest<'a> {
         let mut method = None;
         let mut fields = Vec::new();
         let mut graphql_query = None;
-        let mut has_input = false;
+        let mut reads_body_from_input = false;
         let mut endpoint = None;
         let mut words = argv[2..].iter().copied();
         while let Some(word) = words.next() {
@@ -270,13 +284,21 @@ impl<'a> ApiRequest<'a> {
             };
             match flag {
                 "-X" | "--method" => method = Some(value.to_uppercase()),
-                "-f" | "--raw-field" | "-F" | "--field" | "--form" => {
-                    if let Some(query) = value.strip_prefix("query=") {
-                        graphql_query.get_or_insert(query);
+                "-f" | "--raw-field" => {
+                    let (name, value) = value.split_once('=').unwrap_or((value, ""));
+                    if name == "query" {
+                        graphql_query.get_or_insert(value);
                     }
-                    fields.push(value.split('=').next().unwrap_or_default().to_string())
+                    fields.push((name.to_string(), Value::String(value.to_string())));
                 }
-                "--input" => has_input = true,
+                "-F" | "--field" | "--form" => {
+                    let (name, value) = value.split_once('=').unwrap_or((value, ""));
+                    if name == "query" {
+                        graphql_query.get_or_insert(value);
+                    }
+                    fields.push((name.to_string(), typed_field(value)));
+                }
+                "--input" => reads_body_from_input = true,
                 _ => {}
             }
         }
@@ -287,7 +309,7 @@ impl<'a> ApiRequest<'a> {
                 query: graphql_query,
             });
         }
-        let has_body = has_input || !fields.is_empty();
+        let has_body = reads_body_from_input || !fields.is_empty();
         let method = method.unwrap_or_else(|| if has_body { "POST" } else { "GET" }.to_string());
         let (path, query) = endpoint.split_once('?').unwrap_or((endpoint, ""));
         let mut query: Vec<String> = query
@@ -301,15 +323,202 @@ impl<'a> ApiRequest<'a> {
             })
             .collect();
         if method == "GET" {
-            query.extend(fields);
+            query.extend(fields.drain(..).map(|(name, _)| name));
         }
         Some(ApiRequest::Rest(ApiCall {
             host,
             method,
             path: format!("{}{}", host.path_prefix(), path.trim_start_matches('/')),
             query,
+            fields,
+            reads_body_from_input,
         }))
     }
+}
+
+impl ApiCall {
+    /// The request body: what `stdin` holds when the call reads `--input`,
+    /// else its fields. `None` when it sends none, or reads a file the
+    /// mocks do not record.
+    fn body(&self, stdin: Option<&str>) -> Option<Result<Value, String>> {
+        if self.reads_body_from_input {
+            return stdin.map(|body| serde_json::from_str(body).map_err(|e| e.to_string()));
+        }
+        if self.fields.is_empty() {
+            return None;
+        }
+        Some(Ok(Value::Object(self.fields.iter().cloned().collect())))
+    }
+}
+
+/// A `-F` value as `gh api` and `glab api` send it: `true`, `false`, `null`
+/// and integers as JSON literals, anything else as a string.
+fn typed_field(value: &str) -> Value {
+    match value {
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        "null" => Value::Null,
+        _ => value
+            .parse::<i64>()
+            .map_or_else(|_| Value::String(value.to_string()), Value::from),
+    }
+}
+
+/// Where a body value does not fit its schema.
+enum Mismatch {
+    /// A field the schema does not list, on a level that lists its fields.
+    Unknown { path: String },
+    /// A value of a type the schema does not allow.
+    Type {
+        path: String,
+        sent: &'static str,
+        allowed: String,
+    },
+}
+
+/// The mismatches of `value` against `schema`, the value found at `path`.
+/// Of several branches, the one with the fewest mismatches is reported.
+fn mismatches(schema: &Value, value: &Value, path: &str, out: &mut Vec<Mismatch>) {
+    for key in ["oneOf", "anyOf"] {
+        let Some(branches) = schema[key].as_array() else {
+            continue;
+        };
+        let mut closest: Option<Vec<Mismatch>> = None;
+        for branch in branches {
+            let mut found = Vec::new();
+            mismatches(branch, value, path, &mut found);
+            if found.is_empty() {
+                return;
+            }
+            if closest.as_ref().is_none_or(|best| found.len() < best.len()) {
+                closest = Some(found);
+            }
+        }
+        out.extend(closest.unwrap_or_default());
+        return;
+    }
+    let allowed: Vec<&str> = match &schema["type"] {
+        Value::String(one) => vec![one.as_str()],
+        Value::Array(many) => many.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    if !allowed.is_empty() && !allowed.iter().any(|kind| is_of_type(value, kind)) {
+        out.push(Mismatch::Type {
+            path: path.to_string(),
+            sent: type_of(value),
+            allowed: allowed.join(" or "),
+        });
+        return;
+    }
+    match value {
+        Value::Object(fields) => {
+            let listed = schema["properties"].as_object();
+            let extra = &schema["additionalProperties"];
+            for (name, field) in fields {
+                let field_path = if path.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{path}.{name}")
+                };
+                match listed.and_then(|listed| listed.get(name)) {
+                    Some(field_schema) => mismatches(field_schema, field, &field_path, out),
+                    None if extra.is_object() => mismatches(extra, field, &field_path, out),
+                    None if listed.is_some() && extra != &Value::Bool(true) => {
+                        out.push(Mismatch::Unknown { path: field_path })
+                    }
+                    None => {}
+                }
+            }
+        }
+        Value::Array(items) if schema["items"].is_object() => {
+            for item in items {
+                mismatches(&schema["items"], item, &format!("{path}[]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_of_type(value: &Value, kind: &str) -> bool {
+    match kind {
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "number" => value.is_number(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => true,
+    }
+}
+
+/// The type of `value`, worded for a message.
+fn type_of(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(n) if n.is_i64() || n.is_u64() => "an integer",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// What is wrong with the body a call sent to the operation `operation_key`,
+/// whose body schema is `schema`, one message each.
+fn body_problems(
+    operation_key: &str,
+    schema: Option<&Value>,
+    body: Option<Result<Value, String>>,
+    ledger: &Ledger,
+) -> Vec<String> {
+    let Some(body) = body else {
+        return Vec::new();
+    };
+    let (host, operation) = operation_key.split_once(' ').unwrap_or_default();
+    let Some(schema) = schema else {
+        let key = format!("{operation_key} body");
+        if excused(ledger, &key) {
+            return Vec::new();
+        }
+        return vec![format!(
+            "{host}: {operation} takes no request body (list it as `{key}`)"
+        )];
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(error) => {
+            return vec![format!(
+                "{host}: {operation}: the body is not JSON: {error}"
+            )];
+        }
+    };
+    let mut found = Vec::new();
+    mismatches(schema, &body, "", &mut found);
+    found
+        .into_iter()
+        .filter_map(|mismatch| {
+            let (path, problem) = match mismatch {
+                Mismatch::Unknown { path } => (path, "is not in the description".to_string()),
+                Mismatch::Type {
+                    path,
+                    sent,
+                    allowed,
+                } => (path, format!("is {sent}, the description says {allowed}")),
+            };
+            let (subject, key) = if path.is_empty() {
+                ("the body".to_string(), format!("{operation_key} body"))
+            } else {
+                (
+                    format!("the body field `{path}`"),
+                    format!("{operation_key} body {path}"),
+                )
+            };
+            (!excused(ledger, &key))
+                .then(|| format!("{host}: {operation}: {subject} {problem} (list it as `{key}`)"))
+        })
+        .collect()
 }
 
 pub fn excused(ledger: &Ledger, key: &str) -> bool {
@@ -318,17 +527,19 @@ pub fn excused(ledger: &Ledger, key: &str) -> bool {
         .any(|kind| ledger.excuse(kind, key).is_some())
 }
 
-/// What is wrong with the call `argv`, one message each.
-fn check(argv: &[&str], ledger: &Ledger) -> Vec<String> {
+/// What is wrong with the call `argv`, which read `stdin` as its body, one
+/// message each.
+fn check(argv: &[&str], stdin: Option<&str>, ledger: &Ledger) -> Vec<String> {
     match ApiRequest::read(argv) {
-        Some(ApiRequest::Rest(call)) => rest_problems(&call, ledger),
+        Some(ApiRequest::Rest(call)) => rest_problems(&call, stdin, ledger),
         Some(ApiRequest::Graphql { host, query }) => api_graphql::problems(host, query, ledger),
         None => Vec::new(),
     }
 }
 
-/// What is wrong with the REST call `call`, one message each.
-fn rest_problems(call: &ApiCall, ledger: &Ledger) -> Vec<String> {
+/// What is wrong with the REST call `call`, which read `stdin` as its body,
+/// one message each.
+fn rest_problems(call: &ApiCall, stdin: Option<&str>, ledger: &Ledger) -> Vec<String> {
     let description = match call.host {
         Host::GitHub => &*GITHUB,
         Host::GitLab => &*GITLAB,
@@ -378,7 +589,7 @@ fn rest_problems(call: &ApiCall, ledger: &Ledger) -> Vec<String> {
         Operation::Missing => vec![format!(
             "{host}: {method} {template} is not in the description (list it as `{operation_key}`)"
         )],
-        Operation::Described { query } => call
+        Operation::Described { query, body } => call
             .query
             .iter()
             .map(|name| {
@@ -396,6 +607,12 @@ fn rest_problems(call: &ApiCall, ledger: &Ledger) -> Vec<String> {
                     )
                 })
             })
+            .chain(body_problems(
+                &operation_key,
+                body.as_ref(),
+                call.body(stdin),
+                ledger,
+            ))
             .collect(),
     }
 }
@@ -404,11 +621,11 @@ fn rest_problems(call: &ApiCall, ledger: &Ledger) -> Vec<String> {
 /// `<log_path>.argv.d/`, REST and GraphQL.
 pub fn problems_in_log(log_path: &Path) -> Vec<String> {
     let ledger = Ledger::shipped();
-    let mut problems: Vec<String> = recorded_argvs(log_path)
+    let mut problems: Vec<String> = recorded_calls(log_path)
         .iter()
-        .flat_map(|argv| {
-            let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-            check(&argv, &ledger)
+        .flat_map(|call| {
+            let argv: Vec<&str> = call.argv.iter().map(String::as_str).collect();
+            check(&argv, call.stdin.as_deref(), &ledger)
         })
         .collect();
     problems.sort();
@@ -429,7 +646,7 @@ mod tests {
     }
 
     fn problems_with(argv: &[&str], ledger: &Ledger) -> Vec<String> {
-        check(argv, ledger)
+        check(argv, None, ledger)
     }
 
     #[test]
@@ -686,6 +903,193 @@ mod tests {
                 &listed
             ),
             Vec::<String>::new()
+        );
+    }
+
+    fn problems_with_body(argv: &[&str], body: &str) -> Vec<String> {
+        check(
+            argv,
+            Some(body),
+            &Ledger::with_lists(r#"{"exceptions": [], "findings": []}"#),
+        )
+    }
+
+    const CREATE_REF: [&str; 5] = ["gh", "api", "repos/o/r/git/refs", "--input", "-"];
+
+    #[test]
+    fn a_body_field_the_description_lacks_is_refused() {
+        assert_eq!(
+            problems_with_body(
+                &CREATE_REF,
+                r#"{"ref": "refs/heads/x", "sha": "a1", "frob": 1}"#
+            ),
+            [
+                "github: POST /repos/{owner}/{repo}/git/refs: the body field `frob` is not in the \
+                 description (list it as `github POST /repos/{owner}/{repo}/git/refs body frob`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_body_field_of_the_wrong_type_is_refused() {
+        assert_eq!(
+            problems_with_body(&CREATE_REF, r#"{"ref": 7, "sha": "a1"}"#),
+            [
+                "github: POST /repos/{owner}/{repo}/git/refs: the body field `ref` is an integer, \
+                 the description says string (list it as `github POST /repos/{owner}/{repo}/git/refs body ref`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_field_inside_an_array_of_the_body_is_named_by_its_path() {
+        let review = ["gh", "api", "repos/o/r/pulls/2/reviews", "--input", "-"];
+        assert_eq!(
+            problems_with_body(
+                &review,
+                r#"{"event": "COMMENT", "comments": [{"path": "a", "body": "b", "frob": 1}]}"#
+            ),
+            [
+                "github: POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews: the body field \
+                 `comments[].frob` is not in the description (list it as \
+                 `github POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews body comments[].frob`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn fields_given_as_flags_are_the_body() {
+        let milestone = |field: &'static str, value: &'static str| {
+            check(
+                &[
+                    "gh",
+                    "api",
+                    "repos/o/r/milestones",
+                    "-f",
+                    "title=t",
+                    field,
+                    value,
+                ],
+                None,
+                &Ledger::with_lists(r#"{"exceptions": [], "findings": []}"#),
+            )
+        };
+        assert_eq!(milestone("-f", "due_on=5"), Vec::<String>::new());
+        assert_eq!(
+            milestone("-F", "due_on=5"),
+            [
+                "github: POST /repos/{owner}/{repo}/milestones: the body field `due_on` is an \
+                 integer, the description says string (list it as \
+                 `github POST /repos/{owner}/{repo}/milestones body due_on`)"
+            ]
+        );
+        assert_eq!(
+            milestone("-f", "frob=x"),
+            [
+                "github: POST /repos/{owner}/{repo}/milestones: the body field `frob` is not in \
+                 the description (list it as `github POST /repos/{owner}/{repo}/milestones body frob`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_body_to_an_operation_that_takes_none_is_refused() {
+        assert_eq!(
+            problems_with_body(
+                &[
+                    "gh",
+                    "api",
+                    "-X",
+                    "PATCH",
+                    "notifications/threads/1",
+                    "--input",
+                    "-"
+                ],
+                "{}"
+            ),
+            [
+                "github: PATCH /notifications/threads/{thread_id} takes no request body \
+                 (list it as `github PATCH /notifications/threads/{thread_id} body`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_body_that_is_not_json_is_refused() {
+        assert_eq!(
+            problems_with_body(&CREATE_REF, "ref=x"),
+            [
+                "github: POST /repos/{owner}/{repo}/git/refs: the body is not JSON: \
+              expected value at line 1 column 1"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_listed_body_field_passes() {
+        let listed = Ledger::with_lists(
+            r#"{"exceptions": [
+                {"key": "github POST /repos/{owner}/{repo}/git/refs body frob", "reason": "r"}],
+                "findings": []}"#,
+        );
+        assert_eq!(
+            check(
+                &CREATE_REF,
+                Some(r#"{"ref": "x", "sha": "a", "frob": 1}"#),
+                &listed
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    /// The mismatches of `value` against `schema`, each as its path and, for
+    /// a type mismatch, the types allowed.
+    fn mismatches_of(schema: Value, value: Value) -> Vec<String> {
+        let mut found = Vec::new();
+        mismatches(&schema, &value, "", &mut found);
+        found
+            .into_iter()
+            .map(|mismatch| match mismatch {
+                Mismatch::Unknown { path } => format!("{path}: unknown"),
+                Mismatch::Type { path, allowed, .. } => format!("{path}: {allowed}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_value_that_fits_one_branch_fits() {
+        let schema = serde_json::json!({"oneOf": [
+            {"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": false},
+            {"type": "object", "properties": {"b": {"type": "integer"}}, "additionalProperties": false},
+        ]});
+        assert_eq!(
+            mismatches_of(schema, serde_json::json!({"b": 1})),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_value_that_fits_no_branch_gets_the_closest_branch_reported() {
+        let schema = serde_json::json!({"anyOf": [
+            {"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": false},
+            {"type": "object", "properties": {"b": {"type": "integer"}, "c": {"type": "string"}},
+             "additionalProperties": false},
+        ]});
+        assert_eq!(
+            mismatches_of(schema, serde_json::json!({"b": "y", "c": "z"})),
+            ["b: integer"]
+        );
+    }
+
+    #[test]
+    fn null_fits_only_a_nullable_field() {
+        let schema = serde_json::json!({"type": "object", "properties": {
+            "nullable": {"type": ["string", "null"]},
+            "plain": {"type": "string"},
+        }, "additionalProperties": false});
+        assert_eq!(
+            mismatches_of(schema, serde_json::json!({"nullable": null, "plain": null})),
+            ["plain: string"]
         );
     }
 

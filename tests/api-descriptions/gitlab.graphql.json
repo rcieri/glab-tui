@@ -249,6 +249,11 @@
             "first",
             "last"
           ],
+          "deprecated_args": {
+            "blobPath": "Status: Experiment. Introduced in GitLab 17.7.",
+            "ignoredReviewerUsername": "Status: Experiment. Introduced in GitLab 18.0.",
+            "labels": "Use `labelName`. Deprecated in GitLab 17.1."
+          },
           "type": "MergeRequestConnection"
         },
         "pipelines": {
@@ -289,6 +294,10 @@
             "first",
             "last"
           ],
+          "deprecated_args": {
+            "active": "Renamed. Use `paused` instead. Deprecated in GitLab 14.8.",
+            "ownerFullPath": "Status: Experiment. Introduced in GitLab 17.8."
+          },
           "type": "CiRunnerConnection"
         }
       },

@@ -32,9 +32,16 @@ lint:
 test:
     cargo test --lib --bin glab-tui
 
-# Run end-to-end tests, one process per test (requires cargo-nextest)
+# Run end-to-end tests, one process per test, then check that every entry of tests/api-lists.json was hit (requires cargo-nextest)
 e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GLAB_TUI_API_HITS_DIR="$(mktemp -d)"
+    export GLAB_TUI_API_HITS_DIR
+    trap 'rm -rf "$GLAB_TUI_API_HITS_DIR"' EXIT
     cargo nextest run --test e2e --no-fail-fast
+    cargo nextest run --test e2e --run-ignored ignored-only --success-output final \
+        -E 'test(=api_lists::every_list_entry_was_hit_by_some_test)'
 
 # Check advisories, licenses, duplicate versions and sources (requires cargo-deny)
 deny:

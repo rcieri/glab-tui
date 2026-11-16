@@ -3,6 +3,7 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod api_lists;
 mod cli_contract;
 mod config;
 mod custom_keybindings;

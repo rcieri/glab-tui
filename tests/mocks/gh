@@ -68,7 +68,10 @@ elif [[ "$*" == "run list"* ]]; then
     echo '[{"databaseId": 12345}]'
     exit 0
 elif [[ "$*" == "run view "*"--json jobs"* ]]; then
-    echo '[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success", "url": "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321"}]'
+    cat <<'EOF'
+[{"databaseId": 54321, "name": "rspec", "status": "completed", "conclusion": "success",
+  "url": "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321"}]
+EOF
     exit 0
 elif [[ "$*" == "issue list"* || "$*" == "label list"* ]]; then
     echo "[]"
@@ -89,9 +92,9 @@ fi
 # accepted as pending, and polling its uuid reports the merge done.
 if [[ "$*" == *"/merge-async"* ]]; then
     if [[ " $* " == *" -X PUT "* ]]; then
-        echo '{"status":"pending","details":{"message":"Merge request accepted","uuid":"mock-merge-uuid","merge_method":"squash","merge_action":"default","expected_head_sha":"0000000000000000000000000000000000000000"}}'
+        cat "$FIXTURES_DIR/gh_merge_async_pending.json"
     else
-        echo '{"status":"merged","details":{"message":"Pull request merged","sha":"1111111111111111111111111111111111111111"}}'
+        cat "$FIXTURES_DIR/gh_merge_async_merged.json"
     fi
     exit 0
 fi
@@ -104,36 +107,32 @@ if [[ "$*" == "pr list"* ]]; then
 fi
 
 if [[ "$*" == "api graphql"*"entries(first"* ]]; then
-    STACK_ENTRIES='"entries":{"nodes":[
-        {"position":1,"pullRequest":{"number":10,"title":"Stack bottom","state":"OPEN","isDraft":false}},
-        {"position":2,"pullRequest":{"number":11,"title":"Stack top","state":"OPEN","isDraft":false}}]}'
     case "$*" in
-        *"pullRequest(number:10)"*)
-            echo "{\"data\":{\"repository\":{\"pullRequest\":{\"stackEntry\":{\"position\":1},\"stack\":{\"number\":7,\"size\":2,$STACK_ENTRIES}}}}}"
-            ;;
-        *"pullRequest(number:11)"*)
-            echo "{\"data\":{\"repository\":{\"pullRequest\":{\"stackEntry\":{\"position\":2},\"stack\":{\"number\":7,\"size\":2,$STACK_ENTRIES}}}}}"
-            ;;
+        *"pullRequest(number:10)"*) position=1 ;;
+        *"pullRequest(number:11)"*) position=2 ;;
         *)
             echo '{"data":{"repository":{"pullRequest":{"stackEntry":null,"stack":null}}}}'
+            exit 0
             ;;
     esac
+    cat <<EOF
+{"data":{"repository":{"pullRequest":{
+  "stackEntry":{"position":$position},
+  "stack":{"number":7,"size":2,"entries":{"nodes":[
+    {"position":1,"pullRequest":{"number":10,"title":"Stack bottom","state":"OPEN","isDraft":false}},
+    {"position":2,"pullRequest":{"number":11,"title":"Stack top","state":"OPEN","isDraft":false}}]}}}}}}
+EOF
     exit 0
 fi
 
 # Latest status of each deployment in tests/fixtures/gh_deployments.json.
 if [[ "$*" == "api graphql"*"latestStatus"* ]]; then
-    echo '{"data":{"repository":{"deployments":{"nodes":[
-        {"databaseId":100,"latestStatus":{"state":"FAILURE"}},
-        {"databaseId":99,"latestStatus":{"state":"SUCCESS"}}]}}}}'
+    cat "$FIXTURES_DIR/gh_deployment_states_graphql.json"
     exit 0
 fi
 
 if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
-    echo '{"data":{"repository":{
-        "pr_10":{"number":10,"stack":{"number":7,"size":2},"stackEntry":{"position":1}},
-        "pr_11":{"number":11,"stack":{"number":7,"size":2},"stackEntry":{"position":2}},
-        "pr_12":{"number":12,"stack":null,"stackEntry":null}}}}'
+    cat "$FIXTURES_DIR/gh_pr_stack_summaries_graphql.json"
     exit 0
 fi
 
@@ -229,25 +228,15 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/deployments"* ]]; then
         cat "$FIXTURES_DIR/gh_deployments.json"
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
-        # For Github actions runs, we wrap pipelines.json into GithubWorkflowRuns
-        # pipelines.json is: [{"id": 12345, "status": "success", "ref": "main", "updated_at": "..."}]
-        # GithubWorkflowRuns is: {"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "..."}]}
-        echo '{"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "2026-07-06T12:00:00Z"}]}'
+        cat "$FIXTURES_DIR/gh_workflow_runs.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
-        echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online", "labels": [{"id": 1, "name": "self-hosted", "type": "read-only"}, {"id": 2, "name": "gpu", "type": "custom"}]}]}'
+        cat "$FIXTURES_DIR/gh_runners.json"
     elif [[ "$*" == *"notifications"* ]]; then
-        # GitHub notifications:
-        echo '[{
-            "id": "1",
-            "repository": {"full_name": "test-owner/test-repo"},
-            "subject": {"title": "Todo Item 1", "type": "Issue", "url": "https://api.github.com/repos/test-owner/test-repo/issues/1", "latest_comment_url": "https://api.github.com/repos/test-owner/test-repo/issues/comments/77"},
-            "unread": true,
-            "updated_at": "2026-07-06T12:00:00Z"
-        }]'
+        cat "$FIXTURES_DIR/gh_notifications.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     elif [[ "$*" == *"/jobs"* ]]; then
-        echo '{"jobs": [{"id": 54321, "status": "completed", "conclusion": "success", "name": "rspec"}]}'
+        cat "$FIXTURES_DIR/gh_run_jobs.json"
     else
         unhandled "$@"
     fi

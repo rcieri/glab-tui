@@ -1,0 +1,22 @@
+{
+  "data": {
+    "repository": {
+      "deployments": {
+        "nodes": [
+          {
+            "databaseId": 100,
+            "latestStatus": {
+              "state": "FAILURE"
+            }
+          },
+          {
+            "databaseId": 99,
+            "latestStatus": {
+              "state": "SUCCESS"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

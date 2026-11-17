@@ -169,16 +169,17 @@ if [[ "$*" == *"api"* ]]; then
                 echo '[]'
             fi
         elif [[ -n "$TEST_GLAB_FAILED_JOBS" && "$*" == *"scope[]=failed"* ]]; then
-            echo '[{"id": 54322, "status": "failed", "stage": "test", "name": "rubocop"},
-                   {"id": 54323, "status": "failed", "stage": "test", "name": "eslint"}]'
+            cat "$FIXTURES_DIR/pipeline_failed_jobs.json"
         elif [[ -n "$TEST_GLAB_FAILED_JOBS" ]]; then
             # Jobs carry the pipeline's commit and, when failed, why.
             commit='"commit": {"title": "Bump parser to 2.1", "author_name": "Grace Hopper"}'
-            echo "[{\"id\": 54321, \"status\": \"success\", \"stage\": \"test\", \"name\": \"rspec\", $commit},
-                   {\"id\": 54322, \"status\": \"failed\", \"stage\": \"test\", \"name\": \"rubocop\",
-                    \"failure_reason\": \"script_failure\", $commit}]"
+            cat <<EOF
+[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", $commit},
+ {"id": 54322, "status": "failed", "stage": "test", "name": "rubocop",
+  "failure_reason": "script_failure", $commit}]
+EOF
         else
-            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", "duration": 95.4, "queued_duration": 3.2, "runner": {"id": 7, "description": "shared-runner-7"}, "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321", "artifacts": [{"file_type": "archive"}, {"file_type": "trace"}, {"file_type": "junit"}]}]'
+            cat "$FIXTURES_DIR/pipeline_jobs.json"
         fi
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"

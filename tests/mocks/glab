@@ -5,12 +5,13 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 echo "glab $*" >> "$LOG_FILE"
 # One file per call with the exact argument boundaries, checked against the
 # generated CLI reference by the e2e harness, and beside it, under the same
-# name plus `.stdin`, the request body piped with `--input -`. A shared file
-# would interleave concurrent calls. Both are written under a dot name and
-# renamed once complete, the body first, so the harness can wait for the
-# record. The record's name is then appended to `.order`, which gives the
-# harness the call order: file times are too coarse on some kernels to tell
-# back-to-back calls apart.
+# name plus `.stdin`, the request body piped with `--input -`, and `.stdout`,
+# what the mock printed. A shared file would interleave concurrent calls.
+# Each is written under a dot name and renamed once complete, the body
+# first and the output on exit, so the harness can wait for the record. The
+# record's name is appended to `.order` once the record is renamed, which
+# gives the harness the call order: file times are too coarse on some
+# kernels to tell back-to-back calls apart.
 if [[ -n "$TEST_LOG_PATH" ]]; then
     mkdir -p "$TEST_LOG_PATH.argv.d"
     argv_record=$(mktemp "$TEST_LOG_PATH.argv.d/.XXXXXXXX")
@@ -22,6 +23,8 @@ if [[ -n "$TEST_LOG_PATH" ]]; then
     printf '%s\x1f' glab "$@" > "$argv_record"
     mv "$argv_record" "$record"
     printf '%s\n' "${record##*/}" >> "$TEST_LOG_PATH.argv.d/.order"
+    exec 3>&1 > "$argv_record.stdout"
+    trap 'cat "$argv_record.stdout" >&3; mv "$argv_record.stdout" "$record.stdout"' EXIT
 fi
 
 # A call this mock has no case for. The test harness fails the test when

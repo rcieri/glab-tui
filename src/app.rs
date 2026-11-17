@@ -108,6 +108,10 @@ impl Tab {
         }
     }
 
+    pub fn can_zoom_preview(self) -> bool {
+        self != Tab::Pipelines
+    }
+
     pub fn is_high_churn(&self) -> bool {
         match self {
             Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Jobs | Tab::Todos => true,
@@ -4288,7 +4292,6 @@ pub struct App {
     >,
     pub column_filter_context: Option<(Tab, String)>,
     pub layout: Option<crate::ui::layout::LayoutPlan>,
-    pub sidebar_rect: Option<Rect>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
@@ -4449,7 +4452,6 @@ impl App {
             column_filters: std::collections::HashMap::new(),
             column_filter_context: None,
             layout: None,
-            sidebar_rect: None,
             content_rect: None,
             detail_rect: None,
             overlay_stack: vec![],
@@ -4630,7 +4632,6 @@ impl App {
             active_tab: self.active_tab,
             detail_visible: self.detail_visible,
             details_zoomed: self.details_zoomed,
-            can_zoom: self.active_tab != Tab::Pipelines,
             edit_zoomed: self.edit_menu().is_some(),
         }
     }
@@ -6686,6 +6687,11 @@ impl App {
         {
             self.switch_to_tab(first);
         }
+    }
+
+    pub fn apply_theme(&mut self) {
+        self.theme = self.config.resolve_theme(self.terminal_appearance);
+        self.icons = Arc::new(self.config.icons.icons());
     }
 
     pub fn apply_config(&mut self) {

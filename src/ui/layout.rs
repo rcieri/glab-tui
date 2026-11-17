@@ -20,11 +20,9 @@ pub const AUTO_PREVIEW_MEDIUM_WIDTH: u16 = 45;
 /// `preview_height = "auto"`: a bottom preview takes this share of the list
 /// column.
 pub const AUTO_PREVIEW_HEIGHT_PERCENTAGE: u16 = 50;
-/// The list keeps at least this many columns and rows: the solver shrinks
-/// the navigation, preview and terminal panes first, whatever sizes
-/// `[layout]` asks for.
-pub const MIN_LIST_WIDTH: u16 = 30;
-pub const MIN_LIST_HEIGHT: u16 = 5;
+/// When the sidebar and preview are both open, the list shrinks to this floor
+/// before the sidebar is hidden.
+pub const MIN_SQUEEZED_LIST_WIDTH: u16 = 30;
 
 /// The pane settings of `[layout]`, everything but the tab list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +70,6 @@ pub struct LayoutState {
     pub active_tab: Tab,
     pub detail_visible: bool,
     pub details_zoomed: bool,
-    pub can_zoom: bool,
     pub edit_zoomed: bool,
 }
 
@@ -132,7 +129,7 @@ impl LayoutPlan {
         };
 
         let state = inputs.state;
-        if (state.details_zoomed && state.can_zoom) || state.edit_zoomed {
+        if (state.details_zoomed && state.active_tab.can_zoom_preview()) || state.edit_zoomed {
             return plan.zoomed();
         }
 
@@ -158,7 +155,7 @@ impl LayoutPlan {
         };
         // A tab that cannot zoom has no other way to show its preview, so one
         // the placement leaves out fills the workspace as a zoom would.
-        if wants_preview && !state.can_zoom && placement == Placement::Hidden {
+        if wants_preview && !state.active_tab.can_zoom_preview() && placement == Placement::Hidden {
             return plan.zoomed();
         }
 
@@ -170,7 +167,7 @@ impl LayoutPlan {
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Length(nav_width),
-                Constraint::Min(MIN_LIST_WIDTH),
+                Constraint::Min(MIN_SQUEEZED_LIST_WIDTH),
                 Constraint::Length(beside_columns),
             ])
             .split(workspace_area);
@@ -184,7 +181,7 @@ impl LayoutPlan {
         let term_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(MIN_LIST_HEIGHT),
+                Constraint::Min(compaction::MIN_STACKED_PANE_ROWS),
                 Constraint::Length(terminal_rows),
             ])
             .split(columns[1]);
@@ -195,7 +192,10 @@ impl LayoutPlan {
         };
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(MIN_LIST_HEIGHT), bottom_constraint])
+            .constraints([
+                Constraint::Min(compaction::MIN_STACKED_PANE_ROWS),
+                bottom_constraint,
+            ])
             .split(term_split[0]);
 
         let detail_rect = match placement {
@@ -231,32 +231,26 @@ impl LayoutPlan {
         }
     }
 
-    /// Whether the sidebar is visible and has positive width.
     pub fn has_sidebar(&self) -> bool {
         self.sidebar_rect.width > 0
     }
 
-    /// Whether the detail pane is visible with a positive width and height.
     pub fn has_detail(&self) -> bool {
         self.detail_rect.width > 0 && self.detail_rect.height > 0
     }
 
-    /// Whether the compact terminal pane is visible and has positive height.
     pub fn has_term(&self) -> bool {
         self.term_area.height > 0
     }
 
-    /// Returns `Some(sidebar_rect)` if visible, or `None`.
     pub fn sidebar_rect_opt(&self) -> Option<Rect> {
         self.has_sidebar().then_some(self.sidebar_rect)
     }
 
-    /// Returns `Some(detail_rect)` if visible, or `None`.
     pub fn detail_rect_opt(&self) -> Option<Rect> {
         self.has_detail().then_some(self.detail_rect)
     }
 
-    /// Returns `Some(term_area)` if visible, or `None`.
     pub fn terminal_area_opt(&self) -> Option<Rect> {
         self.has_term().then_some(self.term_area)
     }
@@ -296,7 +290,7 @@ fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Pl
 /// Columns the preview asks for beside the list in a workspace `width` wide,
 /// before compaction narrows it to keep the list readable. A configured
 /// width is capped at what fits beside the list in `room_width`, so it
-/// stays as wide as fits instead of dropping to compaction's 30 columns.
+/// stays as wide as fits instead of dropping to [`compaction::MIN_PREVIEW_COLUMNS`].
 fn preview_columns(size: PaneSize, width: u16, room_width: u16) -> u16 {
     let share = |percent: u16| (u32::from(width) * u32::from(percent) / 100) as u16;
     let fits_beside = room_width
@@ -333,7 +327,6 @@ mod tests {
                 active_tab: Tab::Issues,
                 detail_visible: true,
                 details_zoomed: false,
-                can_zoom: true,
                 edit_zoomed: false,
             },
         }
@@ -480,20 +473,20 @@ mod tests {
     #[test]
     fn a_preview_that_cannot_zoom_fills_the_workspace_when_it_has_no_place() {
         let mut off = with_preview(120, PreviewPlacement::Off);
-        off.state.can_zoom = false;
+        off.state.active_tab = Tab::Pipelines;
         assert_eq!(
             LayoutPlan::compute(off).detail_rect,
             Rect::new(0, 2, 120, 28)
         );
 
         let mut narrow_right = with_preview(80, PreviewPlacement::Right);
-        narrow_right.state.can_zoom = false;
+        narrow_right.state.active_tab = Tab::Pipelines;
         let plan = LayoutPlan::compute(narrow_right);
         assert_eq!(plan.detail_rect, Rect::new(0, 2, 80, 28));
         assert_eq!(plan.content_area.width, 0);
 
         let mut closed = with_preview(120, PreviewPlacement::Off);
-        closed.state.can_zoom = false;
+        closed.state.active_tab = Tab::Pipelines;
         closed.state.detail_visible = false;
         assert!(!LayoutPlan::compute(closed).has_detail());
     }
@@ -532,7 +525,7 @@ mod tests {
         assert_eq!(plan.content_area.width, 0);
         assert_eq!(plan.detail_rect, Rect::new(0, 2, 120, 28));
 
-        inputs.state.can_zoom = false;
+        inputs.state.active_tab = Tab::Pipelines;
         let plan_no_zoom = LayoutPlan::compute(inputs);
         assert!(plan_no_zoom.has_sidebar());
         assert!(plan_no_zoom.content_area.width > 0);
@@ -580,14 +573,25 @@ mod tests {
         wide.panes.preview = PreviewPlacement::Off;
         wide.size.width = 60;
         wide.panes.nav_min_width = 60;
-        assert_eq!(LayoutPlan::compute(wide).content_area.width, MIN_LIST_WIDTH);
+        assert_eq!(
+            LayoutPlan::compute(wide).content_area.width,
+            MIN_SQUEEZED_LIST_WIDTH
+        );
 
         let mut tall = base_inputs(100, 20);
         tall.panes.terminal_pane_height = 20;
         tall.panes.preview = PreviewPlacement::Off;
         assert_eq!(
             LayoutPlan::compute(tall).content_area.height,
-            MIN_LIST_HEIGHT
+            compaction::MIN_STACKED_PANE_ROWS
+        );
+    }
+
+    #[test]
+    fn default_preview_min_width_matches_pane_minimums() {
+        assert_eq!(
+            crate::config::layout::DEFAULT_PREVIEW_MIN_WIDTH,
+            compaction::MIN_PREVIEW_COLUMNS + compaction::MIN_LIST_COLUMNS
         );
     }
 }

@@ -31,7 +31,7 @@ pub(crate) const MIN_LIST_COLUMNS: u16 = 38;
 
 /// Rows each of the list and the preview keeps when they are stacked: borders,
 /// a table header and a few rows.
-const MIN_STACKED_PANE_ROWS: u16 = 6;
+pub(crate) const MIN_STACKED_PANE_ROWS: u16 = 6;
 
 /// Columns the preview narrows to before it gives up its place beside the list.
 pub(crate) const MIN_PREVIEW_COLUMNS: u16 = 30;

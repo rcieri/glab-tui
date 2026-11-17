@@ -358,7 +358,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     let plan = app.compute_layout(size);
     app.layout = Some(plan);
-    app.sidebar_rect = Some(plan.sidebar_rect);
     app.content_rect = Some(plan.content_area);
     app.detail_rect = plan.detail_rect_opt();
 
@@ -475,7 +474,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let sidebar_rect = plan.sidebar_rect;
     let content_area = plan.content_area;
     let detail_rect = plan.detail_rect;
-    let term_area = plan.term_area;
 
     // Sidebar: Tabs
     let kind = ctx.kind;
@@ -589,7 +587,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     // Compact terminal pane at bottom of the middle column
-    if term_area.height > 0 {
+    if let Some(term_area) = plan.terminal_area_opt() {
         let bottom_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(ctx.theme.border))

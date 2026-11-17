@@ -1,6 +1,6 @@
-mod layout;
+pub(crate) mod layout;
 
-pub use layout::{LayoutConfig, PaneSize, PreviewPlacement};
+pub use layout::{DEFAULT_PREVIEW_MIN_WIDTH, LayoutConfig, PaneSize, PreviewPlacement};
 
 use crate::utils::private_fs;
 use ratatui::style::Color;
@@ -983,22 +983,34 @@ fn find_git_root() -> Option<PathBuf> {
 /// The repo-local config files of the checkout holding the working
 /// directory, in the order `Config::load` merges them.
 fn repo_local_config_paths() -> Vec<PathBuf> {
+    let global = Config::config_path();
+    let global_canonical = std::fs::canonicalize(&global).ok();
     find_git_root()
         .map(|root| {
-            vec![
+            [
                 root.join(".glab-tui").join("config.toml"),
                 root.join(".config").join("glab-tui").join("config.toml"),
             ]
+            .into_iter()
+            .filter(|path| {
+                if *path == global {
+                    return false;
+                }
+                if let (Some(c1), Some(c2)) = (std::fs::canonicalize(path).ok(), &global_canonical)
+                {
+                    if c1 == *c2 {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
         })
         .unwrap_or_default()
 }
 
-/// The top-level keys `save_layout` writes.
-const SAVED_KEYS: [&str; 14] = [
-    "theme_preset",
-    "page_size",
-    "prefetch_tabs",
-    "layout",
+/// The pane names serialized in `save_layout`.
+pub const PANE_KEYS: [&str; 10] = [
     "issues",
     "mrs",
     "pipelines",
@@ -1009,6 +1021,24 @@ const SAVED_KEYS: [&str; 14] = [
     "milestones",
     "branches",
     "environments",
+];
+
+/// The top-level keys `save_layout` writes.
+const SAVED_KEYS: [&str; 14] = [
+    "theme_preset",
+    "page_size",
+    "prefetch_tabs",
+    "layout",
+    PANE_KEYS[0],
+    PANE_KEYS[1],
+    PANE_KEYS[2],
+    PANE_KEYS[3],
+    PANE_KEYS[4],
+    PANE_KEYS[5],
+    PANE_KEYS[6],
+    PANE_KEYS[7],
+    PANE_KEYS[8],
+    PANE_KEYS[9],
 ];
 
 /// For each value `repo_local` sets, puts back in `written` what `global`
@@ -1947,31 +1977,27 @@ impl Config {
         }
 
         // Serialize panes
-        for (tab_name, pane, base_pane) in &[
-            ("issues", &self.issues, &base_config.issues),
-            ("mrs", &self.mrs, &base_config.mrs),
-            ("pipelines", &self.pipelines, &base_config.pipelines),
-            ("jobs", &self.jobs, &base_config.jobs),
-            ("runners", &self.runners, &base_config.runners),
-            ("releases", &self.releases, &base_config.releases),
-            ("todos", &self.todos, &base_config.todos),
-            ("milestones", &self.milestones, &base_config.milestones),
-            ("branches", &self.branches, &base_config.branches),
-            (
-                "environments",
-                &self.environments,
-                &base_config.environments,
-            ),
+        for (tab_name, pane, base_pane) in [
+            (PANE_KEYS[0], &self.issues, &base_config.issues),
+            (PANE_KEYS[1], &self.mrs, &base_config.mrs),
+            (PANE_KEYS[2], &self.pipelines, &base_config.pipelines),
+            (PANE_KEYS[3], &self.jobs, &base_config.jobs),
+            (PANE_KEYS[4], &self.runners, &base_config.runners),
+            (PANE_KEYS[5], &self.releases, &base_config.releases),
+            (PANE_KEYS[6], &self.todos, &base_config.todos),
+            (PANE_KEYS[7], &self.milestones, &base_config.milestones),
+            (PANE_KEYS[8], &self.branches, &base_config.branches),
+            (PANE_KEYS[9], &self.environments, &base_config.environments),
         ] {
             if pane != base_pane {
                 let val = pane_to_value(pane);
                 if val.as_table().is_some_and(|t| !t.is_empty()) {
                     table.insert(tab_name.to_string(), val);
                 } else {
-                    table.remove(*tab_name);
+                    table.remove(tab_name);
                 }
             } else {
-                table.remove(*tab_name);
+                table.remove(tab_name);
             }
         }
 

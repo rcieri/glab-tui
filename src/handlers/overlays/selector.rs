@@ -507,7 +507,7 @@ pub fn handle_key(
                     app.close_selector();
                     if let Some(name) = picked {
                         app.config.theme_preset = Some(name);
-                        app.apply_config();
+                        app.apply_theme();
                     }
                     return;
                 }

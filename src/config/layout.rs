@@ -161,8 +161,9 @@ pub struct LayoutConfig {
 
 pub const DEFAULT_NAV_WIDTH: u16 = 22;
 pub const DEFAULT_NAV_MIN_WIDTH: u16 = 80;
-/// The narrowest room that holds a 30-column preview beside a 38-column
-/// list, so by default only the panes' own minimums decide the placement.
+/// The narrowest room that holds a `MIN_PREVIEW_COLUMNS` preview beside a
+/// `MIN_LIST_COLUMNS` list, so by default only the panes' own minimums
+/// decide the placement.
 pub const DEFAULT_PREVIEW_MIN_WIDTH: u16 = 68;
 pub const DEFAULT_TERMINAL_PANE_HEIGHT: u16 = 6;
 pub const DEFAULT_TERMINAL_PANE_MIN_HEIGHT: u16 = 18;

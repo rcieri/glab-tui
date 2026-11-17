@@ -191,7 +191,7 @@ pub(crate) fn activate_row(
         ConfigureRow::PrefetchTabs => {
             app.config.prefetch_tabs = !app.config.prefetch_tabs;
         }
-        ConfigureRow::Theme => open_theme_selector(app),
+        ConfigureRow::Theme => app.open_theme_picker(),
         ConfigureRow::Tab(shown_tab) => {
             if !toggle_tab(&mut app.config.layout, shown_tab) {
                 app.show_notice("The last shown tab cannot be hidden".to_string());
@@ -293,32 +293,6 @@ fn open_column_filter(app: &mut App, column: &str) {
         entity_type: String::new(),
         field_type: "column_filter".to_string(),
         multi_select: true,
-        state: {
-            let mut s = ListState::default();
-            s.select(Some(0));
-            s
-        },
-        request: None,
-    });
-}
-
-fn open_theme_selector(app: &mut App) {
-    let theme_list = crate::config::all_theme_presets();
-    if theme_list.is_empty() {
-        return;
-    }
-    app.open_selector(crate::app::Selector {
-        title: " Select Theme ".to_string(),
-        all_items: theme_list,
-        selected_items: std::collections::HashSet::new(),
-        cursor_idx: 0,
-        search_query: String::new(),
-        is_filtering: false,
-        is_loading: false,
-        entity_iid: 0,
-        entity_type: "theme_selector".to_string(),
-        field_type: "theme_selector".to_string(),
-        multi_select: false,
         state: {
             let mut s = ListState::default();
             s.select(Some(0));

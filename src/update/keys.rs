@@ -56,12 +56,7 @@ pub(super) fn handle_key(
         return;
     }
 
-    if matches!(
-        app.top_modal(),
-        Some(Modal::Diff(_) | Modal::ReviewThreads(_) | Modal::Configure(_))
-    ) && !app.captures_text()
-        && handle_refresh(app, key_event, tx, fx)
-    {
+    if handle_refresh(app, key_event, tx, fx) {
         return;
     }
 
@@ -104,7 +99,7 @@ pub(super) fn handle_key(
         return;
     }
 
-    if handle_switch_repo(app, key_event) || handle_refresh(app, key_event, tx, fx) {
+    if handle_switch_repo(app, key_event) {
         return;
     }
 

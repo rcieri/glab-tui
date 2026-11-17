@@ -146,7 +146,7 @@ pub fn handle_mouse_event(
                 }
             }
 
-            // If a modal is open, don't fall through to table scrolling!
+            // A modal without a recorded rect, like the diff, still owns the screen
             if app.has_modal() {
                 return;
             }
@@ -245,7 +245,7 @@ pub fn handle_mouse_event(
                 }
             }
 
-            // Fallback: don't click through to underlying UI if a modal is open
+            // A modal without a recorded rect, like the diff, still owns the screen
             if app.has_modal() {
                 return;
             }

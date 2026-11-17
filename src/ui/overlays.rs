@@ -79,7 +79,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
-    if app.edit_menu.is_some() {
+    if app.edit_menu().is_some() {
         if let Some(rect) = app.detail_rect {
             app.overlay_stack
                 .push((crate::app::OverlayKind::EditMenu, rect));
@@ -93,14 +93,23 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
     let selector_notice = app.modal_notice().cloned();
     if app.column_filter_context.is_none() {
-        if let Some(selector) = &mut app.selector {
+        let App {
+            modal_stack,
+            overlay_stack,
+            switch_repo_groups,
+            switch_repo_paths,
+            ..
+        } = app;
+        if let Some(crate::app::Modal::Selector(selector)) = modal_stack
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m, crate::app::Modal::Selector(_)))
+        {
             let selector_area = centered_rect_min(70, 70, 60, 8, size);
             let body = modal_area(f, ctx, &selector.title, selector_area);
-            app.overlay_stack
-                .push((crate::app::OverlayKind::Selector, selector_area));
+            overlay_stack.push((crate::app::OverlayKind::Selector, selector_area));
 
-            let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "related_mrs";
+            let has_filter = selector.has_filter_bar();
 
             let mut constraints = Vec::with_capacity(3);
             if has_filter {
@@ -250,7 +259,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                             // a group icon; repo rows keep their basename plus
                             // a muted absolute path.
                             let is_group = selector.field_type == "switch_repo"
-                                && app.switch_repo_groups.contains(item);
+                                && switch_repo_groups.contains(item);
 
                             if is_group {
                                 line_spans.push(Span::styled(
@@ -275,7 +284,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                             // (display name) in muted text so users can
                             // distinguish repos that share a basename.
                             if selector.field_type == "switch_repo" && !is_group {
-                                if let Some(abs_path) = app.switch_repo_paths.get(item) {
+                                if let Some(abs_path) = switch_repo_paths.get(item) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(
                                             format!(" {abs_path}"),
@@ -299,7 +308,12 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
     }
 
-    if let Some(text_input) = &app.text_input {
+    let area = centered_rect_min(60, 60, 36, 6, size);
+    if app.text_input().is_some() {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::TextInput, area));
+    }
+    if let Some(text_input) = app.text_input() {
         let block = Block::default()
             .title(format!(" {} ", text_input.title))
             .title_style(
@@ -311,7 +325,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             .border_style(Style::default().fg(ctx.theme.border_focused))
             .style(Style::default().bg(ctx.theme.bg));
 
-        let area = centered_rect_min(60, 60, 36, 6, size);
         clear_area(f, ctx, area);
         f.render_widget(block, area);
 
@@ -333,7 +346,13 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_widget(value_p, chunks[0]);
     }
 
-    if let Some(date_picker) = &app.date_picker {
+    // 36 columns wide, 11 rows high
+    let area = centered_rect_fixed(36, 11, size);
+    if app.date_picker().is_some() {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::DatePicker, area));
+    }
+    if let Some(date_picker) = app.date_picker() {
         let block = Block::default()
             .title(format!(" {} ", date_picker.title))
             .title_style(
@@ -345,10 +364,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             .border_style(Style::default().fg(ctx.theme.border_focused))
             .style(Style::default().bg(ctx.theme.bg));
 
-        // 36 columns wide, 11 rows high
-        let area = centered_rect_fixed(36, 11, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::DatePicker, area));
         let inner_area = block.inner(area);
 
         let chunks = Layout::default()
@@ -451,11 +466,20 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_widget(table, chunks[1]);
     }
 
-    if app.focus_column_checklist && app.selector.is_none() {
+    if app.focus_column_checklist() && app.selector().is_none() {
+        let (active_idx, editing_page_size, save_menu_open, save_menu_selection) =
+            match app.configure() {
+                Some(cfg) => (
+                    cfg.column_checklist_idx,
+                    cfg.editing_page_size,
+                    cfg.save_menu_open,
+                    cfg.save_menu_selection,
+                ),
+                None => (0, false, false, None),
+            };
         let tab = app.active_tab;
         let kind = ctx.kind;
         let cols = tab.columns(kind, app.scope.is_group());
-        let active_idx = app.column_checklist_idx;
 
         let group_cols: Vec<&str> = cols.to_vec();
 
@@ -602,12 +626,12 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
         // Page Size — inline row (icon + label in header_fg, value in text_normal)
         let is_page_size_active = active_idx == page_size_idx;
-        let page_size_value = if app.editing_page_size {
+        let page_size_value = if editing_page_size {
             format!("[ {}| ]", app.page_size_input)
         } else {
             format!("[ {} ]", app.page_size)
         };
-        let page_size_style = if app.editing_page_size {
+        let page_size_style = if editing_page_size {
             Style::default()
                 .fg(t.highlight_bg)
                 .bg(t.green)
@@ -620,7 +644,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         } else {
             Style::default().fg(t.text_normal)
         };
-        let page_size_line = if is_page_size_active || app.editing_page_size {
+        let page_size_line = if is_page_size_active || editing_page_size {
             Line::from(Span::styled(
                 format!(
                     " {} Page Size      {} ",
@@ -785,7 +809,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_stateful_widget(List::new(items), inner_area, &mut state);
 
         // Save submenu
-        if app.save_menu_open {
+        if save_menu_open {
             let submenu_height = 7;
             let submenu_width = 30;
             let submenu_area = centered_rect_fixed(submenu_width, submenu_height, size);
@@ -809,7 +833,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 .iter()
                 .enumerate()
                 .map(|(i, &label)| {
-                    let is_active = match app.save_menu_selection {
+                    let is_active = match save_menu_selection {
                         Some(SaveMenu::Local) => i == 0,
                         Some(SaveMenu::Global) => i == 1,
                         Some(SaveMenu::Cancel) => i == 2,
@@ -828,7 +852,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 .collect();
 
             let mut submenu_state = ListState::default();
-            submenu_state.select(Some(match app.save_menu_selection {
+            submenu_state.select(Some(match save_menu_selection {
                 Some(SaveMenu::Local) => 0,
                 Some(SaveMenu::Global) => 1,
                 Some(SaveMenu::Cancel) => 2,
@@ -845,12 +869,20 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     }
 
     // Render value-based column filter selector as overlay on configure view
-    if app.focus_column_checklist && app.column_filter_context.is_some() {
-        if let Some(selector) = &mut app.selector {
+    if app.focus_column_checklist() && app.column_filter_context.is_some() {
+        let App {
+            modal_stack,
+            overlay_stack,
+            ..
+        } = app;
+        if let Some(crate::app::Modal::Selector(selector)) = modal_stack
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m, crate::app::Modal::Selector(_)))
+        {
             let selector_area = centered_rect_min(70, 70, 60, 8, size);
             let body = modal_area(f, ctx, &selector.title, selector_area);
-            app.overlay_stack
-                .push((crate::app::OverlayKind::ColumnFilter, selector_area));
+            overlay_stack.push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
@@ -975,7 +1007,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
     }
 
-    if let Some(dialog) = &mut app.submit_dialog {
+    if let Some(dialog) = app.submit_dialog_mut() {
         let icon = submit_dialog_icon(&dialog.action, icons);
         let title = format!("{icon} {}", dialog.form.title);
         let area = super::form::render_form(f, ctx, &mut dialog.form, &title, size);
@@ -1044,7 +1076,7 @@ fn help_category(context: KeyContext, is_github: bool) -> &'static str {
 }
 
 pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
-    if !app.show_help {
+    if !app.show_help() {
         return;
     }
 
@@ -1060,7 +1092,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
     let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
     let d = |k: String| std::borrow::Cow::Owned(k);
 
-    let custom_commands: Vec<crate::custom_commands::CustomCommand> = if app.diff_view.is_some() {
+    let custom_commands: Vec<crate::custom_commands::CustomCommand> = if app.diff_view().is_some() {
         app.custom_commands.in_diff().cloned().collect()
     } else {
         app.custom_commands
@@ -1170,17 +1202,17 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         }),
     );
 
-    let active_categories: &[&str] = if app.submit_dialog.is_some() {
+    let active_categories: &[&str] = if app.submit_dialog().is_some() {
         &["Confirm Dialog"]
-    } else if app.diff_view.is_some() {
+    } else if app.diff_view().is_some() {
         &["Diff View", CUSTOM_COMMANDS_CATEGORY]
-    } else if app.edit_menu.is_some() {
+    } else if app.edit_menu().is_some() {
         &["Global & Nav", "Inspector / Editor"]
-    } else if app.focus_column_checklist {
+    } else if app.focus_column_checklist() {
         &["Global & Nav", "Column Config"]
-    } else if app.date_picker.is_some() {
+    } else if app.date_picker().is_some() {
         &["Global & Nav", "Date Picker"]
-    } else if app.selector.is_some() {
+    } else if app.selector().is_some() {
         &["Global & Nav", "Selector / Filter"]
     } else {
         match app.active_tab {
@@ -1419,7 +1451,7 @@ mod tests {
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::MergeRequests;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1461,7 +1493,7 @@ mod tests {
             show_read_notifications: false,
             opened_pipeline: None,
         });
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::MergeRequests;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1503,7 +1535,7 @@ mod tests {
             show_read_notifications: false,
             opened_pipeline: None,
         });
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Jobs;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1545,7 +1577,7 @@ command = "true"
         )
         .unwrap();
         app.custom_commands = crate::custom_commands::CustomCommands::load(&app.config).0;
-        app.show_help = true;
+        app.open_help();
 
         app.active_tab = Tab::MergeRequests;
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1573,7 +1605,7 @@ command = "true"
         let backend = TestBackend::new(160, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Issues;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1615,7 +1647,7 @@ command = "true"
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Issues;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1652,7 +1684,7 @@ command = "true"
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Jobs;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1674,7 +1706,7 @@ command = "true"
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Issues;
         app.config
             .keybindings
@@ -1728,7 +1760,7 @@ command = "true"
         let mut app = App::default();
         app.mrs.items =
             serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
-        app.submit_dialog = Some(crate::app::SubmitDialog::build(action, &app));
+        app.open_submit_dialog(crate::app::SubmitDialog::build(action, &app));
         let ascii = crate::config::Icons::ascii();
         let ctx = &crate::ui::render_ctx::RenderCtx {
             theme: crate::config::Theme::default(),

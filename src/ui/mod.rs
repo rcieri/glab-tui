@@ -157,19 +157,28 @@ pub(crate) fn render_edit_menu_if_active(
     app: &mut App,
     detail_rect: Rect,
 ) -> bool {
-    let Some(mut menu) = app.edit_menu.take() else {
+    if app.edit_menu().is_none() {
         return false;
-    };
+    }
     let label_colors = app.label_colors.clone();
 
-    let is_bulk_edit = matches!(
-        menu.entity_kind,
-        crate::app::EditEntityKind::BulkEditIssues | crate::app::EditEntityKind::BulkEditMrs
-    );
+    let is_bulk_edit = app.edit_menu().is_some_and(|m| {
+        matches!(
+            m.entity_kind,
+            crate::app::EditEntityKind::BulkEditIssues | crate::app::EditEntityKind::BulkEditMrs
+        )
+    });
     let content = if is_bulk_edit {
         crate::app::InspectorContent::Custom(bulk_selection_lines(app, &ctx.theme))
     } else {
-        crate::app::InspectorContent::Markdown(menu.get_description_value())
+        crate::app::InspectorContent::Markdown(
+            app.edit_menu()
+                .map_or(String::new(), |m| m.get_description_value()),
+        )
+    };
+
+    let Some(menu) = app.edit_menu_mut() else {
+        return false;
     };
 
     let doc = crate::app::EntityDocument {
@@ -183,11 +192,10 @@ pub(crate) fn render_edit_menu_if_active(
         ctx,
         &doc,
         detail_rect,
-        inspector::InspectorMode::Interactive { menu: &mut menu },
+        inspector::InspectorMode::Interactive { menu },
         &label_colors,
     );
 
-    app.edit_menu = Some(menu);
     true
 }
 
@@ -217,7 +225,7 @@ fn bulk_selection_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
 fn render_mode_indicator(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Rect) {
     let theme = &ctx.theme;
 
-    let (label, bg, fg) = if let Some(menu) = app.edit_menu.as_ref() {
+    let (label, bg, fg) = if let Some(menu) = app.edit_menu() {
         if menu.entity_kind.is_create() {
             // CREATE — distinct palette so the user knows they're filling
             // out a new entity, not editing an existing one.
@@ -593,7 +601,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     // When an edit/create menu is active, force the detail pane to full-zoom
     // (exactly like the preview's zoomed state) so the form fills the workspace.
-    let edit_zoomed = app.edit_menu.is_some();
+    let edit_zoomed = app.edit_menu().is_some();
 
     let term_height = if app.active_tab != Tab::Terminal
         && size.height >= 18
@@ -686,7 +694,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     };
     let main_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app.focus_column_checklist {
+        .border_style(Style::default().fg(if app.focus_column_checklist() {
             ctx.theme.border
         } else {
             ctx.theme.border_focused
@@ -818,8 +826,39 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(paragraph, area);
     }
 
-    if app.edit_menu.is_none() {
-        if let Some(mut diff_view) = app.diff_view.take() {
+    if app.edit_menu().is_none() && app.diff_view().is_some() {
+        let diff_layout = app.diff_layout;
+        let unresolved_count = app.unresolved_threads_count();
+        let unresolved_suffix = if unresolved_count > 0 {
+            format!(
+                " [{} Unresolved Threads: {}] ",
+                &ctx.icons.thread_unresolved, unresolved_count
+            )
+        } else {
+            String::new()
+        };
+
+        let in_review_mode = app.in_review_mode;
+        let draft_comments_len = app.draft_comments.len();
+        let title_suffix = if in_review_mode {
+            format!(" [REVIEW MODE: ON ({draft_comments_len} pending)] ")
+        } else {
+            String::new()
+        };
+
+        let App {
+            modal_stack,
+            draft_comments,
+            current_comments,
+            ..
+        } = app;
+
+        if let Some(crate::app::Modal::Diff(diff_view)) = modal_stack
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m, crate::app::Modal::Diff(_)))
+        {
+            let diff_view = &mut **diff_view;
             let area = centered_rect_min(95, 95, 30, 6, size);
 
             let outer_block = Block::default()
@@ -847,25 +886,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
             // it, and the layout catches up once it ends.
             let diff_columns = main_chunks[1].width.saturating_sub(2);
             if diff_view.selection_start.is_none() {
-                diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+                diff_view.set_side_by_side(diff_layout.is_side_by_side(diff_columns));
             }
-
-            let unresolved_count = app.unresolved_threads_count();
-            let unresolved_suffix = if unresolved_count > 0 {
-                format!(
-                    " [{} Unresolved Threads: {}] ",
-                    &ctx.icons.thread_unresolved, unresolved_count
-                )
-            } else {
-                String::new()
-            };
-
-            let title_suffix = if app.in_review_mode {
-                format!(" [REVIEW MODE: ON ({} pending)] ", app.draft_comments.len())
-            } else {
-                String::new()
-            };
-
             let pr_label = if ctx.kind.is_github() {
                 "Pull Request"
             } else {
@@ -1009,7 +1031,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         None
                     };
 
-                    let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
+                    let unresolved_count = App::unresolved_threads_count_for_path_slice(
+                        current_comments,
+                        &node.path_id,
+                    );
                     let count_suffix = if unresolved_count > 0 {
                         format!(" ({} {})", &ctx.icons.thread_unresolved, unresolved_count)
                     } else {
@@ -1148,7 +1173,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let list_height = (main_chunks[1].height as usize).saturating_sub(2);
 
-            let mut updated_diff_view = diff_view;
+            let updated_diff_view = diff_view;
             // When tree is hidden, force focus to diff content
             if !file_tree_visible {
                 updated_diff_view.focus_on_files = false;
@@ -1482,8 +1507,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     right_list_lines.push(Line::from(right_spans));
 
                     // COMMENTS OVERLAY
-                    let matching_comments: Vec<_> = app
-                        .draft_comments
+                    let matching_comments: Vec<_> = draft_comments
                         .iter()
                         .filter(|c| {
                             let path_matches = sline
@@ -1569,8 +1593,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     }
 
-                    let matching_current: Vec<_> = app
-                        .current_comments
+                    let matching_current: Vec<_> = current_comments
                         .iter()
                         .filter(|c| {
                             !c.system
@@ -1827,8 +1850,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     list_lines.push(Line::from(line_spans));
 
                     // COMMENTS OVERLAY (unified)
-                    let matching_comments: Vec<_> = app
-                        .draft_comments
+                    let matching_comments: Vec<_> = draft_comments
                         .iter()
                         .filter(|c| {
                             c.file_path == line.file_path
@@ -1887,8 +1909,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     }
 
-                    let matching_current: Vec<_> = app
-                        .current_comments
+                    let matching_current: Vec<_> = current_comments
                         .iter()
                         .filter(|c| {
                             !c.system
@@ -1993,8 +2014,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let diff_para = Paragraph::new(list_lines).block(diff_block);
                 f.render_widget(diff_para, main_chunks[1]);
             }
-
-            app.diff_view = Some(updated_diff_view);
         }
     }
 
@@ -2303,7 +2322,7 @@ diff --git a/a.rs b/a.rs
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(labels_selector(request));
+        app.open_selector(labels_selector(request));
         app.push_notice(
             crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
         );
@@ -2356,11 +2375,11 @@ diff --git a/a.rs b/a.rs
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(labels_selector(request));
+        app.open_selector(labels_selector(request));
         app.push_notice(
             crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
         );
-        app.selector = None;
+        app.close_selector();
 
         terminal.draw(|f| render(f, &mut app)).unwrap();
 
@@ -2444,13 +2463,13 @@ diff --git a/a.rs b/a.rs
         let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
         let mut app = App::default();
         app.diff_layout = layout;
-        app.diff_view = Some(crate::app::DiffView::new(
+        app.open_diff_view(crate::app::DiffView::new(
             1,
             "o/r".to_string(),
             ONE_LINE_DIFF.to_string(),
         ));
         terminal.draw(|f| render(f, &mut app)).unwrap();
-        app.diff_view.is_some_and(|view| view.side_by_side)
+        app.diff_view().is_some_and(|view| view.side_by_side)
     }
 
     #[test]
@@ -2474,10 +2493,10 @@ diff --git a/a.rs b/a.rs
         let mut view = crate::app::DiffView::new(1, "o/r".to_string(), ONE_LINE_DIFF.to_string());
         view.selection_start = Some(4);
         view.selection_end = Some(5);
-        app.diff_view = Some(view);
+        app.open_diff_view(view);
 
         terminal.draw(|f| render(f, &mut app)).unwrap();
-        let view = app.diff_view.as_mut().expect("diff view open");
+        let view = app.diff_view_mut().expect("diff view open");
         assert_eq!(
             (view.side_by_side, view.selection_start, view.selection_end),
             (false, Some(4), Some(5))
@@ -2486,7 +2505,7 @@ diff --git a/a.rs b/a.rs
         view.selection_start = None;
         view.selection_end = None;
         terminal.draw(|f| render(f, &mut app)).unwrap();
-        assert!(app.diff_view.is_some_and(|view| view.side_by_side));
+        assert!(app.diff_view().is_some_and(|view| view.side_by_side));
     }
 
     #[test]
@@ -2501,7 +2520,7 @@ diff --git a/a.rs b/a.rs
         );
         view.search("foo");
         assert_eq!(view.search_matches.len(), 2, "unified counts both lines");
-        app.diff_view = Some(view);
+        app.open_diff_view(view);
 
         terminal.draw(|f| render(f, &mut app)).unwrap();
         let title = rendered_rows(&terminal)

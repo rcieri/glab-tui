@@ -807,6 +807,13 @@ impl Selector {
             crate::utils::format::truncate(&body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
         )
     }
+
+    /// Whether this selector shows a search/filter bar.
+    pub fn has_filter_bar(&self) -> bool {
+        self.field_type != "comment_action_select"
+            && self.field_type != "related_mrs"
+            && self.field_type != "linked_issues"
+    }
 }
 
 pub const THEME_PICKER_FIELD_TYPE: &str = "theme_selector";
@@ -3310,6 +3317,75 @@ pub enum OverlayKind {
     ReviewThreads,
     ReviewSubmit,
     TerminalInspector,
+    TextInput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModalKind {
+    EditMenu,
+    Selector,
+    Text,
+    Date,
+    Submit,
+    ReviewThreads,
+    Diff,
+    ReviewSubmit,
+    Configure,
+    Help,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConfigureOverlay {
+    pub column_checklist_idx: usize,
+    pub save_menu_open: bool,
+    pub save_menu_selection: Option<SaveMenu>,
+    pub editing_page_size: bool,
+}
+
+#[derive(Debug)]
+pub enum Modal {
+    EditMenu(Box<EditMenu>),
+    Selector(Box<Selector>),
+    Text(Box<TextInput>),
+    Date(Box<DatePicker>),
+    Submit(Box<SubmitDialog>),
+    ReviewThreads(Box<ReviewThreadsOverview>),
+    Diff(Box<DiffView>),
+    ReviewSubmit(Box<crate::review_submit::ReviewSubmit>),
+    Configure(Box<ConfigureOverlay>),
+    Help,
+}
+
+impl Modal {
+    pub fn kind(&self) -> ModalKind {
+        match self {
+            Modal::EditMenu(_) => ModalKind::EditMenu,
+            Modal::Selector(_) => ModalKind::Selector,
+            Modal::Text(_) => ModalKind::Text,
+            Modal::Date(_) => ModalKind::Date,
+            Modal::Submit(_) => ModalKind::Submit,
+            Modal::ReviewThreads(_) => ModalKind::ReviewThreads,
+            Modal::Diff(_) => ModalKind::Diff,
+            Modal::ReviewSubmit(_) => ModalKind::ReviewSubmit,
+            Modal::Configure(_) => ModalKind::Configure,
+            Modal::Help => ModalKind::Help,
+        }
+    }
+
+    pub fn captures_text(&self) -> bool {
+        match self {
+            Modal::Text(_) => true,
+            Modal::EditMenu(m) => m.editing,
+            Modal::Selector(s) => s.is_filtering,
+            Modal::Date(_) => false,
+            Modal::Diff(d) => d.search_active,
+            Modal::Configure(c) => c.editing_page_size,
+            Modal::ReviewSubmit(rs) => rs.focus == crate::review_submit::ReviewSubmitFocus::Summary,
+            Modal::Help => true,
+            Modal::Submit(s) => s.form.is_editing(),
+            Modal::ReviewThreads(_) => false,
+        }
+    }
 }
 
 /// A PR action that needs the PR's stack, so it waits for an on-demand stack
@@ -4086,8 +4162,6 @@ pub struct App {
     /// The server state queries in effect when `take_state_query_refetches`
     /// last ran; `None` until it first runs for the current scope.
     pub observed_state_queries: Option<StateQueries>,
-    pub edit_menu: Option<EditMenu>,
-    pub selector: Option<Selector>,
     /// Mapping from the `all_items` display strings to the absolute on-disk
     /// path for the active `switch_repo` selector. Lets the overlay render
     /// the basename (and a muted absolute path) in each row while the
@@ -4102,10 +4176,7 @@ pub struct App {
     /// Rebuilt on every `handle_switch_repo`, same lifecycle as
     /// `switch_repo_paths`.
     pub switch_repo_groups: std::collections::HashSet<String>,
-    pub text_input: Option<TextInput>,
-    pub editing_page_size: bool,
     pub page_size_input: String,
-    pub date_picker: Option<DatePicker>,
     pub jobs: StatefulTable<crate::domain::pipelines::Job>,
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
@@ -4159,20 +4230,16 @@ pub struct App {
     pub job_trace_poll_in_flight: bool,
     pub job_trace_last_refresh: std::time::Instant,
 
-    pub show_help: bool,
+    pub modal_stack: Vec<Modal>,
     pub help_search_query: String,
     /// Highlighted entry of the help list, clamped by the renderer to the
     /// entries the current context and filter show.
     pub help_selected: usize,
     /// Scroll offset of the help table, kept across frames.
     pub help_table_state: ratatui::widgets::TableState,
-    pub diff_view: Option<DiffView>,
-    pub review_threads: Option<ReviewThreadsOverview>,
-    pub review_submit: Option<crate::review_submit::ReviewSubmit>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
-    pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
     pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
@@ -4183,8 +4250,6 @@ pub struct App {
     /// installs its own is dropped.
     pub tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
     pub enabled_columns: std::collections::HashMap<Tab, std::collections::HashSet<String>>,
-    pub focus_column_checklist: bool,
-    pub column_checklist_idx: usize,
     pub in_review_mode: bool,
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
@@ -4196,8 +4261,6 @@ pub struct App {
     /// `draft_comments` so the cache keeps them until they match again or
     /// the user discards.
     pub stale_draft_comments: Vec<DraftComment>,
-    pub save_menu_open: bool,
-    pub save_menu_selection: Option<SaveMenu>,
     pub page_size: usize,
     pub milestones: StatefulTable<crate::domain::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::domain::issues::Issue>>,
@@ -4302,14 +4365,9 @@ impl App {
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             observed_state_queries: None,
-            edit_menu: None,
-            selector: None,
             switch_repo_paths: std::collections::HashMap::new(),
             switch_repo_groups: std::collections::HashSet::new(),
-            text_input: None,
-            editing_page_size: false,
             page_size_input: String::new(),
-            date_picker: None,
             jobs: StatefulTable::with_items(vec![]),
             detail_scroll: 0,
             selected_pipelines: std::collections::HashSet::new(),
@@ -4339,16 +4397,12 @@ impl App {
             job_trace_poll_in_flight: false,
             job_trace_last_refresh: std::time::Instant::now(),
 
-            show_help: false,
+            modal_stack: Vec::new(),
             help_search_query: String::new(),
             help_selected: 0,
             help_table_state: ratatui::widgets::TableState::default(),
-            diff_view: None,
-            review_threads: None,
-            review_submit: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
-            submit_dialog: None,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             stale_tabs: std::collections::HashMap::new(),
@@ -4367,15 +4421,11 @@ impl App {
                 }
                 ec
             },
-            focus_column_checklist: false,
-            column_checklist_idx: 0,
             in_review_mode: false,
             hide_reviewed_files: false,
             diff_layout: DiffLayout::Auto,
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
-            save_menu_open: false,
-            save_menu_selection: None,
             page_size: config.page_size,
             milestones: StatefulTable::with_items(vec![]),
             selected_milestone_issues: None,
@@ -4523,11 +4573,166 @@ fn ids_with_changed_status<'a>(
         .map(|pipeline| pipeline.id())
 }
 
+macro_rules! define_modal_accessors {
+    ($getter:ident, $getter_mut:ident, $closer:ident, $popper:ident, $variant:ident, $kind:ident, $ty:ty) => {
+        pub fn $getter(&self) -> Option<&$ty> {
+            self.modal_stack.iter().rev().find_map(|m| match m {
+                Modal::$variant(val) => Some(val.as_ref()),
+                _ => None,
+            })
+        }
+
+        pub fn $getter_mut(&mut self) -> Option<&mut $ty> {
+            self.modal_stack.iter_mut().rev().find_map(|m| match m {
+                Modal::$variant(val) => Some(val.as_mut()),
+                _ => None,
+            })
+        }
+
+        pub fn $closer(&mut self) {
+            self.close_modal_kind(ModalKind::$kind);
+        }
+
+        pub fn $popper(&mut self) -> Option<Box<$ty>> {
+            let idx = self
+                .modal_stack
+                .iter()
+                .rposition(|m| matches!(m, Modal::$variant(_)))?;
+            match self.modal_stack.remove(idx) {
+                Modal::$variant(val) => Some(val),
+                _ => None,
+            }
+        }
+    };
+    ($getter:ident, $getter_mut:ident, $opener:ident, $closer:ident, $popper:ident, $variant:ident, $kind:ident, $ty:ty) => {
+        define_modal_accessors!($getter, $getter_mut, $closer, $popper, $variant, $kind, $ty);
+
+        pub fn $opener(&mut self, val: $ty) {
+            self.$closer();
+            self.push_modal(Modal::$variant(Box::new(val)));
+        }
+    };
+}
+
 impl App {
-    /// Open an edit/create menu, capturing the current zoom state so Esc
-    /// can restore it. Use this helper instead of assigning to
-    /// `edit_menu` directly so the prev-details-zoomed bookkeeping is
-    /// consistent across all entry points (double-Enter, `e`, etc.).
+    pub fn captures_text(&self) -> bool {
+        self.modal_stack.last().is_some_and(|m| m.captures_text())
+    }
+
+    pub fn has_modal(&self) -> bool {
+        !self.modal_stack.is_empty()
+    }
+
+    pub fn push_modal(&mut self, modal: Modal) {
+        self.modal_stack.push(modal);
+    }
+
+    pub fn top_modal(&self) -> Option<&Modal> {
+        self.modal_stack.last()
+    }
+
+    pub fn close_modal_kind(&mut self, kind: ModalKind) {
+        self.modal_stack.retain(|m| m.kind() != kind);
+    }
+
+    define_modal_accessors!(
+        edit_menu,
+        edit_menu_mut,
+        close_edit_menu,
+        pop_edit_menu,
+        EditMenu,
+        EditMenu,
+        EditMenu
+    );
+    define_modal_accessors!(
+        selector,
+        selector_mut,
+        open_selector,
+        close_selector,
+        pop_selector,
+        Selector,
+        Selector,
+        Selector
+    );
+    define_modal_accessors!(
+        text_input,
+        text_input_mut,
+        open_text_input,
+        close_text_input,
+        pop_text_input,
+        Text,
+        Text,
+        TextInput
+    );
+    define_modal_accessors!(
+        date_picker,
+        date_picker_mut,
+        open_date_picker,
+        close_date_picker,
+        pop_date_picker,
+        Date,
+        Date,
+        DatePicker
+    );
+    define_modal_accessors!(
+        submit_dialog,
+        submit_dialog_mut,
+        open_submit_dialog,
+        close_submit_dialog,
+        pop_submit_dialog,
+        Submit,
+        Submit,
+        SubmitDialog
+    );
+    define_modal_accessors!(
+        review_threads,
+        review_threads_mut,
+        open_review_threads,
+        close_review_threads,
+        pop_review_threads,
+        ReviewThreads,
+        ReviewThreads,
+        ReviewThreadsOverview
+    );
+    define_modal_accessors!(
+        diff_view,
+        diff_view_mut,
+        close_diff_view,
+        pop_diff_view,
+        Diff,
+        Diff,
+        DiffView
+    );
+    define_modal_accessors!(
+        review_submit,
+        review_submit_mut,
+        open_review_submit,
+        close_review_submit,
+        pop_review_submit,
+        ReviewSubmit,
+        ReviewSubmit,
+        crate::review_submit::ReviewSubmit
+    );
+    define_modal_accessors!(
+        configure,
+        configure_mut,
+        close_configure,
+        pop_configure,
+        Configure,
+        Configure,
+        ConfigureOverlay
+    );
+
+    pub fn show_help(&self) -> bool {
+        self.modal_stack.iter().any(|m| matches!(m, Modal::Help))
+    }
+
+    pub fn focus_column_checklist(&self) -> bool {
+        self.modal_stack
+            .iter()
+            .any(|m| matches!(m, Modal::Configure(_)))
+    }
+
     pub fn open_edit_menu(&mut self, mut menu: EditMenu) {
         if menu.initial_fields.is_empty() {
             menu.initial_fields = menu
@@ -4537,7 +4742,31 @@ impl App {
                 .collect();
         }
         self.prev_details_zoomed = self.details_zoomed;
-        self.edit_menu = Some(menu);
+        self.close_edit_menu();
+        self.push_modal(Modal::EditMenu(Box::new(menu)));
+    }
+
+    pub fn open_diff_view(&mut self, diff: DiffView) {
+        match self.diff_view_mut() {
+            Some(open) => *open = diff,
+            None => self.modal_stack.insert(0, Modal::Diff(Box::new(diff))),
+        }
+    }
+
+    pub fn open_configure(&mut self) {
+        if !self.focus_column_checklist() {
+            self.push_modal(Modal::Configure(Box::default()));
+        }
+    }
+
+    pub fn open_help(&mut self) {
+        if !self.show_help() {
+            self.push_modal(Modal::Help);
+        }
+    }
+
+    pub fn close_help(&mut self) {
+        self.close_modal_kind(ModalKind::Help);
     }
 
     pub fn project_path(&self) -> &str {
@@ -4570,10 +4799,7 @@ impl App {
                     .insert("Project".to_string());
             }
         }
-        self.selector = None;
-        self.text_input = None;
-        self.edit_menu = None;
-        self.submit_dialog = None;
+        self.modal_stack.clear();
         self.clear_info_notices();
         self.stale_tabs.clear();
         self.search_query.clear();
@@ -4732,8 +4958,7 @@ impl App {
     /// The project of MR `iid`, read from the open diff when it shows that
     /// MR. In group scope the iid alone can match another project's MR.
     pub fn project_path_for_open_mr(&self, iid: u64) -> String {
-        self.diff_view
-            .as_ref()
+        self.diff_view()
             .filter(|diff| diff.mr_iid == iid)
             .map(|diff| diff.project_path.clone())
             .unwrap_or_else(|| self.project_path_for_mr(iid))
@@ -5632,7 +5857,7 @@ impl App {
 
     /// The request of the modal on screen, whose notices it draws itself.
     pub fn open_modal_request(&self) -> Option<crate::notice::RequestTag> {
-        self.selector.as_ref().and_then(|selector| selector.request)
+        self.selector().and_then(|selector| selector.request)
     }
 
     /// The newest notice about the open modal's request.
@@ -5832,7 +6057,7 @@ impl App {
             .ok_or_else(|| {
                 anyhow::anyhow!("this entry records no glab, gh or git call to re-run")
             })?;
-        self.submit_dialog = Some(SubmitDialog::build(
+        self.open_submit_dialog(SubmitDialog::build(
             ConfirmAction::RerunCommand(invocation),
             self,
         ));
@@ -6479,7 +6704,7 @@ impl App {
     /// Opens the theme picker on the configured preset.
     pub fn open_theme_picker(&mut self) {
         let current = self.config.theme_preset.as_deref().unwrap_or("default");
-        self.selector = Some(Selector::theme_picker(
+        self.open_selector(Selector::theme_picker(
             crate::config::all_theme_presets(),
             current,
         ));
@@ -6489,7 +6714,7 @@ impl App {
     /// and with the configured one again once the picker closes, whichever
     /// key or click closed it. Runs before each draw.
     pub fn sync_theme_preview(&mut self) {
-        let highlighted = self.selector.as_ref().and_then(Selector::highlighted_theme);
+        let highlighted = self.selector().and_then(Selector::highlighted_theme);
         if highlighted == self.theme_preview {
             return;
         }
@@ -6634,10 +6859,17 @@ impl App {
     }
 
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
+        Self::unresolved_threads_count_for_path_slice(&self.current_comments, path)
+    }
+
+    pub fn unresolved_threads_count_for_path_slice(
+        comments: &[crate::domain::mr::DiscussionNote],
+        path: &str,
+    ) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
 
-        for c in &self.current_comments {
+        for c in comments {
             if c.system {
                 continue;
             }
@@ -7849,7 +8081,7 @@ impl App {
         request: crate::notice::RequestTag,
         items: Result<Vec<String>, String>,
     ) -> bool {
-        if self.selector.as_ref().and_then(|s| s.request) != Some(request) {
+        if self.selector().and_then(|s| s.request) != Some(request) {
             return false;
         }
         let (items, failure) = match items {
@@ -7865,7 +8097,7 @@ impl App {
                     Some(error) => notice.with_detail(error),
                     None => notice,
                 });
-                if let Some(selector) = self.selector.as_mut() {
+                if let Some(selector) = self.selector_mut() {
                     selector.all_items = cached;
                     selector.is_loading = false;
                 }
@@ -7877,15 +8109,15 @@ impl App {
                 crate::notice::Notice::error(format!("Failed to load options: {error}"))
                     .from_request(request),
             );
-            if let Some(selector) = self.selector.as_mut() {
+            if let Some(selector) = self.selector_mut() {
                 selector.is_loading = false;
             }
             return false;
         }
-        let Some(selector) = self.selector.as_mut() else {
+        let Some(field_type) = self.selector().map(|s| s.field_type.clone()) else {
             return false;
         };
-        match selector.field_type.as_str() {
+        match field_type.as_str() {
             "labels" => {
                 self.cached_labels = items.clone();
                 self.project_cache.labels = items.clone();
@@ -7896,6 +8128,9 @@ impl App {
             }
             _ => {}
         }
+        let Some(selector) = self.selector_mut() else {
+            return false;
+        };
         if selector.field_type == "project" {
             selector.all_items.extend(items);
             selector.all_items.sort();
@@ -7909,7 +8144,7 @@ impl App {
 
     /// The open selector's options known without a fetch, if any.
     fn cached_selector_items(&self) -> Option<Vec<String>> {
-        let cached: Vec<String> = match self.selector.as_ref()?.field_type.as_str() {
+        let cached: Vec<String> = match self.selector()?.field_type.as_str() {
             "labels" => self.cached_labels.clone(),
             "assignees" | "reviewers" => self.cached_members.clone(),
             "milestone" => self
@@ -8283,18 +8518,7 @@ impl App {
     /// Whether a keypress goes into a text field (a search, a filter, an
     /// inline edit) rather than to a binding.
     pub fn is_capturing_text(&self) -> bool {
-        self.text_input.is_some()
-            || self.show_help
-            || self.is_typing_search
-            || self.job_trace_searching
-            || self.editing_page_size
-            || self.selector.as_ref().is_some_and(|s| s.is_filtering)
-            || self.edit_menu.as_ref().is_some_and(|m| m.editing)
-            || self.diff_view.as_ref().is_some_and(|d| d.search_active)
-            || self
-                .submit_dialog
-                .as_ref()
-                .is_some_and(|d| d.form.is_editing())
+        self.captures_text() || self.is_typing_search || self.job_trace_searching
     }
 
     fn keybinding_timeout(&self) -> std::time::Duration {
@@ -11024,7 +11248,7 @@ diff --git a/VERSION b/VERSION
         let mut opened = mr_fixture(5, "opened", "b", false, "beta !5");
         opened.project_path = "acme/beta".to_string();
         app.mrs.items = vec![listed_first, opened];
-        app.diff_view = Some(DiffView::without_highlighting(
+        app.open_diff_view(DiffView::without_highlighting(
             5,
             "acme/beta".to_string(),
             String::new(),
@@ -11100,12 +11324,12 @@ diff --git a/VERSION b/VERSION
         let mut app = App::default();
         let stale = app.next_request_tag();
         let current = app.next_request_tag();
-        app.selector = Some(loading_labels_selector(current));
+        app.open_selector(loading_labels_selector(current));
 
         let applied = app.apply_selector_items(stale, Ok(vec!["bug".to_string()]));
 
         assert!(!applied);
-        let selector = app.selector.as_ref().expect("selector stays open");
+        let selector = app.selector().expect("selector stays open");
         assert!(selector.is_loading);
         assert!(selector.all_items.is_empty());
         assert!(app.cached_labels.is_empty());
@@ -11127,13 +11351,13 @@ diff --git a/VERSION b/VERSION
     fn selector_reply_fills_the_selector_and_the_label_cache() {
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(loading_labels_selector(request));
+        app.open_selector(loading_labels_selector(request));
         let labels = vec!["bug".to_string(), "docs".to_string()];
 
         let applied = app.apply_selector_items(request, Ok(labels.clone()));
 
         assert!(applied);
-        let selector = app.selector.as_ref().expect("selector stays open");
+        let selector = app.selector().expect("selector stays open");
         assert!(!selector.is_loading);
         assert_eq!(selector.all_items, labels);
         assert_eq!(app.cached_labels, labels);
@@ -11147,12 +11371,12 @@ diff --git a/VERSION b/VERSION
             ..App::default()
         };
         let request = app.next_request_tag();
-        app.selector = Some(loading_labels_selector(request));
+        app.open_selector(loading_labels_selector(request));
 
         let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
 
         assert!(!applied);
-        let selector = app.selector.as_ref().expect("selector stays open");
+        let selector = app.selector().expect("selector stays open");
         assert!(!selector.is_loading);
         assert_eq!(selector.all_items, ["bug"]);
         let notice = app.modal_notice().expect("notice inside the selector");
@@ -11166,12 +11390,12 @@ diff --git a/VERSION b/VERSION
         let mut app = App::default();
         app.project_cache.labels = vec!["persisted".to_string()];
         let request = app.next_request_tag();
-        app.selector = Some(loading_labels_selector(request));
+        app.open_selector(loading_labels_selector(request));
 
         let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
 
         assert!(!applied);
-        let selector = app.selector.as_ref().expect("selector stays open");
+        let selector = app.selector().expect("selector stays open");
         assert!(!selector.is_loading);
         assert!(selector.all_items.is_empty());
         assert_eq!(
@@ -11212,6 +11436,32 @@ diff --git a/VERSION b/VERSION
         assert_eq!(selector.cursor_idx, 4);
         selector.move_by(false, 15);
         assert_eq!(selector.cursor_idx, 0, "stops on the first item");
+    }
+
+    #[test]
+    fn test_selector_has_filter_bar() {
+        let make = |field_type: &str| Selector {
+            title: "Test".to_string(),
+            all_items: vec![],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: field_type.to_string(),
+            multi_select: false,
+            state: ListState::default(),
+            request: None,
+        };
+
+        assert!(!make("linked_issues").has_filter_bar());
+        assert!(!make("comment_action_select").has_filter_bar());
+        assert!(!make("related_mrs").has_filter_bar());
+        assert!(make("labels").has_filter_bar());
+        assert!(make("assignees").has_filter_bar());
+        assert!(make("milestone").has_filter_bar());
     }
 
     #[test]
@@ -11659,8 +11909,8 @@ index abcdef..ffffff 100644
         assert!(!app.is_column_visible(Tab::MergeRequests, "Milestone"));
         assert!(!app.is_column_visible(Tab::MergeRequests, "Author"));
 
-        assert!(!app.focus_column_checklist);
-        assert_eq!(app.column_checklist_idx, 0);
+        assert!(!app.focus_column_checklist());
+        assert_eq!(app.configure().map(|c| c.column_checklist_idx), None);
     }
 
     #[test]
@@ -12508,7 +12758,7 @@ scroll_page_up = "Ctrl+b"
     #[test]
     fn test_app_inline_page_size_defaults() {
         let app = App::default();
-        assert!(!app.editing_page_size);
+        assert!(app.configure().is_none());
         assert_eq!(app.page_size_input, "");
     }
 
@@ -14005,7 +14255,7 @@ index 123456..789012 100644
 
         app.confirm_terminal_rerun().unwrap();
 
-        let dialog = app.submit_dialog.expect("confirmation is open");
+        let dialog = app.submit_dialog().cloned().expect("confirmation is open");
         let crate::app::ConfirmAction::RerunCommand(invocation) = &dialog.action else {
             panic!("expected a rerun confirmation, got {:?}", dialog.action);
         };
@@ -14025,7 +14275,7 @@ index 123456..789012 100644
         app.start_command("Creating branch: x from main".to_string());
 
         assert!(app.confirm_terminal_rerun().is_err());
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
     }
 
     #[test]
@@ -14900,7 +15150,7 @@ index 123456..789012 100644
     }
 
     fn highlight_theme(app: &mut App, preset: &str) {
-        let selector = app.selector.as_mut().expect("theme picker is open");
+        let selector = app.selector_mut().expect("theme picker is open");
         selector.cursor_idx = selector
             .get_filtered_items()
             .iter()
@@ -14914,7 +15164,7 @@ index 123456..789012 100644
         let nord = Theme::preset("nord").unwrap();
 
         assert_eq!(
-            app.selector.as_ref().and_then(Selector::highlighted_theme),
+            app.selector().and_then(Selector::highlighted_theme),
             Some("nord".to_string())
         );
 
@@ -14923,7 +15173,7 @@ index 123456..789012 100644
         assert_eq!(app.theme, Theme::preset("dracula").unwrap());
         assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
 
-        app.selector = None;
+        app.close_selector();
         app.sync_theme_preview();
         assert_eq!(app.theme, nord);
         assert_eq!(app.theme_preview, None);
@@ -14947,7 +15197,7 @@ index 123456..789012 100644
         highlight_theme(&mut app, "dracula");
         app.sync_theme_preview();
 
-        let selector = app.selector.as_mut().unwrap();
+        let selector = app.selector_mut().unwrap();
         selector.search_query = "no-such-theme".to_string();
         selector.cursor_idx = 0;
         app.sync_theme_preview();

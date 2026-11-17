@@ -583,7 +583,7 @@ fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
         }
         _ => crate::app::ConfirmAction::MergeMr(pr_number),
     };
-    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+    app.open_submit_dialog(crate::app::SubmitDialog::build_with_project(
         action,
         project.to_string(),
         app,
@@ -648,7 +648,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
         },
         request: None,
     };
-    app.selector = Some(selector);
+    app.open_selector(selector);
 }
 
 /// Scrolls the detail pane by a full or half page for the
@@ -961,7 +961,7 @@ pub fn handle_active_tab_key(
                             let client = app.gitlab_client.clone();
                             jump_to_mr_tab(app, items[0].iid, client, tx.clone(), fx);
                         } else {
-                            app.selector = Some(crate::app::Selector {
+                            app.open_selector(crate::app::Selector {
                                 title: format!(
                                     " Related {} for Issue #{} ",
                                     if is_github {
@@ -1264,8 +1264,7 @@ pub fn handle_active_tab_key(
                     if let Some(mr) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let pr_suffix = if is_github { "PR" } else { "MR" };
-                        let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid)
-                        {
+                        let unresolved = if app.diff_view().map(|d| d.mr_iid) == Some(mr.iid) {
                             Some(app.unresolved_threads_count())
                         } else {
                             None
@@ -1311,7 +1310,7 @@ pub fn handle_active_tab_key(
             {
                 let mut items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
                 items.sort_unstable();
-                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                app.open_submit_dialog(crate::app::SubmitDialog::build(
                     crate::app::ConfirmAction::BulkMergeMrs(items),
                     app,
                 ));
@@ -1346,12 +1345,13 @@ pub fn handle_active_tab_key(
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
                                 RebaseGate::Allowed => {
-                                    app.submit_dialog =
-                                        Some(crate::app::SubmitDialog::build_with_project(
+                                    app.open_submit_dialog(
+                                        crate::app::SubmitDialog::build_with_project(
                                             crate::app::ConfirmAction::RebaseMr(mr_iid),
                                             app.scope.project_of(&mr.project_path).to_string(),
                                             app,
-                                        ));
+                                        ),
+                                    );
                                 }
                                 RebaseGate::ResolveLocally => {
                                     app.show_error(
@@ -1529,7 +1529,7 @@ pub fn handle_active_tab_key(
                                     } else {
                                         let is_github = app.is_github();
                                         let pr_term = if is_github { "PR" } else { "MR" };
-                                        app.selector = Some(crate::app::Selector {
+                                        app.open_selector(crate::app::Selector {
                                             title: format!(
                                                 " Linked Issues for {pr_term} #{mr_iid} "
                                             ),
@@ -1865,7 +1865,7 @@ pub fn handle_active_tab_key(
                     .next()
                     .and_then(|sel| pipelines.iter().position(|p| p == sel))
                     .unwrap_or(0);
-                app.selector = Some(crate::app::Selector {
+                app.open_selector(crate::app::Selector {
                     title: " Select Pipeline ".to_string(),
                     all_items: pipelines,
                     selected_items: pre_selected,
@@ -2262,7 +2262,7 @@ pub fn handle_active_tab_key(
                         .matches(Action::RunnersEditDescription, key_event) =>
                     {
                         let current_desc = item.description.clone().unwrap_or_default();
-                        app.text_input = Some(crate::app::TextInput::new(
+                        app.open_text_input(crate::app::TextInput::new(
                             " Edit Runner Description ",
                             current_desc,
                             crate::app::TextInputAction::EditField {
@@ -2932,14 +2932,13 @@ pub fn handle_active_tab_key(
                                         if let Some(mr) = filtered.get(selected_idx) {
                                             let is_github = app.is_github();
                                             let pr_suffix = if is_github { "PR" } else { "MR" };
-                                            let unresolved =
-                                                if app.diff_view.as_ref().map(|d| d.mr_iid)
-                                                    == Some(mr.iid)
-                                                {
-                                                    Some(app.unresolved_threads_count())
-                                                } else {
-                                                    None
-                                                };
+                                            let unresolved = if app.diff_view().map(|d| d.mr_iid)
+                                                == Some(mr.iid)
+                                            {
+                                                Some(app.unresolved_threads_count())
+                                            } else {
+                                                None
+                                            };
                                             let is_fetching_issues =
                                                 app.fetching_mr_related_issues.contains(&mr.iid);
                                             let mut doc = crate::entity_editor::build_mr_document(
@@ -3932,7 +3931,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         assert!(matches!(
             dialog.action,
             crate::app::ConfirmAction::CancelPipeline(42)
@@ -4002,7 +4001,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         match &dialog.action {
             crate::app::ConfirmAction::CancelJobs {
                 pipeline_id,
@@ -4523,7 +4522,10 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.expect("close opens a confirm dialog");
+        let dialog = app
+            .submit_dialog()
+            .cloned()
+            .expect("close opens a confirm dialog");
         assert!(matches!(
             dialog.action,
             crate::app::ConfirmAction::CloseMilestone(ref milestone) if milestone.id == 20
@@ -4570,7 +4572,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
         );
 
-        let menu = app.edit_menu.expect("create milestone menu");
+        let menu = app.edit_menu().cloned().expect("create milestone menu");
         assert_eq!(menu.entity_project, "grp/b");
     }
 
@@ -4720,7 +4722,7 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
         );
-        let menu = app.edit_menu.as_ref().expect("MR creation form opened");
+        let menu = app.edit_menu().expect("MR creation form opened");
         let source_field = menu.fields.iter().find(|f| f.label == "Source Branch");
         assert_eq!(source_field.map(|f| f.value.as_str()), Some("branch-00"));
     }
@@ -4756,7 +4758,7 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
-        let dialog = app.submit_dialog.as_ref().expect("Delete dialog shown");
+        let dialog = app.submit_dialog().expect("Delete dialog shown");
         assert_eq!(dialog.form.title, "Delete Branch 'branch-00'");
         if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
             assert_eq!(name, "branch-00");
@@ -4786,15 +4788,12 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
-        let dialog = app
-            .submit_dialog
-            .as_ref()
-            .expect("Bulk delete dialog shown");
+        let dialog = app.submit_dialog().expect("Bulk delete dialog shown");
         assert_eq!(dialog.form.title, "Delete 2 Branches");
         if let crate::app::ConfirmAction::BulkDeleteBranches(names) = &dialog.action {
             assert_eq!(
-                names,
-                &vec!["branch-00".to_string(), "branch-01".to_string()]
+                names.as_slice(),
+                &["branch-00".to_string(), "branch-01".to_string()]
             );
         } else {
             panic!("Expected ConfirmAction::BulkDeleteBranches");
@@ -4940,7 +4939,7 @@ pub(crate) mod tests {
         dispatch(&mut app, &key(KeyCode::Char('j')));
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         let crate::app::ConfirmAction::RollbackDeployment {
             environment,
             deployment,
@@ -4958,7 +4957,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert_eq!(
             app.toast_notice().map(Notice::text),
             Some(NO_DEPLOYMENT_SELECTED)
@@ -4972,7 +4971,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert_eq!(
             app.toast_notice().map(Notice::text),
             Some("Deployment #1 has no deploy job to re-run")
@@ -4985,7 +4984,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('d')));
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         assert!(matches!(
             &dialog.action,
             crate::app::ConfirmAction::StopEnvironment(env) if env.id == 1

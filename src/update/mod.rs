@@ -1024,7 +1024,12 @@ mod tests {
             serde_json::from_str(r#"{"iid": 1, "title": "Test Issue", "state": "opened", "updated_at": "2026-01-01T00:00:00Z", "author": {"username": "user"}}"#).unwrap(),
         ];
         app.issues.state.select(Some(0));
-        app.content_rect = Some(ratatui::layout::Rect::new(0, 5, 80, 20));
+        let content_area = ratatui::layout::Rect::new(0, 5, 80, 20);
+        app.content_rect = Some(content_area);
+        app.layout = Some(crate::ui::layout::LayoutPlan {
+            content_area,
+            ..Default::default()
+        });
 
         app.open_configure();
         assert!(app.has_modal());
@@ -1039,5 +1044,35 @@ mod tests {
         update(&mut app, click_event);
 
         assert_eq!(app.issues.state.selected(), Some(0));
+    }
+
+    #[test]
+    fn sidebar_clicks_switch_tabs_inside_the_border_only() {
+        use crossterm::event::MouseEventKind;
+        let click = |row: u16, column: u16| {
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let mut app = app_with_client();
+        app.active_tab = Tab::Issues;
+        let sidebar_rect = ratatui::layout::Rect::new(0, 0, 22, 12);
+        app.layout = Some(crate::ui::layout::LayoutPlan {
+            sidebar_rect,
+            ..Default::default()
+        });
+
+        update(&mut app, click(0, 5));
+        assert_eq!(app.active_tab, Tab::Issues, "top border row");
+        update(&mut app, click(11, 5));
+        assert_eq!(app.active_tab, Tab::Issues, "bottom border row");
+        update(&mut app, click(2, 0));
+        assert_eq!(app.active_tab, Tab::Issues, "left border column");
+
+        update(&mut app, click(2, 5));
+        assert_eq!(app.active_tab, Tab::MergeRequests);
     }
 }

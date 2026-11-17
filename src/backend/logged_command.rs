@@ -244,7 +244,12 @@ mod tests {
     async fn rerun_replays_arguments_and_stdin_and_records_the_output() {
         let invocation = Invocation {
             program: Program::Git,
-            args: vec!["hash-object".to_string(), "--stdin".to_string()],
+            args: vec![
+                "-C".to_string(),
+                env!("CARGO_MANIFEST_DIR").to_string(),
+                "hash-object".to_string(),
+                "--stdin".to_string(),
+            ],
             stdin: Some("hello\n".to_string()),
         };
 
@@ -262,7 +267,14 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn rerun_of_a_failing_call_reports_its_stderr() {
-        let invocation = Invocation::new(Program::Git, &["no-such-subcommand-for-glab-tui"]);
+        let invocation = Invocation::new(
+            Program::Git,
+            &[
+                "-C",
+                env!("CARGO_MANIFEST_DIR"),
+                "no-such-subcommand-for-glab-tui",
+            ],
+        );
 
         let (status, execution) = rerun(invocation).await;
 
@@ -277,6 +289,8 @@ mod tests {
         let invocation = Invocation::new(
             Program::Git,
             &[
+                "-C",
+                env!("CARGO_MANIFEST_DIR"),
                 "-c",
                 "alias.big=!head -c 100000 /dev/zero | tr '\\0' z",
                 "big",

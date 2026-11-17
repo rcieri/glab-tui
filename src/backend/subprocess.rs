@@ -177,10 +177,12 @@ mod tests {
     #[tokio::test]
     async fn capped_output_keeps_a_prefix_of_each_stream_and_lets_the_child_finish() {
         let output = output_within(
-            Command::new("sh").args([
-                "-c",
-                "head -c 200000 /dev/zero | tr '\\0' o; head -c 200000 /dev/zero | tr '\\0' e >&2; exit 3",
-            ]),
+            Command::new("sh")
+                .args([
+                    "-c",
+                    "head -c 200000 /dev/zero | tr '\\0' o; head -c 200000 /dev/zero | tr '\\0' e >&2; exit 3",
+                ])
+                .current_dir(env!("CARGO_MANIFEST_DIR")),
             None,
             Some(1000),
             Duration::from_secs(10),

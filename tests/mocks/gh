@@ -106,6 +106,14 @@ if [[ "$*" == "api graphql"*"entries(first"* ]]; then
     exit 0
 fi
 
+# Latest status of each deployment in tests/fixtures/gh_deployments.json.
+if [[ "$*" == "api graphql"*"latestStatus"* ]]; then
+    echo '{"data":{"repository":{"deployments":{"nodes":[
+        {"databaseId":100,"latestStatus":{"state":"FAILURE"}},
+        {"databaseId":99,"latestStatus":{"state":"SUCCESS"}}]}}}}'
+    exit 0
+fi
+
 if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
     echo '{"data":{"repository":{
         "pr_10":{"number":10,"stack":{"number":7,"size":2},"stackEntry":{"position":1}},

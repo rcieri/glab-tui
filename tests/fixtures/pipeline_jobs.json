@@ -1,0 +1,26 @@
+[
+  {
+    "id": 54321,
+    "status": "success",
+    "stage": "test",
+    "name": "rspec",
+    "duration": 95.4,
+    "queued_duration": 3.2,
+    "runner": {
+      "id": 7,
+      "description": "shared-runner-7"
+    },
+    "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321",
+    "artifacts": [
+      {
+        "file_type": "archive"
+      },
+      {
+        "file_type": "trace"
+      },
+      {
+        "file_type": "junit"
+      }
+    ]
+  }
+]

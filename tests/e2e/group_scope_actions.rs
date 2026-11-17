@@ -159,3 +159,18 @@ fn opening_a_group_milestone_uses_its_web_url() {
         )
         .expect("the group milestone page should open in the browser");
 }
+
+/// GitHub lists an org's issues and PRs through the search API, whose reply
+/// wraps them in `items`.
+#[test]
+fn github_org_scope_lists_issues_and_prs_from_search() {
+    let mut session =
+        TestSession::launch_with_args(Sandbox::new(true).unwrap(), 30, 140, &["-g", "acme"], &[]);
+    session
+        .wait_for_screen_contains("Org issue in project-b", 5000)
+        .expect("the org's issue is listed");
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("Org PR in project-b", 5000)
+        .expect("the org's PR is listed");
+}

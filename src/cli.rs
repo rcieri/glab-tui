@@ -14,7 +14,7 @@ const C_BLUE: &str = "\x1b[34m";
 const C_CYAN: &str = "\x1b[36m";
 
 fn styled(text: &str, code: &str) -> String {
-    format!("{}{}{}", code, text, C_RESET)
+    format!("{code}{text}{C_RESET}")
 }
 
 fn pass(label: &str, detail: &str) {
@@ -34,7 +34,7 @@ fn info(label: &str, detail: &str) {
 }
 
 fn header(text: &str) {
-    println!("{}", styled(text, &format!("{}{}", C_BOLD, C_CYAN)));
+    println!("{}", styled(text, &format!("{C_BOLD}{C_CYAN}")));
 }
 
 fn subheader(text: &str) {
@@ -133,7 +133,7 @@ pub async fn run_doctor() {
     match Command::new("glab").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            pass("[PASS]", &format!("glab: {}", v));
+            pass("[PASS]", &format!("glab: {v}"));
             has_backend = true;
         }
         _ => {
@@ -148,7 +148,7 @@ pub async fn run_doctor() {
     match Command::new("gh").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            pass("[PASS]", &format!("gh:   {}", v));
+            pass("[PASS]", &format!("gh:   {v}"));
             has_backend = true;
         }
         _ => {
@@ -163,7 +163,7 @@ pub async fn run_doctor() {
     match Command::new("git").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            pass("[PASS]", &format!("git:  {}", v));
+            pass("[PASS]", &format!("git:  {v}"));
         }
         _ => {
             fail("[FAIL]", "git not found");
@@ -252,7 +252,7 @@ pub async fn run_doctor() {
     println!();
     subheader("Repository context");
     println!("{}", styled("-------------------", C_DIM));
-    match crate::domain::client::get_project_context().await {
+    match crate::domain::client::get_project_context() {
         Ok(context) => {
             println!("  Remote:  {}", styled(&context, C_BOLD));
             let is_github = detect_github().await;
@@ -261,7 +261,7 @@ pub async fn run_doctor() {
             } else {
                 styled("GitLab", C_YELLOW)
             };
-            println!("  Backend: {}", backend);
+            println!("  Backend: {backend}");
         }
         Err(_) => {
             println!(
@@ -457,6 +457,7 @@ pub fn run_cache_list() {
 
 pub async fn run_open_in_browser(entity: &str, id: &str) {
     let is_github = detect_github().await;
+    let web_url;
 
     let (program, subcommand) = match entity {
         "issue" => {
@@ -491,14 +492,16 @@ pub async fn run_open_in_browser(entity: &str, id: &str) {
                 );
                 return;
             } else {
-                ("glab", vec!["ci", "view", id, "-w"])
+                web_url = gitlab_web_url_or_exit("jobs", id);
+                ("git", vec!["web--browse", web_url.as_str()])
             }
         }
         "milestone" => {
             if is_github {
                 ("gh", vec!["issue", "list", "--milestone", id, "--web"])
             } else {
-                ("glab", vec!["milestone", "view", id, "-w"])
+                web_url = gitlab_web_url_or_exit("milestones", id);
+                ("git", vec!["web--browse", web_url.as_str()])
             }
         }
         _ => {
@@ -579,10 +582,25 @@ pub async fn run_update() {
             }
         }
         Err(e) => {
-            eprintln!("{}", styled(&format!("Update failed: {}", e), C_RED));
+            eprintln!("{}", styled(&format!("Update failed: {e}"), C_RED));
             std::process::exit(1);
         }
     }
+}
+
+/// `https://<host>/<project>/-/<page>/<id>` for the project of the `origin`
+/// remote. Exits with an error when `origin` yields no host or project.
+fn gitlab_web_url_or_exit(page: &str, id: &str) -> String {
+    let host_and_project = crate::git_helpers::remote_host("origin")
+        .zip(crate::git_helpers::remote_project_path("origin"));
+    let Some((host, project)) = host_and_project else {
+        eprintln!(
+            "{} no GitLab project found in the `origin` remote",
+            styled("error:", C_RED)
+        );
+        std::process::exit(1);
+    };
+    format!("https://{host}/{project}/-/{page}/{id}")
 }
 
 async fn detect_github() -> bool {

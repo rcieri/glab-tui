@@ -1,6 +1,6 @@
 [package]
 name = "glab-tui-crate"
-version = "0.9.3"
+version = "0.9.5"
 edition = "2024"
 rust-version = "1.88"
 description = "A terminal user interface for GitLab and GitHub"
@@ -31,12 +31,16 @@ anyhow = "1.0.86"
 chrono = "0.4.45"
 tempfile = "3.10"
 fuzzy-matcher = "0.3.7"
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+syntect = { version = "5", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+similar = { version = "3.2", default-features = false }
+unicode-segmentation = "1.13"
 async-trait = "0.1.89"
 clap = { version = "4", features = ["derive"] }
-serde_yaml = "0.9"
+serde-saphyr = { version = "1.1", default-features = false, features = ["deserialize"] }
 pulldown-cmark = { version = "0.13.0", default-features = false }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+sha2 = "0.10"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.186"
 

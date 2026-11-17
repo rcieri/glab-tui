@@ -87,6 +87,67 @@ command = "printf '%s|%s|%s|%s|%s|%s' {{{{.PrNumber}}}} {{{{.HeadRefName}}}} {{{
 }
 
 #[test]
+fn test_pipeline_custom_command_runs_with_the_highlighted_pipeline() {
+    let config = format!(
+        r#"
+[[custom_keybindings.pipelines]]
+key = "x"
+command = "printf '%s|%s|%s' {{{{.PipelineId}}}} {{{{.Ref}}}} {{{{.RepoName}}}} > {{{{.RepoPath}}}}/{OUTPUT_FILE}"
+"#
+    );
+    let mut session = TestSession::with_config(false, 40, 160, Some(&config));
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.press_keys(b"ll");
+    session
+        .wait_for_screen_contains("#12345", 15000)
+        .expect("Pipelines tab should list the fixture pipeline");
+    let output_path = session.sandbox.repo_dir.join(OUTPUT_FILE);
+
+    session.send_input(b"x");
+
+    assert_eq!(
+        wait_for_file(&mut session, &output_path, 10000).unwrap(),
+        "12345|main|test-owner/test-repo"
+    );
+}
+
+#[test]
+fn test_jobs_custom_command_runs_with_the_highlighted_job_fields() {
+    let config = format!(
+        r#"
+[[custom_keybindings.jobs]]
+key = "L"
+name = "record job"
+command = "printf '%s|%s|%s|%s|%s|%s' {{{{.JobId}}}} {{{{.JobName}}}} {{{{.Stage}}}} {{{{.Status}}}} {{{{.RepoName}}}} \"$GLAB_TUI_JOB_ID\" > {{{{.RepoPath}}}}/{OUTPUT_FILE}"
+"#
+    );
+    let mut session = TestSession::with_config(false, 40, 160, Some(&config));
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 15000)
+        .expect("the pipeline is listed");
+    session.send_input(b"\x1bj"); // Alt+j: the pipeline's own jobs
+    session
+        .wait_for_screen_contains("rspec", 15000)
+        .expect("the pipeline's job is listed");
+    let output_path = session.sandbox.repo_dir.join(OUTPUT_FILE);
+
+    session.send_input(b"L");
+
+    let output = wait_for_file(&mut session, &output_path, 10000)
+        .expect("the jobs binding should run from the Jobs tab");
+    assert_eq!(
+        output,
+        "54321|rspec|test|success|test-owner/test-repo|54321"
+    );
+}
+
+#[test]
 fn test_custom_command_is_listed_in_help_on_its_tab() {
     let mut session = session_on_mrs_tab(
         r#"
@@ -184,6 +245,40 @@ command = "printf '%s:%s %s' {{{{.FilePath}}}} {{{{.LineNumber}}}} {{{{.HeadRefN
     let output = wait_for_file(&mut session, &output_path, 10000)
         .expect("the diff binding should run from the diff view");
     assert_eq!(output, "src/pagination.rs:41 feature/pagination");
+}
+
+#[test]
+fn test_diff_custom_command_on_a_remapped_layout_key_runs() {
+    let config = format!(
+        r#"
+[keybindings.diff]
+layout_auto = "="
+
+[[custom_keybindings.diff]]
+key = "0"
+command = "printf ran > {OUTPUT_FILE}"
+"#
+    );
+    let mut session = session_on_mrs_tab(&config);
+    session.send_input(b"D");
+    session
+        .wait_for_screen_contains("(unified, auto)", 15000)
+        .expect("D should open the MR diff in the auto layout");
+
+    session.send_input(b"1");
+    session
+        .wait_for_screen_contains("(side-by-side, pinned)", 5000)
+        .expect("1 should still pin side-by-side");
+    session.send_input(b"=");
+    session
+        .wait_for_screen_contains("(unified, auto)", 5000)
+        .expect("the remapped layout_auto key should return to the auto layout");
+
+    session.send_input(b"0");
+    let output_path = session.sandbox.repo_dir.join(OUTPUT_FILE);
+    let output = wait_for_file(&mut session, &output_path, 10000)
+        .expect("0 should run the diff binding once layout_auto moved off it");
+    assert_eq!(output, "ran");
 }
 
 /// Waits between keystrokes while feeding the app's output to the emulator.

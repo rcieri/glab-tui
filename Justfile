@@ -4,6 +4,18 @@
 default:
     @just --list
 
+# Build the release binary (target/release/glab-tui)
+build:
+    cargo build --release
+
+# Run a debug build, passing arguments to glab-tui (e.g. just run -r owner/repo)
+run *args:
+    cargo run -- {{args}}
+
+# Build, then copy the binary to the first directory in PATH
+install: build
+    @dest="${PATH%%:*}"; cp target/release/glab-tui "$dest/" && echo "Installed glab-tui to $dest"
+
 # Format code with rustfmt
 fmt:
     cargo fmt --all
@@ -18,11 +30,19 @@ lint:
 
 # Run unit tests
 test:
-    cargo test --bin glab-tui
+    cargo test --lib --bin glab-tui
 
-# Run end-to-end tests (single-threaded)
+# Run end-to-end tests, one process per test (requires cargo-nextest)
 e2e:
-    cargo test --test e2e -- --test-threads=1
+    cargo nextest run --test e2e --no-fail-fast
+
+# Check advisories, licenses, duplicate versions and sources (requires cargo-deny)
+deny:
+    cargo deny check
+
+# Fuzz one parser: diff_parser, markdown or ansi_trace (requires nightly and cargo-fuzz)
+fuzz target seconds="60":
+    cargo +nightly fuzz run {{target}} -- -max_total_time={{seconds}}
 
 # Run all CI checks locally (fmt check, clippy, unit tests, e2e tests)
 check: fmt-check lint test e2e

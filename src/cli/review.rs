@@ -1,6 +1,6 @@
 use crate::app::{DiffLine, DiffView};
 use crate::domain::client::GitlabClient;
-use crate::domain::mr::{get_mr_diff, list_mr_notes};
+use crate::domain::mr::{ReviewState, get_mr_diff, list_mr_notes};
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::review_threads::{ReviewThread, ThreadAnchor, group_threads};
 use anyhow::{Context, Result, bail};
@@ -177,6 +177,8 @@ struct ThreadOutput {
     anchor: Option<AnchorOutput>,
     resolvable: bool,
     resolved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_state: Option<ReviewState>,
     notes: Vec<NoteOutput>,
 }
 
@@ -189,7 +191,7 @@ struct AnchorOutput {
 
 #[derive(Serialize)]
 struct NoteOutput {
-    id: u64,
+    id: Option<u64>,
     author: String,
     body: String,
     created_at: String,
@@ -208,10 +210,7 @@ impl From<&ReviewThread> for ThreadOutput {
             _ => Side::New,
         };
         Self {
-            id: root
-                .discussion_id
-                .clone()
-                .unwrap_or_else(|| root.id.to_string()),
+            id: thread.id.clone(),
             classification,
             anchor: anchor.map(|(file, line)| AnchorOutput {
                 file: file.clone(),
@@ -220,6 +219,7 @@ impl From<&ReviewThread> for ThreadOutput {
             }),
             resolvable: thread.is_resolvable(),
             resolved: thread.is_resolvable() && !thread.is_unresolved(),
+            review_state: thread.review_state(),
             notes: thread
                 .notes
                 .iter()
@@ -238,7 +238,7 @@ impl From<&ReviewThread> for ThreadOutput {
 pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_json::Value> {
     let project = match repo {
         Some(repo) => repo,
-        None => crate::domain::client::get_project_context().await?,
+        None => crate::domain::client::get_project_context()?,
     };
     if project == "unknown/unknown" {
         bail!("cannot tell which repository to use; run inside a checkout or pass --repo");
@@ -251,7 +251,7 @@ pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_j
                 get_mr_diff(&client, &project, iid),
                 list_mr_notes(&client, &project, iid),
             )?;
-            let diff = DiffView::new(iid, project, raw_diff);
+            let diff = DiffView::without_highlighting(iid, project, raw_diff);
             let threads: Vec<ThreadOutput> = group_threads(&notes, |p| diff.contains_anchor(p))
                 .iter()
                 .map(ThreadOutput::from)
@@ -289,7 +289,7 @@ pub async fn run(command: ReviewCommand, repo: Option<String>) -> Result<serde_j
                 Some(source) => read_input(&source)?,
                 None => Vec::new(),
             };
-            if inputs.is_empty() && body.trim().is_empty() && event != ReviewEvent::Approve {
+            if event.is_empty_review(&body, inputs.len()) {
                 bail!("nothing to submit: pass --body or comments with --input");
             }
             let comments = if inputs.is_empty() {
@@ -331,7 +331,7 @@ async fn anchor_comments(
     inputs: Vec<InputComment>,
 ) -> Result<Vec<DraftComment>> {
     let raw_diff = get_mr_diff(client, project, iid).await?;
-    let diff = DiffView::new(iid, project.to_string(), raw_diff);
+    let diff = DiffView::without_highlighting(iid, project.to_string(), raw_diff);
     inputs.into_iter().map(|c| c.anchor(&diff)).collect()
 }
 
@@ -339,7 +339,7 @@ fn read_input(source: &str) -> Result<Vec<InputComment>> {
     let raw = if source == "-" {
         std::io::read_to_string(std::io::stdin()).context("reading comments from stdin")?
     } else {
-        std::fs::read_to_string(source).with_context(|| format!("reading {}", source))?
+        std::fs::read_to_string(source).with_context(|| format!("reading {source}"))?
     };
     serde_json::from_str(&raw)
         .context("--input must be a JSON array of {file, line, end_line?, side?, body}")
@@ -371,7 +371,7 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     fn diff() -> DiffView {
-        DiffView::new(7, "group/project".to_string(), DIFF.to_string())
+        DiffView::without_highlighting(7, "group/project".to_string(), DIFF.to_string())
     }
 
     #[test]

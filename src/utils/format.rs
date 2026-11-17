@@ -75,6 +75,48 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
+/// Splits `text` into rows of at most `width` display columns, as byte ranges
+/// of `text`. Unlike `wrap_text` it keeps runs of whitespace, so every byte
+/// offset (a cursor) falls in one row. Each `\n` ends a row and belongs to
+/// none, and a word longer than `width` is split between two characters. A
+/// character wider than `width` takes a row of its own.
+pub fn wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut line_start = 0;
+    for line in text.split('\n') {
+        let mut row_start = line_start;
+        let mut row_columns = 0;
+        let mut follows_whitespace = true;
+        for (offset, c) in line.char_indices() {
+            let at = line_start + offset;
+            let is_whitespace = c.is_whitespace();
+            if !is_whitespace && follows_whitespace && row_columns > 0 {
+                let word_columns = line[offset..]
+                    .split(char::is_whitespace)
+                    .next()
+                    .map_or(0, |word| Span::raw(word).width());
+                if row_columns + word_columns > width {
+                    rows.push(row_start..at);
+                    row_start = at;
+                    row_columns = 0;
+                }
+            }
+            let columns = Span::raw(&line[offset..offset + c.len_utf8()]).width();
+            if row_columns > 0 && row_columns + columns > width {
+                rows.push(row_start..at);
+                row_start = at;
+                row_columns = 0;
+            }
+            row_columns += columns;
+            follows_whitespace = is_whitespace;
+        }
+        rows.push(row_start..line_start + line.len());
+        line_start += line.len() + 1;
+    }
+    rows
+}
+
 pub fn time_ago(date_str: &str) -> String {
     if let Ok(parsed_time) = date_str.parse::<DateTime<Utc>>() {
         let now = Utc::now();
@@ -85,7 +127,7 @@ pub fn time_ago(date_str: &str) -> String {
             if days == 1 {
                 return "1 day ago".to_string();
             }
-            return format!("{} days ago", days);
+            return format!("{days} days ago");
         }
 
         let hours = duration.num_hours();
@@ -93,7 +135,7 @@ pub fn time_ago(date_str: &str) -> String {
             if hours == 1 {
                 return "1 hr ago".to_string();
             }
-            return format!("{} hrs ago", hours);
+            return format!("{hours} hrs ago");
         }
 
         let minutes = duration.num_minutes();
@@ -101,7 +143,7 @@ pub fn time_ago(date_str: &str) -> String {
             if minutes == 1 {
                 return "1 min ago".to_string();
             }
-            return format!("{} mins ago", minutes);
+            return format!("{minutes} mins ago");
         }
 
         "just now".to_string()
@@ -110,32 +152,45 @@ pub fn time_ago(date_str: &str) -> String {
     }
 }
 
+/// How long a command ran: `850ms`, `2.4s`, `3m 05s`.
+pub fn format_elapsed(duration: std::time::Duration) -> String {
+    let millis = duration.as_millis();
+    if millis < 1000 {
+        return format!("{millis}ms");
+    }
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        return format!("{:.1}s", duration.as_secs_f64());
+    }
+    format!("{}m {:02}s", seconds / 60, seconds % 60)
+}
+
 pub fn format_ref(r#ref: &str) -> String {
     if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
         .and_then(|s| s.strip_suffix("/merge"))
     {
-        format!("PR #{}", pr_id)
+        format!("PR #{pr_id}")
     } else if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
         .and_then(|s| s.strip_suffix("/head"))
     {
-        format!("PR #{}", pr_id)
+        format!("PR #{pr_id}")
     } else if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
         .and_then(|s| s.split('/').next())
     {
-        format!("PR #{}", pr_id)
+        format!("PR #{pr_id}")
     } else if let Some(mr_id) = r#ref
         .strip_prefix("refs/merge-requests/")
         .and_then(|s| s.strip_suffix("/merge"))
     {
-        format!("MR !{}", mr_id)
+        format!("MR !{mr_id}")
     } else if let Some(mr_id) = r#ref
         .strip_prefix("refs/merge-requests/")
         .and_then(|s| s.split('/').next())
     {
-        format!("MR !{}", mr_id)
+        format!("MR !{mr_id}")
     } else if let Some(branch) = r#ref.strip_prefix("refs/heads/") {
         branch.to_string()
     } else if let Some(tag) = r#ref.strip_prefix("refs/tags/") {
@@ -201,6 +256,12 @@ pub fn sanitize_untrusted(s: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(s)
     }
+}
+
+/// Text a user edits, as drawn: escape sequences removed, and tabs and
+/// carriage returns shown as one space so byte offsets past them do not move.
+pub fn displayable(text: &str) -> String {
+    sanitize_untrusted(text).replace(['\t', '\r'], " ")
 }
 
 /// Removes ECMA-48 escape sequences (CSI, OSC, DCS/SOS/PM/APC strings and
@@ -272,8 +333,11 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
     trace
         .lines()
         .map(|raw_line| {
-            let (gl_ts, line) = strip_gl_ts(raw_line);
-            let (prefix, content) = split_gh_prefix(line);
+            let TraceLine {
+                gl_ts,
+                gh_prefix,
+                content,
+            } = TraceLine::split(raw_line);
 
             let content_spans = if content.contains('\x1b') {
                 parse_ansi_line(content, theme)
@@ -284,13 +348,13 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
             let mut spans: Vec<Span<'static>> = Vec::new();
             if let Some(ts) = gl_ts {
                 spans.push(Span::styled(
-                    format!("{} ", ts),
+                    format!("{ts} "),
                     Style::default()
                         .fg(theme.text_muted)
                         .add_modifier(Modifier::ITALIC),
                 ));
             }
-            if let Some(p) = prefix {
+            if let Some(p) = gh_prefix {
                 spans.push(Span::styled(
                     p.to_string(),
                     Style::default().fg(theme.text_muted),
@@ -302,16 +366,51 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
         .collect()
 }
 
-/// Strips the GitHub Actions log prefix `<job_name>\t<step_name>\t` if present.
-/// Returns `(Some(prefix), content)` or `(None, whole_line)`.
-fn split_gh_prefix(line: &str) -> (Option<&str>, &str) {
-    if let Some(first_tab) = line.find('\t') {
-        if let Some(second_tab) = line[first_tab + 1..].find('\t') {
-            let prefix_end = first_tab + 1 + second_tab + 1;
-            return (Some(&line[..prefix_end]), &line[prefix_end..]);
+/// A job log line apart from what the runner or `gh` put before it.
+struct TraceLine<'a> {
+    gl_ts: Option<&'a str>,
+    gh_prefix: Option<&'a str>,
+    content: &'a str,
+}
+
+impl<'a> TraceLine<'a> {
+    fn split(line: &'a str) -> Self {
+        let (gl_ts, line) = strip_gl_ts(line);
+        let line = strip_section_marker(line);
+        let (gh_prefix, content) = split_gh_prefix(line);
+        Self {
+            gl_ts,
+            gh_prefix,
+            content,
         }
     }
-    (None, line)
+}
+
+/// What the job printed on `line`, without the GitLab Runner timestamp, the
+/// GitLab section markers (and the escape sequences in front of them) or the
+/// `<job>\t<step>\t` prefix `gh run view --log` adds.
+pub fn trace_line_content(line: &str) -> &str {
+    TraceLine::split(line).content
+}
+
+/// Strips the `gh run view --log` prefix `<job_name>\t<step_name>\t`. `gh`
+/// always follows it with the line's timestamp (on a job's first line after a
+/// byte order mark), which keeps tab-separated output such as Go's
+/// `FAIL\t<pkg>\t0.01s` whole. Returns `(Some(prefix), content)` or
+/// `(None, whole_line)`.
+fn split_gh_prefix(line: &str) -> (Option<&str>, &str) {
+    let Some((second_tab, _)) = line.match_indices('\t').nth(1) else {
+        return (None, line);
+    };
+    let (prefix, content) = line.split_at(second_tab + 1);
+    if strip_gh_ts(content.trim_start_matches('\u{feff}'))
+        .0
+        .is_some()
+    {
+        (Some(prefix), content)
+    } else {
+        (None, line)
+    }
 }
 
 fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
@@ -539,6 +638,53 @@ fn strip_gl_ts(line: &str) -> (Option<&str>, &str) {
     (None, line)
 }
 
+/// Strips the markers GitLab Runner puts where a log section begins or ends:
+/// `section_start:<unix ts>:<name>[<options>]` or `section_end:<unix ts>:<name>`,
+/// each followed by `\r\x1b[0K`. Several markers can follow one another on a
+/// line, and escape sequences such as `\x1b[0K` or `\x1b[0;m` can come before
+/// each; those are dropped with the marker. Text and escape sequences after the
+/// last marker are kept. A line without a complete marker is returned unchanged.
+fn strip_section_marker(line: &str) -> &str {
+    let mut rest = line;
+    let mut stripped = line;
+    while let Some(after) = section_marker_tail(skip_csi_sequences(rest)) {
+        rest = after;
+        stripped = after;
+    }
+    stripped
+}
+
+/// Skips the CSI escape sequences (`\x1b[` parameters, final byte) at the start
+/// of `text`.
+fn skip_csi_sequences(mut text: &str) -> &str {
+    while let Some(body) = text.strip_prefix("\x1b[") {
+        let Some(end) = body.find(|c: char| ('\u{40}'..='\u{7e}').contains(&c)) else {
+            break;
+        };
+        text = &body[end + 1..];
+    }
+    text
+}
+
+/// What follows the complete section marker at the start of `text`, or `None`
+/// when `text` does not start with one.
+fn section_marker_tail(text: &str) -> Option<&str> {
+    let rest = text
+        .strip_prefix("section_start:")
+        .or_else(|| text.strip_prefix("section_end:"))?;
+    let after_ts = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+    if after_ts.len() == rest.len() {
+        return None;
+    }
+    let after_colon = after_ts.strip_prefix(':')?;
+    let end = after_colon.find('\r')?;
+    let (marker, tail) = after_colon.split_at(end);
+    if marker.is_empty() || marker.contains(char::is_whitespace) {
+        return None;
+    }
+    tail.strip_prefix("\r\x1b[0K")
+}
+
 /// Strips a GitHub Actions timestamp (`YYYY-MM-DDTHH:MM:SS.fffffffZ`) from
 /// the start of a line. Returns `(Some(ts), rest)` or `(None, original)`.
 fn strip_gh_ts(line: &str) -> (Option<&str>, &str) {
@@ -714,6 +860,52 @@ fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wrapped(text: &str, width: usize) -> Vec<&str> {
+        wrap_ranges(text, width)
+            .into_iter()
+            .map(|row| &text[row])
+            .collect()
+    }
+
+    #[test]
+    fn wrap_ranges_keeps_runs_of_spaces_and_moves_a_word_that_does_not_fit() {
+        assert_eq!(wrapped("a   b", 10), ["a   b"]);
+        assert_eq!(wrapped("one two three", 8), ["one two ", "three"]);
+    }
+
+    #[test]
+    fn wrap_ranges_ends_a_row_at_each_newline_and_keeps_empty_lines() {
+        assert_eq!(wrapped("- a\n\n  - b", 10), ["- a", "", "  - b"]);
+        assert_eq!(wrapped("", 10), [""]);
+        assert_eq!(wrapped("end\n", 10), ["end", ""]);
+    }
+
+    #[test]
+    fn wrap_ranges_splits_a_long_multibyte_word_between_characters() {
+        assert_eq!(wrapped("ééééé", 2), ["éé", "éé", "é"]);
+        assert_eq!(
+            wrapped("x https://example.com/a", 8),
+            ["x ", "https://", "example.", "com/a"]
+        );
+    }
+
+    #[test]
+    fn wrap_ranges_measures_wide_characters_in_display_columns() {
+        assert_eq!(wrapped("日本語", 4), ["日本", "語"]);
+        assert_eq!(wrapped("ok 🎉🎉", 5), ["ok ", "🎉🎉"]);
+        assert_eq!(wrapped("日本", 1), ["日", "本"]);
+    }
+
+    #[test]
+    fn format_elapsed_switches_units_at_a_second_and_a_minute() {
+        use std::time::Duration;
+        assert_eq!(format_elapsed(Duration::from_millis(999)), "999ms");
+        assert_eq!(format_elapsed(Duration::from_millis(1000)), "1.0s");
+        assert_eq!(format_elapsed(Duration::from_millis(2449)), "2.4s");
+        assert_eq!(format_elapsed(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(format_elapsed(Duration::from_secs(185)), "3m 05s");
+    }
 
     #[test]
     fn test_expand_tabs_indentation() {
@@ -930,6 +1122,132 @@ mod tests {
         assert_eq!(
             text,
             "2026-08-18T16:54:49.475670Z ✓ src/foo.test.ts (19 tests)"
+        );
+    }
+
+    fn rendered_trace_text(trace: &str) -> Vec<String> {
+        let theme = crate::config::Theme::default();
+        parse_ansi_trace(trace, &theme)
+            .iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_gitlab_section_markers_and_keeps_the_text_after_them() {
+        let trace = concat!(
+            "section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m\n",
+            "section_start:1715685561:prepare_executor[collapsed=true]\r\u{1b}[0K\u{1b}[0K\u{1b}[36;1mPreparing the executor\u{1b}[0m\n",
+            "section_end:1715685562:build_script\r\u{1b}[0K\n",
+            "section_end:1715685563:prepare_executor\r\u{1b}[0KJob succeeded",
+        );
+        assert_eq!(
+            rendered_trace_text(trace),
+            [
+                "$ cargo build",
+                "Preparing the executor",
+                "",
+                "Job succeeded"
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_a_gitlab_section_marker_after_the_runner_timestamp() {
+        let trace = "2026-08-18T16:54:49.475670Z 00O section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m";
+        assert_eq!(
+            rendered_trace_text(trace),
+            ["2026-08-18T16:54:49.475670Z $ cargo build"]
+        );
+    }
+
+    #[test]
+    fn trace_line_content_leaves_out_gitlab_section_markers() {
+        for line in [
+            "section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m",
+            "section_start:1715685560:build_script[collapsed=true]\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m",
+            "2026-08-18T16:54:49.475670Z 00O section_start:1715685560:build_script\r\u{1b}[0K\u{1b}[36;1m$ cargo build\u{1b}[0m",
+        ] {
+            let content = trace_line_content(line);
+            assert!(
+                !content.contains("section_start") && !content.contains('\r'),
+                "{content:?}"
+            );
+            assert!(content.ends_with("$ cargo build\u{1b}[0m"), "{content:?}");
+        }
+        for line in [
+            "section_end:1715685562:build_script\r\u{1b}[0K",
+            "2026-08-18T16:54:49.475670Z 00O section_end:1715685562:build_script\r\u{1b}[0K",
+        ] {
+            let content = trace_line_content(line);
+            assert!(
+                !content.contains("section_end") && !content.contains('\r'),
+                "{content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_every_gitlab_section_marker_chained_on_one_line() {
+        let trace = concat!(
+            "section_end:1506004957:prepare_script\r\u{1b}[0Ksection_start:1506004957:get_sources\r\u{1b}[0K\u{1b}[32;1mCloning repository...\u{1b}[0;m\n",
+            "section_end:1506004958:get_sources\r\u{1b}[0Ksection_start:1506004958:restore_cache\r\u{1b}[0Ksection_end:1506004958:restore_cache\r\u{1b}[0Ksection_start:1506004958:step_script\r\u{1b}[0Krunning",
+        );
+        assert_eq!(
+            rendered_trace_text(trace),
+            ["Cloning repository...", "running"]
+        );
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_a_gitlab_section_marker_after_an_erase_line_sequence() {
+        let trace = "\u{1b}[0Ksection_start:1715685560:my_section\r\u{1b}[0K\u{1b}[36;1mHeader\u{1b}[0m\n\u{1b}[0Ksection_end:1715685562:my_section\r\u{1b}[0K\n";
+        assert_eq!(rendered_trace_text(trace), ["Header", ""]);
+    }
+
+    #[test]
+    fn parse_ansi_trace_hides_a_gitlab_section_marker_after_a_reset_sequence() {
+        let trace = "\u{1b}[0;msection_start:1506004957:prepare_executor\r\u{1b}[0K\u{1b}[0;m\u{1b}[36;1mPreparing the executor\u{1b}[0;m";
+        assert_eq!(rendered_trace_text(trace), ["Preparing the executor"]);
+    }
+
+    #[test]
+    fn trace_line_content_leaves_out_chained_and_escape_prefixed_gitlab_section_markers() {
+        for line in [
+            "section_end:1506004957:a\r\u{1b}[0Ksection_start:1506004957:b\r\u{1b}[0Ktext",
+            "\u{1b}[0Ksection_start:1506004957:b\r\u{1b}[0Ktext",
+            "\u{1b}[0;msection_start:1506004957:b\r\u{1b}[0Ktext",
+            "2026-08-18T16:54:49.475670Z 00O \u{1b}[0Ksection_end:1506004957:a\r\u{1b}[0Ksection_start:1506004957:b\r\u{1b}[0Ktext",
+        ] {
+            assert_eq!(trace_line_content(line), "text", "{line:?}");
+        }
+    }
+
+    #[test]
+    fn trace_line_content_drops_the_runner_and_gh_prefixes() {
+        assert_eq!(
+            trace_line_content(
+                "build\tUpload logs on failure\t2024-05-14T11:19:20.0000000Z Uploading"
+            ),
+            "2024-05-14T11:19:20.0000000Z Uploading"
+        );
+        assert_eq!(
+            trace_line_content("build\tSet up job\t\u{feff}2024-05-14T11:19:20.0000000Z Runner"),
+            "\u{feff}2024-05-14T11:19:20.0000000Z Runner"
+        );
+        assert_eq!(
+            trace_line_content("2024-05-14T11:19:20.000000Z 01E error: boom"),
+            "error: boom"
+        );
+    }
+
+    #[test]
+    fn trace_line_content_keeps_tab_separated_output_whole() {
+        let go = "FAIL\texample.com/pkg\t0.012s";
+        assert_eq!(trace_line_content(go), go);
+        assert_eq!(
+            trace_line_content(&format!("2024-05-14T11:19:20.000000Z 00O {go}")),
+            go
         );
     }
 }

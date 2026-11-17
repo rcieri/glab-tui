@@ -1,5 +1,6 @@
-use crate::backend::{Backend, BackendKind, IssueUpdate, MrUpdate};
+use crate::backend::{Backend, BackendKind, IssueUpdate, MergeOptions, MrUpdate, NewIssue, NewMr};
 use crate::config::Config;
+use crate::domain::milestones::Milestone;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -10,11 +11,43 @@ pub struct GitlabClient {
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub page_size: usize,
     pub api_per_page: usize,
+    /// Whether the Todos tab lists read (GitHub) or done (GitLab) items too.
+    pub show_read_notifications: bool,
+    /// The pipeline the Jobs tab shows instead of the checked-out branch's
+    /// newest one, opened from the Pipelines tab or picked on the Jobs tab.
+    pub opened_pipeline: Option<Box<OpenedPipeline>>,
+}
+
+/// A pipeline the user opened, and the project its jobs are fetched from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenedPipeline {
+    pub id: u64,
+    pub project: String,
+    /// Its parent pipelines, outermost first, for the Jobs tab title.
+    pub parents: Vec<u64>,
+}
+
+/// The pipeline requested by the Jobs tab: the branch's newest one or the
+/// one the user opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobsSource {
+    /// The newest pipeline of the checked-out branch.
+    Branch,
+    /// The pipeline opened from the Pipelines tab or picked on the Jobs tab.
+    Opened(u64),
 }
 
 impl GitlabClient {
     pub fn kind(&self) -> BackendKind {
         self.backend.kind()
+    }
+
+    /// The pipeline the Jobs tab shows and refreshes.
+    pub fn jobs_source(&self) -> JobsSource {
+        match &self.opened_pipeline {
+            Some(opened) => JobsSource::Opened(opened.id),
+            None => JobsSource::Branch,
+        }
     }
 
     pub async fn new(config: &Config) -> Result<Self> {
@@ -40,6 +73,8 @@ impl GitlabClient {
             tx: None,
             page_size: config.page_size,
             api_per_page: config.api_per_page_clamped(),
+            show_read_notifications: false,
+            opened_pipeline: None,
         })
     }
 
@@ -54,6 +89,12 @@ impl GitlabClient {
 
     pub async fn retry_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
         self.backend.retry_pipeline(project_path, pipeline_id).await
+    }
+
+    pub async fn retry_failed_jobs(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
+        self.backend
+            .retry_failed_jobs(project_path, pipeline_id)
+            .await
     }
 
     pub async fn cancel_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
@@ -129,29 +170,8 @@ impl GitlabClient {
         self.backend.delete_issue(project, iid).await
     }
 
-    pub async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()> {
-        self.backend
-            .create_issue(
-                project,
-                title,
-                description,
-                labels,
-                assignees,
-                milestone,
-                due_date,
-                weight,
-            )
-            .await
+    pub async fn create_issue(&self, project: &str, issue: &NewIssue<'_>) -> Result<()> {
+        self.backend.create_issue(project, issue).await
     }
 
     // ── MR mutations ──
@@ -217,9 +237,7 @@ impl GitlabClient {
         project: &str,
         mr_iid: u64,
     ) -> Result<Vec<crate::domain::mr::DiscussionNote>> {
-        self.backend
-            .list_mr_notes(project, mr_iid, self.page_size)
-            .await
+        self.backend.list_mr_notes(project, mr_iid).await
     }
 
     /// GitHub's viewed state of a PR's files when `sync` is on; `None` on
@@ -267,56 +285,17 @@ impl GitlabClient {
         &self,
         project: &str,
         iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
-        sha: Option<&str>,
+        options: &MergeOptions<'_>,
     ) -> Result<()> {
-        self.backend
-            .merge_mr(
-                project,
-                iid,
-                squash,
-                delete_branch,
-                strategy,
-                auto_merge,
-                sha,
-            )
-            .await
+        self.backend.merge_mr(project, iid, options).await
     }
 
     pub async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
         self.backend.toggle_mr_draft(project, iid, is_draft).await
     }
 
-    pub async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()> {
-        self.backend
-            .create_mr(
-                project,
-                title,
-                description,
-                source_branch,
-                target_branch,
-                labels,
-                assignees,
-                reviewers,
-                milestone,
-                issue_iid,
-            )
-            .await
+    pub async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()> {
+        self.backend.create_mr(project, mr).await
     }
 
     pub async fn submit_review(
@@ -587,21 +566,14 @@ impl GitlabClient {
     pub async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         start_date: Option<&str>,
         due_date: Option<&str>,
     ) -> Result<()> {
         self.backend
-            .update_milestone(
-                project,
-                milestone_iid,
-                title,
-                description,
-                start_date,
-                due_date,
-            )
+            .update_milestone(project, milestone, title, description, start_date, due_date)
             .await
     }
     pub async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
@@ -611,11 +583,17 @@ impl GitlabClient {
     pub async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
         self.backend.open_pipeline_in_browser(project, id).await
     }
-    pub async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        self.backend.open_job_in_browser(project, id).await
+    pub async fn open_job_url(&self, url: &str) -> Result<()> {
+        crate::backend::browser::open_url(url, self.tx.clone(), "OPENING JOB IN BROWSER").await
     }
-    pub async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        self.backend.open_milestone_in_browser(project, id).await
+    pub async fn open_milestone_in_browser(
+        &self,
+        project: &str,
+        milestone: &Milestone,
+    ) -> Result<()> {
+        self.backend
+            .open_milestone_in_browser(project, milestone)
+            .await
     }
     pub async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
         self.backend.open_runner_in_browser(scope, runner_id).await
@@ -794,6 +772,8 @@ impl Clone for GitlabClient {
             tx: self.tx.clone(),
             page_size: self.page_size,
             api_per_page: self.api_per_page,
+            show_read_notifications: self.show_read_notifications,
+            opened_pipeline: self.opened_pipeline.clone(),
         }
     }
 }
@@ -807,7 +787,7 @@ impl std::fmt::Debug for GitlabClient {
     }
 }
 
-pub async fn get_project_context() -> Result<String> {
+pub fn get_project_context() -> Result<String> {
     // An explicit `gh repo set-default` wins: in a fork it is the only signal
     // that says which repository the user actually works against.
     if let Some(project) = crate::git_helpers::gh_resolved_project() {

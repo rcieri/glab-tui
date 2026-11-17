@@ -1,0 +1,14 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": { "hasNextPage": false, "endCursor": "cursor-2" },
+          "nodes": [
+            { "isResolved": false, "comments": { "nodes": [ { "databaseId": 205 } ] } }
+          ]
+        }
+      }
+    }
+  }
+}

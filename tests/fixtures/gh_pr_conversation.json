@@ -1,0 +1,50 @@
+{
+  "comments": [
+    {
+      "id": "IC_conversation_first",
+      "author": { "login": "reviewer-user" },
+      "authorAssociation": "MEMBER",
+      "body": "Could you add a changelog entry?",
+      "createdAt": "2026-07-06T08:00:00Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "viewerDidAuthor": false,
+      "url": "https://github.com/test-owner/test-repo/pull/2#issuecomment-901"
+    },
+    {
+      "id": "IC_conversation_reply",
+      "author": { "login": "test-user" },
+      "authorAssociation": "OWNER",
+      "body": "Changelog entry added.",
+      "createdAt": "2026-07-06T15:00:00Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "viewerDidAuthor": true,
+      "url": "https://github.com/test-owner/test-repo/pull/2#issuecomment-902"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "PRR_changes_requested",
+      "author": { "login": "reviewer-user" },
+      "authorAssociation": "MEMBER",
+      "body": "Please split the fetch helper before merging.",
+      "submittedAt": "2026-07-06T09:05:00Z",
+      "includesCreatedEdit": false,
+      "commit": { "oid": "0000000000000000000000000000000000000001" },
+      "state": "CHANGES_REQUESTED"
+    },
+    {
+      "id": "PRR_bare_approval",
+      "author": { "login": "reviewer-user" },
+      "authorAssociation": "MEMBER",
+      "body": "",
+      "submittedAt": "2026-07-06T16:00:00Z",
+      "includesCreatedEdit": false,
+      "commit": { "oid": "0000000000000000000000000000000000000002" },
+      "state": "APPROVED"
+    }
+  ]
+}

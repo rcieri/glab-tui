@@ -55,10 +55,10 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Features
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
-- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
+- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`; pipelines on GitHub organizations only). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
-- **Bulk editing & Visual Select Mode** — select multiple issues or merge requests with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
-- **Custom commands** — bind a key to your own shell command with the highlighted issue or MR/PR as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
+- **Bulk editing & Visual Select Mode** — select multiple issues, merge requests, or branches with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
+- **Custom commands** — bind a key to your own shell command with the highlighted issue, MR/PR or pipeline as gh-dash-style template arguments (`{{.PrNumber}}`, `{{.HeadRefName}}`, `{{.PipelineId}}`, `{{.RepoPath}}`, …), e.g. to open a worktree in a new tmux window. See [Custom commands](#custom-commands).
 - **Single-Column Inspector** — unified fullscreen details preview and inline editing with full-width markdown description on top and stacked metadata fields below
 - **Interactive Submit Dialogs** — explicit Submit/Cancel confirmations with configurable options (squash, delete source branch, auto-merge) for mutating actions
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description) with in-menu template selection
@@ -67,12 +67,12 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Code Reviews & Diff View** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, mark files as reviewed (`m`/`M`), and atomic review submission
 - **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with theme-aware syntax highlighting and tab-stop expansion
 - **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces; trigger pipelines with `workflow_dispatch` input prompts
-- **Runners** — list runners with structured details panel; pause/resume, edit descriptions, and monitor live runner status
+- **Runners** — list runners with structured details panel and monitor live runner status; pause/resume and edit descriptions (GitLab)
 - **Releases** — browse, create, and edit project releases directly in the terminal
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
-- **Branches** — browse branches with default/protected markers; create and delete branches inline
-- **Environments & Deployments** — browse environments and their deployment status, drilling into deployment history with `Enter`
+- **Branches** — browse branches with commit details, ahead/behind status, and default/protected markers; switch/checkout (`C`), create MR/PR from branch (`m`), visual and bulk selection (`Space`, `v`, `Ctrl+a`), create and bulk delete branches inline
+- **Environments & Deployments** — browse environments and their deployment status, walk an environment's deployment history with `Enter`, inspect each deployment's commit, deployer, job and notes, roll back with `R`, stop an environment with `d` and copy its URL with `y`
 - **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status and unified error toasts
 - **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
 - **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
@@ -83,7 +83,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
-- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
+- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates. Needs `curl` (not `gh`), and the download is checked against the release's published SHA-256 before it replaces the binary
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories), `review` (read threads and post review comments as JSON, for scripts and agents)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 38 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
@@ -191,7 +191,7 @@ Or with `wget`:
 wget -qO- https://raw.githubusercontent.com/rcieri/glab-tui/main/install.sh | sh
 ```
 
-The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable).
+The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable). The script verifies the archive against the release's published `.sha256` before installing and aborts on a mismatch; it needs `sha256sum` or `shasum`.
 
 ### Install script (Windows)
 
@@ -199,7 +199,7 @@ The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environmen
 iwr -useb https://raw.githubusercontent.com/rcieri/glab-tui/main/install.ps1 | iex
 ```
 
-The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter).
+The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter). The script verifies the archive against the release's published `.sha256` before installing and aborts on a mismatch.
 
 ### Docker
 
@@ -267,7 +267,15 @@ The generated file is fully annotated. Key sections:
 
 ```toml
 # Pick a built-in theme preset
-theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
+theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | terminal | auto | ...
+
+# "terminal" draws with your terminal's own ANSI palette, so it follows the
+# terminal or OS theme. "auto" picks theme_dark or theme_light from COLORFGBG,
+# else by asking the terminal for its background color at startup.
+# Set appearance to skip asking.
+# theme_dark = "default"
+# theme_light = "catppuccin-latte"
+# appearance = "light"   # dark | light
 
 # Tab to open on launch. Valid: issues, mrs, pr, pipelines, runners, releases,
 # todos, milestones, branches, environments, terminal. Case-insensitive.
@@ -277,6 +285,10 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # Items per API request (1-100) — lower this if your GitLab instance truncates
 # large JSON response bodies. GitLab-only; GitHub paginates with --limit.
 # api_per_page = 100
+
+# Seconds one gh/glab call may run before it is killed and shown as an error.
+# Raise it for a slow self-hosted instance.
+# command_timeout_seconds = 120
 
 # Label colors: use the real colors from `label list` (GitLab/GitHub) when
 # available, falling back to the theme palette. Set to false to always use the
@@ -299,10 +311,21 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # border_focused = "#31bf67"
 # ...color tokens (see bundled themes for the full list)
 
-# Remap any keybinding
+# Remap any action. A binding is one key ("l", "Ctrl+x", "PageDown", "F5"),
+# a sequence of plain characters typed one after the other ("gg", "gcc"), or a
+# list of either (["j", "Down"]). The keys you set replace the action's default
+# keys: the old key stops triggering it. "" or [] unbinds the action. A key
+# glab-tui cannot read ("esc", "Ctrl+Shift+N") is reported in the Terminal tab
+# and the action keeps its defaults.
+# While the keys typed so far start a sequence, glab-tui waits for the next one.
+# A sequence that is also the start of a longer one ("g" next to "gg") fires
+# after keybinding_timeout_ms (default 1000) without a key, and a key that
+# completes nothing drops what was typed.
 [keybindings.global]
-next_tab = "l"
+next_tab = ["l", "Right"]
 submit_edit = "Ctrl+x"
+scroll_top = ["gg", "Home"]
+help = ["?", "F1"]
 # ...
 
 [keybindings.issues]
@@ -311,7 +334,23 @@ edit_entity = "e"
 copy_reference = "y"
 # ...
 
-# Persist default column visibility / grouping / filters per pane
+# Keys every list view handles after the tab's own keys.
+[keybindings.list]
+next_row = ["j", "Down"]
+back = ["Esc", "Backspace"]
+# ...
+
+# The diff view, selector overlays and confirmation dialogs remap the same way
+# under [keybindings.diff], [keybindings.selector] and [keybindings.dialog].
+[keybindings.diff]
+toggle_side_by_side = "d"
+search_previous = "Ctrl+p"
+# ...
+
+# Persist default column visibility / grouping / filters per pane.
+# On a GitHub repository, a State filter with a single state also makes
+# `gh issue list` / `gh pr list` fetch only that state (`--state open`).
+# For PRs, `--state closed` also returns merged PRs, which the State filter hides.
 # [issues]
 # columns = ["ID", "State", "Title", "Labels"]
 # group_by_column = "State"
@@ -328,6 +367,10 @@ copy_reference = "y"
 ### Custom themes
 
 Drop any `<name>.toml` file into `~/.config/glab-tui/themes/` and set `theme_preset = "<name>"` in `config.toml`. The file must define the same 29 color tokens as the bundled themes: the 19 semantic tokens (backgrounds, borders, text, status colors) plus the 10-entry `label_palette_0`…`label_palette_9` used for label and fallback rendering. The theme's `bg` token paints the table backgrounds, popup overlays (edit menus, selectors, confirm dialogs), and the diff view, so custom themes render consistently even on terminals whose default background differs.
+
+A color is a hex value (`"#31bf67"`), an ANSI color name (`"red"`, `"light-blue"`, `"dark-gray"`), a palette index (`"8"`), or `""` for the terminal's default color. Names and indexes 0 to 15 take their value from the terminal's palette, as in the bundled `terminal` theme.
+
+The **Theme** row of the Configure View opens a picker that previews each preset on the whole screen as you move through it. `Enter` keeps the highlighted preset and `Esc` goes back to the one you had.
 
 ### Editor
 
@@ -366,6 +409,9 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
 |---|---|
 | `custom_keybindings.mrs` (alias `prs`) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author` |
 | `custom_keybindings.issues` | `RepoName`, `RepoPath`, `IssueNumber`, `IssueTitle`, `Author` |
+| `custom_keybindings.pipelines` | `RepoName`, `RepoPath`, `PipelineId`, `Ref`, `Sha` |
+| `custom_keybindings.jobs` | `RepoName`, `RepoPath`, `JobId`, `JobName`, `Stage`, `Status` |
+| `custom_keybindings.branches` | `RepoName`, `RepoPath`, `BranchName`, `CommitSha` |
 | `custom_keybindings.universal` | `RepoName`, `RepoPath` |
 | `custom_keybindings.diff` (diff view) | `RepoName`, `RepoPath`, `PrNumber`, `HeadRefName`, `BaseRefName`, `Author`, `FilePath`, `LineNumber` |
 
@@ -379,11 +425,11 @@ A commented set of ready-to-copy bindings (worktrees with `lazyworktree`, Neovim
   command = "lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec 'nvim +{{.LineNumber}} {{.FilePath}}'"
   ```
 - `background = true` runs the command without handing over the terminal: the TUI stays on screen, the command gets no input, its output is not shown, and the Terminal tab logs it when it finishes; a failure toasts its last stderr line (e.g. `lazyworktree` refusing a closed issue). Use it for commands that open their own window or pane, such as `tmux new-window` or `herdr pane split`. Background commands run in their own session without a controlling terminal, so tools that query the terminal through `/dev/tty` (lazyworktree, gh) cannot inject the reply into glab-tui as keypresses. Place new herdr panes with `--pane "$HERDR_PANE_ID"` (glab-tui's own pane): `--current` follows whichever pane is focused in the herdr UI.
-- **Bulk runs:** with issues or MRs/PRs selected (`Space`, or `v` select mode), an `issues`/`mrs` binding runs once per selected item, in number order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
-- Row arguments come from the highlighted issue or MR/PR. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project.
-- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`. A `{{.Arg}}` whose value contains a shell metacharacter (`` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` or a control character) is refused rather than spliced into the command; quote the variable instead, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"`.
-- Built-in keys always win. Several fixed keys (`q`, `j`/`k`/`h`/`l`, `?`, `,`, Enter, Esc, and in the diff view every key it handles) are taken whatever the modifier, so `Ctrl+q` or `Ctrl+d` counts as taken. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action (including the fixed keys such as `j`, `q`, `u`, `f`) takes first is reported in the Terminal tab at startup; remap the built-in under `[keybindings.<pane>]` to free the key. A pane-specific binding overrides a universal one on the same key.
-- Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A repo-local `config.toml` that defines a table replaces the global list for that table.
+- **Bulk runs:** with issues, MRs/PRs, pipelines, jobs, or branches selected (`Space`, or `v` select mode), an `issues`/`mrs`/`pipelines`/`jobs`/`branches` binding runs once per selected item, in number/name order, within a single terminal handoff — e.g. one worktree per selected issue. A failing or refused item does not stop the others; each run is logged and one toast summarises the failures.
+- Row arguments come from the highlighted issue, MR/PR, pipeline, job, or branch. `RepoPath` is the local checkout: the repository glab-tui runs in (it follows the `Ctrl+S` switcher), or in group scope the recently used checkout whose `origin` is the row's project. GitHub jobs have no stage, so `{{.Stage}}` is refused there. `JobName` is the full name GitLab or GitHub reports, so a matrix job's (`rspec: [3.2, pg]`, `build (ubuntu, 3.2)`) holds spaces and brackets: pass it as `"$GLAB_TUI_JOB_NAME"`.
+- Every argument is also exported as an environment variable: `GLAB_TUI_REPO_NAME`, `GLAB_TUI_REPO_PATH`, `GLAB_TUI_PR_NUMBER`, `GLAB_TUI_HEAD_REF_NAME`, `GLAB_TUI_BASE_REF_NAME`, `GLAB_TUI_AUTHOR`, `GLAB_TUI_ISSUE_NUMBER`, `GLAB_TUI_ISSUE_TITLE`, `GLAB_TUI_PIPELINE_ID`, `GLAB_TUI_REF`, `GLAB_TUI_SHA`, `GLAB_TUI_BRANCH_NAME`, `GLAB_TUI_COMMIT_SHA`, `GLAB_TUI_FILE_PATH`, `GLAB_TUI_LINE_NUMBER`, `GLAB_TUI_JOB_ID`, `GLAB_TUI_JOB_NAME`, `GLAB_TUI_STAGE`, `GLAB_TUI_STATUS`. Titles, branch names and file paths are written by third parties, so a `{{.Arg}}` is spliced into the command only when its value is a single plain word: a value that starts with `-` or `+` (an option, or a `+cmd` that vim, nvim and less run as a command), or contains whitespace, a control character or any of `` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `\` `"` `'` `~` `*` `?` `[` `]` `{` `}` `#` `=`, is refused. The environment variable is the only safe way to pass free text such as `IssueTitle`: quote it, and put it after `--` when the value could start with `-` or `+`, e.g. `echo "$GLAB_TUI_ISSUE_TITLE"` or `some-tool -- "$GLAB_TUI_ISSUE_TITLE"`.
+- Built-in keys always win. Every built-in key is an action in the same registry the help modal lists. A plain character matches only with its own modifiers (Shift for an uppercase letter), so `Ctrl+q` is free while `q` quits. Named keys (Enter, Esc, arrows, Home, F-keys) still match whatever the modifiers, and `Ctrl+`/`Alt+` combos also match with extra modifiers, so a custom `Ctrl+Enter` is reported as taken by `keybindings.list.open`. `J`/`K` and PageUp/PageDown are reported as taken even though they only scroll while the detail pane is open. A custom key that a built-in action takes first is reported in the Terminal tab at startup, naming the action's config key (e.g. `keybindings.list.next_row`); remap that action to free the key. A pane-specific binding overrides a universal one on the same key.
+- Invalid entries (missing `key` or `command`, an unbindable key, an argument the table does not offer, an unsupported table) are skipped and reported the same way instead of breaking the rest of the config. A custom `key` is a single key: a key sequence such as `gg` counts as unbindable here. A repo-local `config.toml` that defines a table replaces the global list for that table.
 
 ---
 
@@ -458,10 +504,10 @@ glab-tui review resolve 42 --thread <id> [--unresolve]         # GitLab only
   ]
   ```
 
-- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
+- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. If a draft note or `bulk_publish` fails on GitLab, the draft notes already created are deleted again, so retrying does not post them twice. A failure after publishing (the approval or the summary) leaves the comments posted. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
 - **Unchanged lines** carry both line numbers (GitLab requires both); GitHub anchors them on the new side.
-- **`threads`** prints, per thread: `id` (pass it to `reply`/`resolve`), `classification` (`general`, `in-diff`, `outdated` against the current diff), `anchor` (`file`, `line`, `side`), `resolvable`, `resolved` and the `notes` (`id`, `author`, `body`, `created_at`). On GitHub only pull-request review comments are listed, and a thread id is the id of its first comment.
-- **`resolve`** on GitHub exits non-zero: it is not supported there.
+- **`threads`** prints, per thread: `id` (pass it to `reply`/`resolve`), `classification` (`general`, `in-diff`, `outdated` against the current diff), `anchor` (`file`, `line`, `side`), `resolvable`, `resolved` and the `notes` (`id`, `author`, `body`, `created_at`). On GitHub, a review comment thread's id is the id of its first comment. The PR's conversation comments and the summaries of submitted reviews are listed too, as `general` threads whose id is the comment's or review's node id (`IC_…`, `PRR_…`). A review summary also carries `review_state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` or `DISMISSED`), and its note `id` is `null`. A review submitted without a body is not listed.
+- **`resolve`** on GitHub exits non-zero: it is not supported there. **`reply`** to a GitHub conversation comment or review summary exits non-zero too: GitHub only takes replies in review comment threads.
 
 ---
 
@@ -500,11 +546,11 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 ## Key Bindings
 
-> All tables below show the **default** keys. The **Config** column shows the key name to remap in `config.toml` (e.g. under `[keybindings.issues]`, `create_issue = "n"`). `—` means the binding is fixed and **not** remappable.
+> All tables below show the **default** keys. The **Config** column shows the key name to remap in `config.toml` (e.g. under `[keybindings.issues]`, `create_issue = "n"`). Keys you set replace the defaults of that action. `—` means the key belongs to a text field or an overlay outside the registry and is **not** remappable.
 
 ### Global
 
-> Remappable via `[keybindings.global]` in `config.toml`.
+> Remappable via `[keybindings.global]` in `config.toml`, or `[keybindings.list]` for the `list.*` keys, which every list view handles after the tab's own keys.
 
 | Key | Action | Config |
 |---|---|---|
@@ -512,22 +558,30 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `h` / `←` | Previous tab | `prev_tab` |
 | `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) | `configure` |
 | `Esc` | Close configure popup / overlay | — |
-| `j` / `↓` | Move selection down | — |
-| `k` / `↑` | Move selection up | — |
+| `j` / `↓` | Move selection down | `list.next_row` |
+| `k` / `↑` | Move selection up | `list.previous_row` |
+| `Home` / `End` | Select the first / last row (with the detail pane closed) | `list.first_row` / `list.last_row` |
+| `Enter` | Open details, zoom, then edit | `list.open` |
+| `Esc` / `Backspace` | Go back: clear the selection, close details, leave a pipeline, clear the filter | `list.back` |
+| `Esc` | Return from a project narrowed with `G` to its group | `leave_scope` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 | `Home` | Jump to the top of the description panel | `scroll_top` |
 | `End` | Jump to the last line of the description panel | `scroll_to_end` |
 | `PageDown` / `PageUp` | Scroll description panel by one page | `scroll_page_down` / `scroll_page_up` |
-| `Ctrl+d` / `Ctrl+u` | Scroll description panel by half a page | `scroll_half_page_down` / `scroll_half_page_up` |
-| `f` / `/` | Open search / filter bar | `search` |
+| `Ctrl+d` / `Ctrl+u` | Scroll description panel (or the list when it is hidden) by half a page | `scroll_half_page_down` / `scroll_half_page_up` |
+| `/` | Open search / filter bar | `search` |
+| `f` | Open search / filter bar, unless the tab uses `f` | `list.search` |
 | `Enter` / `Esc` (in search) | Close search bar | — |
-| `?` / `F1` | Show help: type to filter; `↑`/`↓`, `Ctrl+N`/`Ctrl+P`, `PgUp`/`PgDn`, `Home`/`End` or the mouse wheel scroll the list | `help` |
+| `?` / `F1` | Show help: type to filter; `↑`/`↓`, `Ctrl+N`/`Ctrl+P`, `PgUp`/`PgDn`, `Ctrl+D`/`Ctrl+U`, `Home`/`End` or the mouse wheel scroll the list | `help` |
 | `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
-| `Ctrl+S` | Switch repository | — |
+| `>` / `<` | Sort list by next / previous visible column | `sort_next` / `sort_prev` |
+| `=` | Reverse sort order | `sort_reverse` |
+| `Ctrl+S` | Switch repository | `switch_repo` |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
-| `u` | Check for updates | — |
-| `q` / `Esc` | Quit (or close current overlay) | `quit` |
+| `u` | Check for updates | `list.check_updates` |
+| `q` | Quit | `quit` |
+| `Ctrl+C` | Quit, even from an overlay | `force_quit` |
 
 ---
 
@@ -585,11 +639,11 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |
 | `Space` | Select MR for bulk editing | `select_mr` |
 | `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
-| `o` | Open selected MR in browser | — |
+| `o` | Open selected MR in browser | `open_in_browser` |
 | `s` | Toggle Draft / Ready status | `toggle_draft` |
 | `c` | Close selected MR | `close_entity` |
 | `r` | Reopen selected MR | `reopen_entity` |
-| `d` | Delete selected MR (with confirmation) | `delete_entity` |
+| `d` | Delete selected MR (with confirmation) *(GitLab only)* | `delete_entity` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 
@@ -612,61 +666,70 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
 
-> Diff View keys are **fixed** and not remappable in `config.toml`.
+> Remappable via `[keybindings.diff]` in `config.toml`.
 
-| Key | Action |
-|---|---|
-| `q` / `Esc` | Exit diff view (or cancel current selection / search) |
-| `Tab` | Toggle focus between file tree and diff pane |
-| `h` / `←` | In file tree: collapse directory; in diff: focus file tree |
-| `l` / `→` | In file tree: expand directory / open file |
-| `j` / `↓` | Move down (file tree or diff lines) |
-| `k` / `↑` | Move up (file tree or diff lines) |
-| `J` / `K` | Scroll 10 lines / jump 10 files |
-| `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) |
-| `[` / `]` | Previous / next hunk |
-| `z` / `Z` | Collapse / expand all files |
-| `m` | Mark / unmark file as reviewed (on a directory: every file below it) |
-| `M` | Hide / show reviewed files in the file tree |
-| `d` | Toggle unified / side-by-side layout |
-| `v` / `V` | Start / stop multi-line selection for comments |
-| `c` | Add comment on current line / selection |
-| `C` | Add comment via external `$EDITOR` |
-| `e` | Add code suggestion via `$EDITOR` |
-| `a` | Open comment actions menu (reply, resolve, edit, delete) |
-| `T` | Review threads overview: every thread, including general and outdated ones |
-| `r` | Submit review (Approve / Request Changes / Comment) |
-| `/` / `f` | Search within diff |
-| `Ctrl+N` | Next search match |
-| `Ctrl+Shift+N` | Previous search match |
-| `?` / `F1` | Show help |
+| Key | Action | Config |
+|---|---|---|
+| `Esc` | Leave the search, then the selection, focus the file tree, show the tree, then exit the diff view. With draft comments pending, asks to **Submit**, **Keep drafts** (close, keep them for later), **Discard** them, or **Cancel** (`Esc`, back to the diff) | `back` |
+| `q` | Cancel the current selection, or exit the diff view (asking first with drafts pending, as above) | `close` |
+| `Tab` | Toggle focus between file tree and diff pane | `toggle_focus` |
+| `h` / `←` | In file tree: collapse directory; in diff: focus file tree | `focus_files` |
+| `l` / `→` | In file tree: expand directory / open file | `focus_diff` |
+| `j` / `↓` | Move down (file tree or diff lines) | `next_line` |
+| `k` / `↑` | Move up (file tree or diff lines) | `previous_line` |
+| `J` / `K` | Scroll 10 lines / jump 10 files | `page_down` / `page_up` |
+| `Ctrl+d` / `Ctrl+u` | Move half a page (file tree or diff lines) | `global.scroll_half_page_down` / `global.scroll_half_page_up` |
+| `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) | `open` |
+| `[` / `]` | Previous / next hunk | `previous_hunk` / `next_hunk` |
+| `z` / `Z` | Collapse / expand all files | `collapse_all` / `expand_all` |
+| `m` | Mark / unmark file as reviewed (on a directory: every file below it) | `toggle_reviewed` |
+| `M` | Hide / show reviewed files in the file tree | `toggle_hide_reviewed` |
+| `d` | Toggle unified / side-by-side layout, pinned for the session | `toggle_side_by_side` |
+| `1` / `2` | Pin side-by-side / unified layout for the session | `layout_side_by_side` / `layout_unified` |
+| `0` | Pick the layout from the width again: side-by-side when the diff pane has at least 121 columns inside its border (two 60-column sides and the divider), unified below | `layout_auto` |
+| `v` / `V` | Start / stop multi-line selection for comments | `toggle_selection` |
+| `c` | Add comment on current line / selection | `comment` |
+| `C` | Add comment via external `$EDITOR` | `comment_in_editor` |
+| `e` | Add code suggestion via `$EDITOR` | `suggest` |
+| `a` | Open comment actions menu (reply, resolve, edit, delete) | `comment_actions` |
+| `T` | Review threads overview: every thread, including general and outdated ones | `review_threads` |
+| `r` | Submit review: pick Comment / Approve / Request changes / Keep as draft with `j`/`k`, move into the summary with `j` past the last verdict or `Tab`, type it (or `Ctrl+E` for `$EDITOR`) and submit. A failed submission shows its error in the dialog and keeps the drafts. On GitLab, a failure after the comments are published (the approval or the summary) leaves them posted: do not resubmit them | `submit_review` |
+| `/` / `f` | Search within diff | `search` |
+| `Ctrl+n` | Next search match | `search_next` |
+| `Ctrl+p` | Previous search match | `search_previous` |
+| `?` / `F1` | Show help | `global.help` |
 
 **Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` together with a fingerprint of each file's diff, and restored the next time you open the same diff: a file whose diff changed since you marked it (a new push, or a rebase that moved its hunks) comes back unreviewed with a "changed since review" indicator (`~` with `icons = "ascii"`), counted in the tree header, while untouched files keep their mark. Files that are no longer part of the diff are dropped. Marks saved by versions before the fingerprint existed are dropped once, since the version they covered is unknown.
 
 **GitHub "Viewed" sync.** On GitHub, marks are your pull request's "Viewed" checkboxes: opening a diff loads their state alongside the diff and the comments, `m` updates GitHub in the background (rapid toggles are batched, directories go out as one request), and a failed update reverts the mark with an error toast. Files GitHub reports as changed since you viewed them show the "changed since review" indicator and stay visible under `M`. Local marks are never uploaded on their own. When GitHub can't be reached the local marks apply. Set `sync_viewed_files = false` to keep marks local. GitLab has no API for its "Viewed" checkboxes (they live in the browser's storage), so marks there are always local.
 
-**Review threads overview.** Inline comments only appear under a line that is still in the diff, so plain MR/PR comments and threads whose line was rebased away are otherwise invisible. Press `T` to list every thread with its status (`UNRESOLVED` / `RESOLVED`), its location (`file:line`, `GENERAL`, or `OUTDATED`), the author, an excerpt and the reply count; the lower pane shows the full thread. `j`/`k` move and wrap around at either end like the other lists, `g`/`G` jump to the first/last thread, `u` narrows the list to unresolved threads, `J`/`K` scroll the thread, `Enter` jumps the diff cursor to the thread's line (or to its file when the line is gone), `a` opens the usual reply / resolve / edit / delete actions, and `Esc` closes it. Jumping to a file you marked as reviewed unfolds its directory, and if `M` was hiding it, reviewed files are shown again. On GitHub the overview lists pull-request review comments only; top-level PR conversation comments are not fetched, and GitHub reports no resolved state through this endpoint, so every thread shows as unresolved.
+**Review threads overview.** Inline comments only appear under a line that is still in the diff, so plain MR/PR comments and threads whose line was rebased away are otherwise invisible. Press `T` to list every thread with its status (`UNRESOLVED` / `RESOLVED`), its location (`file:line`, `GENERAL`, or `OUTDATED`), the author, an excerpt, its age and the reply count; the lower pane shows the full thread. `j`/`k` move and wrap around at either end like the other lists, `Ctrl+d`/`Ctrl+u` move half a page, `g`/`G` jump to the first/last thread, `u` narrows the list to unresolved threads, `J`/`K` scroll the thread, `Enter` jumps the diff cursor to the thread's line (or to its file when the line is gone), `a` opens the usual reply / resolve / edit / delete actions, and `Esc` closes it. Jumping to a file you marked as reviewed unfolds its directory, and if `M` was hiding it, reviewed files are shown again. On GitHub the overview also lists the PR's conversation comments and the summary of every review submitted with a body, as `GENERAL` threads ordered by creation time. A review summary carries its verdict as a badge (`APPROVED`, `CHANGES REQUESTED`, `COMMENTED`, `DISMISSED`). Neither can be replied to or resolved: `a` offers edit and delete for a conversation comment, and nothing for a review summary.
 
 ---
 
 ### Pipelines tab
 
-> Remappable via `[keybindings.pipelines]` in `config.toml`.
+> Remappable via `[keybindings.pipelines]` in `config.toml`. GitLab has no group pipelines endpoint, so in GitLab group scope the tab is unavailable.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Drill into selected pipeline (show downstream pipelines or jobs) | — |
+| `Enter` | Drill into selected pipeline (show downstream pipelines or jobs) | `list.open` |
 | `Alt+j` | View selected pipeline's own jobs directly (skip downstream pipelines) | `enter_jobs` |
-| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | — |
-| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | — |
+| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | `list.back` |
+| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | `run_new` |
 | `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
-| `r` | Retry selected pipeline (or all checked pipelines) | `retry` |
+| `r` | Retry selected pipeline (or all checked pipelines). GitLab reruns its failed and canceled jobs, GitHub the whole run | `retry` |
+| `R` | Retry only the failed jobs of the selected pipeline (or all checked pipelines) | `retry_failed` |
+| `s` | Filter by status: All → Running → Failed → Success → All | `cycle_status_filter` |
+| `i` | Show / hide the inspector: triggering commit, who triggered it, and each failed job with its failure reason | `toggle_preview` |
 | `d` | Cancel selected pipeline | `cancel` |
-| `y` | Copy selected pipeline commit SHA | `copy_sha` |
+| `y` | Copy selected pipeline URL | `copy_url` |
+| `Y` | Copy selected pipeline ID (`#123`) | `copy_id` |
+| `C` | Copy selected pipeline commit SHA | `copy_sha` |
 | `o` | Open pipeline in browser | `open_in_browser` |
-| `Space` | Check/uncheck pipeline for bulk retry | — |
-| `j` / `↓` | (in job view) move down | — |
-| `k` / `↑` | (in job view) move up | — |
+| `Space` | Check/uncheck pipeline for bulk retry | `select_pipeline` |
+| `j` / `↓` | (in job view) move down | `list.next_row` |
+| `k` / `↑` | (in job view) move up | `list.previous_row` |
 
 **Inside a pipeline (job view)**
 
@@ -676,35 +739,47 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 |---|---|---|
 | `Enter` | Fetch and display job trace (toggle zoom when trace is open) | `view_trace` |
 | `r` | Retry selected job (or all checked jobs) | `retry` |
-| `S` | Start manual (blocked) GitLab CI job | `start_job` |
-| `c` | Cancel selected job (or all checked jobs) | `cancel` |
+| `S` | Start manual (blocked) job. GitLab only: hidden on GitHub | `start_job` |
+| `c` | Cancel selected job (or all checked jobs), after a confirmation | `cancel` |
 | `d` | Download job artifact | `download_artifact` |
-| `y` | Copy pipeline commit SHA | `copy_sha` |
+| `y` | Copy job web URL | `copy_url` |
+| `Y` | Copy job ID | `copy_id` |
+| `Alt+y` | Copy pipeline commit SHA | `copy_sha` |
+| `E` | Jump to the next failure line in the job trace (fetches the trace first when it is not shown) | `jump_to_failure` |
 | `o` | Open job in browser | `open_in_browser` |
 | `e` | Open job trace in `$EDITOR` | `view_trace_editor` |
 | `p` | Switch to pipeline selector | `enter_pipeline` |
 | `s` | Select all jobs in the current stage | `select_stage` |
 | `w` | Toggle trace word wrap | `toggle_trace_wrap` |
-| `m` | Collapse / expand matrix jobs | — |
+| `f` | Follow the trace of a running job: every 5 seconds, append what the log gained (GitLab asks only for the new bytes) | `toggle_trace_follow` |
 | `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
-| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
-| `j` / `↓` | (in trace view) scroll down | — |
-| `k` / `↑` | (in trace view) scroll up | — |
-| `PageDown` / `PageUp` | (in trace view) page down / up | — |
-| `Ctrl+d` / `Ctrl+u` | (in trace view) scroll half page down / up | — |
-| `Home` / `End` | (in trace view) jump to top / bottom | — |
+| `Esc` | Clear the job trace search (before going back) | `clear_trace_search` |
+| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | `list.back` |
+| `j` / `↓` | (in trace view) scroll down | `list.next_row` |
+| `k` / `↑` | (in trace view) scroll up | `list.previous_row` |
+| `PageDown` / `PageUp` | (in trace view) page down / up | `global.scroll_page_down` / `global.scroll_page_up` |
+| `Ctrl+d` / `Ctrl+u` | (in trace view) scroll half page down / up | `global.scroll_half_page_down` / `global.scroll_half_page_up` |
+| `Home` / `End` | (in trace view) jump to top / bottom | `global.scroll_top` / `global.scroll_to_end` |
+
+glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[TRUNCATED: first 16 MiB]` in the pane title (press `o` to open the full log in the browser). A diff larger than 32 MiB is refused with an error rather than shown in part.
 
 ---
 
 ### Runners tab
 
-> Remappable via `[keybindings.runners]` in `config.toml`.
+> Remappable via `[keybindings.runners]` in `config.toml`. Pause, resume and edit are GitLab-only: GitHub's runner API has no pause, resume or description endpoint, so on GitHub these keys do nothing. The tab lists a single repository's runners, so it is unavailable in group scope.
 
 | Key | Action | Config |
 |---|---|---|
 | `p` | Pause selected runner | `pause` |
 | `r` | Resume (un-pause) selected runner | `resume` |
 | `e` | Edit runner description (inline text input) | `edit_description` |
+| `o` | Open runner in browser | `open_in_browser` |
+| `s` | Cycle the Status filter: Online, Paused, Offline, all (Online, Offline, all on GitHub, whose runners cannot be paused) | `cycle_status` |
+| `y` | Copy runner URL | `copy_url` |
+| `Y` | Copy runner ID | `copy_id` |
+
+The preview lists each runner's type (instance, group or project), tags, version, last contact, IP address and URL. On GitLab the tags, version, last contact and IP address come from one `glab api graphql` query over the project's runners, and the IP address only appears when a runner manager reports one (GitLab 17 and later no longer report the runner's own IP). On GitHub the runner's labels are its tags, and type, version, last contact and IP address are not available. A runner that is paused shows `PAUSED` whatever its connection state. The `Tags` column (shown by default) can be searched and filtered by tag from the column configurator, where the `Type`, `Version` and `Last Contact` columns can be enabled too.
 
 ---
 
@@ -714,7 +789,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | View release details in terminal | — |
+| `Enter` | View release details in terminal | `list.open` |
 | `n` | Create a new release (tag, name, description) | `create_release` |
 | `e` | Edit selected release | `edit_release` |
 | `d` | Delete selected release (with confirmation) | `delete_release` |
@@ -739,14 +814,28 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 ### Todos tab
 
-On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
+On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lists unread items only until `r` toggles read (GitHub) or done (GitLab) items on, and the tab title shows the active filter (`Unread` / `All`). Every action updates the list as soon as the CLI call succeeds, and a failed call raises an error toast.
+
+The State and Type columns are badges (`NEW` / `READ`, `Issue` / `MR` or `PR`). `p` opens the preview, which renders the comment that triggered the item as Markdown, or the target's description when there is none, with the reason and author. GitLab todos carry it in the list. GitHub fetches the latest comment (or the issue / PR body) once the cursor rests on a notification.
+
+Select items with `Space`, or with `v` and the cursor (yazi-style), then press `Enter` or `d` to mark every selected item read or done in one go. `Esc` clears the selection.
 
 > Remappable via `[keybindings.todos]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Mark item as read and jump to its target (issue / MR) | `mark_as_read` |
+| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`). With a selection, marks every selected unread item read without leaving the tab | `mark_as_read` |
+| `d` | Mark item (or every selected item) as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
+| `A` | Mark all items as read (with confirmation) | `mark_all_as_read` |
+| `U` | Unsubscribe from the item's thread (GitLab: issues and MRs only) | `unsubscribe` |
+| `r` | Toggle showing read / done items | `toggle_show_read` |
 | `o` | Open item in browser | `open_in_browser` |
+| `Space` | Toggle the item in the selection | `select_todo` |
+| `v` | Toggle select mode (paint selection while navigating) | `selection_toggle` |
+| `Ctrl+a` | Select every filtered item | `select_all` |
+| `y` | Copy the target's URL | `copy_url` |
+| `Y` | Copy the target's reference (`#123`, or `!456` for a GitLab MR). Targets glab-tui has no view for, such as releases or check suites, have none | `copy_reference` |
+| `p` | Show / hide the preview | `toggle_preview` |
 
 ---
 
@@ -757,7 +846,12 @@ On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 | Key | Action | Config |
 |---|---|---|
 | `n` | Create a new branch (prompts for name; based on the selected branch) | `create_branch` |
-| `d` | Delete selected branch (with confirmation) | `delete_branch` |
+| `d` | Delete selected branch or bulk delete marked branches (with confirmation) | `delete_branch` |
+| `C` | Checkout / switch to branch | `checkout_branch` |
+| `m` | Create Merge Request / Pull Request from branch | `create_mr` |
+| `Space` | Toggle branch selection | `select_branch` |
+| `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
+| `Ctrl+a` | Select all visible branches | `select_all` |
 | `y` | Copy selected branch name | `copy_branch` |
 | `o` | Open branch in browser | `open_in_browser` |
 
@@ -765,25 +859,43 @@ On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 
 ### Environments tab
 
+`Enter` lists the highlighted environment's deployments, newest first, above the selected deployment's details, and moves the focus to them: `j`/`k`, `Home`/`End` then select a deployment instead of an environment. `Tab` moves the focus back and forth, `Esc` returns it to the environment list. While deployments are listed `Tab` is taken, so open the Configure View with `,`. Selecting another environment drops the listed deployments.
+
 > Remappable via `[keybindings.environments]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Fetch and view the deployments list for the selected environment | `view_deployments` |
+| `Enter` | List the selected environment's deployments and focus them | `view_deployments` |
+| `Tab` | Move the focus between the environment list and its deployments | `focus_deployments` |
+| `R` | Roll back to the selected deployment (with confirmation). GitLab re-runs the deployment's job. GitHub creates a deployment record of its commit, which only deploys if a workflow runs `on: deployment` | `rollback_deployment` |
+| `e` | Open the selected deployment's job log in `$EDITOR`. GitLab only: hidden on GitHub, whose deployments carry no job | `view_deployment_log` |
+| `d` | Stop the environment (with confirmation). GitLab runs its stop action. GitHub, which has no stop, marks its live deployment (the newest whose latest status is success) inactive | `stop_environment` |
+| `y` | Copy the environment's external URL | `copy_url` |
+| `o` | Open environment in browser | `open_in_browser` |
 
 ---
 
 ### Terminal tab
 
-Logs every `glab` / `gh` command the TUI executes, with success/failure status.
+Logs every `glab` / `gh` command the TUI executes and the `git` calls its backends make, with success/failure status. The log keeps the most recent 1,000 entries and drops older ones. The search bar (`/` or `f`) filters it by command or status, and `s` narrows it to failed or successful commands. Without wrapping, the bottom row of the view is highlighted and is the entry the inspect, copy and re-run keys act on. While wrapping, they act on the newest entry.
+
+`Enter` (or `P`) opens the command inspector: the full command line, exit code, start time, duration, the error, and the command's stderr and stdout (each kept up to 16 KiB). `y`, `Y` and `r` work inside it too, on the inspected entry. Re-running asks for confirmation, runs the exact recorded `glab` / `gh` / `git` call again (including the request body of an `api --input -` call) and logs it as a new `Rerun:` entry. It does not refresh any tab. Entries that only describe an action, such as custom commands, record no call and cannot be re-run.
 
 > Remappable via `[keybindings.terminal]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `j` / `↓` | Scroll log down | — |
-| `k` / `↑` | Scroll log up | — |
+| `j` / `↓` | Scroll log down | `list.next_row` |
+| `k` / `↑` | Scroll log up | `list.previous_row` |
+| `Enter` / `P` | Inspect the highlighted entry | `inspect_command` |
+| `s` | Cycle the status filter: All, Errors, Success | `cycle_status_filter` |
+| `r` | Re-run the highlighted entry's `glab` / `gh` / `git` call after a confirmation | `rerun_command` |
 | `w` | Toggle line wrapping | `toggle_wrap` |
+| `y` | Copy the highlighted entry's command line to the clipboard (the newest entry while wrapping) | `copy_command` |
+| `Y` | Copy the highlighted entry's output (stdout, then stderr), or its error when it printed nothing | `copy_output` |
+| `C` | Clear the log | `clear_log` |
+
+In the inspector, the `[keybindings.list]` row keys (`next_row` / `previous_row`: `j`/`k`, `Down`/`Up`; `first_row` / `last_row`) and the `[keybindings.global]` scroll keys (`J`/`K`, Home/End, PageUp/PageDown, `Ctrl+d`/`Ctrl+u`) scroll, and the `list.back` keys (`Esc`, `Backspace`), the `quit` key (`q`) or the `inspect_command` keys (`Enter`, `P`) close it.
 
 ---
 
@@ -791,19 +903,37 @@ Logs every `glab` / `gh` command the TUI executes, with success/failure status.
 
 Searchable multi-select popups are used for choosing labels, assignees, reviewers, milestones, and for **value-based column filtering** (see [Filtering, Grouping & Columns](#filtering-grouping--columns)).
 
-> Selector keys are **fixed** and not remappable in `config.toml`.
+> Remappable via `[keybindings.selector]` in `config.toml`. Keys typed while filtering go into the filter.
 
-| Key | Action |
-|---|---|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `Space` | Toggle selection |
-| `f` / `/` / `i` | Enter filter/search mode |
-| `Backspace` | Delete last character in filter |
-| `Enter` | Confirm selection and apply |
-| `Esc` | Cancel and return to edit menu |
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` | Move down | `next` |
+| `k` / `↑` | Move up | `previous` |
+| `Space` | Toggle selection | `toggle` |
+| `f` / `/` / `i` | Enter filter/search mode | `filter` |
+| `Backspace` | Delete last character in filter | — |
+| `Enter` | Confirm selection and apply (while filtering: leave the filter) | `confirm` |
+| `Esc` | Clear the filter, then cancel and return to edit menu (while filtering: leave the filter) | `close` |
 
 > If you type a value that doesn't exist in the list, a **`+ Create "…"`** option appears at the top, letting you create a new label inline.
+
+### Confirmation dialogs
+
+Every destructive action (close, reopen, delete, revoke, cancel, stop, roll back, mark all read) opens a confirmation dialog first, whatever key it is bound to.
+
+> Remappable via `[keybindings.dialog]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` | Next option / button row | `next_field` |
+| `k` / `↑` | Previous option / button row | `previous_field` |
+| `l` / `→` | Next button | `next_button` |
+| `h` / `←` | Previous button | `previous_button` |
+| `Tab` / `Shift+Tab` | Next / previous control | `next` / `previous` |
+| `Space` | Toggle the focused option | `toggle_option` |
+| `Enter` | Activate the focused button | `activate` |
+| `y` / `Y` | Submit while the Submit button is focused | `submit` |
+| `Esc` | Cancel | `cancel` |
 
 ---
 
@@ -820,11 +950,13 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`anyhow`](https://crates.io/crates/anyhow) | 1.0 | Ergonomic error handling |
 | [`async-trait`](https://crates.io/crates/async-trait) | 0.1.92 | Async trait support for Backend trait |
 | [`clap`](https://crates.io/crates/clap) | 4 (derive) | CLI argument parsing for subcommands |
-| [`serde_yaml`](https://crates.io/crates/serde_yaml) | 0.9 | YAML output for `doctor` diagnostics |
+| [`serde-saphyr`](https://crates.io/crates/serde-saphyr) | 1.1 (deserialize) | Parsing `workflow_dispatch` inputs from GitHub workflow files |
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
 | [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
+| [`two-face`](https://crates.io/crates/two-face) | 0.5 | bat's syntax definitions for syntect (TypeScript, TOML, Dockerfile, Kotlin, Swift, Nix, Zig, Terraform, Svelte, Vue, …) |
+| [`similar`](https://crates.io/crates/similar) | 3.2 | Word-level diff of changed lines in the diff view |
 | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) | 0.13.0 | CommonMark and GFM markdown renderer for details panes |
 | [`arboard`](https://crates.io/crates/arboard) | 3.6 | System clipboard integration for copy shortcuts |
 | [`libc`](https://crates.io/crates/libc) | 0.2 | POSIX process management and terminal session isolation |
@@ -837,9 +969,12 @@ All API calls are made by shelling out to `gh api` or `glab api` (depending on t
 
 ```
 src/
-├── main.rs          # Entry point, event loop, all key-binding handlers
+├── main.rs          # Entry point: terminal setup and the effect-executing event loop
+├── update/          # update(app, event) -> Vec<Effect>: applies every event to App
+├── effect.rs        # Effect: what update asks the loop to do (spawn, suspend, quit)
 ├── app.rs           # App state, Tab enum, DiffView, DatePicker, filtering logic
-├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
+├── config.rs        # Config/Theme loading, TOML generation
+├── keymap.rs        # Action registry: every bindable key, its context, defaults, help label
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
 ├── fetch.rs         # Per-tab data-fetching dispatch
 ├── git_helpers.rs   # Git remote parsing, current branch, workflow file detection
@@ -866,10 +1001,12 @@ src/
 │   ├── notifications.rs # Todo/notification type + list
 │   ├── branches.rs  # Branch type + list/create/delete
 │   └── deployments.rs # Environment + Deployment types
-├── handlers/        # Keypress handlers
+├── handlers/        # Keypress handlers, called from update
 │   ├── mod.rs
 │   ├── tabs.rs      # Per-tab keybinding handlers
-│   └── overlays.rs  # Overlay keybinding handlers
+│   ├── overlays/    # One module per overlay (submit dialog, selector, edit menu, ...)
+│   ├── diff_view.rs # Diff view keys and review comment posting
+│   └── mouse.rs     # Mouse handling
 ├── ui/              # Ratatui render functions
 │   ├── mod.rs       # Re-exports
 │   ├── inspector.rs # Unified entity inspector (preview/edit single-column layout)
@@ -884,7 +1021,7 @@ src/
     ├── format.rs    # Time formatting, tab expansion, text wrapping
     ├── markdown.rs  # CommonMark and GFM Markdown rendering
     ├── ui.rs        # StatefulTable generic helper
-    └── update.rs    # GitHub releases self-updater with multi-target Linux selection
+    └── update.rs    # GitHub releases self-updater (curl, checksum-verified) with multi-target Linux selection
 ```
 
 ---
@@ -892,7 +1029,8 @@ src/
 ## Running Tests
 
 ```sh
-cargo test
+just test       # unit tests
+just check      # fmt check, clippy, unit tests and e2e tests
 ```
 
 Unit tests live in several modules:
@@ -910,7 +1048,7 @@ Releases are prepared and distributed from a maintainer's machine; CI only build
 scripts/release.sh [patch|minor|major|nightly]   # default: patch
 ```
 
-`scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.
+`scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.
 
 Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final publish step), `jq`, and `vhs`/`ttyd`/`ffmpeg`/JetBrainsMono Nerd Font for the demo recordings. The script fails fast with a clear message when a prerequisite is missing.
 
@@ -920,8 +1058,8 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
-3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant (run unit tests with `cargo test --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+3. Add or update tests where relevant. A bug fix starts with a test that fails without the fix.
+4. Run `just check` before opening a PR (the e2e tests need `cargo-nextest`).
 
 ### Development & Tasks (`just`)
 
@@ -930,15 +1068,20 @@ The repository includes `rust-toolchain.toml` to automatically pin the Rust vers
 A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 
 ```sh
-just check      # runs fmt check, clippy, unit tests, and single-threaded e2e tests (mirrors CI)
+just check      # runs fmt check, clippy, unit tests, and e2e tests (mirrors CI)
 ```
 
 Available recipes:
+- `just run [args]` — run a debug build, passing `args` to glab-tui
+- `just build` — build the release binary (`target/release/glab-tui`)
+- `just install` — build, then copy the binary to the first directory in `PATH`
 - `just fmt` / `just fmt-check` — format code or verify formatting
-- `just lint` — run Clippy with `-Dwarnings`
-- `just test` — run unit tests (`cargo test --bin glab-tui`)
-- `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
-- `just check` — run the full CI check matrix locally
+- `just lint` — run Clippy over all targets with `-Dwarnings`
+- `just test` — run unit tests (`cargo test --lib --bin glab-tui`)
+- `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e --no-fail-fast`, requires `cargo-nextest`)
+- `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
+- `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
+- `just check` — run the recipes CI's Rustfmt, Clippy and Test jobs run (`fmt-check`, `lint`, `test`, `e2e`)
 - `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 
 

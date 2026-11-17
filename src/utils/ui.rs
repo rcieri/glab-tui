@@ -150,6 +150,26 @@ impl<T> StatefulTable<T> {
     pub fn unselect(&mut self) {
         self.state.select(None);
     }
+
+    /// Moves the selection `rows` down or up, stopping at the first and last row.
+    pub fn move_by(&mut self, len: usize, down: bool, rows: usize) {
+        if len == 0 {
+            return;
+        }
+        let idx = step_clamped(self.state.selected().unwrap_or(0), len, down, rows);
+        self.state.select(Some(idx));
+    }
+}
+
+/// `idx` moved `rows` down or up inside `0..len`. Unlike `next`/`previous`,
+/// a page move stops at the ends instead of wrapping.
+pub fn step_clamped(idx: usize, len: usize, down: bool, rows: usize) -> usize {
+    let idx = if down {
+        idx.saturating_add(rows)
+    } else {
+        idx.saturating_sub(rows)
+    };
+    idx.min(len.saturating_sub(1))
 }
 
 #[cfg(test)]
@@ -175,6 +195,32 @@ mod tests {
         table.first(1);
         assert_eq!(table.state.selected(), Some(0));
         table.last(1);
+        assert_eq!(table.state.selected(), Some(0));
+    }
+
+    #[test]
+    fn step_clamped_stops_at_both_ends_instead_of_wrapping() {
+        assert_eq!(step_clamped(2, 10, true, 5), 7);
+        assert_eq!(step_clamped(7, 10, true, 5), 9);
+        assert_eq!(step_clamped(7, 10, false, 5), 2);
+        assert_eq!(step_clamped(2, 10, false, 5), 0);
+        assert_eq!(step_clamped(0, 0, true, 5), 0);
+    }
+
+    #[test]
+    fn stateful_table_move_by_clamps_and_ignores_empty_lists() {
+        let mut table: StatefulTable<i32> = StatefulTable::with_items(vec![]);
+        table.move_by(0, true, 3);
+        assert_eq!(table.state.selected(), None);
+
+        table.state.select(Some(1));
+        table.move_by(5, true, 3);
+        assert_eq!(table.state.selected(), Some(4));
+        table.move_by(5, true, 3);
+        assert_eq!(table.state.selected(), Some(4));
+        table.move_by(5, false, 3);
+        assert_eq!(table.state.selected(), Some(1));
+        table.move_by(5, false, 3);
         assert_eq!(table.state.selected(), Some(0));
     }
 

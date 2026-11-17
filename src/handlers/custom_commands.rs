@@ -1,9 +1,11 @@
 use crate::AppTerminal;
 use crate::app::{App, CUSTOM_COMMAND_LOG_PREFIX};
+use crate::command_log::Execution;
 use crate::custom_commands::{CommandPane, CustomCommand, TemplateValues, render, shell_process};
+use crate::effect::{Effects, ForegroundJob};
 use crate::event::Event;
+use crate::keybinding::KeyPress;
 use crate::scope::Scope;
-use crossterm::event::KeyEvent;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Runs the custom command bound to `key_event` on the active tab, handing it
@@ -11,14 +13,14 @@ use tokio::sync::mpsc::UnboundedSender;
 /// key; every claimed keypress leaves one entry in the terminal log.
 pub fn run_bound_command(
     app: &mut App,
-    key_event: &KeyEvent,
-    terminal: &mut AppTerminal,
+    key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let Some(command) = app.custom_commands.find(app.active_tab, key_event).cloned() else {
         return false;
     };
-    execute(app, &command, terminal, tx);
+    execute(app, &command, tx, fx);
     true
 }
 
@@ -26,14 +28,14 @@ pub fn run_bound_command(
 /// diff view is open.
 pub fn run_bound_diff_command(
     app: &mut App,
-    key_event: &KeyEvent,
-    terminal: &mut AppTerminal,
+    key_event: &KeyPress,
     tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
 ) -> bool {
     let Some(command) = app.custom_commands.find_in_diff(key_event).cloned() else {
         return false;
     };
-    execute(app, &command, terminal, tx);
+    execute(app, &command, tx, fx);
     true
 }
 
@@ -51,11 +53,19 @@ pub struct RunReport {
     total: usize,
     /// Rows refused before running, already logged.
     refused: Vec<String>,
-    /// Rendered command and outcome of each run, in order.
-    runs: Vec<(String, Result<(), String>)>,
+    /// Every run, in order.
+    runs: Vec<FinishedRun>,
     /// Terminal-log rows shown as running while a background run works,
     /// one per run in the same order; empty for terminal runs.
-    log_rows: Vec<usize>,
+    log_rows: Vec<crate::command_log::LogRow>,
+}
+
+/// One run of a command: the rendered command, how it ended and when it ran.
+#[derive(Clone, Debug)]
+struct FinishedRun {
+    rendered: String,
+    outcome: Result<(), String>,
+    execution: Execution,
 }
 
 /// Where a command's stderr goes while it runs.
@@ -67,12 +77,37 @@ enum Handoff {
     Background,
 }
 
-fn execute(
-    app: &mut App,
-    command: &CustomCommand,
-    terminal: &mut AppTerminal,
-    tx: &UnboundedSender<Event>,
-) {
+/// The runs of one keypress that need the terminal, waiting for the event
+/// loop to hand it over.
+#[derive(Debug)]
+pub struct TerminalRuns {
+    command: CustomCommand,
+    runs: Vec<(String, TemplateValues)>,
+    report: RunReport,
+}
+
+impl TerminalRuns {
+    pub fn run(self, terminal: &mut AppTerminal) -> RunReport {
+        let TerminalRuns {
+            command,
+            runs,
+            mut report,
+        } = self;
+        report.runs = match crate::editor::suspend_while(terminal, || {
+            run_all(&command, runs, Handoff::Terminal)
+        }) {
+            Ok(runs) => runs,
+            Err(error) => vec![FinishedRun {
+                rendered: command.command.clone(),
+                outcome: Err(format!("\"{}\" not run: {error}", command.label())),
+                execution: Execution::default(),
+            }],
+        };
+        report
+    }
+}
+
+fn execute(app: &mut App, command: &CustomCommand, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     let Selection {
         targets,
         missing_rows,
@@ -97,6 +132,7 @@ fn execute(
         app.record_command_outcome(
             format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", command.command),
             &Err(reason.clone()),
+            Execution::default(),
         );
         refused.push(reason);
     }
@@ -113,6 +149,7 @@ fn execute(
                 app.record_command_outcome(
                     format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", command.command),
                     &Err(reason.clone()),
+                    Execution::default(),
                 );
                 refused.push(reason);
             }
@@ -140,31 +177,25 @@ fn execute(
             .collect();
         let command = command.clone();
         let tx = tx.clone();
-        std::thread::spawn(move || {
+        fx.spawn_thread(move || {
             report.runs = run_all(&command, runs, Handoff::Background);
             let _ = tx.send(Event::CustomCommandFinished(report));
         });
         return;
     }
 
-    let label = command.label().to_string();
-    report.runs = match crate::editor::suspend_while(terminal, || {
-        run_all(command, runs, Handoff::Terminal)
-    }) {
-        Ok(outcomes) => outcomes,
-        Err(error) => vec![(
-            command.command.clone(),
-            Err(format!("\"{label}\" not run: {error}")),
-        )],
-    };
-    report_runs(app, report);
+    fx.suspend(ForegroundJob::RunCommands(TerminalRuns {
+        command: command.clone(),
+        runs,
+        report,
+    }));
 }
 
 fn run_all(
     command: &CustomCommand,
     runs: Vec<(String, TemplateValues)>,
     handoff: Handoff,
-) -> Vec<(String, Result<(), String>)> {
+) -> Vec<FinishedRun> {
     runs.into_iter()
         .map(|(rendered, values)| {
             if handoff == Handoff::Terminal {
@@ -174,8 +205,18 @@ fn run_all(
             }
             let mut process = shell_process(&rendered);
             process.envs(values.environment());
+            let started_at = chrono::Local::now();
+            let clock = std::time::Instant::now();
             let outcome = run_process(command, &mut process, handoff);
-            (rendered, outcome)
+            FinishedRun {
+                rendered,
+                outcome,
+                execution: Execution {
+                    started_at: Some(started_at),
+                    duration: Some(clock.elapsed()),
+                    ..Default::default()
+                },
+            }
         })
         .collect()
 }
@@ -183,13 +224,16 @@ fn run_all(
 /// Logs every run of a keypress and raises one toast for its failures.
 pub fn report_runs(app: &mut App, report: RunReport) {
     let mut failures = report.refused;
-    for (index, (rendered, outcome)) in report.runs.into_iter().enumerate() {
+    for (index, run) in report.runs.into_iter().enumerate() {
         match report.log_rows.get(index) {
-            Some(&row) => app.settle_command(row, &outcome),
-            None => app
-                .record_command_outcome(format!("{CUSTOM_COMMAND_LOG_PREFIX}{rendered}"), &outcome),
+            Some(&row) => app.settle_command(row, &run.outcome, Some(run.execution)),
+            None => app.record_command_outcome(
+                format!("{CUSTOM_COMMAND_LOG_PREFIX}{}", run.rendered),
+                &run.outcome,
+                run.execution,
+            ),
         }
-        if let Err(reason) = outcome {
+        if let Err(reason) = run.outcome {
             failures.push(reason);
         }
     }
@@ -335,9 +379,9 @@ struct Selection {
     missing_rows: Vec<String>,
 }
 
-/// What a command acts on: every selected issue or MR/PR when there is a
-/// selection (bulk run), otherwise the highlighted row, the diff cursor, or
-/// the repository for a universal command.
+/// What a command acts on: every selected issue, MR/PR or pipeline when there
+/// is a selection (bulk run), otherwise the highlighted row, the diff cursor,
+/// or the repository for a universal command.
 fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
     let mut checkouts = CheckoutCache::new();
     let mut missing_rows = Vec::new();
@@ -421,6 +465,109 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
                 .map(|mr| mr_target(app, mr, &mut checkouts))
                 .collect()
         }
+        CommandPane::Pipelines => {
+            let pipelines: Vec<&crate::domain::pipelines::Pipeline> =
+                if app.selected_pipelines.is_empty() {
+                    let pipeline = app
+                        .pipelines
+                        .state
+                        .selected()
+                        .and_then(|index| app.filtered_pipelines().get(index).copied())
+                        .ok_or_else(|| "no pipeline is selected".to_string())?;
+                    vec![pipeline]
+                } else {
+                    let loaded: Vec<_> = app
+                        .pipelines
+                        .items
+                        .iter()
+                        .filter(|p| app.selected_pipelines.contains(&p.id))
+                        .collect();
+                    let mut unloaded: Vec<u64> = app
+                        .selected_pipelines
+                        .iter()
+                        .copied()
+                        .filter(|id| !loaded.iter().any(|p| p.id == *id))
+                        .collect();
+                    unloaded.sort_unstable();
+                    missing_rows = unloaded.into_iter().map(|id| format!("#{id}")).collect();
+                    sorted_by_project_and_number(loaded, |p| (p.project_path.as_str(), p.id))
+                };
+            if pipelines.is_empty() {
+                return Err("the selected pipelines are no longer loaded".to_string());
+            }
+            pipelines
+                .into_iter()
+                .map(|pipeline| pipeline_target(app, pipeline, &mut checkouts))
+                .collect()
+        }
+        CommandPane::Jobs => {
+            let jobs: Vec<&crate::domain::pipelines::Job> = if app.selected_jobs.is_empty() {
+                let job = app
+                    .selected_job()
+                    .ok_or_else(|| "no job is selected".to_string())?;
+                vec![job]
+            } else {
+                let mut loaded: Vec<_> = app
+                    .jobs
+                    .items
+                    .iter()
+                    .filter(|job| app.selected_jobs.contains(&job.id))
+                    .collect();
+                loaded.sort_by_key(|job| job.id);
+                let mut missing: Vec<u64> = app
+                    .selected_jobs
+                    .iter()
+                    .copied()
+                    .filter(|id| !loaded.iter().any(|job| job.id == *id))
+                    .collect();
+                missing.sort_unstable();
+                missing_rows = missing.into_iter().map(|id| format!("#{id}")).collect();
+                loaded
+            };
+            if jobs.is_empty() {
+                return Err("the selected jobs are no longer loaded".to_string());
+            }
+            jobs.into_iter()
+                .map(|job| job_target(app, job, &mut checkouts))
+                .collect()
+        }
+        CommandPane::Branches => {
+            let branches: Vec<&crate::domain::branches::Branch> =
+                if app.selected_branches.is_empty() {
+                    let branch = app
+                        .branches
+                        .cursor_row()
+                        .ok_or_else(|| "no branch is selected".to_string())?;
+                    vec![branch]
+                } else {
+                    let loaded: Vec<_> = app
+                        .branches
+                        .items()
+                        .iter()
+                        .filter(|b| app.selected_branches.contains(&b.name))
+                        .collect();
+                    let loaded_names: std::collections::HashSet<&str> =
+                        loaded.iter().map(|b| b.name.as_str()).collect();
+                    let mut missing: Vec<String> = app
+                        .selected_branches
+                        .iter()
+                        .filter(|name| !loaded_names.contains(name.as_str()))
+                        .cloned()
+                        .collect();
+                    missing.sort();
+                    missing_rows = missing;
+                    let mut sorted = loaded;
+                    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+                    sorted
+                };
+            if branches.is_empty() {
+                return Err("the selected branches are no longer loaded".to_string());
+            }
+            branches
+                .into_iter()
+                .map(|branch| branch_target(app, branch, &mut checkouts))
+                .collect()
+        }
         CommandPane::Diff => vec![Target {
             row: String::new(),
             values: diff_values(app, &mut checkouts)?,
@@ -432,10 +579,7 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
     })
 }
 
-fn sorted_by_project_and_number<'a, T>(
-    mut rows: Vec<&'a T>,
-    key: impl Fn(&T) -> (&str, u64),
-) -> Vec<&'a T> {
+fn sorted_by_project_and_number<T>(mut rows: Vec<&T>, key: impl Fn(&T) -> (&str, u64)) -> Vec<&T> {
     rows.sort_by(|a, b| key(a).cmp(&key(b)));
     rows
 }
@@ -491,6 +635,72 @@ fn mr_target(
     insert_repo_values(&mut values, app, project, checkouts);
     Target {
         row: format!("{}{}", mr_row_prefix(app), mr.iid),
+        values,
+    }
+}
+
+fn pipeline_target(
+    app: &App,
+    pipeline: &crate::domain::pipelines::Pipeline,
+    checkouts: &mut CheckoutCache,
+) -> Target {
+    let mut values = TemplateValues::default();
+    values.insert("PipelineId", pipeline.id.to_string());
+    values.insert("Ref", pipeline.r#ref.clone());
+    values.insert("Sha", pipeline.head_sha.clone());
+    let project = row_project(
+        &pipeline.project_path,
+        pipeline.web_url.as_deref(),
+        &app.scope,
+    );
+    insert_repo_values(&mut values, app, project, checkouts);
+    Target {
+        row: format!("#{}", pipeline.id),
+        values,
+    }
+}
+
+fn job_target(
+    app: &App,
+    job: &crate::domain::pipelines::Job,
+    checkouts: &mut CheckoutCache,
+) -> Target {
+    let mut values = TemplateValues::default();
+    values.insert("JobId", job.id.to_string());
+    values.insert("JobName", job.api_name.clone());
+    if job.stage.is_empty() {
+        values.insert_unavailable("Stage", "the job has no stage".to_string());
+    } else {
+        values.insert("Stage", job.stage.clone());
+    }
+    values.insert("Status", job.status.clone());
+    let project = row_project(
+        app.jobs_project().unwrap_or(""),
+        job.web_url.as_deref(),
+        &app.scope,
+    );
+    insert_repo_values(&mut values, app, project, checkouts);
+    Target {
+        row: format!("#{}", job.id),
+        values,
+    }
+}
+
+fn branch_target(
+    app: &App,
+    branch: &crate::domain::branches::Branch,
+    checkouts: &mut CheckoutCache,
+) -> Target {
+    let mut values = TemplateValues::default();
+    values.insert("BranchName", branch.name.clone());
+    values.insert("CommitSha", branch.commit_sha.clone());
+    let project = app
+        .scope
+        .is_repository()
+        .then(|| app.scope.as_str().to_string());
+    insert_repo_values(&mut values, app, project, checkouts);
+    Target {
+        row: branch.name.clone(),
         values,
     }
 }
@@ -703,6 +913,53 @@ mod tests {
         assert!(outcome.unwrap_err().ends_with(": boom"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn each_run_is_logged_with_when_it_started_and_how_long_it_took() {
+        let command = CustomCommand {
+            pane: CommandPane::Universal,
+            key: "X".to_string(),
+            name: None,
+            command: String::new(),
+            background: false,
+            shadowed_on: Vec::new(),
+        };
+        let runs = vec![
+            ("sleep 0.3".to_string(), TemplateValues::default()),
+            ("sleep 0.3".to_string(), TemplateValues::default()),
+        ];
+        let mut app = App::default();
+
+        let report = RunReport {
+            label: "sleep".to_string(),
+            total: 2,
+            refused: Vec::new(),
+            runs: run_all(&command, runs, Handoff::Background),
+            log_rows: Vec::new(),
+        };
+        report_runs(&mut app, report);
+
+        let executions: Vec<&Execution> = app
+            .terminal_commands
+            .iter()
+            .map(|cmd| &cmd.execution)
+            .collect();
+        let minimum = std::time::Duration::from_millis(300);
+        assert_eq!(executions.len(), 2);
+        assert!(
+            executions.iter().all(|run| run.duration >= Some(minimum)),
+            "{executions:?}"
+        );
+        let (Some(first), Some(second)) = (executions[0].started_at, executions[1].started_at)
+        else {
+            panic!("every run records its start: {executions:?}");
+        };
+        assert!(
+            (second - first).to_std().unwrap() >= minimum,
+            "{executions:?}"
+        );
+    }
+
     #[test]
     fn selected_issues_each_get_a_run_in_number_order() {
         let mut app = App::default();
@@ -749,6 +1006,51 @@ mod tests {
             vec!["#99"],
             "vanished rows are reported"
         );
+    }
+
+    fn pipeline(id: u64, project: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "failed", "ref": "release/1.2", "updated_at": "",
+            "head_sha": format!("abc{id}"), "project_path": project
+        }))
+        .expect("pipeline fixture")
+    }
+
+    #[test]
+    fn pipeline_command_gets_the_highlighted_pipeline_id_ref_and_sha() {
+        let mut app = App::default();
+        app.scope = Scope::Group("acme".to_string());
+        app.pipelines.items = vec![pipeline(7, "acme/api"), pipeline(9, "acme/web")];
+        app.pipelines.state.select(Some(1));
+
+        let values = single_values(&app, CommandPane::Pipelines).unwrap();
+
+        assert_eq!(
+            render("{{.RepoName}} {{.PipelineId}} {{.Ref}} {{.Sha}}", &values).as_deref(),
+            Ok("acme/web 9 release/1.2 abc9")
+        );
+    }
+
+    #[test]
+    fn selected_pipelines_each_get_a_run_and_unloaded_ones_are_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("acme/api".to_string());
+        app.pipelines.items = vec![pipeline(30, ""), pipeline(10, ""), pipeline(20, "")];
+        app.pipelines.state.select(Some(2));
+        app.selected_pipelines = [30, 10, 99].into_iter().collect();
+
+        let selection = targets(&app, CommandPane::Pipelines).unwrap();
+
+        assert_eq!(
+            selection
+                .targets
+                .iter()
+                .map(|target| target.row.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#10", "#30"],
+            "the selection wins over the highlighted #20"
+        );
+        assert_eq!(selection.missing_rows, vec!["#99"]);
     }
 
     #[test]
@@ -857,6 +1159,163 @@ mod tests {
             render("cd {{.RepoPath}}", &values),
             Err(
                 "{{.RepoPath}} is unavailable: the group acme has no single repository".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn branches_custom_command_resolves_branch_and_commit_sha() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Branches;
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.branches.set_items(vec![
+            crate::domain::branches::Branch {
+                name: "feat/cool-branch".to_string(),
+                commit_sha: "1234567890abcdef".to_string(),
+                ..Default::default()
+            },
+            crate::domain::branches::Branch {
+                name: "main".to_string(),
+                commit_sha: "fedcba0987654321".to_string(),
+                ..Default::default()
+            },
+        ]);
+        app.sync_list_views();
+
+        // Single cursor target
+        let values = single_values(&app, CommandPane::Branches).unwrap();
+        assert_eq!(
+            render("git checkout {{.BranchName}} # {{.CommitSha}}", &values).as_deref(),
+            Ok("git checkout feat/cool-branch # 1234567890abcdef")
+        );
+
+        // Multi selection
+        app.selected_branches.insert("feat/cool-branch".to_string());
+        app.selected_branches.insert("main".to_string());
+        let selection = targets(&app, CommandPane::Branches).unwrap();
+        assert_eq!(selection.targets.len(), 2);
+        assert_eq!(selection.targets[0].row, "feat/cool-branch");
+        assert_eq!(selection.targets[1].row, "main");
+    }
+
+    #[test]
+    fn branches_custom_command_without_selection_or_cursor_fails() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.branches.set_items(vec![]);
+        app.branches.reset_cursor();
+
+        assert_eq!(
+            single_values(&app, CommandPane::Branches),
+            Err("no branch is selected".to_string())
+        );
+    }
+
+    fn job(json: serde_json::Value) -> crate::domain::pipelines::Job {
+        let job = serde_json::from_value(json).expect("job fixture");
+        crate::domain::pipelines::process_pipeline_jobs(vec![job]).remove(0)
+    }
+
+    #[test]
+    fn job_values_come_from_the_highlighted_row() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![
+            job(
+                serde_json::json!({"id": 5, "status": "success", "stage": "build", "name": "compile"}),
+            ),
+            job(serde_json::json!({"id": 6, "status": "failed", "stage": "test", "name": "rspec"})),
+        ];
+        app.jobs.state.select(Some(1));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            render(
+                "{{.RepoName}} {{.JobId}} {{.JobName}} {{.Stage}} {{.Status}}",
+                &values
+            )
+            .as_deref(),
+            Ok("owner/repo 6 rspec test failed")
+        );
+    }
+
+    #[test]
+    fn selected_jobs_each_get_a_run_in_id_order_and_vanished_ones_are_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![
+            job(serde_json::json!({"id": 30, "status": "failed", "stage": "test", "name": "c"})),
+            job(serde_json::json!({"id": 10, "status": "failed", "stage": "test", "name": "a"})),
+            job(serde_json::json!({"id": 20, "status": "success", "stage": "test", "name": "b"})),
+        ];
+        app.jobs.state.select(Some(2));
+        app.selected_jobs = [30, 10, 99].into_iter().collect();
+
+        let selection = targets(&app, CommandPane::Jobs).unwrap();
+        let rendered: Vec<String> = selection
+            .targets
+            .iter()
+            .map(|target| render("retry {{.JobId}}", &target.values).unwrap())
+            .collect();
+        assert_eq!(rendered, vec!["retry 10", "retry 30"]);
+        assert_eq!(selection.missing_rows, vec!["#99"]);
+    }
+
+    #[test]
+    fn github_job_has_no_stage_to_pass() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![job(
+            serde_json::json!({"id": 7, "status": "success", "stage": "", "name": "lint"}),
+        )];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            render("echo {{.Stage}}", &values),
+            Err("{{.Stage}} is unavailable: the job has no stage".to_string())
+        );
+    }
+
+    #[test]
+    fn group_scope_job_takes_its_repo_name_from_the_web_url() {
+        let mut app = App::default();
+        app.scope = Scope::Group("acme".to_string());
+        app.jobs.items = vec![job(serde_json::json!({
+            "id": 8, "status": "failed", "stage": "test", "name": "rspec",
+            "web_url": "https://gitlab.com/acme/sub/tool/-/jobs/8"
+        }))];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            render("{{.RepoName}} {{.JobId}}", &values).as_deref(),
+            Ok("acme/sub/tool 8")
+        );
+    }
+
+    #[test]
+    fn matrix_job_passes_the_name_the_api_reported() {
+        let mut app = App::default();
+        app.scope = Scope::Repository("owner/repo".to_string());
+        app.jobs.items = vec![job(serde_json::json!({
+            "id": 9, "status": "failed", "stage": "test", "name": "rspec: [3.2, pg]"
+        }))];
+        app.jobs.state.select(Some(0));
+
+        let values = single_values(&app, CommandPane::Jobs).unwrap();
+        assert_eq!(
+            values
+                .environment()
+                .find(|(name, _)| name == "GLAB_TUI_JOB_NAME"),
+            Some(("GLAB_TUI_JOB_NAME".to_string(), "rspec: [3.2, pg]"))
+        );
+        assert_eq!(
+            render("{{.JobName}}", &values),
+            Err(
+                "{{.JobName}} contains ' ', which the shell would interpret; \
+                 use \"$GLAB_TUI_JOB_NAME\" in the command instead"
+                    .to_string()
             )
         );
     }

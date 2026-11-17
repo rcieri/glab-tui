@@ -1,9 +1,14 @@
+use super::MODAL_NOTICE_ROWS;
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
 use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
-use crate::config::{ICONS, THEME};
+use crate::config::Icons;
+use crate::keymap::{Action, KeyContext};
+use crate::notice::{Notice, NoticeLevel};
+use crate::ui::render_ctx::RenderCtx;
+use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -42,10 +47,35 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
     (Text::from(lines), count)
 }
 
-pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
+/// One row inside a modal for a notice about the modal's own request.
+fn modal_notice_line(ctx: &RenderCtx<'_>, notice: &Notice) -> Line<'static> {
+    let theme = &ctx.theme;
+    let mut spans = match notice.level() {
+        NoticeLevel::Error => vec![Span::styled(
+            format!(
+                " {} {}",
+                ctx.icons.status_failed,
+                sanitize_untrusted(notice.text())
+            ),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        )],
+        NoticeLevel::Info => vec![Span::styled(
+            format!(" {}", sanitize_untrusted(notice.text())),
+            Style::default().fg(theme.yellow),
+        )],
+    };
+    if let Some(detail) = notice.detail() {
+        spans.push(Span::styled(
+            format!(" {}", sanitize_untrusted(detail)),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    Line::from(spans)
+}
+
+pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
-    let icons = ICONS.read().unwrap();
-    let label_colors = app.label_colors.clone();
+    let icons = ctx.icons;
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
@@ -57,29 +87,29 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     }
 
     // Below every other overlay: its comment actions and reply prompts open on top.
-    super::review_threads::render_review_threads(f, app, size);
+    super::review_threads::render_review_threads(f, ctx, app, size);
+    // Below the re-run confirmation it opens.
+    super::terminal_inspector::render_terminal_inspector(f, ctx, app, size);
 
+    let selector_notice = app.modal_notice().cloned();
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
+            let selector_area = centered_rect_min(70, 70, 60, 8, size);
+            let body = modal_area(f, ctx, &selector.title, selector_area);
             app.overlay_stack
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
             let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "review_submit_status"
-                && selector.field_type != "merge_options"
                 && selector.field_type != "related_mrs";
 
-            let constraints = if has_filter {
-                vec![
-                    Constraint::Length(3), // Search/Filter
-                    Constraint::Min(0),    // List of items
-                ]
-            } else {
-                vec![
-                    Constraint::Min(0), // List of items
-                ]
-            };
+            let mut constraints = Vec::with_capacity(3);
+            if has_filter {
+                constraints.push(Constraint::Length(3)); // Search/Filter
+            }
+            constraints.push(Constraint::Min(0)); // List of items
+            if selector_notice.is_some() {
+                constraints.push(Constraint::Length(MODAL_NOTICE_ROWS));
+            }
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -91,19 +121,23 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             } else {
                 (None, chunks[0])
             };
+            if let Some(notice) = &selector_notice {
+                let notice_chunk = chunks[chunks.len() - 1];
+                f.render_widget(
+                    Paragraph::new(modal_notice_line(ctx, notice))
+                        .style(Style::default().bg(ctx.theme.bg)),
+                    notice_chunk,
+                );
+            }
 
             let border_color_search = if selector.is_filtering {
-                THEME.read().unwrap().border_focused
+                ctx.theme.border_focused
             } else {
-                THEME.read().unwrap().border
+                ctx.theme.border
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(
-                    Style::default()
-                        .fg(border_color_search)
-                        .bg(THEME.read().unwrap().bg),
-                )
+                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
                 .title(" Filter ");
 
             let search_text = if selector.is_filtering {
@@ -116,18 +150,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .bg(THEME.read().unwrap().bg)
+                    .fg(ctx.theme.text_muted)
+                    .bg(ctx.theme.bg)
                     .add_modifier(Modifier::ITALIC)
             } else {
-                Style::default()
-                    .fg(THEME.read().unwrap().text_normal)
-                    .bg(THEME.read().unwrap().bg)
+                Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg)
             };
 
             let search_p = Paragraph::new(Span::styled(search_text, search_style))
                 .block(search_block)
-                .style(Style::default().bg(THEME.read().unwrap().bg))
+                .style(Style::default().bg(ctx.theme.bg))
                 .wrap(ratatui::widgets::Wrap { trim: true });
 
             if let Some(sc) = search_chunk {
@@ -138,8 +170,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let p = Paragraph::new("\n  Loading options from GitLab...")
                     .style(
                         Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(THEME.read().unwrap().bg)
+                            .fg(ctx.theme.text_muted)
+                            .bg(ctx.theme.bg)
                             .add_modifier(Modifier::ITALIC),
                     )
                     .wrap(ratatui::widgets::Wrap { trim: true });
@@ -150,8 +182,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     let p = Paragraph::new("\n  No matching options found.")
                         .style(
                             Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
-                                .bg(THEME.read().unwrap().bg)
+                                .fg(ctx.theme.text_muted)
+                                .bg(ctx.theme.bg)
                                 .add_modifier(Modifier::ITALIC),
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true });
@@ -174,36 +206,34 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 format!(" {} ", icons.check_off)
                             };
                             let marker_color = if is_selected {
-                                THEME.read().unwrap().green
+                                ctx.theme.green
                             } else {
-                                THEME.read().unwrap().text_muted
+                                ctx.theme.text_muted
                             };
 
                             let item_bg = if i == selector.cursor_idx {
-                                THEME.read().unwrap().highlight_bg
+                                ctx.theme.highlight_bg
                             } else {
-                                THEME.read().unwrap().bg
+                                ctx.theme.bg
                             };
 
                             let style = if i == selector.cursor_idx {
                                 Style::default()
                                     .bg(item_bg)
-                                    .fg(THEME.read().unwrap().text_normal)
+                                    .fg(ctx.theme.text_normal)
                                     .add_modifier(Modifier::BOLD)
                             } else {
-                                Style::default()
-                                    .fg(THEME.read().unwrap().text_normal)
-                                    .bg(item_bg)
+                                Style::default().fg(ctx.theme.text_normal).bg(item_bg)
                             };
 
                             let highlight_style = if i == selector.cursor_idx {
                                 Style::default()
                                     .bg(item_bg)
-                                    .fg(THEME.read().unwrap().yellow)
+                                    .fg(ctx.theme.yellow)
                                     .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default()
-                                    .fg(THEME.read().unwrap().yellow)
+                                    .fg(ctx.theme.yellow)
                                     .bg(item_bg)
                                     .add_modifier(Modifier::BOLD)
                             };
@@ -225,9 +255,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             if is_group {
                                 line_spans.push(Span::styled(
                                     format!("{} ", icons.label_group),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().text_muted)
-                                        .bg(item_bg),
+                                    Style::default().fg(ctx.theme.text_muted).bg(item_bg),
                                 ));
                             }
 
@@ -250,10 +278,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 if let Some(abs_path) = app.switch_repo_paths.get(item) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(
-                                            format!(" {}", abs_path),
-                                            Style::default()
-                                                .fg(THEME.read().unwrap().text_muted)
-                                                .bg(item_bg),
+                                            format!(" {abs_path}"),
+                                            Style::default().fg(ctx.theme.text_muted).bg(item_bg),
                                         ));
                                     }
                                 }
@@ -264,9 +290,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         })
                         .collect();
 
-                    let list =
-                        List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-                    let mut state = selector.state.clone();
+                    let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
+                    let mut state = selector.state;
                     f.render_stateful_widget(list, list_chunk, &mut state);
                     selector.state = state;
                 }
@@ -279,15 +304,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .title(format!(" {} ", text_input.title))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(ctx.theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             )
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(THEME.read().unwrap().bg));
+            .border_style(Style::default().fg(ctx.theme.border_focused))
+            .style(Style::default().bg(ctx.theme.bg));
 
         let area = centered_rect_min(60, 60, 36, 6, size);
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(block, area);
 
         let chunks = Layout::default()
@@ -301,19 +326,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .split(area);
 
-        let mut display_val = text_input.value.clone();
-        if text_input.cursor_idx <= display_val.len() {
-            display_val.insert(text_input.cursor_idx, '▋');
-        } else {
-            display_val.push('▋');
-        }
-
-        let value_p = Paragraph::new(display_val)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_normal)
-                    .bg(THEME.read().unwrap().bg),
-            )
+        let value_p = Paragraph::new(text_input.buffer.value_with_cursor('▋'))
+            .style(Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(value_p, chunks[0]);
@@ -324,12 +338,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .title(format!(" {} ", date_picker.title))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(ctx.theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             )
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(THEME.read().unwrap().bg));
+            .border_style(Style::default().fg(ctx.theme.border_focused))
+            .style(Style::default().bg(ctx.theme.bg));
 
         // 36 columns wide, 11 rows high
         let area = centered_rect_fixed(36, 11, size);
@@ -363,18 +377,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             12 => "December",
             _ => "",
         };
-        let header_str = {
-            let icons = ICONS.read().unwrap();
-            format!(
-                "{}  {} {}  {}",
-                icons.nav_prev, month_str, date_picker.year, icons.nav_next
-            )
-        };
+        let header_str = format!(
+            "{}  {} {}  {}",
+            icons.nav_prev, month_str, date_picker.year, icons.nav_next
+        );
         let header_p = Paragraph::new(header_str)
             .alignment(Alignment::Center)
             .style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(ctx.theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             );
 
@@ -383,8 +394,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let col_headers = weekday_headers
             .into_iter()
             .map(|h| Cell::from(Line::from(h).alignment(Alignment::Center)));
-        let table_header =
-            Row::new(col_headers).style(Style::default().fg(THEME.read().unwrap().text_muted));
+        let table_header = Row::new(col_headers).style(Style::default().fg(ctx.theme.text_muted));
 
         // Calculate days grid
         let first_date =
@@ -398,16 +408,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let mut row_cells = Vec::new();
             for c in 0..7 {
                 let cell_idx = r * 7 + c;
-                let day_num = (cell_idx as i32) - (start_weekday as i32) + 1;
+                let day_num = cell_idx - (start_weekday as i32) + 1;
                 if day_num >= 1 && day_num <= total_days as i32 {
                     let is_selected = day_num as u32 == date_picker.day;
                     let style = if is_selected {
                         Style::default()
-                            .bg(THEME.read().unwrap().highlight_bg)
-                            .fg(THEME.read().unwrap().header_fg)
+                            .bg(ctx.theme.highlight_bg)
+                            .fg(ctx.theme.header_fg)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
+                        Style::default().fg(ctx.theme.text_normal)
                     };
                     row_cells.push(Cell::from(
                         Line::from(day_num.to_string())
@@ -435,7 +445,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .header(table_header)
             .column_spacing(1);
 
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(block, area);
         f.render_widget(header_p, chunks[0]);
         f.render_widget(table, chunks[1]);
@@ -443,12 +453,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
-        let kind = app.kind();
-        let is_github = kind.is_github();
+        let kind = ctx.kind;
         let cols = tab.columns(kind, app.scope.is_group());
         let active_idx = app.column_checklist_idx;
 
-        let group_cols: Vec<&str> = cols.iter().copied().collect();
+        let group_cols: Vec<&str> = cols.to_vec();
 
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
@@ -463,7 +472,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let mut lines: Vec<(Option<usize>, ListItem)> = Vec::new();
         let mut active_line: Option<usize> = None;
 
-        let t = THEME.read().unwrap();
+        let t = &ctx.theme;
 
         // COLUMNS header
         lines.push((
@@ -679,7 +688,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
-        let theme_value = format!("[ {} ]", current_theme_name);
+        let theme_value = format!("[ {current_theme_name} ]");
         let theme_style = if is_theme_active {
             Style::default()
                 .fg(t.highlight_bg)
@@ -737,8 +746,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             ListItem::new(save_button_text).style(save_button_style),
         ));
 
-        drop(t);
-
         // Grow the popup with content, but cap it so the whole list scrolls
         // within the available terminal height (headers included).
         let content_len = lines.len() as u16;
@@ -754,20 +761,20 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let checklist_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(THEME.read().unwrap().bg))
+            .border_style(Style::default().fg(ctx.theme.border_focused))
+            .style(Style::default().bg(ctx.theme.bg))
             .title(format!(
                 " {} Configure View: {}",
                 icons.label_configure,
-                tab.title(kind)
+                tab.title(kind, ctx.icons)
             ))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().border_focused)
+                    .fg(ctx.theme.border_focused)
                     .add_modifier(Modifier::BOLD),
             );
 
-        clear_area(f, area);
+        clear_area(f, ctx, area);
         f.render_widget(checklist_block.clone(), area);
 
         let inner_area = checklist_block.inner(area);
@@ -786,14 +793,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .push((crate::app::OverlayKind::SaveMenu, submenu_area));
             let submenu_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+                .border_style(Style::default().fg(ctx.theme.border_focused))
                 .title(format!(" {} Save to Config ", icons.label_save))
                 .title_style(
                     Style::default()
-                        .fg(THEME.read().unwrap().border_focused)
+                        .fg(ctx.theme.border_focused)
                         .add_modifier(Modifier::BOLD),
                 );
-            clear_area(f, submenu_area);
+            clear_area(f, ctx, submenu_area);
             f.render_widget(submenu_block.clone(), submenu_area);
             let submenu_inner = submenu_block.inner(submenu_area);
 
@@ -810,11 +817,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     };
                     let style = if is_active {
                         Style::default()
-                            .fg(THEME.read().unwrap().highlight_bg)
-                            .bg(THEME.read().unwrap().border_focused)
+                            .fg(ctx.theme.highlight_bg)
+                            .bg(ctx.theme.border_focused)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
+                        Style::default().fg(ctx.theme.text_normal)
                     };
                     ListItem::new(label).style(style)
                 })
@@ -840,7 +847,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     // Render value-based column filter selector as overlay on configure view
     if app.focus_column_checklist && app.column_filter_context.is_some() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
+            let selector_area = centered_rect_min(70, 70, 60, 8, size);
+            let body = modal_area(f, ctx, &selector.title, selector_area);
             app.overlay_stack
                 .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
@@ -857,17 +865,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
 
             let border_color_search = if selector.is_filtering {
-                THEME.read().unwrap().border_focused
+                ctx.theme.border_focused
             } else {
-                THEME.read().unwrap().border
+                ctx.theme.border
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(
-                    Style::default()
-                        .fg(border_color_search)
-                        .bg(THEME.read().unwrap().bg),
-                )
+                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
                 .title(" Filter ");
 
             let search_text = if selector.is_filtering {
@@ -879,7 +883,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             let search_p = Paragraph::new(search_text)
                 .block(search_block)
-                .style(Style::default().fg(THEME.read().unwrap().text_normal));
+                .style(Style::default().fg(ctx.theme.text_normal));
 
             f.render_widget(search_p, search_chunk);
 
@@ -888,8 +892,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let p = Paragraph::new("\n  No matching options found.")
                     .style(
                         Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(THEME.read().unwrap().bg)
+                            .fg(ctx.theme.text_muted)
+                            .bg(ctx.theme.bg)
                             .add_modifier(Modifier::ITALIC),
                     )
                     .wrap(ratatui::widgets::Wrap { trim: true });
@@ -907,36 +911,34 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             format!(" {} ", icons.check_off)
                         };
                         let marker_color = if is_selected {
-                            THEME.read().unwrap().green
+                            ctx.theme.green
                         } else {
-                            THEME.read().unwrap().text_muted
+                            ctx.theme.text_muted
                         };
 
                         let item_bg = if i == selector.cursor_idx {
-                            THEME.read().unwrap().highlight_bg
+                            ctx.theme.highlight_bg
                         } else {
-                            THEME.read().unwrap().bg
+                            ctx.theme.bg
                         };
 
                         let style = if i == selector.cursor_idx {
                             Style::default()
                                 .bg(item_bg)
-                                .fg(THEME.read().unwrap().text_normal)
+                                .fg(ctx.theme.text_normal)
                                 .add_modifier(Modifier::BOLD)
                         } else {
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .bg(item_bg)
+                            Style::default().fg(ctx.theme.text_normal).bg(item_bg)
                         };
 
                         let highlight_style = if i == selector.cursor_idx {
                             Style::default()
                                 .bg(item_bg)
-                                .fg(THEME.read().unwrap().yellow)
+                                .fg(ctx.theme.yellow)
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()
-                                .fg(THEME.read().unwrap().yellow)
+                                .fg(ctx.theme.yellow)
                                 .bg(item_bg)
                                 .add_modifier(Modifier::BOLD)
                         };
@@ -965,283 +967,94 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     })
                     .collect();
 
-                let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-                let mut state = selector.state.clone();
+                let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
+                let mut state = selector.state;
                 f.render_stateful_widget(list, list_chunk, &mut state);
                 selector.state = state;
             }
         }
     }
 
-    if let Some(dialog) = &app.submit_dialog {
-        let theme = THEME.read().unwrap();
-        let icon = match dialog.action {
-            crate::app::ConfirmAction::DeleteMilestone(_)
-            | crate::app::ConfirmAction::DeleteRelease(_)
-            | crate::app::ConfirmAction::DeleteBranch(_)
-            | crate::app::ConfirmAction::DeleteIssue(_)
-            | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
-            crate::app::ConfirmAction::CloseIssue(_)
-            | crate::app::ConfirmAction::CloseMr(_)
-            | crate::app::ConfirmAction::CloseMilestone(_) => icons.action_close.clone(),
-            crate::app::ConfirmAction::ReopenIssue(_)
-            | crate::app::ConfirmAction::ReopenMr(_)
-            | crate::app::ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
-            crate::app::ConfirmAction::MergeMr(_)
-            | crate::app::ConfirmAction::MergeStack(_)
-            | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
-            crate::app::ConfirmAction::RevokeMr(_) | crate::app::ConfirmAction::SubmitReview(_) => {
-                icons.action_review.clone()
-            }
-            crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
-        };
-        let option_rows = dialog.options.len();
-
-        let title = format!(" {} {} ", icon, dialog.title);
-        let mut body_lines = if dialog.body.is_empty() {
-            0
-        } else {
-            textwrap(&dialog.body, 56).len() + 1 // text + leading blank line
-        };
-        if option_rows > 0 {
-            body_lines += 1; // +1 gap before options
-        }
-        let option_rows = dialog.options.len();
-        let button_height: u16 = 1; // label only (no top/bottom borders)
-        // [border top] + [pad] + body + options + [separator] + [buttons]
-        let mut dialog_height =
-            (2u16 + 1 + body_lines as u16 + option_rows as u16 + 1 + button_height) as u16;
-        let max_h = size.height.saturating_sub(2).max(11);
-        dialog_height = dialog_height.clamp(11, max_h);
-
-        let area = centered_rect_fixed(crate::app::SubmitDialog::DIALOG_WIDTH, dialog_height, size);
+    if let Some(dialog) = &mut app.submit_dialog {
+        let icon = submit_dialog_icon(&dialog.action, icons);
+        let title = format!("{icon} {}", dialog.form.title);
+        let area = super::form::render_form(f, ctx, &mut dialog.form, &title, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::ConfirmPopup, area));
-
-        let block = Block::default()
-            .title(title)
-            .title_style(
-                Style::default()
-                    .fg(theme.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.border_focused))
-            .style(Style::default().bg(theme.bg));
-
-        // Draw the backdrop + border first so the content below renders
-        // on top of it (the block fills the whole area with its bg).
-        clear_area(f, area);
-        f.render_widget(block, area);
-
-        let v = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(1),             // pad below title
-                Constraint::Min(0),                // body + options (flexes)
-                Constraint::Length(1),             // separator
-                Constraint::Length(button_height), // button row
-            ])
-            .split(area);
-
-        let content = v[1];
-        let sep = v[2];
-        let buttons = v[3];
-
-        let content_chunks = if option_rows > 0 {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(option_rows as u16)])
-                .split(content)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0)])
-                .split(content)
-        };
-
-        let mut body_lines = if dialog.body.is_empty() {
-            vec![]
-        } else {
-            textwrap(&dialog.body, 56)
-        };
-
-        if !dialog.body.is_empty() {
-            body_lines.insert(0, Line::from(""));
-            if option_rows > 0 {
-                body_lines.push(Line::from(""));
-            }
-        } else if option_rows > 0 {
-            body_lines.push(Line::from(""));
-        }
-        let body_p = Paragraph::new(body_lines)
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(theme.text_normal))
-            .wrap(ratatui::widgets::Wrap { trim: true });
-        f.render_widget(body_p, content_chunks[0]);
-
-        if option_rows > 0 {
-            let mut state = ListState::default();
-            state.select(dialog.option_idx());
-            let items: Vec<Line<'static>> = dialog
-                .options
-                .iter()
-                .map(|o| {
-                    let is_radio = o.label.starts_with("Strategy: ");
-                    let display_label = if is_radio {
-                        o.label.trim_start_matches("Strategy: ")
-                    } else {
-                        &o.label
-                    };
-                    let mark = if is_radio {
-                        if o.checked {
-                            "(x) ".to_string()
-                        } else {
-                            "( ) ".to_string()
-                        }
-                    } else {
-                        if o.checked {
-                            "[x] ".to_string()
-                        } else {
-                            "[ ] ".to_string()
-                        }
-                    };
-                    Line::from(format!("{mark}{}", display_label))
-                })
-                .collect();
-            let list = List::new(items)
-                .style(Style::default().fg(theme.text_normal))
-                .highlight_style(
-                    Style::default()
-                        .bg(theme.border_focused)
-                        .fg(theme.highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                );
-
-            // Center the options list to match the centered body text
-            let max_option_width = dialog
-                .options
-                .iter()
-                .map(|o| {
-                    let text = o.label.trim_start_matches("Strategy: ");
-                    text.chars().count() + 4 // "[x] "
-                })
-                .max()
-                .unwrap_or(20) as u16;
-            let pad = content_chunks[1].width.saturating_sub(max_option_width) / 2;
-            let list_layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(pad),
-                    Constraint::Length(max_option_width),
-                    Constraint::Min(0),
-                ])
-                .split(content_chunks[1]);
-
-            f.render_stateful_widget(list, list_layout[1], &mut state);
-        }
-
-        f.render_widget(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(theme.border)),
-            sep,
-        );
-
-        let halves = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Ratio(1, 2),
-                Constraint::Length(1),
-                Constraint::Ratio(1, 2),
-            ])
-            .split(buttons);
-
-        let submit_selected = dialog.is_on_submit();
-        let cancel_selected = dialog.is_on_cancel();
-
-        // Cancel button (right half)
-        f.render_widget(
-            Paragraph::new(format!("{} Cancel", icons.check_off))
-                .alignment(Alignment::Center)
-                .style(
-                    Style::default()
-                        .fg(if cancel_selected {
-                            theme.bg
-                        } else {
-                            theme.text_normal
-                        })
-                        .bg(if cancel_selected {
-                            theme.border_focused
-                        } else {
-                            theme.bg
-                        })
-                        .add_modifier(if cancel_selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            halves[2],
-        );
-
-        // Submit button (left half)
-        f.render_widget(
-            Paragraph::new(format!("{} {}", icons.check_on, dialog.submit_label))
-                .alignment(Alignment::Center)
-                .style(
-                    Style::default()
-                        .fg(if submit_selected {
-                            theme.bg
-                        } else {
-                            if dialog.action.is_destructive() {
-                                theme.red
-                            } else {
-                                theme.green
-                            }
-                        })
-                        .bg(if submit_selected {
-                            if dialog.action.is_destructive() {
-                                theme.red
-                            } else {
-                                theme.green
-                            }
-                        } else {
-                            theme.bg
-                        })
-                        .add_modifier(if submit_selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            halves[0],
-        );
     }
 
-    render_help(f, app, size);
+    super::review_submit::render_review_submit(f, ctx, app, size);
+    render_help(f, ctx, app, size);
+}
+
+fn submit_dialog_icon<'a>(action: &crate::app::ConfirmAction, icons: &'a Icons) -> &'a str {
+    use crate::app::ConfirmAction;
+    match action {
+        ConfirmAction::DeleteMilestone(_)
+        | ConfirmAction::DeleteRelease(_)
+        | ConfirmAction::DeleteBranch(_)
+        | ConfirmAction::BulkDeleteBranches(_)
+        | ConfirmAction::DeleteIssue(_)
+        | ConfirmAction::DeleteMr(_) => &icons.action_delete,
+        ConfirmAction::CloseIssue(_)
+        | ConfirmAction::CloseMr(_)
+        | ConfirmAction::CloseMilestone(_)
+        | ConfirmAction::StopEnvironment(_) => &icons.action_close,
+        ConfirmAction::ReopenIssue(_)
+        | ConfirmAction::ReopenMr(_)
+        | ConfirmAction::ReopenMilestone(_) => &icons.action_reopen,
+        ConfirmAction::MergeMr(_)
+        | ConfirmAction::MergeStack(_)
+        | ConfirmAction::BulkMergeMrs(_) => &icons.action_merge,
+        ConfirmAction::RevokeMr(_) | ConfirmAction::SubmitReview(_) => &icons.action_review,
+        ConfirmAction::RebaseMr(_) => &icons.merge_rebase,
+        ConfirmAction::MarkAllTodosRead => &icons.tab_todo,
+        ConfirmAction::CancelPipeline(_) | ConfirmAction::CancelJobs { .. } => {
+            &icons.status_canceled
+        }
+        ConfirmAction::RerunCommand(_) => &icons.tab_terminal,
+        ConfirmAction::RollbackDeployment { .. } => &icons.label_deployment,
+    }
 }
 
 const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
 
-pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
+fn help_category(context: KeyContext, is_github: bool) -> &'static str {
+    match context {
+        KeyContext::Global | KeyContext::ListView => "Global & Nav",
+        KeyContext::EditMenu => "Inspector / Editor",
+        KeyContext::DiffView => "Diff View",
+        KeyContext::Selector => "Selector / Filter",
+        KeyContext::Dialog => "Confirm Dialog",
+        KeyContext::Tab(tab) => match tab {
+            Tab::Issues => "Issues",
+            Tab::MergeRequests if is_github => "Pull Requests",
+            Tab::MergeRequests => "Merge Requests",
+            Tab::Pipelines => "Pipelines",
+            Tab::Jobs => "Jobs",
+            Tab::Runners => "Runners",
+            Tab::Releases => "Releases",
+            Tab::Todos => "TODOs",
+            Tab::Milestones => "Milestones",
+            Tab::Branches => "Branches",
+            Tab::Environments => "Environments",
+            Tab::Terminal => "Terminal",
+        },
+    }
+}
+
+pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
     if !app.show_help {
         return;
     }
 
-    let icons = ICONS.read().unwrap();
-    let is_github = app.is_github();
-    let mr_label: &'static str = if is_github {
-        "Pull Requests"
-    } else {
-        "Merge Requests"
-    };
+    let icons = ctx.icons;
+    let is_github = ctx.kind.is_github();
 
-    struct Shortcut<'a> {
+    struct Shortcut {
         category: &'static str,
         key: std::borrow::Cow<'static, str>,
-        action: &'a str,
+        action: String,
     }
 
     let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
@@ -1256,846 +1069,110 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             .collect()
     };
 
-    let mut shortcuts: Vec<Shortcut> = vec![
-        // ── Global & Nav ──
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / →", app.config.keybindings.global.next_tab)),
-            action: "Next tab",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / ←", app.config.keybindings.global.prev_tab)),
-            action: "Previous tab",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.configure)),
-            action: "Toggle columns config popup (filter / group / sort)",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("j / k / ↓ / ↑ / Home / End"),
-            action: "Select item / Scroll page / Jump to top or bottom",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.scroll_down, app.config.keybindings.global.scroll_up
-            )),
-            action: "Scroll description / trace / notes",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.scroll_page_down,
-                app.config.keybindings.global.scroll_page_up
-            )),
-            action: "Scroll description pane by one page",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.scroll_half_page_down,
-                app.config.keybindings.global.scroll_half_page_up
-            )),
-            action: "Scroll description pane by half a page",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.scroll_to_end)),
-            action: "Jump to the last line of the description pane",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.scroll_top)),
-            action: "Jump to the top of the description pane",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / f", app.config.keybindings.global.search)),
-            action: "Open fuzzy search / filter bar",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Ctrl+W / Ctrl+U"),
-            action: "Search: delete previous word / clear line",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Esc"),
-            action: "Exit input / clear the active filter",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.jump_to_id)),
-            action: "Jump to issue/MR by ID; fetch if not cached",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!(
-                "F5 / Ctrl+R / {}",
-                app.config.keybindings.global.refresh
-            )),
-            action: "Refresh active tab data",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Ctrl+S"),
-            action: "Switch repository",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("u"),
-            action: "Check for updates",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.quit.clone()),
-            action: "Quit program",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Esc"),
-            action: "Close active overlay",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(app.config.keybindings.global.submit_edit.clone()),
-            action: "Submit active edit form",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: s("Ctrl+C"),
-            action: "Quit program",
-        },
-        // ── Issues ──
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.create_issue.clone()),
-            action: "Create new Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.select_issue.clone()),
-            action: "Toggle issue selection (bulk edit with e)",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.select_all.clone()),
-            action: "Select all filtered issues (in select mode)",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.edit_entity.clone()),
-            action: "Open parameter edit menu",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.close_entity.clone()),
-            action: "Close selected Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.reopen_entity.clone()),
-            action: "Reopen selected Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.delete_entity.clone()),
-            action: "Delete selected Issue",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.copy_reference.clone()),
-            action: "Copy selected Issue as Markdown link",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.open_in_browser.clone()),
-            action: "Open selected Issue in browser",
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.create_mr.clone()),
-            action: if is_github {
-                "Create Pull Request from selected Issue"
-            } else {
-                "Create Merge Request from selected Issue"
-            },
-        },
-        Shortcut {
-            category: "Issues",
-            key: d(app.config.keybindings.issues.jump_related_mrs.clone()),
-            action: "Jump to related Merge Requests / Pull Requests",
-        },
-        // ── Merge Requests / Pull Requests ──
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.create_mr.clone()),
-            action: if is_github {
-                "Create new Pull Request"
-            } else {
-                "Create new Merge Request"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.select_mr.clone()),
-            action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.select_all.clone()),
-            action: "Select all filtered MRs / PRs (in select mode)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.edit_entity.clone()),
-            action: "Open parameter edit menu",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.approve_mr.clone()),
-            action: if is_github {
-                "Approve selected PR"
-            } else {
-                "Approve selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.revoke_mr.clone()),
-            action: "Revoke your approval (GitLab only)",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.rebase_mr.clone()),
-            action: "Rebase source branch onto target",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.merge_mr.clone()),
-            action: if is_github {
-                "Merge selected PR (a stacked PR merges with the open PRs below it)"
-            } else {
-                "Merge selected MR (configure squash/delete)"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.toggle_draft.clone()),
-            action: "Toggle Draft / Ready status",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.view_diff.clone()),
-            action: if is_github {
-                "View Pull Request diff changes"
-            } else {
-                "View Merge Request diff changes"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.view_related_pipelines.clone()),
-            action: if is_github {
-                "View related Actions for selected PR"
-            } else {
-                "View related pipelines for selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.view_stack.clone()),
-            action: if is_github {
-                "Browse the stack of the selected stacked PR"
-            } else {
-                "Browse the stack of the selected MR (GitHub-only)"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.close_entity.clone()),
-            action: if is_github {
-                "Close selected PR"
-            } else {
-                "Close selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.reopen_entity.clone()),
-            action: if is_github {
-                "Reopen selected PR"
-            } else {
-                "Reopen selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.delete_entity.clone()),
-            action: if is_github {
-                "Delete selected PR"
-            } else {
-                "Delete selected MR"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.copy_reference.clone()),
-            action: if is_github {
-                "Copy selected PR as Markdown link"
-            } else {
-                "Copy selected MR as Markdown link"
-            },
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.jump_linked_issues.clone()),
-            action: "Jump to linked Issues",
-        },
-        Shortcut {
-            category: mr_label,
-            key: d(app.config.keybindings.mrs.open_in_browser.clone()),
-            action: if is_github {
-                "Open selected PR in browser"
-            } else {
-                "Open selected MR in browser"
-            },
-        },
-        // ── Pipelines ──
-        Shortcut {
-            category: "Pipelines",
-            key: s("Enter"),
-            action: "Descend into downstream pipelines, or the pipeline's jobs",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.enter_jobs.clone()),
-            action: "View the selected pipeline's own jobs",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.run_new.clone()),
-            action: "Create pipeline with interactive form",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.trigger_pipeline.clone()),
-            action: "Trigger new pipeline from MR",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.retry.clone()),
-            action: "Retry selected pipeline(s)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.cancel.clone()),
-            action: "Cancel pipeline execution",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.open_workflow.clone()),
-            action: "Open pipeline workflow in browser",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.select_pipeline.clone()),
-            action: "Check / uncheck pipeline for bulk retry",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.select_all.clone()),
-            action: "Select all filtered pipelines (in select mode)",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.open_in_browser.clone()),
-            action: "Open pipeline in browser",
-        },
-        Shortcut {
-            category: "Pipelines",
-            key: d(app.config.keybindings.pipelines.copy_sha.clone()),
-            action: "Copy selected pipeline commit SHA",
-        },
-        // ── Jobs ──
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.view_trace.clone()),
-            action: "View job trace (toggle zoom)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: s("Esc / Backspc"),
-            action: "Go back to Pipelines list",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.enter_pipeline.clone()),
-            action: "Switch to pipeline selector",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.retry.clone()),
-            action: "Retry selected job(s)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.start_job.clone()),
-            action: "Start manual job (GitLab only)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.cancel.clone()),
-            action: "Cancel selected job(s)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.select_job.clone()),
-            action: "Check / uncheck job for bulk retry/cancel",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.selection_toggle.clone()),
-            action: "Toggle select mode (paint selection while navigating)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.select_all.clone()),
-            action: "Select all filtered jobs (in select mode)",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.select_stage.clone()),
-            action: "Select all jobs in stage",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.download_artifact.clone()),
-            action: "Download job artifact",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.view_trace_editor.clone()),
-            action: "Open job trace in external $EDITOR",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.open_in_browser.clone()),
-            action: "Open selected job in browser",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.toggle_trace_wrap.clone()),
-            action: "Toggle trace word wrap / clipped view",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.trace_search.clone()),
-            action: "Search within job trace",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.toggle_trace_follow.clone()),
-            action: "Toggle trace auto-follow mode",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: s("m"),
-            action: "Collapse / expand matrix jobs",
-        },
-        Shortcut {
-            category: "Jobs",
-            key: d(app.config.keybindings.jobs.copy_sha.clone()),
-            action: "Copy pipeline commit SHA",
-        },
-        // ── Milestones ──
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.create_milestone.clone()),
-            action: "Create new milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.edit_milestone.clone()),
-            action: "Edit selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.close_milestone.clone()),
-            action: "Close selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.reopen_milestone.clone()),
-            action: "Reopen selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.delete_milestone.clone()),
-            action: "Delete selected milestone",
-        },
-        Shortcut {
-            category: "Milestones",
-            key: d(app.config.keybindings.milestones.open_in_browser.clone()),
-            action: "Open milestone in browser",
-        },
-        // ── Runners ──
-        Shortcut {
-            category: "Runners",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.runners.pause, app.config.keybindings.runners.resume,
-            )),
-            action: "Pause / Resume runner",
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.edit_description.clone()),
-            action: "Edit runner description text",
-        },
-        Shortcut {
-            category: "Runners",
-            key: d(app.config.keybindings.runners.open_in_browser.clone()),
-            action: "Open runner in browser",
-        },
-        // ── Releases ──
-        Shortcut {
-            category: "Releases",
-            key: s("Enter"),
-            action: "View release notes (toggle zoom)",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.create_release.clone()),
-            action: "Create new release tag & changelog",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.edit_release.clone()),
-            action: "Edit selected release",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.delete_release.clone()),
-            action: "Delete selected release",
-        },
-        Shortcut {
-            category: "Releases",
-            key: d(app.config.keybindings.releases.open_in_browser.clone()),
-            action: "Open release in browser",
-        },
-        // ── TODOs ──
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.mark_as_read.clone()),
-            action: "Open todo target & mark read",
-        },
-        Shortcut {
-            category: "TODOs",
-            key: d(app.config.keybindings.todos.open_in_browser.clone()),
-            action: "Open todo in browser",
-        },
-        // ── Terminal ──
-        Shortcut {
-            category: "Terminal",
-            key: s("j / k / ↑ / ↓"),
-            action: "Scroll terminal log",
-        },
-        Shortcut {
-            category: "Terminal",
-            key: d(app.config.keybindings.terminal.toggle_wrap.clone()),
-            action: "Toggle terminal line wrapping",
-        },
-        // ── Branches ──
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.create_branch.clone()),
-            action: "Create new branch",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.delete_branch.clone()),
-            action: "Delete selected branch",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.open_in_browser.clone()),
-            action: "Open branch in browser",
-        },
-        Shortcut {
-            category: "Branches",
-            key: d(app.config.keybindings.branches.copy_branch.clone()),
-            action: "Copy selected branch name",
-        },
-        // ── Environments ──
-        Shortcut {
-            category: "Environments",
-            key: d(app.config.keybindings.environments.view_deployments.clone()),
-            action: "View deployments list for environment",
-        },
-        Shortcut {
-            category: "Environments",
-            key: d(app.config.keybindings.environments.open_in_browser.clone()),
-            action: "Open environment in browser",
-        },
-        // ── Diff View ──
-        Shortcut {
-            category: "Diff View",
-            key: s("q / Esc"),
-            action: "Exit Diff View",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("Tab"),
-            action: "Toggle Focus (Files / Diff)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("h / l / Left / Right"),
-            action: "Switch Panel Focus",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("j / k / ↓ / ↑"),
-            action: "Navigate files or diff lines",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("J / K"),
-            action: "Page down / Page up",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("[ / ]"),
-            action: "Previous / Next Hunk",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("c"),
-            action: "Add Comment on Line",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("r"),
-            action: "Submit Review (approve/changes/comment)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("d"),
-            action: "Toggle unified / side-by-side layout",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("v / V"),
-            action: "Start / Stop line selection for comment",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("a"),
-            action: "Interact with comments on current line (focus the diff with `l`/`Tab` first; pushes and drafts both)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("C"),
-            action: "Add comment via external $EDITOR",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("e"),
-            action: "Add code suggestion via $EDITOR",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("/ f"),
-            action: "Search within diff",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("Ctrl+n / Ctrl+N"),
-            action: "Search next / previous match",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("z / Z"),
-            action: "Collapse / Expand all files",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("m"),
-            action: "Mark / unmark file (or directory) as reviewed",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("M"),
-            action: "Hide / show reviewed files in the tree",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("T"),
-            action: "Review threads overview (general, outdated, unresolved)",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: s("Enter / Space"),
-            action: "Expand file tree / Toggle zoom",
-        },
-        Shortcut {
-            category: "Diff View",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Inspector / Editor ──
+    let mut shortcuts: Vec<Shortcut> = Action::ALL
+        .iter()
+        .filter(|action| action.spec().support.includes(ctx.kind))
+        .map(|&action| {
+            let spec = action.spec();
+            Shortcut {
+                category: help_category(spec.context, is_github),
+                key: d(app.config.keybindings.display(action)),
+                action: spec.label_for(ctx.kind),
+            }
+        })
+        .collect();
+
+    shortcuts.extend([
         Shortcut {
             category: "Inspector / Editor",
             key: s("j / k / ↓ / ↑ / Tab / Shift+Tab"),
-            action: "Navigate fields & buttons",
+            action: "Navigate fields & buttons".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("Enter / Space"),
-            action: "Edit field / Select option / Submit",
+            action: "Edit field / Select option / Submit".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("Ctrl+E"),
-            action: "Edit description / notes in $EDITOR",
+            action: "Edit description / notes in $EDITOR".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("J / K"),
-            action: "Scroll description / notes pane",
+            action: "Scroll description / notes pane".to_string(),
         },
         Shortcut {
             category: "Inspector / Editor",
             key: s("Esc"),
-            action: "Exit inspector / Close editor form",
+            action: "Exit inspector / Close editor form".to_string(),
         },
         Shortcut {
-            category: "Inspector / Editor",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Selector / Filter ──
-        Shortcut {
-            category: "Selector / Filter",
-            key: s("j / k / ↓ / ↑"),
-            action: "Navigate options",
+            category: "Global & Nav",
+            key: s("Ctrl+W / Ctrl+U"),
+            action: "Search: delete previous word / clear line".to_string(),
         },
         Shortcut {
-            category: "Selector / Filter",
-            key: s("Enter"),
-            action: "Confirm selection",
-        },
-        Shortcut {
-            category: "Selector / Filter",
-            key: s("Space"),
-            action: "Toggle item (multi-select)",
-        },
-        Shortcut {
-            category: "Selector / Filter",
+            category: "Global & Nav",
             key: s("Esc"),
-            action: "Close selector overlay",
+            action: "Exit input / clear the active filter".to_string(),
         },
-        Shortcut {
-            category: "Selector / Filter",
-            key: s("Type to search"),
-            action: "Fuzzy filter available items",
-        },
-        Shortcut {
-            category: "Selector / Filter",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Column Config ──
         Shortcut {
             category: "Column Config",
             key: s("j / k / ↓ / ↑"),
-            action: "Navigate columns & group-by options",
+            action: "Navigate columns & group-by options".to_string(),
         },
         Shortcut {
             category: "Column Config",
             key: s("Space"),
-            action: "Toggle column visibility checkbox",
+            action: "Toggle column visibility checkbox".to_string(),
         },
         Shortcut {
             category: "Column Config",
             key: s("Enter"),
-            action: "Open value filter selector for column",
+            action: "Open value filter selector for column".to_string(),
         },
         Shortcut {
             category: "Column Config",
             key: s("Esc"),
-            action: "Close columns config popup",
+            action: "Close columns config popup".to_string(),
         },
-        Shortcut {
-            category: "Column Config",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-        // ── Date Picker ──
         Shortcut {
             category: "Date Picker",
             key: s("h / l / ← / →"),
-            action: "Previous / Next month",
+            action: "Previous / Next month".to_string(),
         },
         Shortcut {
             category: "Date Picker",
             key: s("j / k / ↓ / ↑"),
-            action: "Previous / Next day",
+            action: "Previous / Next day".to_string(),
         },
         Shortcut {
             category: "Date Picker",
             key: s("Enter"),
-            action: "Confirm date selection",
+            action: "Confirm date selection".to_string(),
         },
         Shortcut {
             category: "Date Picker",
             key: s("Esc"),
-            action: "Cancel date selection",
+            action: "Cancel date selection".to_string(),
         },
-        Shortcut {
-            category: "Date Picker",
-            key: d(format!("{} / F1", app.config.keybindings.global.help)),
-            action: "Show this help modal",
-        },
-    ];
+    ]);
+
     // The few user-defined commands go first, above the long built-in lists.
     shortcuts.splice(
         0..0,
         custom_commands.iter().map(|command| Shortcut {
             category: CUSTOM_COMMANDS_CATEGORY,
             key: d(command.key.clone()),
-            action: command.label(),
+            action: command.label().to_string(),
         }),
     );
 
-    let active_categories: &[&str] = if app.diff_view.is_some() {
+    let active_categories: &[&str] = if app.submit_dialog.is_some() {
+        &["Confirm Dialog"]
+    } else if app.diff_view.is_some() {
         &["Diff View", CUSTOM_COMMANDS_CATEGORY]
     } else if app.edit_menu.is_some() {
         &["Global & Nav", "Inspector / Editor"]
@@ -2127,23 +1204,36 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         }
     };
 
-    let filtered_shortcuts: Vec<&Shortcut> = shortcuts
+    // The help key itself stays reachable from every context, even one
+    // (Diff View, Confirm Dialog) whose active categories do not include
+    // "Global & Nav".
+    let help_label = Action::GlobalHelp.spec().label;
+    let mut filtered_shortcuts: Vec<&Shortcut> = shortcuts
         .iter()
-        .filter(|s| active_categories.contains(&s.category) && !s.key.trim().is_empty())
-        .filter(|s| s.key.split('/').any(|k| !k.trim().is_empty()))
+        .filter(|s| {
+            (active_categories.contains(&s.category) || s.action == help_label)
+                && !s.key.trim().is_empty()
+        })
         .collect();
+    // The registry lists the global keys first, but the keys of the open
+    // view are what the modal is opened for.
+    filtered_shortcuts.sort_by_key(|s| match s.category {
+        CUSTOM_COMMANDS_CATEGORY => 0,
+        "Global & Nav" => 2,
+        _ => 1,
+    });
 
     let block = Block::default()
         .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
         .title_style(
             Style::default()
-                .fg(THEME.read().unwrap().header_fg)
+                .fg(ctx.theme.header_fg)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+        .border_style(Style::default().fg(ctx.theme.border_focused))
         .border_type(BorderType::Double)
-        .style(Style::default().bg(THEME.read().unwrap().bg));
+        .style(Style::default().bg(ctx.theme.bg));
 
     let area = centered_rect_min(90, 85, 95, 38, size);
     app.overlay_stack
@@ -2166,9 +1256,9 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     let action_width = help_chunks[1].width.saturating_sub(20 + 24 + 4).max(8);
 
     let border_color = if app.help_search_query.is_empty() {
-        THEME.read().unwrap().border
+        ctx.theme.border
     } else {
-        THEME.read().unwrap().border_focused
+        ctx.theme.border_focused
     };
     let search_block = Block::default()
         .borders(Borders::ALL)
@@ -2176,7 +1266,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         .title(" Filter Shortcuts ")
         .title_style(
             Style::default()
-                .fg(THEME.read().unwrap().text_muted)
+                .fg(ctx.theme.text_muted)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -2188,10 +1278,10 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
 
     let search_style = if app.help_search_query.is_empty() {
         Style::default()
-            .fg(THEME.read().unwrap().text_muted)
+            .fg(ctx.theme.text_muted)
             .add_modifier(Modifier::ITALIC)
     } else {
-        Style::default().fg(THEME.read().unwrap().text_normal)
+        Style::default().fg(ctx.theme.text_normal)
     };
 
     let search_p = Paragraph::new(search_text)
@@ -2214,7 +1304,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             .collect()
     };
 
-    let theme = THEME.read().unwrap();
+    let theme = &ctx.theme;
     let mut rows: Vec<Row> = Vec::new();
     // Table row of each listed shortcut; spacer rows between categories are
     // never selectable.
@@ -2234,7 +1324,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         } else {
             ""
         };
-        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+        let (action_text, action_lines) = wrap_cell_text(&s.action, action_width);
         shortcut_rows.push(rows.len());
         rows.push(
             Row::new(vec![
@@ -2292,9 +1382,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         .block(block)
         .row_highlight_style(Style::default().bg(theme.highlight_bg))
         .column_spacing(2);
-    drop(theme);
-
-    clear_area(f, area);
+    clear_area(f, ctx, area);
     f.render_widget(search_p, help_chunks[0]);
     f.render_stateful_widget(table, help_chunks[1], &mut app.help_table_state);
     let mut scrollbar_state =
@@ -2307,16 +1395,6 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         }),
         &mut scrollbar_state,
     );
-}
-
-/// Wrap a string into `width`-character lines at word boundaries,
-/// returning one `Line` per wrapped line. Hard-break overlong words
-/// instead of panicking on zero width.
-fn textwrap(text: &str, width: usize) -> Vec<Line<'static>> {
-    crate::utils::format::wrap_text(text, width)
-        .into_iter()
-        .map(Line::from)
-        .collect()
 }
 
 #[cfg(test)]
@@ -2344,9 +1422,11 @@ mod tests {
         app.show_help = true;
         app.active_tab = Tab::MergeRequests;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2361,7 +1441,10 @@ mod tests {
         );
         assert!(text.contains("Approve selected MR"));
         assert!(text.contains("Open selected MR in browser"));
-        assert!(text.contains("View related pipelines for selected MR"));
+        assert!(text.contains("View related Pipelines for selected MR"));
+        assert!(text.contains("Merge selected MR (configure squash/delete)"));
+        assert!(!text.contains("stacked PR"), "{text:?}");
+        assert!(text.contains("Delete selected MR"));
     }
 
     #[test]
@@ -2375,13 +1458,17 @@ mod tests {
             tx: None,
             page_size: 50,
             api_per_page: 50,
+            show_read_notifications: false,
+            opened_pipeline: None,
         });
         app.show_help = true;
         app.active_tab = Tab::MergeRequests;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2397,7 +1484,50 @@ mod tests {
         assert!(text.contains("Approve selected PR"));
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related Actions for selected PR"));
+        assert!(
+            text.contains("Merge selected PR (a stacked PR merges with the open PRs below it)")
+        );
         assert!(text.contains("Create new Pull Request"));
+        assert!(!text.contains("Delete selected PR"), "{text:?}");
+    }
+
+    fn render_jobs_help(is_github: bool) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(160, 80)).unwrap();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github,
+            backend: create_backend(is_github),
+            tx: None,
+            page_size: 50,
+            api_per_page: 50,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.show_help = true;
+        app.active_tab = Tab::Jobs;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+        buffer_text(&terminal)
+    }
+
+    #[test]
+    fn render_help_offers_trace_follow_on_gitlab() {
+        let text = render_jobs_help(false);
+        assert!(text.contains("Toggle trace auto-follow mode"), "{text:?}");
+    }
+
+    #[test]
+    fn render_help_does_not_offer_trace_follow_on_github() {
+        let text = render_jobs_help(true);
+        assert!(text.contains("Toggle trace word wrap"), "{text:?}");
+        assert!(
+            !text.contains("Toggle trace auto-follow mode"),
+            "trace follow is not offered on GitHub: {text:?}"
+        );
     }
 
     #[test]
@@ -2418,8 +1548,10 @@ command = "true"
         app.show_help = true;
 
         app.active_tab = Tab::MergeRequests;
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let on_mrs = buffer_text(&terminal);
         assert!(on_mrs.contains("Custom Commands"), "{on_mrs:?}");
@@ -2427,7 +1559,7 @@ command = "true"
 
         app.active_tab = Tab::Issues;
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let on_issues = buffer_text(&terminal);
         assert!(
@@ -2444,11 +1576,13 @@ command = "true"
         app.show_help = true;
         app.active_tab = Tab::Issues;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let top = buffer_text(&terminal);
-        assert!(top.contains("Next tab"), "{top:?}");
+        assert!(top.contains("Create new Issue"), "{top:?}");
         let listed = top
             .split(" 1/")
             .nth(1)
@@ -2458,7 +1592,7 @@ command = "true"
 
         app.help_selected = usize::MAX;
         terminal
-            .draw(|f| render_help(f, &mut app, f.area()))
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
             .unwrap();
         let bottom = buffer_text(&terminal);
         assert_eq!(
@@ -2471,7 +1605,7 @@ command = "true"
             "{bottom:?}"
         );
         assert!(
-            !bottom.contains("Next tab"),
+            !bottom.contains("Create new Issue"),
             "the list scrolled past the first entries"
         );
     }
@@ -2484,9 +1618,11 @@ command = "true"
         app.show_help = true;
         app.active_tab = Tab::Issues;
 
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
@@ -2496,18 +1632,197 @@ command = "true"
             "save_view should not be listed in help: {text:?}",
         );
 
-        // If a keybinding is set to empty string, it is filtered out from help
-        app.config.keybindings.issues.create_issue = "".to_string();
+        // If a keybinding is set to no keys, it is filtered out from help
+        app.config.keybindings.set(Action::IssuesCreateIssue, &[]);
         terminal
             .draw(|f| {
-                render_help(f, &mut app, f.area());
+                render_help(f, ctx, &mut app, f.area());
             })
             .unwrap();
 
         let text_empty = buffer_text(&terminal);
         assert!(
-            !text_empty.contains("Create new issue"),
+            !text_empty.contains("Create new Issue"),
             "empty keybinding shortcut should be filtered from help: {text_empty:?}",
         );
+    }
+
+    #[test]
+    fn render_help_lists_actions_bound_only_to_slash() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Jobs;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains(Action::GlobalSearch.spec().label), "{text:?}");
+        assert!(
+            text.contains(Action::JobsTraceSearch.spec().label),
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn render_help_shows_a_remapped_key_instead_of_the_default() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Issues;
+        app.config
+            .keybindings
+            .set(Action::IssuesCreateIssue, &["F9"]);
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row: String = buffer
+            .content
+            .chunks(buffer.area.width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .find(|row| row.contains("Create new Issue"))
+            .expect("Create new Issue row rendered");
+        let before_label = row.split("Create new Issue").next().unwrap_or_default();
+        let key_cell = before_label
+            .trim_end()
+            .rsplit("  ")
+            .next()
+            .unwrap_or_default();
+        assert_eq!(key_cell.trim(), "F9", "{row:?}");
+    }
+
+    /// The merge dialog for the fixture MR.
+    fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        render_dialog(crate::app::ConfirmAction::MergeMr(2), width, height)
+    }
+
+    /// A bulk merge of twenty MRs, too tall for 24 rows even without blank
+    /// rows, so the form shortens the list.
+    fn render_bulk_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        let items = (1..=20).map(|iid| (String::new(), iid)).collect();
+        render_dialog(
+            crate::app::ConfirmAction::BulkMergeMrs(items),
+            width,
+            height,
+        )
+    }
+
+    /// Drawn with the ASCII icon set, the one the snapshots are written in.
+    fn render_dialog(
+        action: crate::app::ConfirmAction,
+        width: u16,
+        height: u16,
+    ) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut app = App::default();
+        app.mrs.items =
+            serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(action, &app));
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        terminal
+    }
+
+    /// One line per buffer row, trailing blanks trimmed.
+    fn snapshot_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for row in buffer.content.chunks(buffer.area.width as usize) {
+            let line: String = row.iter().map(|cell| cell.symbol()).collect();
+            text.push_str(line.trim_end());
+            text.push('\n');
+        }
+        text
+    }
+
+    /// Compares against `src/ui/snapshots/<name>.txt`. Set
+    /// `GLAB_TUI_UPDATE_SNAPSHOTS=1` to rewrite the file after an intended
+    /// layout change.
+    fn assert_snapshot(name: &str, actual: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ui/snapshots")
+            .join(format!("{name}.txt"));
+        if std::env::var_os("GLAB_TUI_UPDATE_SNAPSHOTS").is_some() {
+            std::fs::write(&path, actual).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}\nactual:\n{actual}", path.display()))
+            .replace("\r\n", "\n");
+        assert_eq!(
+            actual, expected,
+            "{name} changed; rerun with GLAB_TUI_UPDATE_SNAPSHOTS=1 if intended"
+        );
+    }
+
+    #[test]
+    fn merge_dialog_at_60_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(60, 24);
+        assert_snapshot("submit_dialog_merge_60x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn merge_dialog_at_80_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(80, 24);
+        assert_snapshot("submit_dialog_merge_80x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn merge_dialog_at_120_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(120, 24);
+        assert_snapshot("submit_dialog_merge_120x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn bulk_merge_form_at_60_columns_matches_snapshot() {
+        let terminal = render_bulk_merge_dialog(60, 24);
+        assert_snapshot("form_bulk_merge_60x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn bulk_merge_form_at_80_columns_matches_snapshot() {
+        let terminal = render_bulk_merge_dialog(80, 24);
+        assert_snapshot("form_bulk_merge_80x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn a_long_bulk_branch_delete_lists_the_branches_that_fit_and_counts_the_rest() {
+        const BRANCHES: usize = 60;
+        let names = (1..=BRANCHES).map(|n| format!("branch-{n}")).collect();
+        let terminal = render_dialog(crate::app::ConfirmAction::BulkDeleteBranches(names), 80, 24);
+        let text = snapshot_text(&terminal);
+        let rows: Vec<&str> = text
+            .lines()
+            .map(|line| line.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+            .collect();
+        assert!(rows.contains(&"Are you sure you want to delete 60 selected branches?"));
+        let shown: Vec<&str> = rows
+            .iter()
+            .copied()
+            .filter(|row| row.starts_with("branch-"))
+            .collect();
+        let expected: Vec<String> = (1..=shown.len()).map(|n| format!("branch-{n}")).collect();
+        assert_eq!(shown, expected);
+        assert!(shown.len() >= 3, "only {} branches shown", shown.len());
+        let more = format!("v {} more", BRANCHES - shown.len());
+        assert!(rows.contains(&more.as_str()), "no `{more}` row in\n{text}");
     }
 }

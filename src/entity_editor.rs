@@ -12,14 +12,10 @@ pub fn branch_fields(
     fields
 }
 
-use crate::AppTerminal;
 use crate::app::App;
 use crate::domain::issues::Issue;
-use crate::editor::edit_in_editor;
-use crate::event::Event;
-use crossterm::event::KeyCode;
-use ratatui::Terminal;
-use ratatui::backend::Backend;
+use crate::effect::Effects;
+use crate::event::{CommandOutcome, Event};
 
 fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
     if entity_type.contains("issue") {
@@ -36,17 +32,17 @@ fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
 }
 
 #[inline]
-pub(crate) fn entity_is_mr(entity_type: &str) -> bool {
+pub fn entity_is_mr(entity_type: &str) -> bool {
     entity_type == "mr" || entity_type == "edit_mr"
 }
 
 #[inline]
-pub(crate) fn entity_is_issue(entity_type: &str) -> bool {
+pub fn entity_is_issue(entity_type: &str) -> bool {
     entity_type == "issue" || entity_type == "edit_issue"
 }
 
 #[inline]
-pub(crate) fn entity_is_milestone(entity_type: &str) -> bool {
+pub fn entity_is_milestone(entity_type: &str) -> bool {
     entity_type == "milestone" || entity_type == "edit_milestone"
 }
 
@@ -62,15 +58,21 @@ pub(crate) fn display_branch(value: &str) -> &str {
 
 // ── Shared field builders (single source of truth for edit/creation forms) ──
 
+/// Initial values of the issue edit/creation form fields.
+#[derive(Default)]
+pub struct IssueFieldValues {
+    pub title: String,
+    pub labels: String,
+    pub assignees: String,
+    pub milestone: String,
+    pub confidential: String,
+    pub due_date: String,
+    pub weight: String,
+    pub description: String,
+}
+
 pub fn issue_fields(
-    title: String,
-    labels: String,
-    assignees: String,
-    milestone: String,
-    confidential: String,
-    due_date: String,
-    weight: String,
-    description: String,
+    values: IssueFieldValues,
     is_github: bool,
     project: Option<String>,
 ) -> Vec<crate::app::Field> {
@@ -78,32 +80,49 @@ pub fn issue_fields(
     if let Some(proj) = project {
         fields.push(crate::app::Field::ref_field("Project", proj));
     }
-    fields.push(crate::app::Field::text("Title", title));
-    fields.push(crate::app::Field::multi_select("Assignees", assignees));
-    fields.push(crate::app::Field::multi_select("Milestone", milestone));
-    fields.push(crate::app::Field::multi_select("Labels", labels));
+    fields.push(crate::app::Field::text("Title", values.title));
+    fields.push(crate::app::Field::multi_select(
+        "Assignees",
+        values.assignees,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Milestone",
+        values.milestone,
+    ));
+    fields.push(crate::app::Field::multi_select("Labels", values.labels));
     if !is_github {
-        fields.push(crate::app::Field::toggle("Confidential", confidential));
-        fields.push(crate::app::Field::date("Due Date", due_date));
-        fields.push(crate::app::Field::text("Weight", weight));
+        fields.push(crate::app::Field::toggle(
+            "Confidential",
+            values.confidential,
+        ));
+        fields.push(crate::app::Field::date("Due Date", values.due_date));
+        fields.push(crate::app::Field::text("Weight", values.weight));
     }
     fields.push(crate::app::Field::ref_field(
         "Description Template",
         String::new(),
     ));
-    fields.push(crate::app::Field::text("Description", description));
+    fields.push(crate::app::Field::text("Description", values.description));
     fields
 }
 
+/// Initial values of the MR/PR edit/creation form fields.
+#[derive(Default)]
+pub struct MrFieldValues {
+    pub title: String,
+    pub labels: String,
+    pub assignees: String,
+    pub reviewers: String,
+    pub milestone: String,
+    pub target_branch: String,
+    pub source_branch: String,
+    pub create_from_issue: String,
+    pub draft_status: String,
+    pub description: String,
+}
+
 pub fn mr_fields(
-    title: String,
-    labels: String,
-    assignees: String,
-    reviewers: String,
-    milestone: String,
-    target_branch: String,
-    draft_status: String,
-    description: String,
+    values: MrFieldValues,
     is_github: bool,
     project: Option<String>,
 ) -> Vec<crate::app::Field> {
@@ -111,28 +130,43 @@ pub fn mr_fields(
     if let Some(proj) = project {
         fields.push(crate::app::Field::ref_field("Project", proj));
     }
-    fields.push(crate::app::Field::text("Title", title));
+    fields.push(crate::app::Field::text("Title", values.title));
     if !is_github {
         fields.push(crate::app::Field::toggle(
             "Status (Draft/Ready)",
-            draft_status,
+            values.draft_status,
         ));
     }
-    fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
+    fields.push(crate::app::Field::ref_field(
+        "Target Branch",
+        values.target_branch,
+    ));
     fields.push(crate::app::Field::ref_field(
         "Create from Issue",
-        String::new(),
+        values.create_from_issue,
     ));
-    fields.push(crate::app::Field::ref_field("Source Branch", String::new()));
-    fields.push(crate::app::Field::multi_select("Assignees", assignees));
-    fields.push(crate::app::Field::multi_select("Reviewers", reviewers));
-    fields.push(crate::app::Field::multi_select("Milestone", milestone));
-    fields.push(crate::app::Field::multi_select("Labels", labels));
+    fields.push(crate::app::Field::ref_field(
+        "Source Branch",
+        values.source_branch,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Assignees",
+        values.assignees,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Reviewers",
+        values.reviewers,
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Milestone",
+        values.milestone,
+    ));
+    fields.push(crate::app::Field::multi_select("Labels", values.labels));
     fields.push(crate::app::Field::ref_field(
         "Description Template",
         String::new(),
     ));
-    fields.push(crate::app::Field::text("Description", description));
+    fields.push(crate::app::Field::text("Description", values.description));
     fields
 }
 
@@ -285,8 +319,8 @@ pub fn build_mr_document(
     is_github: bool,
     unresolved_threads_count: Option<usize>,
     fetching_linked_issues: bool,
+    icons: &crate::config::Icons,
 ) -> crate::app::EntityDocument {
-    let icons = crate::config::ICONS.read().unwrap();
     let mut fields = vec![
         crate::app::Field::read_only("ID", format!("!{}", mr.iid)),
         crate::app::Field::text("Title", mr.title.clone()),
@@ -312,19 +346,19 @@ pub fn build_mr_document(
 
     if let Some(wf) = mr.workflow {
         let text = if let Some(label) = crate::domain::mr_state::workflow_label(Some(wf)) {
-            let glyph = crate::domain::mr_state::workflow_icon(Some(wf));
+            let glyph = crate::domain::mr_state::workflow_icon(Some(wf), icons);
             if glyph.is_empty() {
                 label.to_string()
             } else {
                 format!("{glyph} {label}")
             }
         } else {
-            crate::domain::mr_state::workflow_cell(Some(wf))
+            crate::domain::mr_state::workflow_cell(Some(wf), icons)
         };
         fields.push(crate::app::Field::read_only("Workflow", text));
     }
     if let Some(approval) = &mr.approval {
-        let (text, tone) = crate::domain::mr_state::approval_cell(Some(approval), is_github);
+        let (text, tone) = crate::domain::mr_state::approval_cell(Some(approval), is_github, icons);
         fields.push(crate::app::Field::read_only_toned(
             "Approval",
             text,
@@ -340,7 +374,7 @@ pub fn build_mr_document(
         ));
     }
     if let Some(mergeability) = &mr.mergeability {
-        let (text, tone) = crate::domain::mr_state::mergeable_cell(Some(mergeability));
+        let (text, tone) = crate::domain::mr_state::mergeable_cell(Some(mergeability), icons);
         fields.push(crate::app::Field::read_only_toned(
             "Mergeable",
             text,
@@ -358,7 +392,7 @@ pub fn build_mr_document(
         if let Some((text, _)) = crate::domain::mr_state::threads_line_text(
             Some(blocking),
             unresolved_threads_count,
-            &icons,
+            icons,
         ) {
             fields.push(crate::app::Field::read_only("Threads", text));
         }
@@ -523,36 +557,58 @@ fn format_linked_issues_value(
 pub fn build_pipeline_document(
     pipeline: &crate::domain::pipelines::Pipeline,
     jobs: &[crate::domain::pipelines::Job],
+    is_github: bool,
 ) -> crate::app::EntityDocument {
+    use crate::app::Field;
     let mut fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", pipeline.id)),
-        crate::app::Field::read_only("Status", pipeline.status.to_uppercase()),
-        crate::app::Field::read_only("Ref", pipeline.r#ref.clone()),
-        crate::app::Field::read_only("SHA", crate::utils::format::truncate(&pipeline.head_sha, 8)),
+        Field::read_only("ID", format!("#{}", pipeline.id)),
+        Field::read_only("Status", pipeline.status.to_uppercase()),
     ];
-    if !pipeline.project_path.is_empty() {
-        fields.push(crate::app::Field::read_only(
-            "Project",
-            pipeline.project_path.clone(),
+    let failed_jobs = jobs.iter().filter(|job| job.is_failed()).count();
+    if failed_jobs > 0 {
+        fields.push(Field::read_only_toned(
+            "Failed Jobs",
+            format!("{failed_jobs} of {}", jobs.len()),
+            crate::app::FieldTone::Red,
         ));
     }
+    fields.push(Field::read_only("Ref", pipeline.r#ref.clone()));
+    fields.push(Field::read_only(
+        "SHA",
+        crate::utils::format::truncate(&pipeline.head_sha, 8),
+    ));
+    let commit = crate::domain::pipelines::triggering_commit(pipeline, jobs);
+    if let Some(commit) = commit.filter(|commit| !commit.title.is_empty()) {
+        fields.push(Field::read_only("Commit", commit.title.clone()));
+    }
+    if let Some(commit) = commit.filter(|commit| !commit.author_name.is_empty()) {
+        fields.push(Field::read_only(
+            "Commit Author",
+            commit.author_name.clone(),
+        ));
+    }
+    let differs_from_commit = commit.is_none_or(|commit| commit.title != pipeline.display_title);
+    if !pipeline.display_title.is_empty() && differs_from_commit {
+        fields.push(Field::read_only("Title", pipeline.display_title.clone()));
+    }
+    if !pipeline.project_path.is_empty() {
+        fields.push(Field::read_only("Project", pipeline.project_path.clone()));
+    }
     if let Some(source) = &pipeline.source {
-        fields.push(crate::app::Field::read_only("Source", source.clone()));
+        let label = if is_github { "Event" } else { "Source" };
+        fields.push(Field::read_only(label, source.clone()));
     }
     if !pipeline.actor_login.is_empty() {
-        fields.push(crate::app::Field::read_only(
-            "Author",
+        fields.push(Field::read_only(
+            "Actor",
             format!("@{}", pipeline.actor_login),
         ));
     }
     if let Some(duration) = pipeline.duration_seconds {
-        fields.push(crate::app::Field::read_only(
-            "Duration",
-            format!("{}s", duration),
-        ));
+        fields.push(Field::read_only("Duration", format!("{duration}s")));
     }
     if let Some(created) = &pipeline.created_at {
-        fields.push(crate::app::Field::read_only(
+        fields.push(Field::read_only(
             "Created",
             crate::utils::format::time_ago(created),
         ));
@@ -564,36 +620,65 @@ pub fn build_pipeline_document(
     }
 }
 
+/// Metadata of one job, above its log or the pipeline's stage summary
+/// (`content`). GitHub jobs carry no stage, so none is shown for them.
 pub fn build_job_document(
     job: &crate::domain::pipelines::Job,
-    trace: Option<&str>,
-    wrap: bool,
+    content: crate::app::InspectorContent,
 ) -> crate::app::EntityDocument {
+    let status_tone = match job.status.as_str() {
+        "success" => crate::app::FieldTone::Green,
+        "failed" => crate::app::FieldTone::Red,
+        "running" => crate::app::FieldTone::Blue,
+        "pending" | "preparing" | "waiting_for_resource" => crate::app::FieldTone::Yellow,
+        _ => crate::app::FieldTone::Muted,
+    };
     let mut fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", job.id)),
         crate::app::Field::read_only("Name", job.name.clone()),
-        crate::app::Field::read_only("Stage", job.stage.clone()),
-        crate::app::Field::read_only("Status", job.status.to_uppercase()),
+        crate::app::Field::read_only_toned("Status", job.status.to_uppercase(), status_tone),
     ];
+    if !job.stage.is_empty() {
+        fields.push(crate::app::Field::read_only("Stage", job.stage.clone()));
+    }
+    if let Some(matrix) = &job.matrix {
+        fields.push(crate::app::Field::read_only("Matrix", matrix.clone()));
+    }
+    if let Some(failure_reason) = &job.failure_reason {
+        fields.push(crate::app::Field::read_only(
+            "Failure",
+            failure_reason.replace('_', " "),
+        ));
+    }
     if let Some(runner) = &job.runner {
         fields.push(crate::app::Field::read_only("Runner", runner.clone()));
+    }
+    if let Some(queued) = job.queued_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Queued",
+            format!("{}m {}s", queued / 60, queued % 60),
+        ));
     }
     if let Some(duration) = job.duration_seconds {
         fields.push(crate::app::Field::read_only(
             "Duration",
-            format!("{}s", duration),
+            format!("{}m {}s", duration / 60, duration % 60),
         ));
     }
-    let content = if let Some(tr) = trace {
-        crate::app::InspectorContent::AnsiTrace {
-            trace: tr.to_string(),
-            wrap,
-        }
-    } else {
-        crate::app::InspectorContent::Empty("Press Enter to fetch/view job trace...")
-    };
+    if !job.needs.is_empty() {
+        fields.push(crate::app::Field::read_only("Needs", job.needs.join(", ")));
+    }
+    if !job.artifact_file_types.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Artifacts",
+            job.artifact_file_types.join(", "),
+        ));
+    }
+    if let Some(url) = &job.web_url {
+        fields.push(crate::app::Field::read_only("URL", url.clone()));
+    }
     crate::app::EntityDocument {
-        title: format!("Job #{} - {}", job.id, job.name),
+        title: format!("Job #{}", job.id),
         fields,
         content,
     }
@@ -690,10 +775,7 @@ pub fn build_release_document(
         crate::app::Field::text("Release Name", release.name.clone()),
     ];
     if let Some(author) = &release.author_name {
-        fields.push(crate::app::Field::read_only(
-            "Author",
-            format!("@{}", author),
-        ));
+        fields.push(crate::app::Field::read_only("Author", format!("@{author}")));
     }
     if let Some(commit_id) = &release.commit_id {
         let commit_text = if let Some(title) = &release.commit_title {
@@ -722,25 +804,42 @@ pub fn build_release_document(
 pub fn build_runner_document(
     runner: &crate::domain::runners::Runner,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
+    let or_placeholder =
+        |value: Option<&str>| value.filter(|v| !v.is_empty()).unwrap_or("--").to_string();
+    let mut fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", runner.id)),
-        crate::app::Field::read_only(
-            "Description",
-            runner
-                .description
-                .clone()
-                .unwrap_or_else(|| "--".to_string()),
-        ),
-        crate::app::Field::read_only("Status", runner.status.to_uppercase()),
+        crate::app::Field::read_only("Description", or_placeholder(runner.description.as_deref())),
+        crate::app::Field::read_only("Status", runner.status_kind().label().to_string()),
         crate::app::Field::read_only(
             "Active",
-            if runner.active {
-                "YES".to_string()
-            } else {
-                "NO".to_string()
-            },
+            crate::app::runner_active_display(runner.active).to_string(),
+        ),
+        crate::app::Field::read_only(
+            "Type",
+            or_placeholder(runner.runner_type.map(|kind| kind.label())),
+        ),
+        crate::app::Field::read_only(
+            "Tags",
+            or_placeholder(Some(runner.tags.join(", ").as_str())),
+        ),
+        crate::app::Field::read_only("Version", or_placeholder(runner.version.as_deref())),
+        crate::app::Field::read_only(
+            "Last Contact",
+            or_placeholder(
+                runner
+                    .contacted_at
+                    .as_deref()
+                    .map(crate::utils::format::time_ago)
+                    .as_deref(),
+            ),
         ),
     ];
+    if let Some(ip) = runner.ip_address.as_deref().filter(|ip| !ip.is_empty()) {
+        fields.push(crate::app::Field::read_only("IP Address", ip.to_string()));
+    }
+    if let Some(url) = &runner.web_url {
+        fields.push(crate::app::Field::read_only("URL", url.clone()));
+    }
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),
         fields,
@@ -750,58 +849,127 @@ pub fn build_runner_document(
 
 pub fn build_todo_document(
     todo: &crate::domain::notifications::Notification,
+    kind: crate::backend::BackendKind,
+    detail_fetch_error: Option<&str>,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", todo.id)),
+    let mut fields = vec![
         crate::app::Field::text("Title", todo.title.clone()),
-        crate::app::Field::read_only(
-            "Target",
-            if todo.target_type == "MergeRequest" {
-                format!("!{}", todo.target_iid)
-            } else if todo.target_type == "Issue" {
-                format!("#{}", todo.target_iid)
-            } else {
-                format!("{} #{}", todo.target_type, todo.target_iid)
-            },
-        ),
-        crate::app::Field::read_only("State", todo.state.to_uppercase()),
-        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&todo.updated_at)),
-        crate::app::Field::read_only("Project", todo.project_path.clone()),
+        crate::app::Field::read_only("Type", todo.type_label(kind).to_string()),
+        crate::app::Field::read_only("State", todo.state.clone()),
     ];
+    if !todo.reason.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Reason",
+            todo.reason.replace('_', " "),
+        ));
+    }
+    if !todo.author.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Author",
+            format!("@{}", todo.author),
+        ));
+    }
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&todo.updated_at),
+    ));
+    fields.push(crate::app::Field::read_only(
+        "Project",
+        todo.project_path.clone(),
+    ));
+    let content = match (&todo.body, detail_fetch_error) {
+        (Some(body), _) => crate::app::InspectorContent::Markdown(body.clone()),
+        (None, Some(error)) => {
+            crate::app::InspectorContent::Markdown(format!("_Could not load details: {error}_"))
+        }
+        (None, None) if todo.detail_api_path.is_some() => {
+            crate::app::InspectorContent::Empty("Loading details…")
+        }
+        (None, None) => crate::app::InspectorContent::Markdown(String::new()),
+    };
+    let title = match todo.reference(kind) {
+        Some(reference) => format!("{} {reference}", todo.type_label(kind)),
+        None => todo.type_label(kind).to_string(),
+    };
     crate::app::EntityDocument {
-        title: format!("Notification {}", todo.id),
+        title,
         fields,
-        content: crate::app::InspectorContent::Empty("Notification details"),
+        content,
     }
 }
 
 pub fn build_branch_document(
     branch: &crate::domain::branches::Branch,
 ) -> crate::app::EntityDocument {
+    let author_display = branch.author_name.as_ref().map(|name| {
+        match branch.author_email.as_deref().filter(|e| !e.is_empty()) {
+            Some(email) => format!("{name} <{email}>"),
+            None => name.clone(),
+        }
+    });
+
+    let date_display = branch.commit_date.as_ref().map(|d| {
+        let ago = crate::utils::format::time_ago(d);
+        if &ago == d {
+            d.clone()
+        } else {
+            format!("{ago} ({d})")
+        }
+    });
+
+    let ahead_behind = branch.ahead_behind;
+    let ahead_behind_display = ahead_behind.map(|(ahead, behind)| {
+        if ahead == 0 && behind == 0 && branch.default {
+            "Default branch".to_string()
+        } else {
+            format!("{ahead} ahead, {behind} behind")
+        }
+    });
+
+    let commit_msg = branch
+        .commit_message
+        .clone()
+        .filter(|m| !m.trim().is_empty());
+
     let mut fields = vec![
-        crate::app::Field::read_only("Branch", branch.name.clone()),
-        crate::app::Field::read_only(
+        crate::app::Field::ref_field("Branch", branch.name.clone()),
+        crate::app::Field::read_only_toned(
             "Default",
             if branch.default {
                 "YES".to_string()
             } else {
                 "NO".to_string()
             },
+            if branch.default {
+                crate::app::FieldTone::Green
+            } else {
+                crate::app::FieldTone::Muted
+            },
         ),
-        crate::app::Field::read_only(
+        crate::app::Field::read_only_toned(
             "Protected",
             if branch.protected {
                 "YES".to_string()
             } else {
                 "NO".to_string()
             },
+            if branch.protected {
+                crate::app::FieldTone::Yellow
+            } else {
+                crate::app::FieldTone::Muted
+            },
         ),
-        crate::app::Field::read_only(
+        crate::app::Field::read_only_toned(
             "Can Push",
             if branch.can_push {
                 "YES".to_string()
             } else {
                 "NO".to_string()
+            },
+            if branch.can_push {
+                crate::app::FieldTone::Green
+            } else {
+                crate::app::FieldTone::Muted
             },
         ),
         crate::app::Field::read_only(
@@ -813,19 +981,38 @@ pub fn build_branch_document(
             },
         ),
     ];
+    if let Some(auth) = author_display {
+        fields.push(crate::app::Field::read_only("Author", auth));
+    }
+    if let Some(dt) = date_display {
+        fields.push(crate::app::Field::date("Date", dt));
+    }
+    if let Some(ab) = ahead_behind_display {
+        fields.push(crate::app::Field::read_only("Ahead/Behind", ab));
+    }
     if !branch.web_url.is_empty() {
         fields.push(crate::app::Field::read_only("URL", branch.web_url.clone()));
     }
+
+    let content = if let Some(msg) = commit_msg {
+        crate::app::InspectorContent::Markdown(msg)
+    } else {
+        crate::app::InspectorContent::Empty("Branch details")
+    };
+
     crate::app::EntityDocument {
         title: format!("Branch {}", branch.name),
         fields,
-        content: crate::app::InspectorContent::Empty("Branch details"),
+        content,
     }
 }
 
 pub fn build_environment_document(
     env: &crate::domain::deployments::Environment,
+    keys: &crate::keymap::Keymap,
+    is_github: bool,
 ) -> crate::app::EntityDocument {
+    use crate::keymap::Action;
     let mut fields = vec![
         crate::app::Field::read_only("Environment", env.name.clone()),
         crate::app::Field::read_only("State", env.state.to_uppercase()),
@@ -849,7 +1036,7 @@ pub fn build_environment_document(
         ));
         fields.push(crate::app::Field::read_only(
             "Deploy SHA",
-            crate::utils::format::truncate(&dep.sha, 8),
+            dep.short_sha().to_string(),
         ));
         if let Some(user) = &dep.user {
             fields.push(crate::app::Field::read_only(
@@ -862,10 +1049,85 @@ pub fn build_environment_document(
             crate::utils::format::time_ago(&dep.created_at),
         ));
     }
+    let mut action_lines = vec![format!(
+        "- `{}` rolls back to the selected deployment",
+        keys.display(Action::EnvironmentsRollbackDeployment)
+    )];
+    if !is_github {
+        action_lines.push(format!(
+            "- `{}` opens the selected deployment's job log",
+            keys.display(Action::EnvironmentsViewDeploymentLog)
+        ));
+    }
+    action_lines.push(format!(
+        "- `{}` stops the environment",
+        keys.display(Action::EnvironmentsStopEnvironment)
+    ));
+    action_lines.push(format!(
+        "- `{}` copies its URL",
+        keys.display(Action::EnvironmentsCopyUrl)
+    ));
+    let actions = format!(
+        "Press `{}` to list this environment's deployments and `{}` to move between them and \
+         the environment list.\n\n{}",
+        keys.display(Action::EnvironmentsViewDeployments),
+        keys.display(Action::EnvironmentsFocusDeployments),
+        action_lines.join("\n"),
+    );
     crate::app::EntityDocument {
         title: format!("Environment {}", env.name),
         fields,
-        content: crate::app::InspectorContent::Empty("Environment details"),
+        content: crate::app::InspectorContent::Markdown(actions),
+    }
+}
+
+pub fn build_deployment_document(
+    deployment: &crate::domain::deployments::Deployment,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("Deployment", format!("#{}", deployment.iid)),
+        crate::app::Field::read_only("Deploy Status", deployment.status.to_uppercase()),
+        crate::app::Field::read_only(
+            if deployment.tag { "Tag" } else { "Ref" },
+            deployment.ref_name.clone(),
+        ),
+        crate::app::Field::read_only("Commit", deployment.sha.clone()),
+    ];
+    if let Some(user) = &deployment.user {
+        fields.push(crate::app::Field::read_only(
+            "Deployer",
+            format!("@{}", user.username),
+        ));
+    }
+    if let Some(job) = &deployment.deployable {
+        fields.push(crate::app::Field::read_only(
+            "Job",
+            format!("{} (#{})", job.name, job.id),
+        ));
+        if let Some(status) = &job.status {
+            fields.push(crate::app::Field::read_only(
+                "Status",
+                status.to_uppercase(),
+            ));
+        }
+    }
+    fields.push(crate::app::Field::read_only(
+        "Created",
+        crate::utils::format::time_ago(&deployment.created_at),
+    ));
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&deployment.updated_at),
+    ));
+    let content = if deployment.description.trim().is_empty() {
+        crate::app::InspectorContent::Empty("No deployment notes")
+    } else {
+        crate::app::InspectorContent::Markdown(deployment.description.clone())
+    };
+    crate::app::EntityDocument {
+        title: format!("Deployment #{}", deployment.iid),
+        fields,
+        content,
     }
 }
 
@@ -875,10 +1137,10 @@ pub fn apply_field_text_change(
     iid: u64,
     field_type: &str,
     value: String,
-    terminal: &mut AppTerminal,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
+    fx: &mut Effects,
 ) {
+    let tab = app.active_tab;
     if entity_is_milestone(entity_type) {
         if let Some(item) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
             match field_type {
@@ -933,11 +1195,11 @@ pub fn apply_field_text_change(
             };
             let project_path = app.project_path_for_milestone(iid);
             let tx_spawn = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let res = crate::domain::milestones::update_milestone(
                     &client,
                     &project_path,
-                    iid,
+                    &milestone,
                     &title,
                     &description,
                     start_date.as_deref(),
@@ -951,59 +1213,6 @@ pub fn apply_field_text_change(
                     Err(e) => {
                         let _ = tx_spawn.send(Event::CommandCompleted(
                             crate::app::Tab::Milestones,
-                            Err(e.to_string()),
-                        ));
-                    }
-                }
-            });
-        }
-        return;
-    }
-
-    if entity_type == "release" {
-        let release_opt = app.releases.items.get(iid as usize).cloned();
-        if let Some(release) = release_opt {
-            let mut name = release.name.clone();
-            let mut tag = release.tag_name.clone();
-            let mut description = release.description.clone().unwrap_or_default();
-
-            match field_type {
-                "title" | "release_name" => name = value.clone(),
-                "tag" => tag = value.clone(),
-                "description" => description = value.clone(),
-                _ => {}
-            }
-
-            if let Some(item) = app.releases.items.get_mut(iid as usize) {
-                if field_type == "title" || field_type == "release_name" {
-                    item.name = value.clone();
-                }
-                if field_type == "description" {
-                    item.description = Some(value.clone());
-                }
-            }
-
-            let Some(client) = app.gitlab_client.clone() else {
-                return;
-            };
-            let project_path = app.project_path_for_release(&tag);
-            let tx_spawn = tx.clone();
-            tokio::spawn(async move {
-                let res = crate::domain::releases::update_release(
-                    &client,
-                    &project_path,
-                    &tag,
-                    &name,
-                    &description,
-                )
-                .await;
-                match res {
-                    Ok(_) => {
-                        let _ = tx_spawn.send(Event::ReleaseUpdated);
-                    }
-                    Err(e) => {
-                        let _ = tx_spawn.send(Event::CommandCompleted(
-                            crate::app::Tab::Releases,
                             Err(e.to_string()),
                         ));
                     }
@@ -1030,7 +1239,7 @@ pub fn apply_field_text_change(
             };
             let et = entity_type.to_string();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = if entity_is_issue(&et) {
                     client.update_issue_title(&project_path, iid, &value).await
                 } else {
@@ -1038,7 +1247,7 @@ pub fn apply_field_text_change(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1062,13 +1271,13 @@ pub fn apply_field_text_change(
                     return;
                 };
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client
                         .update_mr_target_branch(&project_path, iid, &value)
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1092,13 +1301,13 @@ pub fn apply_field_text_change(
                     return;
                 };
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client
                         .update_issue_due_date(&project_path, iid, &flag_value)
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1110,30 +1319,29 @@ pub fn apply_field_text_change(
                     return;
                 };
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client.update_issue_weight(&project_path, iid, &value).await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
         }
         "runner_description" => {
-            let project_path = app.project_path_for_runner(iid);
-            if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == iid) {
+            app.runners.update(&iid, |runner| {
                 runner.description = Some(value.clone());
-            }
+            });
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
             let scope = app.scope.clone();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = client.update_runner_description(&scope, iid, &value).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1153,7 +1361,7 @@ pub fn apply_field_text_change(
             };
             let et = entity_type.to_string();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = if entity_is_issue(&et) {
                     client
                         .update_issue_description(&project_path, iid, &value)
@@ -1165,7 +1373,7 @@ pub fn apply_field_text_change(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1173,16 +1381,16 @@ pub fn apply_field_text_change(
     }
 }
 
-pub fn apply_selector_changes<B: Backend>(
+pub fn apply_selector_changes(
     app: &mut App,
     entity_type: &str,
     iid: u64,
     field_type: &str,
     values: Vec<String>,
-    terminal: &mut Terminal<B>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
+    fx: &mut Effects,
 ) {
+    let tab = app.active_tab;
     match field_type {
         "labels" => {
             let current_labels: Vec<String> = if entity_is_issue(entity_type) {
@@ -1218,7 +1426,7 @@ pub fn apply_selector_changes<B: Backend>(
                 let project_path = get_entity_project_path(app, entity_type, iid);
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = if entity_is_issue(&et) {
                         client
                             .update_issue_labels(&project_path, iid, &to_add, &to_remove)
@@ -1230,7 +1438,7 @@ pub fn apply_selector_changes<B: Backend>(
                     };
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1283,7 +1491,7 @@ pub fn apply_selector_changes<B: Backend>(
                 let project_path = get_entity_project_path(app, entity_type, iid);
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = if entity_is_issue(&et) {
                         client
                             .update_issue_assignees(&project_path, iid, &to_add, &to_remove)
@@ -1295,7 +1503,7 @@ pub fn apply_selector_changes<B: Backend>(
                     };
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1350,13 +1558,13 @@ pub fn apply_selector_changes<B: Backend>(
                     };
                     let project_path = app.project_path_for_mr(iid);
                     let tx2 = tx.clone();
-                    tokio::spawn(async move {
+                    fx.spawn(async move {
                         let result = client
                             .update_mr_reviewers(&project_path, iid, &to_add, &to_remove)
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             tab,
-                            result.map_err(|e| e.to_string()),
+                            CommandOutcome::mutation(result),
                         ));
                     });
                 }
@@ -1404,7 +1612,7 @@ pub fn apply_selector_changes<B: Backend>(
             let project_path = get_entity_project_path(app, entity_type, iid);
             let et = entity_type.to_string();
             let tx2 = tx.clone();
-            tokio::spawn(async move {
+            fx.spawn(async move {
                 let result = if entity_is_issue(&et) {
                     client
                         .update_issue_milestone(&project_path, iid, &first_val)
@@ -1416,7 +1624,7 @@ pub fn apply_selector_changes<B: Backend>(
                 };
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
-                    result.map_err(|e| e.to_string()),
+                    CommandOutcome::mutation(result),
                 ));
             });
         }
@@ -1428,13 +1636,13 @@ pub fn apply_selector_changes<B: Backend>(
                 };
                 let project_path = app.project_path_for_issue(iid);
                 let tx2 = tx.clone();
-                tokio::spawn(async move {
+                fx.spawn(async move {
                     let result = client
                         .update_issue_confidential(&project_path, iid, is_confidential)
                         .await;
                     let _ = tx2.send(Event::CommandCompleted(
                         tab,
-                        result.map_err(|e| e.to_string()),
+                        CommandOutcome::mutation(result),
                     ));
                 });
             }
@@ -1500,6 +1708,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 cursor_pos: 0,
                 editing: false,
                 desc_scroll: 0,
+                source_on_forge: false,
             });
         }
     } else if entity_is_mr(entity_type) {
@@ -1517,7 +1726,8 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             };
 
             let is_fetching_issues = app.fetching_mr_related_issues.contains(&mr.iid);
-            let mut doc = build_mr_document(&mr, is_github, unresolved, is_fetching_issues);
+            let mut doc =
+                build_mr_document(&mr, is_github, unresolved, is_fetching_issues, &app.icons);
             doc.fields.push(crate::app::Field::text(
                 "Description",
                 mr.description.clone().unwrap_or_default(),
@@ -1541,6 +1751,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 cursor_pos: 0,
                 editing: false,
                 desc_scroll: 0,
+                source_on_forge: false,
             });
         }
     } else if entity_is_milestone(entity_type) {
@@ -1549,11 +1760,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
-            let issues: Option<Vec<crate::domain::issues::Issue>> = app
-                .selected_milestone_issues
-                .clone()
-                .or_else(|| app.milestone_issues_cache.get(&milestone.iid).cloned());
-            let issues_ref: Option<&[crate::domain::issues::Issue]> = issues.as_deref();
+            let issues_ref = app.milestone_issues(milestone.iid);
             let progress = app.milestone_progress_cache.get(&milestone.iid).copied();
             let mut doc = build_milestone_document(&milestone, issues_ref, progress, is_github);
             doc.fields.push(crate::app::Field::text(
@@ -1578,275 +1785,48 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 cursor_pos: 0,
                 editing: false,
                 desc_scroll: 0,
-            });
-        }
-    } else if entity_type == "release" {
-        if let Some(release) = app.releases.items.get(entity_iid as usize).cloned() {
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut doc = build_release_document(&release);
-            doc.fields.push(crate::app::Field::text(
-                "Release Notes",
-                release.description.clone().unwrap_or_default(),
-            ));
-
-            app.open_edit_menu(crate::app::EditMenu {
-                title: format!("Edit Release {}", release.tag_name),
-                entity_project: app.scope.as_str().to_string(),
-                fields: doc.fields,
-                initial_fields: std::collections::HashMap::new(),
-                selected_idx,
-                entity_iid,
-                entity_kind: crate::app::EditEntityKind::EditRelease,
-                state: {
-                    let mut s = ratatui::widgets::ListState::default();
-                    s.select(Some(selected_idx));
-                    s
-                },
-                workflow_inputs: vec![],
-                cursor_pos: 0,
-                editing: false,
-                desc_scroll: 0,
+                source_on_forge: false,
             });
         }
     }
 }
 
-pub async fn handle_entity_update(
-    app: &mut App,
-    entity_type: &str,
-    iid: u64,
-    code: KeyCode,
-    terminal: &mut AppTerminal,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
-) {
-    match code {
-        KeyCode::Char('t') => {
-            let current_title = if entity_is_issue(entity_type) {
-                app.issues
-                    .items
-                    .iter()
-                    .find(|i| i.iid == iid)
-                    .map(|i| i.title.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .map(|m| m.title.clone())
-                    .unwrap_or_default()
-            };
-
-            if let Some(new_title) = edit_in_editor(&current_title, terminal) {
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = get_entity_project_path(app, entity_type, iid);
-                let result = if entity_is_issue(entity_type) {
-                    client
-                        .update_issue_title(&project_path, iid, &new_title)
-                        .await
-                } else {
-                    client.update_mr_title(&project_path, iid, &new_title).await
-                };
-                if let Err(e) = result {
-                    app.show_error(format!("Failed to update title: {}", e));
-                    return;
-                }
-                if entity_is_issue(entity_type) {
-                    if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                        item.title = new_title;
-                    }
-                } else if entity_is_mr(entity_type) {
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.title = new_title;
-                    }
-                }
-            }
-        }
-        KeyCode::Char('s') => {
-            if entity_is_mr(entity_type) {
-                let is_draft = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .map(|m| m.draft)
-                    .unwrap_or(false);
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = app.project_path_for_mr(iid);
-                if let Err(e) = client.toggle_mr_draft(&project_path, iid, is_draft).await {
-                    app.show_error(format!("Failed to toggle draft: {}", e));
-                    return;
-                }
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.draft = !is_draft;
-                }
-            }
-        }
-        KeyCode::Char('g') => {
-            if entity_is_mr(entity_type) {
-                let current_branch = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .map(|m| m.target_branch.clone())
-                    .unwrap_or_default();
-                if let Some(target) = edit_in_editor(&current_branch, terminal) {
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let project_path = app.project_path_for_mr(iid);
-                    if let Err(e) = client
-                        .update_mr_target_branch(&project_path, iid, &target)
-                        .await
-                    {
-                        app.show_error(format!("Failed to update target branch: {}", e));
-                        return;
-                    }
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.target_branch = target;
-                    }
-                }
-            }
-        }
-        KeyCode::Char('c') => {
-            if entity_is_issue(entity_type) {
-                if let Some(res) = edit_in_editor("public", terminal) {
-                    let flag = if res.to_lowercase().contains("confidential") {
-                        "--confidential"
-                    } else {
-                        "--public"
-                    };
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let ppc = app.project_path_for_issue(iid);
-                    let confidential_val = flag == "--confidential";
-                    if let Err(e) = client
-                        .update_issue_confidential(&ppc, iid, confidential_val)
-                        .await
-                    {
-                        app.error_message =
-                            Some(format!("Failed to update confidentiality: {}", e));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('u') => {
-            if entity_is_issue(entity_type) {
-                if let Some(due_date) = edit_in_editor("YYYY-MM-DD", terminal) {
-                    let flag_value = if due_date == "YYYY-MM-DD" || due_date.is_empty() {
-                        ""
-                    } else {
-                        &due_date
-                    };
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let project_path = app.project_path_for_issue(iid);
-                    if let Err(e) = client
-                        .update_issue_due_date(&project_path, iid, flag_value)
-                        .await
-                    {
-                        app.show_error(format!("Failed to update due date: {}", e));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('w') => {
-            if entity_is_issue(entity_type) {
-                if let Some(weight) = edit_in_editor("0", terminal) {
-                    let Some(client) = app.gitlab_client.clone() else {
-                        return;
-                    };
-                    let project_path = app.project_path_for_issue(iid);
-                    if let Err(e) = client
-                        .update_issue_weight(&project_path, iid, &weight)
-                        .await
-                    {
-                        app.show_error(format!("Failed to update weight: {}", e));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('d') => {
-            let current_desc = if entity_is_issue(entity_type) {
-                app.issues
-                    .items
-                    .iter()
-                    .find(|i| i.iid == iid)
-                    .and_then(|i| i.description.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .and_then(|m| m.description.clone())
-                    .unwrap_or_default()
-            };
-            app.text_input = Some(crate::app::TextInput {
-                title: " Edit Description ".to_string(),
-                value: current_desc.clone(),
-                cursor_idx: current_desc.len(),
-                action: crate::app::TextInputAction::EditField {
-                    entity_iid: iid,
-                    entity_type: entity_type.to_string(),
-                    field_type: "description".to_string(),
-                },
-            });
-        }
-        KeyCode::Char('D') => {
-            let current_desc = if entity_is_issue(entity_type) {
-                app.issues
-                    .items
-                    .iter()
-                    .find(|i| i.iid == iid)
-                    .and_then(|i| i.description.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == iid)
-                    .and_then(|m| m.description.clone())
-                    .unwrap_or_default()
-            };
-            if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                if entity_is_issue(entity_type) {
-                    if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                        item.description = Some(new_desc.clone());
-                    }
-                } else if entity_is_mr(entity_type) {
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.description = Some(new_desc.clone());
-                    }
-                }
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = get_entity_project_path(app, entity_type, iid);
-                let result = if entity_is_issue(entity_type) {
-                    client
-                        .update_issue_description(&project_path, iid, &new_desc)
-                        .await
-                } else {
-                    client
-                        .update_mr_description(&project_path, iid, &new_desc)
-                        .await
-                };
-                if let Err(e) = result {
-                    app.show_error(format!("Failed to update description: {}", e));
-                }
-            }
-        }
-        _ => {}
+/// The edit menu for `release`. Releases have no numeric id, so the menu's
+/// `entity_iid` stays 0 and submitting resolves the release by its
+/// read-only Tag field.
+pub fn release_edit_menu(
+    release: &crate::domain::releases::Release,
+    project: &str,
+) -> crate::app::EditMenu {
+    let mut doc = build_release_document(release);
+    doc.fields.push(crate::app::Field::text(
+        "Release Notes",
+        release.description.clone().unwrap_or_default(),
+    ));
+    crate::app::EditMenu {
+        title: format!("Edit Release {}", release.tag_name),
+        entity_project: project.to_string(),
+        fields: doc.fields,
+        initial_fields: std::collections::HashMap::new(),
+        selected_idx: 0,
+        entity_iid: 0,
+        entity_kind: crate::app::EditEntityKind::EditRelease,
+        state: {
+            let mut s = ratatui::widgets::ListState::default();
+            s.select(Some(0));
+            s
+        },
+        workflow_inputs: vec![],
+        cursor_pos: 0,
+        editing: false,
+        desc_scroll: 0,
+        source_on_forge: false,
     }
+}
+
+pub fn open_release_edit_menu(app: &mut App, release: &crate::domain::releases::Release) {
+    let menu = release_edit_menu(release, release.project_or(&app.scope));
+    app.open_edit_menu(menu);
 }
 
 #[cfg(test)]
@@ -1894,6 +1874,79 @@ mod tests {
         assert!(
             gh_doc.fields.iter().any(|f| f.label == "Pull Requests"),
             "GitHub issues must label the row 'Pull Requests'"
+        );
+    }
+
+    fn field_values(doc: &crate::app::EntityDocument) -> Vec<(&str, &str)> {
+        doc.fields
+            .iter()
+            .map(|f| (f.label.as_str(), f.value.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn gitlab_pipeline_document_takes_the_commit_from_its_jobs_and_counts_failures() {
+        let pipeline: crate::domain::pipelines::Pipeline =
+            serde_json::from_value(serde_json::json!({
+                "id": 88, "status": "failed", "ref": "main", "updated_at": "",
+                "head_sha": "0123456789abcdef", "actor_login": "deployer", "source": "push"
+            }))
+            .unwrap();
+        let jobs: Vec<crate::domain::pipelines::Job> = serde_json::from_value(serde_json::json!([
+            {"id": 1, "status": "success", "stage": "build", "name": "compile",
+             "commit": {"title": "Bump parser", "author_name": "Grace Hopper"}},
+            {"id": 2, "status": "failed", "stage": "test", "name": "rspec",
+             "failure_reason": "script failure",
+             "commit": {"title": "Bump parser", "author_name": "Grace Hopper"}}
+        ]))
+        .unwrap();
+
+        let doc = build_pipeline_document(&pipeline, &jobs, false);
+
+        assert_eq!(
+            field_values(&doc),
+            vec![
+                ("ID", "#88"),
+                ("Status", "FAILED"),
+                ("Failed Jobs", "1 of 2"),
+                ("Ref", "main"),
+                ("SHA", "01234567..."),
+                ("Commit", "Bump parser"),
+                ("Commit Author", "Grace Hopper"),
+                ("Source", "push"),
+                ("Actor", "@deployer"),
+            ]
+        );
+    }
+
+    #[test]
+    fn github_run_title_is_shown_only_when_it_differs_from_the_commit() {
+        let run = |display_title: &str| -> crate::domain::pipelines::Pipeline {
+            serde_json::from_value(serde_json::json!({
+                "id": 5, "status": "success", "ref": "main", "updated_at": "",
+                "display_title": display_title,
+                "commit": {"title": "Fix login", "author_name": "Ada"}
+            }))
+            .unwrap()
+        };
+        let title = |doc: &crate::app::EntityDocument| {
+            doc.fields
+                .iter()
+                .find(|f| f.label == "Title")
+                .map(|f| f.value.clone())
+        };
+
+        assert_eq!(
+            title(&build_pipeline_document(&run("Fix login"), &[], true)),
+            None
+        );
+        assert_eq!(
+            title(&build_pipeline_document(
+                &run("Release 2.0 (#40)"),
+                &[],
+                true
+            )),
+            Some("Release 2.0 (#40)".to_string())
         );
     }
 
@@ -2015,8 +2068,6 @@ mod tests {
         app.mrs.items = vec![mr];
 
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let backend = ratatui::backend::TestBackend::new(80, 24);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
 
         // Clear milestone by passing no value (deselected in the selector) on Issue
         apply_selector_changes(
@@ -2025,9 +2076,8 @@ mod tests {
             1,
             "milestone",
             vec![],
-            &mut terminal,
             tx.clone(),
-            crate::app::Tab::Issues,
+            &mut crate::effect::Effects::default(),
         );
 
         assert!(app.issues.items[0].milestone.is_none());
@@ -2039,9 +2089,8 @@ mod tests {
             1,
             "milestone",
             vec![],
-            &mut terminal,
             tx,
-            crate::app::Tab::MergeRequests,
+            &mut crate::effect::Effects::default(),
         );
 
         assert!(app.mrs.items[0].milestone.is_none());
@@ -2068,14 +2117,12 @@ mod tests {
     #[test]
     fn test_group_view_creation_fields_include_project() {
         let issue_f = issue_fields(
-            "title".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "No".into(),
-            "".into(),
-            "0".into(),
-            "".into(),
+            IssueFieldValues {
+                title: "title".into(),
+                confidential: "No".into(),
+                weight: "0".into(),
+                ..IssueFieldValues::default()
+            },
             false,
             Some("owner/repo".into()),
         );
@@ -2083,14 +2130,12 @@ mod tests {
         assert_eq!(issue_f[0].value, "owner/repo");
 
         let mr_f = mr_fields(
-            "title".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "".into(),
-            "main".into(),
-            "Draft".into(),
-            "".into(),
+            MrFieldValues {
+                title: "title".into(),
+                target_branch: "main".into(),
+                draft_status: "Draft".into(),
+                ..MrFieldValues::default()
+            },
             false,
             Some("owner/repo".into()),
         );
@@ -2158,6 +2203,7 @@ mod tests {
             due_date: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             project_path: "owner/repo".to_string(),
+            web_url: None,
         };
 
         // Case 1: with progress tuple (3 closed, 5 total)
@@ -2274,6 +2320,7 @@ mod tests {
             due_date: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             project_path: "owner/repo".to_string(),
+            web_url: None,
         };
         let issue = crate::domain::issues::Issue {
             iid: 12,
@@ -2372,7 +2419,7 @@ mod tests {
             ]),
         };
 
-        let doc = build_mr_document(&mr, true, None, false);
+        let doc = build_mr_document(&mr, true, None, false, &crate::config::Icons::nerd());
         assert!(
             doc.fields
                 .iter()
@@ -2382,11 +2429,90 @@ mod tests {
         if let crate::app::InspectorContent::Markdown(content) = doc.content {
             assert!(content.contains("### Stack #7 (3 PRs)"));
             assert!(content.contains("1. #101: Base PR (MERGED)"));
-            let nav_prev = crate::config::ICONS.read().unwrap().nav_prev.clone();
+            let nav_prev = crate::config::Icons::nerd().nav_prev;
             assert!(content.contains(&format!("2. #102: Middle PR (OPEN) {nav_prev} (current)")));
             assert!(content.contains("3. #103: Top PR (OPEN) [draft]"));
         } else {
             panic!("Expected Markdown content");
+        }
+    }
+
+    #[test]
+    fn release_edit_form_targets_the_selected_row_project_when_tags_repeat() {
+        let release = |project: &str| crate::domain::releases::Release {
+            name: format!("Release in {project}"),
+            tag_name: "v1.0.0".to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(format!("notes for {project}")),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        };
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.releases
+            .set_items(vec![release("group/a"), release("group/b")]);
+
+        let selected = app.releases.items()[1].clone();
+        open_release_edit_menu(&mut app, &selected);
+
+        let menu = app.edit_menu.as_ref().expect("release edit form opens");
+        let notes = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Release Notes")
+            .map(|f| f.value.as_str());
+        assert_eq!(menu.entity_project, "group/b");
+        assert_eq!(notes, Some("notes for group/b"));
+    }
+
+    #[test]
+    fn test_build_branch_document() {
+        let branch = crate::domain::branches::Branch {
+            name: "feature/awesome".to_string(),
+            default: false,
+            protected: true,
+            web_url: "https://gitlab.com/test/repo/-/tree/feature/awesome".to_string(),
+            can_push: true,
+            commit_sha: "abcdef1234567890".to_string(),
+            commit_message: Some("feat: add cool feature\n\nMore details".to_string()),
+            author_name: Some("Alice Developer".to_string()),
+            author_email: Some("alice@example.com".to_string()),
+            commit_date: Some("2026-10-18T10:00:00Z".to_string()),
+            ahead_behind: Some((3, 1)),
+        };
+
+        let doc = build_branch_document(&branch);
+        assert_eq!(doc.title, "Branch feature/awesome");
+
+        let author_field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Author")
+            .expect("Author field");
+        assert_eq!(author_field.value, "Alice Developer <alice@example.com>");
+
+        let ahead_field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Ahead/Behind")
+            .expect("Ahead/Behind field");
+        assert_eq!(ahead_field.value, "3 ahead, 1 behind");
+
+        let date_field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Date")
+            .expect("Date field");
+        assert!(date_field.value.contains("2026-10-18T10:00:00Z"));
+
+        if let crate::app::InspectorContent::Markdown(ref msg) = doc.content {
+            assert!(msg.contains("feat: add cool feature"));
+            assert!(msg.contains("More details"));
+        } else {
+            panic!("Expected Markdown content for commit message");
         }
     }
 }

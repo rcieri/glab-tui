@@ -1,9 +1,11 @@
+use crate::utils::private_fs;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Serializes tests that mutate process-global environment variables
 /// (config paths, cache dirs). Env vars are visible to every test thread,
@@ -60,6 +62,31 @@ impl Drop for EnvGuard {
     }
 }
 
+/// RAII guard that moves the process into a directory for the duration of a
+/// scope and moves it back on drop, including on panic. The working
+/// directory is process-global like the environment, so hold
+/// `TEST_ENV_MUTEX` (e.g. through `isolate_home()`) while it is changed.
+#[cfg(test)]
+struct CurrentDirGuard {
+    previous: PathBuf,
+}
+
+#[cfg(test)]
+impl CurrentDirGuard {
+    fn enter(dir: &std::path::Path) -> Self {
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.previous);
+    }
+}
+
 #[cfg(test)]
 fn set_or_remove_env(name: &str, value: Option<&str>) {
     // SAFETY: callers hold TEST_ENV_MUTEX, so no other test thread reads or
@@ -69,6 +96,69 @@ fn set_or_remove_env(name: &str, value: Option<&str>) {
             Some(value) => std::env::set_var(name, value),
             None => std::env::remove_var(name),
         }
+    }
+}
+
+/// Holds `TEST_ENV_MUTEX` and points every location variable at a tempdir,
+/// for tests that write the cache or config files.
+#[cfg(test)]
+pub(crate) struct IsolatedHome {
+    _env: EnvGuard,
+    _home: tempfile::TempDir,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+/// Takes `TEST_ENV_MUTEX`, also after a test panicked while holding it, so one
+/// failing test does not fail every later test that takes the lock.
+#[cfg(test)]
+pub(crate) fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+pub(crate) fn isolate_home() -> IsolatedHome {
+    let lock = lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let env = EnvGuard::isolate_home(home.path());
+    IsolatedHome {
+        _env: env,
+        _home: home,
+        _lock: lock,
+    }
+}
+
+#[cfg(test)]
+impl IsolatedHome {
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self._home.path()
+    }
+}
+
+/// An isolated home that is also the working directory.
+#[cfg(test)]
+pub(crate) struct IsolatedConfig {
+    _cwd: CurrentDirGuard,
+    _home: IsolatedHome,
+}
+
+#[cfg(all(test, unix))]
+impl IsolatedConfig {
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self._home.path()
+    }
+}
+
+/// `isolate_home()`, run from inside the temporary home, so `Config::load()`
+/// finds neither the developer's global nor their repo-local config.
+#[cfg(test)]
+pub(crate) fn isolate_config() -> IsolatedConfig {
+    let home = isolate_home();
+    let cwd = CurrentDirGuard::enter(home.path());
+    IsolatedConfig {
+        _cwd: cwd,
+        _home: home,
     }
 }
 
@@ -96,15 +186,26 @@ pub struct Theme {
     // ── Diff ──
     pub diff_addition_fg: Color,
     pub diff_addition_bg: Color,
+    /// Background of the words an added line changed, over `diff_addition_bg`.
+    pub diff_addition_emph_bg: Color,
     pub diff_deletion_fg: Color,
     pub diff_deletion_bg: Color,
+    /// Background of the words a removed line changed, over `diff_deletion_bg`.
+    pub diff_deletion_emph_bg: Color,
     pub diff_gutter_bg: Color,
     pub diff_sep: Color,
+    pub diff_search_bg: Color,
+    pub diff_search_fg: Color,
     // ── Comments ──
     pub comment_bg: Color,
     pub comment_draft_bg: Color,
     // ── Modals ──
     pub modal_border: Color,
+    // ── Forms ──
+    pub accent: Color,
+    pub key_hint: Color,
+    pub danger_border: Color,
+    pub backdrop_dim: Color,
     // ── Pipelines ──
     pub pipeline_success: Color,
     pub pipeline_failed: Color,
@@ -137,6 +238,19 @@ impl IconSet {
             IconSet::Ascii => Icons::ascii(),
         }
     }
+}
+
+/// The `theme_preset` value that follows the terminal's appearance.
+pub const AUTO_THEME_PRESET: &str = "auto";
+const DEFAULT_DARK_THEME: &str = "default";
+const DEFAULT_LIGHT_THEME: &str = "catppuccin-latte";
+
+/// Whether the terminal draws light text on a dark background or the reverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    Dark,
+    Light,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +304,8 @@ pub struct Icons {
     pub runner_paused: String,
     pub runner_offline: String,
     pub highlight_arrow: String,
+    pub sort_asc: String,
+    pub sort_desc: String,
     pub separator: String,
     pub check_on: String,
     pub check_off: String,
@@ -254,6 +370,8 @@ pub struct Icons {
     pub nav_next: String,
     pub comment_bubble: String,
     pub pointer: String,
+    pub todo_unread: String,
+    pub todo_read: String,
 }
 
 impl Icons {
@@ -308,6 +426,8 @@ impl Icons {
             runner_paused: "\u{f46e}".to_string(),
             runner_offline: "\u{f4c3}".to_string(),
             highlight_arrow: "\u{f44a}".to_string(),
+            sort_asc: "\u{2191}".to_string(),
+            sort_desc: "\u{2193}".to_string(),
             separator: "\u{f460}".to_string(),
             check_on: "\u{f4a7}".to_string(),
             check_off: "\u{f51d}".to_string(),
@@ -371,6 +491,8 @@ impl Icons {
             nav_next: "▶".to_string(),
             comment_bubble: "💬".to_string(),
             pointer: "❯".to_string(),
+            todo_unread: "\u{f0e0}".to_string(),
+            todo_read: "\u{f2b6}".to_string(),
         }
     }
 
@@ -427,6 +549,8 @@ impl Icons {
             runner_paused: "=".to_string(),
             runner_offline: ".".to_string(),
             highlight_arrow: ">".to_string(),
+            sort_asc: "^".to_string(),
+            sort_desc: "v".to_string(),
             separator: ">".to_string(),
             check_on: "+".to_string(),
             check_off: "-".to_string(),
@@ -490,6 +614,8 @@ impl Icons {
             nav_next: ">".to_string(),
             comment_bubble: "\"".to_string(),
             pointer: ">".to_string(),
+            todo_unread: "*".to_string(),
+            todo_read: ".".to_string(),
         }
     }
 }
@@ -501,7 +627,10 @@ pub enum SaveMenu {
     Cancel,
 }
 
-pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
+/// Reads a theme color: `#rrggbb` (the `#` is optional), an ANSI color name
+/// (`red`, `light-blue`, `dark-gray`, `reset`, ...) or a palette index
+/// (`0`-`255`). Names and indexes 0-15 draw with the terminal's own palette.
+pub fn parse_color(s: &str) -> Option<Color> {
     let s = s.trim();
     // An empty color string maps to Color::Reset, which lets the terminal's
     // own (possibly transparent) background show through instead of painting
@@ -509,23 +638,41 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
     if s.is_empty() {
         return Some(Color::Reset);
     }
-    let s = s.trim_start_matches('#');
-    if s.len() == 6 {
-        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-        Some(Color::Rgb(r, g, b))
-    } else {
-        None
+    let hex = s.trim_start_matches('#');
+    if hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        return Some(Color::Rgb(r, g, b));
     }
+    s.parse().ok()
 }
 
 fn color_to_hex(c: Color) -> String {
     match c {
         Color::Reset => String::new(),
-        Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
         _ => String::new(),
     }
+}
+
+const DIFF_EMPHASIS_FG_SHARE: f32 = 0.3;
+
+/// Background of the words a diff row changed, derived from the row's colours.
+fn diff_emphasis_bg(row_fg: Color, row_bg: Color) -> Color {
+    blend(row_bg, row_fg, DIFF_EMPHASIS_FG_SHARE)
+}
+
+/// Mixes `share` of `toward` into `base`. Anything but two RGB colours (a
+/// `Reset` background, say) leaves `base` unchanged.
+fn blend(base: Color, toward: Color, share: f32) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(to_r, to_g, to_b)) = (base, toward) else {
+        return base;
+    };
+    let mix = |from: u8, to: u8| {
+        (f32::from(from) + (f32::from(to) - f32::from(from)) * share).round() as u8
+    };
+    Color::Rgb(mix(r, to_r), mix(g, to_g), mix(b, to_b))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -555,13 +702,21 @@ struct ThemeToml {
     #[serde(default)]
     diff_addition_bg: Option<String>,
     #[serde(default)]
+    diff_addition_emph_bg: Option<String>,
+    #[serde(default)]
     diff_deletion_fg: Option<String>,
     #[serde(default)]
     diff_deletion_bg: Option<String>,
     #[serde(default)]
+    diff_deletion_emph_bg: Option<String>,
+    #[serde(default)]
     diff_gutter_bg: Option<String>,
     #[serde(default)]
     diff_sep: Option<String>,
+    #[serde(default)]
+    diff_search_bg: Option<String>,
+    #[serde(default)]
+    diff_search_fg: Option<String>,
     // ── Comments ──
     #[serde(default)]
     comment_bg: Option<String>,
@@ -570,6 +725,15 @@ struct ThemeToml {
     // ── Modals ──
     #[serde(default)]
     modal_border: Option<String>,
+    // ── Forms ──
+    #[serde(default)]
+    accent: Option<String>,
+    #[serde(default)]
+    key_hint: Option<String>,
+    #[serde(default)]
+    danger_border: Option<String>,
+    #[serde(default)]
+    backdrop_dim: Option<String>,
     // ── Pipelines ──
     #[serde(default)]
     pipeline_success: Option<String>,
@@ -611,31 +775,35 @@ struct ThemeToml {
 
 impl ThemeToml {
     fn to_theme(&self) -> Option<Theme> {
-        let bg = hex_to_color(&self.bg)?;
-        let border = hex_to_color(&self.border)?;
-        let border_focused = hex_to_color(&self.border_focused)?;
-        let header_fg = hex_to_color(&self.header_fg)?;
-        let highlight_bg = hex_to_color(&self.highlight_bg)?;
-        let inactive_bg = hex_to_color(&self.inactive_bg)?;
-        let text_normal = hex_to_color(&self.text_normal)?;
-        let text_muted = hex_to_color(&self.text_muted)?;
-        let checked_bg = hex_to_color(&self.checked_bg)?;
-        let green = hex_to_color(&self.green)?;
-        let green_bg = hex_to_color(&self.green_bg)?;
-        let red = hex_to_color(&self.red)?;
-        let red_bg = hex_to_color(&self.red_bg)?;
-        let blue = hex_to_color(&self.blue)?;
-        let blue_bg = hex_to_color(&self.blue_bg)?;
-        let yellow = hex_to_color(&self.yellow)?;
-        let yellow_bg = hex_to_color(&self.yellow_bg)?;
-        let purple = hex_to_color(&self.purple)?;
-        let purple_bg = hex_to_color(&self.purple_bg)?;
+        let bg = parse_color(&self.bg)?;
+        let border = parse_color(&self.border)?;
+        let border_focused = parse_color(&self.border_focused)?;
+        let header_fg = parse_color(&self.header_fg)?;
+        let highlight_bg = parse_color(&self.highlight_bg)?;
+        let inactive_bg = parse_color(&self.inactive_bg)?;
+        let text_normal = parse_color(&self.text_normal)?;
+        let text_muted = parse_color(&self.text_muted)?;
+        let checked_bg = parse_color(&self.checked_bg)?;
+        let green = parse_color(&self.green)?;
+        let green_bg = parse_color(&self.green_bg)?;
+        let red = parse_color(&self.red)?;
+        let red_bg = parse_color(&self.red_bg)?;
+        let blue = parse_color(&self.blue)?;
+        let blue_bg = parse_color(&self.blue_bg)?;
+        let yellow = parse_color(&self.yellow)?;
+        let yellow_bg = parse_color(&self.yellow_bg)?;
+        let purple = parse_color(&self.purple)?;
+        let purple_bg = parse_color(&self.purple_bg)?;
 
         let hex_or = |opt: &Option<String>, fallback: Color| -> Color {
             opt.as_ref()
-                .and_then(|s| hex_to_color(s))
+                .and_then(|s| parse_color(s))
                 .unwrap_or(fallback)
         };
+        let diff_addition_fg = hex_or(&self.diff_addition_fg, green);
+        let diff_addition_bg = hex_or(&self.diff_addition_bg, green_bg);
+        let diff_deletion_fg = hex_or(&self.diff_deletion_fg, red);
+        let diff_deletion_bg = hex_or(&self.diff_deletion_bg, red_bg);
 
         Some(Theme {
             bg,
@@ -657,15 +825,29 @@ impl ThemeToml {
             yellow_bg,
             purple,
             purple_bg,
-            diff_addition_fg: hex_or(&self.diff_addition_fg, green),
-            diff_addition_bg: hex_or(&self.diff_addition_bg, green_bg),
-            diff_deletion_fg: hex_or(&self.diff_deletion_fg, red),
-            diff_deletion_bg: hex_or(&self.diff_deletion_bg, red_bg),
+            diff_addition_fg,
+            diff_addition_bg,
+            diff_addition_emph_bg: hex_or(
+                &self.diff_addition_emph_bg,
+                diff_emphasis_bg(diff_addition_fg, diff_addition_bg),
+            ),
+            diff_deletion_fg,
+            diff_deletion_bg,
+            diff_deletion_emph_bg: hex_or(
+                &self.diff_deletion_emph_bg,
+                diff_emphasis_bg(diff_deletion_fg, diff_deletion_bg),
+            ),
             diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
             diff_sep: hex_or(&self.diff_sep, text_muted),
+            diff_search_bg: hex_or(&self.diff_search_bg, yellow_bg),
+            diff_search_fg: hex_or(&self.diff_search_fg, yellow),
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
             comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
             modal_border: hex_or(&self.modal_border, border_focused),
+            accent: hex_or(&self.accent, purple),
+            key_hint: hex_or(&self.key_hint, yellow),
+            danger_border: hex_or(&self.danger_border, red),
+            backdrop_dim: hex_or(&self.backdrop_dim, text_muted),
             pipeline_success: hex_or(&self.pipeline_success, green),
             pipeline_failed: hex_or(&self.pipeline_failed, red),
             pipeline_running: hex_or(&self.pipeline_running, blue),
@@ -752,6 +934,7 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("pop-dark", include_str!("themes/pop-dark.toml")),
     ("adwaita-dark", include_str!("themes/adwaita-dark.toml")),
     ("adwaita-light", include_str!("themes/adwaita-light.toml")),
+    ("terminal", include_str!("themes/terminal.toml")),
 ];
 
 pub(crate) fn home_dir() -> PathBuf {
@@ -817,11 +1000,18 @@ pub fn use_config_file(file: PathBuf) {
 }
 
 fn config_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("GLAB_TUI_CONFIG") {
-        let mut p = PathBuf::from(path);
-        p.pop();
-        return p;
-    }
+    user_chosen_config_dir().unwrap_or_else(default_config_dir)
+}
+
+/// The parent of a `GLAB_TUI_CONFIG` file: a directory the user picked, whose
+/// mode glab-tui must not change.
+fn user_chosen_config_dir() -> Option<PathBuf> {
+    let mut dir = PathBuf::from(std::env::var("GLAB_TUI_CONFIG").ok()?);
+    dir.pop();
+    Some(dir)
+}
+
+fn default_config_dir() -> PathBuf {
     let xdg_config = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| home_dir().join(".config"));
@@ -834,16 +1024,28 @@ fn themes_dir() -> PathBuf {
     path
 }
 
+/// Where user themes are looked up. Unit tests use the bundled themes only, so
+/// a theme the developer installed cannot change their results.
+#[cfg(not(test))]
+fn user_themes_dir() -> Option<PathBuf> {
+    Some(themes_dir())
+}
+
+#[cfg(test)]
+fn user_themes_dir() -> Option<PathBuf> {
+    None
+}
+
 fn ensure_themes() {
     let dir = themes_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = private_fs::create_dir_all(&dir);
     // Always overwrite bundled themes so users receive fixes and new tokens
     // (e.g. diff_gutter_bg) on upgrade without deleting the themes dir.
     // User-created themes use filenames not present in BUNDLED_THEMES and are
     // never touched here.
     for (name, toml_str) in BUNDLED_THEMES {
-        let theme_path = dir.join(format!("{}.toml", name));
-        let _ = std::fs::write(&theme_path, toml_str);
+        let theme_path = dir.join(format!("{name}.toml"));
+        let _ = private_fs::write(&theme_path, toml_str);
     }
 }
 
@@ -862,9 +1064,13 @@ impl Theme {
     }
 
     pub fn preset(name: &str) -> Option<Self> {
-        // Check user's themes directory first
-        let theme_path = themes_dir().join(format!("{}.toml", name));
-        if theme_path.exists() {
+        Self::preset_from(user_themes_dir().as_deref(), name)
+    }
+
+    /// The preset `name` from `user_themes`, else the bundled one.
+    fn preset_from(user_themes: Option<&std::path::Path>, name: &str) -> Option<Self> {
+        if let Some(dir) = user_themes {
+            let theme_path = dir.join(format!("{name}.toml"));
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
                     if let Some(theme) = tf.to_theme() {
@@ -884,7 +1090,7 @@ impl Theme {
 
 fn apply_color(field: &mut Color, override_val: &Option<String>) {
     if let Some(s) = override_val {
-        if let Some(c) = hex_to_color(s) {
+        if let Some(c) = parse_color(s) {
             *field = c;
         }
     }
@@ -911,17 +1117,40 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
     // ── Diff ──
+    let addition_row = (base.diff_addition_fg, base.diff_addition_bg);
     apply_color(&mut base.diff_addition_fg, &overrides.diff_addition_fg);
     apply_color(&mut base.diff_addition_bg, &overrides.diff_addition_bg);
+    if (base.diff_addition_fg, base.diff_addition_bg) != addition_row {
+        base.diff_addition_emph_bg = diff_emphasis_bg(base.diff_addition_fg, base.diff_addition_bg);
+    }
+    apply_color(
+        &mut base.diff_addition_emph_bg,
+        &overrides.diff_addition_emph_bg,
+    );
+    let deletion_row = (base.diff_deletion_fg, base.diff_deletion_bg);
     apply_color(&mut base.diff_deletion_fg, &overrides.diff_deletion_fg);
     apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
+    if (base.diff_deletion_fg, base.diff_deletion_bg) != deletion_row {
+        base.diff_deletion_emph_bg = diff_emphasis_bg(base.diff_deletion_fg, base.diff_deletion_bg);
+    }
+    apply_color(
+        &mut base.diff_deletion_emph_bg,
+        &overrides.diff_deletion_emph_bg,
+    );
     apply_color(&mut base.diff_gutter_bg, &overrides.diff_gutter_bg);
     apply_color(&mut base.diff_sep, &overrides.diff_sep);
+    apply_color(&mut base.diff_search_bg, &overrides.diff_search_bg);
+    apply_color(&mut base.diff_search_fg, &overrides.diff_search_fg);
     // ── Comments ──
     apply_color(&mut base.comment_bg, &overrides.comment_bg);
     apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
     // ── Modals ──
     apply_color(&mut base.modal_border, &overrides.modal_border);
+    // ── Forms ──
+    apply_color(&mut base.accent, &overrides.accent);
+    apply_color(&mut base.key_hint, &overrides.key_hint);
+    apply_color(&mut base.danger_border, &overrides.danger_border);
+    apply_color(&mut base.backdrop_dim, &overrides.backdrop_dim);
     // ── Pipelines ──
     apply_color(&mut base.pipeline_success, &overrides.pipeline_success);
     apply_color(&mut base.pipeline_failed, &overrides.pipeline_failed);
@@ -969,15 +1198,24 @@ pub struct ThemeOverrides {
     // ── Diff ──
     diff_addition_fg: Option<String>,
     diff_addition_bg: Option<String>,
+    diff_addition_emph_bg: Option<String>,
     diff_deletion_fg: Option<String>,
     diff_deletion_bg: Option<String>,
+    diff_deletion_emph_bg: Option<String>,
     diff_gutter_bg: Option<String>,
     diff_sep: Option<String>,
+    diff_search_bg: Option<String>,
+    diff_search_fg: Option<String>,
     // ── Comments ──
     comment_bg: Option<String>,
     comment_draft_bg: Option<String>,
     // ── Modals ──
     modal_border: Option<String>,
+    // ── Forms ──
+    accent: Option<String>,
+    key_hint: Option<String>,
+    danger_border: Option<String>,
+    backdrop_dim: Option<String>,
     // ── Pipelines ──
     pipeline_success: Option<String>,
     pipeline_failed: Option<String>,
@@ -998,288 +1236,6 @@ pub struct ThemeOverrides {
     label_palette_7: Option<String>,
     label_palette_8: Option<String>,
     label_palette_9: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingGlobal {
-    #[serde(default)]
-    pub quit: String,
-    #[serde(default)]
-    pub help: String,
-    #[serde(default)]
-    pub search: String,
-    #[serde(default)]
-    pub refresh: String,
-    #[serde(default)]
-    pub configure: String,
-    #[serde(default)]
-    pub next_tab: String,
-    #[serde(default)]
-    pub prev_tab: String,
-    #[serde(default)]
-    pub scroll_down: String,
-    #[serde(default)]
-    pub scroll_up: String,
-    #[serde(default = "def_scroll_page_down")]
-    pub scroll_page_down: String,
-    #[serde(default = "def_scroll_page_up")]
-    pub scroll_page_up: String,
-    #[serde(default = "def_scroll_half_page_down")]
-    pub scroll_half_page_down: String,
-    #[serde(default = "def_scroll_half_page_up")]
-    pub scroll_half_page_up: String,
-    #[serde(default = "def_scroll_to_end")]
-    pub scroll_to_end: String,
-    #[serde(default = "def_scroll_top")]
-    pub scroll_top: String,
-    #[serde(default = "def_switch_repo")]
-    pub switch_repo: String,
-    #[serde(default = "def_jump_to_id")]
-    pub jump_to_id: String,
-    #[serde(default = "def_submit_edit")]
-    pub submit_edit: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingIssues {
-    #[serde(default)]
-    pub create_issue: String,
-    #[serde(default)]
-    pub edit_entity: String,
-    #[serde(default)]
-    pub close_entity: String,
-    #[serde(default)]
-    pub reopen_entity: String,
-    #[serde(default = "def_delete_entity")]
-    pub delete_entity: String,
-    #[serde(default)]
-    pub select_issue: String,
-    #[serde(default)]
-    pub create_mr: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_copy_reference")]
-    pub copy_reference: String,
-    #[serde(default)]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-    #[serde(default = "def_drill_into_scope")]
-    pub drill_into_scope: String,
-    #[serde(default = "def_jump_related_mrs")]
-    pub jump_related_mrs: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingMrs {
-    #[serde(default)]
-    pub create_mr: String,
-    #[serde(default)]
-    pub approve_mr: String,
-    #[serde(default = "def_revoke_mr")]
-    pub revoke_mr: String,
-    #[serde(default = "def_rebase_mr")]
-    pub rebase_mr: String,
-    #[serde(default)]
-    pub merge_mr: String,
-    #[serde(default)]
-    pub toggle_draft: String,
-    #[serde(default)]
-    pub view_diff: String,
-    #[serde(default)]
-    pub view_related_pipelines: String,
-    #[serde(default)]
-    pub edit_entity: String,
-    #[serde(default)]
-    pub close_entity: String,
-    #[serde(default)]
-    pub reopen_entity: String,
-    #[serde(default = "def_delete_entity")]
-    pub delete_entity: String,
-    #[serde(default)]
-    pub select_mr: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default)]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-    #[serde(default = "def_drill_into_scope")]
-    pub drill_into_scope: String,
-    #[serde(default = "def_copy_reference")]
-    pub copy_reference: String,
-    /// Open a selector listing the PRs in a stacked GitHub PR, then jump to
-    /// the chosen one. Fetches the stack first when the session lacks it.
-    #[serde(default = "def_view_stack")]
-    pub view_stack: String,
-    #[serde(default = "def_jump_linked_issues")]
-    pub jump_linked_issues: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingPipelines {
-    #[serde(default)]
-    pub trigger_pipeline: String,
-    #[serde(default = "def_run_new")]
-    pub run_new: String,
-    /// Show the selected pipeline's own jobs, skipping the descent into its
-    /// downstream pipelines.
-    #[serde(default = "def_enter_jobs")]
-    pub enter_jobs: String,
-    #[serde(default)]
-    pub retry: String,
-    #[serde(default)]
-    pub cancel: String,
-    #[serde(default)]
-    pub open_workflow: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_copy_sha")]
-    pub copy_sha: String,
-    #[serde(default = "def_select_pipeline")]
-    pub select_pipeline: String,
-    #[serde(default = "def_selection_toggle")]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingReleases {
-    #[serde(default)]
-    pub create_release: String,
-    #[serde(default)]
-    pub edit_release: String,
-    #[serde(default)]
-    pub delete_release: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingMilestones {
-    #[serde(default)]
-    pub create_milestone: String,
-    #[serde(default)]
-    pub edit_milestone: String,
-    #[serde(default)]
-    pub close_milestone: String,
-    #[serde(default)]
-    pub reopen_milestone: String,
-    #[serde(default)]
-    pub delete_milestone: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingJobs {
-    #[serde(default)]
-    pub enter_pipeline: String,
-    #[serde(default)]
-    pub select_job: String,
-    #[serde(default)]
-    pub retry: String,
-    #[serde(default)]
-    pub start_job: String,
-    #[serde(default)]
-    pub select_stage: String,
-    #[serde(default)]
-    pub cancel: String,
-    #[serde(default)]
-    pub download_artifact: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-    #[serde(default)]
-    pub view_trace_editor: String,
-    #[serde(default)]
-    pub view_trace: String,
-    #[serde(default)]
-    pub toggle_trace_wrap: String,
-    #[serde(default)]
-    pub trace_search: String,
-    #[serde(default)]
-    pub toggle_trace_follow: String,
-    #[serde(default = "def_copy_sha")]
-    pub copy_sha: String,
-    #[serde(default = "def_selection_toggle")]
-    pub selection_toggle: String,
-    #[serde(default = "def_select_all")]
-    pub select_all: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingRunners {
-    #[serde(default)]
-    pub pause: String,
-    #[serde(default)]
-    pub resume: String,
-    #[serde(default)]
-    pub edit_description: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingTodos {
-    #[serde(default)]
-    pub mark_as_read: String,
-    #[serde(default)]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingBranches {
-    #[serde(default)]
-    pub create_branch: String,
-    #[serde(default)]
-    pub delete_branch: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-    #[serde(default = "def_copy_branch")]
-    pub copy_branch: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingEnvironments {
-    #[serde(default)]
-    pub view_deployments: String,
-    #[serde(default = "def_open_in_browser")]
-    pub open_in_browser: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingTerminal {
-    #[serde(default)]
-    pub toggle_wrap: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingConfig {
-    #[serde(default)]
-    pub global: KeybindingGlobal,
-    #[serde(default)]
-    pub issues: KeybindingIssues,
-    #[serde(default)]
-    pub mrs: KeybindingMrs,
-    #[serde(default)]
-    pub pipelines: KeybindingPipelines,
-    #[serde(default)]
-    pub releases: KeybindingReleases,
-    #[serde(default)]
-    pub milestones: KeybindingMilestones,
-    #[serde(default)]
-    pub jobs: KeybindingJobs,
-    #[serde(default)]
-    pub runners: KeybindingRunners,
-    #[serde(default)]
-    pub todos: KeybindingTodos,
-    #[serde(default)]
-    pub branches: KeybindingBranches,
-    #[serde(default)]
-    pub environments: KeybindingEnvironments,
-    #[serde(default)]
-    pub terminal: KeybindingTerminal,
 }
 
 /// A user-defined shell command bound to a key, in the gh-dash shape.
@@ -1310,305 +1266,13 @@ pub struct CustomKeybindingConfig {
     pub mrs: Vec<CustomKeybinding>,
     /// Run from the MR/PR diff view, with the file and line under the cursor.
     pub diff: Vec<CustomKeybinding>,
+    pub pipelines: Vec<CustomKeybinding>,
+    /// Run from the Jobs tab, with the highlighted job or every selected one.
+    pub jobs: Vec<CustomKeybinding>,
+    pub branches: Vec<CustomKeybinding>,
     /// Panes that take no custom keybindings, kept only to report them.
     #[serde(flatten, skip_serializing)]
     pub unsupported_panes: std::collections::BTreeMap<String, toml::Value>,
-}
-
-macro_rules! keybind_defaults {
-    ( $( $name:ident = $val:expr ),+ $(,)? ) => {
-        $(
-            fn $name() -> String { $val.to_string() }
-        )+
-    };
-}
-
-keybind_defaults! {
-    def_quit = "q",
-    def_help = "?",
-    def_search = "/",
-    def_refresh = "Ctrl+r",
-    def_configure = "Tab",
-    def_next_tab = "l",
-    def_prev_tab = "h",
-    def_scroll_down = "J",
-    def_scroll_up = "K",
-    def_scroll_page_down = "PageDown",
-    def_scroll_page_up = "PageUp",
-    def_scroll_half_page_down = "Ctrl+d",
-    def_scroll_half_page_up = "Ctrl+u",
-    def_scroll_to_end = "End",
-    def_scroll_top = "Home",
-    def_create_issue = "n",
-    def_select_issue = "Space",
-    def_create_mr_issue = "m",
-    def_copy_reference = "y",
-    def_edit_entity = "e",
-    def_close_entity = "c",
-    def_reopen_entity = "r",
-    def_delete_entity = "d",
-    def_create_mr = "n",
-    def_select_mr = "Space",
-    def_selection_toggle = "v",
-    def_select_all = "Ctrl+a",
-    def_approve_mr = "a",
-    def_revoke_mr = "A",
-    def_rebase_mr = "R",
-    def_merge_mr = "m",
-    def_toggle_draft = "s",
-    def_view_diff = "D",
-    def_view_related_pipelines = "P",
-    def_view_stack = "Y",
-    def_jump_related_mrs = "M",
-    def_jump_linked_issues = "I",
-    def_trigger_pipeline = "p",
-    def_select_pipeline = "Space",
-    def_retry = "r",
-    def_cancel = "d",
-    def_open_workflow = "W",
-    def_create_release = "n",
-    def_edit_release = "e",
-    def_delete_release = "d",
-    def_create_milestone = "n",
-    def_edit_milestone = "e",
-    def_close_milestone = "c",
-    def_reopen_milestone = "r",
-    def_delete_milestone = "d",
-    def_open_in_browser = "o",
-    def_run_new = "n",
-    def_enter_pipeline = "p",
-    def_enter_jobs = "Alt+j",
-    def_select_job = "Space",
-    def_retry_job = "r",
-    def_start_job = "S",
-    def_select_stage = "s",
-    def_cancel_job = "c",
-    def_download_artifact_job = "d",
-    def_open_in_browser_job = "o",
-    def_view_trace_editor = "e",
-    def_view_trace = "Enter",
-    def_toggle_trace_wrap = "w",
-    def_trace_search = "/",
-    def_toggle_trace_follow = "f",
-    def_pause_runner = "p",
-    def_resume_runner = "r",
-    def_edit_description = "e",
-    def_mark_as_read = "Enter",
-    def_open_in_browser_todo = "o",
-    def_create_branch = "n",
-    def_delete_branch = "d",
-    def_view_deployments = "Enter",
-    def_toggle_terminal_wrap = "w",
-    def_drill_into_scope = "G",
-    def_switch_repo = "Ctrl+s",
-    def_jump_to_id = "g",
-    def_submit_edit = "Ctrl+x",
-    def_copy_branch = "y",
-    def_copy_sha = "y",
-}
-
-impl Default for KeybindingGlobal {
-    fn default() -> Self {
-        Self {
-            quit: def_quit(),
-            help: def_help(),
-            search: def_search(),
-            refresh: def_refresh(),
-            configure: def_configure(),
-            next_tab: def_next_tab(),
-            prev_tab: def_prev_tab(),
-            scroll_down: def_scroll_down(),
-            scroll_up: def_scroll_up(),
-            scroll_page_down: def_scroll_page_down(),
-            scroll_page_up: def_scroll_page_up(),
-            scroll_half_page_down: def_scroll_half_page_down(),
-            scroll_half_page_up: def_scroll_half_page_up(),
-            scroll_to_end: def_scroll_to_end(),
-            scroll_top: def_scroll_top(),
-            switch_repo: def_switch_repo(),
-            jump_to_id: def_jump_to_id(),
-            submit_edit: def_submit_edit(),
-        }
-    }
-}
-
-impl Default for KeybindingIssues {
-    fn default() -> Self {
-        Self {
-            create_issue: def_create_issue(),
-            edit_entity: def_edit_entity(),
-            close_entity: def_close_entity(),
-            reopen_entity: def_reopen_entity(),
-            delete_entity: def_delete_entity(),
-            select_issue: def_select_issue(),
-            create_mr: def_create_mr_issue(),
-            open_in_browser: def_open_in_browser(),
-            copy_reference: def_copy_reference(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-            drill_into_scope: def_drill_into_scope(),
-            jump_related_mrs: def_jump_related_mrs(),
-        }
-    }
-}
-
-impl Default for KeybindingMrs {
-    fn default() -> Self {
-        Self {
-            create_mr: def_create_mr(),
-            approve_mr: def_approve_mr(),
-            revoke_mr: def_revoke_mr(),
-            rebase_mr: def_rebase_mr(),
-            merge_mr: def_merge_mr(),
-            toggle_draft: def_toggle_draft(),
-            view_diff: def_view_diff(),
-            view_related_pipelines: def_view_related_pipelines(),
-            edit_entity: def_edit_entity(),
-            close_entity: def_close_entity(),
-            reopen_entity: def_reopen_entity(),
-            delete_entity: def_delete_entity(),
-            select_mr: def_select_mr(),
-            open_in_browser: def_open_in_browser(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-            drill_into_scope: def_drill_into_scope(),
-            copy_reference: def_copy_reference(),
-            view_stack: def_view_stack(),
-            jump_linked_issues: def_jump_linked_issues(),
-        }
-    }
-}
-
-impl Default for KeybindingPipelines {
-    fn default() -> Self {
-        Self {
-            trigger_pipeline: def_trigger_pipeline(),
-            run_new: def_run_new(),
-            enter_jobs: def_enter_jobs(),
-            retry: def_retry(),
-            cancel: def_cancel(),
-            open_workflow: def_open_workflow(),
-            open_in_browser: def_open_in_browser(),
-            copy_sha: def_copy_sha(),
-            select_pipeline: def_select_pipeline(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-        }
-    }
-}
-
-impl Default for KeybindingReleases {
-    fn default() -> Self {
-        Self {
-            create_release: def_create_release(),
-            edit_release: def_edit_release(),
-            delete_release: def_delete_release(),
-            open_in_browser: def_open_in_browser(),
-        }
-    }
-}
-
-impl Default for KeybindingMilestones {
-    fn default() -> Self {
-        Self {
-            create_milestone: def_create_milestone(),
-            edit_milestone: def_edit_milestone(),
-            close_milestone: def_close_milestone(),
-            reopen_milestone: def_reopen_milestone(),
-            delete_milestone: def_delete_milestone(),
-            open_in_browser: def_open_in_browser(),
-        }
-    }
-}
-
-impl Default for KeybindingJobs {
-    fn default() -> Self {
-        Self {
-            enter_pipeline: def_enter_pipeline(),
-            select_job: def_select_job(),
-            retry: def_retry_job(),
-            start_job: def_start_job(),
-            select_stage: def_select_stage(),
-            cancel: def_cancel_job(),
-            download_artifact: def_download_artifact_job(),
-            open_in_browser: def_open_in_browser_job(),
-            view_trace_editor: def_view_trace_editor(),
-            view_trace: def_view_trace(),
-            toggle_trace_wrap: def_toggle_trace_wrap(),
-            trace_search: def_trace_search(),
-            toggle_trace_follow: def_toggle_trace_follow(),
-            copy_sha: def_copy_sha(),
-            selection_toggle: def_selection_toggle(),
-            select_all: def_select_all(),
-        }
-    }
-}
-
-impl Default for KeybindingRunners {
-    fn default() -> Self {
-        Self {
-            pause: def_pause_runner(),
-            resume: def_resume_runner(),
-            edit_description: def_edit_description(),
-            open_in_browser: def_open_in_browser(),
-        }
-    }
-}
-
-impl Default for KeybindingTodos {
-    fn default() -> Self {
-        Self {
-            mark_as_read: def_mark_as_read(),
-            open_in_browser: def_open_in_browser_todo(),
-        }
-    }
-}
-
-impl Default for KeybindingBranches {
-    fn default() -> Self {
-        Self {
-            create_branch: def_create_branch(),
-            delete_branch: def_delete_branch(),
-            open_in_browser: def_open_in_browser(),
-            copy_branch: def_copy_branch(),
-        }
-    }
-}
-
-impl Default for KeybindingEnvironments {
-    fn default() -> Self {
-        Self {
-            view_deployments: def_view_deployments(),
-            open_in_browser: def_open_in_browser(),
-        }
-    }
-}
-
-impl Default for KeybindingTerminal {
-    fn default() -> Self {
-        Self {
-            toggle_wrap: def_toggle_terminal_wrap(),
-        }
-    }
-}
-
-impl Default for KeybindingConfig {
-    fn default() -> Self {
-        Self {
-            global: KeybindingGlobal::default(),
-            issues: KeybindingIssues::default(),
-            mrs: KeybindingMrs::default(),
-            pipelines: KeybindingPipelines::default(),
-            releases: KeybindingReleases::default(),
-            milestones: KeybindingMilestones::default(),
-            jobs: KeybindingJobs::default(),
-            runners: KeybindingRunners::default(),
-            todos: KeybindingTodos::default(),
-            branches: KeybindingBranches::default(),
-            environments: KeybindingEnvironments::default(),
-            terminal: KeybindingTerminal::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1657,6 +1321,10 @@ fn def_sync_viewed_files() -> bool {
     true
 }
 
+fn def_command_timeout_seconds() -> u64 {
+    120
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1679,18 +1347,26 @@ impl Default for UiConfig {
 #[serde(default)]
 pub struct Config {
     pub backend: Option<crate::backend::BackendKind>,
+    /// A preset name, or `auto` to pick `theme_dark` or `theme_light` from
+    /// the terminal's appearance.
     pub theme_preset: Option<String>,
+    /// Forces the appearance `auto` resolves to. Unset, the terminal is asked
+    /// for its background color at startup.
+    pub appearance: Option<Appearance>,
+    pub theme_dark: String,
+    pub theme_light: String,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
-    pub keybindings: KeybindingConfig,
+    pub keybindings: crate::keymap::Keymap,
     pub custom_keybindings: CustomKeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
     #[serde(default = "def_api_per_page")]
     pub api_per_page: usize,
-    /// How long a captured first keypress of a two-character sequence stays
-    /// pending before the timeout fires and the prefix is dispatched as a
-    /// single keypress.
+    /// How long keys typed towards a longer key sequence wait for the next
+    /// key. Each key restarts it. When it runs out, a single waiting key is
+    /// handled as typed, a binding the typed keys complete fires, and
+    /// anything else is dropped.
     #[serde(default = "def_keybinding_timeout_ms")]
     pub keybinding_timeout_ms: u64,
     /// Use real label colors from `label list` when available; otherwise use
@@ -1705,6 +1381,10 @@ pub struct Config {
     /// "Viewed" checkboxes. No effect on GitLab, which has no such API.
     #[serde(default = "def_sync_viewed_files")]
     pub sync_viewed_files: bool,
+    /// How long one `gh`/`glab` call may run before it is killed and reported
+    /// as an error. Zero is read as one second.
+    #[serde(default = "def_command_timeout_seconds")]
+    pub command_timeout_seconds: u64,
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
@@ -1727,9 +1407,12 @@ impl Default for Config {
         Self {
             backend: None,
             theme_preset: Some("default".to_string()),
+            appearance: None,
+            theme_dark: DEFAULT_DARK_THEME.to_string(),
+            theme_light: DEFAULT_LIGHT_THEME.to_string(),
             active_tab: None,
             theme: ThemeOverrides::default(),
-            keybindings: KeybindingConfig::default(),
+            keybindings: crate::keymap::Keymap::default(),
             custom_keybindings: CustomKeybindingConfig::default(),
             page_size: def_page_size(),
             api_per_page: def_api_per_page(),
@@ -1737,6 +1420,7 @@ impl Default for Config {
             fetch_label_colors: def_fetch_label_colors(),
             prefetch_tabs: def_prefetch_tabs(),
             sync_viewed_files: def_sync_viewed_files(),
+            command_timeout_seconds: def_command_timeout_seconds(),
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
@@ -1760,8 +1444,17 @@ impl Config {
         if let Some(file) = CONFIG_FILE_OVERRIDE.get() {
             return file.clone();
         }
-        let mut path = config_dir();
-        let _ = std::fs::create_dir_all(&path);
+        let mut path = match user_chosen_config_dir() {
+            Some(dir) => {
+                let _ = private_fs::create_dir_all(&dir);
+                dir
+            }
+            None => {
+                let dir = default_config_dir();
+                let _ = private_fs::create_owned_dir(&dir);
+                dir
+            }
+        };
         path.push("config.toml");
         path
     }
@@ -1769,6 +1462,10 @@ impl Config {
     /// Per-request page size, clamped to GitLab's accepted `per_page` range.
     pub fn api_per_page_clamped(&self) -> usize {
         self.api_per_page.clamp(1, 100)
+    }
+
+    pub fn command_timeout(&self) -> Duration {
+        Duration::from_secs(self.command_timeout_seconds.max(1))
     }
 
     fn generate_default_toml() -> String {
@@ -1780,8 +1477,16 @@ impl Config {
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
 # "oled", "github-dark-hc",
 # "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
-# "rose-pine", "rose-pine-moon", "rose-pine-dawn"
+# "rose-pine", "rose-pine-moon", "rose-pine-dawn",
+# "terminal" (follows the terminal's own ANSI palette),
+# "auto" (theme_dark or theme_light, by the terminal's background)
 theme_preset = "default"
+
+# Presets "auto" picks. The terminal is asked for its background color at
+# startup. Set appearance to "dark" or "light" to skip asking.
+# theme_dark = "default"
+# theme_light = "catppuccin-latte"
+# appearance = "dark"
 
 # Tab to open on launch. Valid values: issues, mrs, pr, pipelines, runners, releases,
 # todos, milestones, branches, environments, terminal. Case-insensitive.
@@ -1805,12 +1510,15 @@ page_size = 100
 # checkboxes. Visible on your GitHub account; no effect on GitLab.
 # sync_viewed_files = true
 
+# Seconds one gh/glab call may run before it is killed and shown as an error.
+# command_timeout_seconds = 120
+
 # Icon glyphs: "nerd" needs a Nerd Font (https://www.nerdfonts.com) in the terminal.
 # Use "ascii" when boxes and columns are misaligned because no Nerd Font is installed.
 # icons = "nerd"
 
-# How long a captured first keypress of a two-character key sequence stays
-# pending before the prefix is dispatched as a single keypress.
+# How long keys typed towards a longer key sequence (e.g. the `g` of `gg`)
+# wait for the next key. When it runs out, the binding they complete fires.
 # keybinding_timeout_ms = 1000
 
 # Per-color overrides (takes precedence over theme_preset).
@@ -1836,109 +1544,6 @@ page_size = 100
 # purple = "{purple}"
 # purple_bg = "{purple_bg}"
 
-[keybindings.global]
-quit = "q"
-help = "?"
-search = "/"
-refresh = "Ctrl+r"
-configure = "Tab"
-next_tab = "l"
-prev_tab = "h"
-scroll_down = "J"
-scroll_up = "K"
-scroll_page_down = "PageDown"
-scroll_page_up = "PageUp"
-scroll_half_page_down = "Ctrl+d"
-scroll_half_page_up = "Ctrl+u"
-scroll_to_end = "End"
-scroll_top = "Home"
-jump_to_id = "g"
-
-[keybindings.issues]
-create_issue = "n"
-select_issue = "Space"
-create_mr = "m"
-edit_entity = "e"
-close_entity = "c"
-reopen_entity = "r"
-delete_entity = "d"
-selection_toggle = "v"
-jump_related_mrs = "M"
-
-[keybindings.mrs]
-create_mr = "n"
-select_mr = "Space"
-approve_mr = "a"
-revoke_mr = "A"
-rebase_mr = "R"
-merge_mr = "m"
-toggle_draft = "s"
-view_diff = "D"
-view_related_pipelines = "P"
-edit_entity = "e"
-close_entity = "c"
-reopen_entity = "r"
-delete_entity = "d"
-selection_toggle = "v"
-jump_linked_issues = "I"
-
-[keybindings.pipelines]
-trigger_pipeline = "p"
-enter_jobs = "Alt+j"
-select_pipeline = "Space"
-retry = "r"
-cancel = "d"
-open_workflow = "W"
-selection_toggle = "v"
-
-[keybindings.releases]
-create_release = "n"
-edit_release = "e"
-delete_release = "d"
-open_in_browser = "o"
-
-[keybindings.milestones]
-create_milestone = "n"
-edit_milestone = "e"
-close_milestone = "c"
-reopen_milestone = "r"
-delete_milestone = "d"
-open_in_browser = "o"
-
-[keybindings.jobs]
-enter_pipeline = "p"
-select_job = "Space"
-retry = "r"
-start_job = "S"
-select_stage = "s"
-cancel = "c"
-download_artifact = "d"
-open_in_browser = "o"
-view_trace_editor = "e"
-view_trace = "Enter"
-toggle_trace_wrap = "w"
-trace_search = "/"
-toggle_trace_follow = "f"
-selection_toggle = "v"
-
-[keybindings.runners]
-pause = "p"
-resume = "r"
-edit_description = "e"
-
-[keybindings.todos]
-mark_as_read = "Enter"
-open_in_browser = "o"
-
-[keybindings.branches]
-create_branch = "n"
-delete_branch = "d"
-
-[keybindings.environments]
-view_deployments = "Enter"
-
-[keybindings.terminal]
-toggle_wrap = "w"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:
@@ -1959,6 +1564,9 @@ toggle_wrap = "w"
 # `prs` is accepted for `mrs`). Template arguments per table:
 #   mrs:       RepoName RepoPath PrNumber HeadRefName BaseRefName Author
 #   issues:    RepoName RepoPath IssueNumber IssueTitle Author
+#   pipelines: RepoName RepoPath PipelineId Ref Sha
+#   jobs:      RepoName RepoPath JobId JobName Stage Status
+#   branches:  RepoName RepoPath BranchName CommitSha
 #   universal: RepoName RepoPath
 #   diff:      mrs arguments + FilePath LineNumber (the line under the diff cursor)
 # Each is also exported as GLAB_TUI_<NAME>, e.g. GLAB_TUI_PR_NUMBER.
@@ -2039,7 +1647,7 @@ toggle_wrap = "w"
         match Config::deserialize(merged_value) {
             Ok(cfg) => cfg,
             Err(e) => {
-                eprintln!("Error deserializing merged config: {}. Using defaults.", e);
+                eprintln!("Error deserializing merged config: {e}. Using defaults.");
                 Config::default()
             }
         }
@@ -2049,37 +1657,80 @@ toggle_wrap = "w"
         let path = Self::config_path();
         match toml::to_string(self) {
             Ok(toml_str) => {
-                let _ = std::fs::write(&path, &toml_str);
+                let _ = private_fs::write(&path, &toml_str);
             }
             Err(e) => {
-                eprintln!("Error serializing config: {}", e);
+                eprintln!("Error serializing config: {e}");
             }
         }
     }
 
-    pub fn resolve_theme(&self) -> Theme {
-        let mut theme = if let Some(ref preset) = self.theme_preset {
-            Theme::preset(preset).unwrap_or_else(Theme::default)
-        } else {
-            Theme::default()
-        };
+    /// The theme `theme_preset` and the `[theme]` overrides resolve to.
+    pub fn resolve_theme(&self, terminal_appearance: Option<Appearance>) -> Theme {
+        self.resolve_theme_with_preset(self.theme_preset.as_deref(), terminal_appearance)
+    }
+
+    /// `resolve_theme` as if `theme_preset` were `preset`.
+    pub fn resolve_theme_with_preset(
+        &self,
+        preset: Option<&str>,
+        terminal_appearance: Option<Appearance>,
+    ) -> Theme {
+        let mut theme = preset
+            .and_then(|preset| Theme::preset(self.concrete_preset(preset, terminal_appearance)))
+            .unwrap_or_default();
         apply_overrides(&mut theme, &self.theme);
         theme
     }
+
+    fn concrete_preset<'a>(
+        &'a self,
+        preset: &'a str,
+        terminal_appearance: Option<Appearance>,
+    ) -> &'a str {
+        if preset != AUTO_THEME_PRESET {
+            return preset;
+        }
+        match self.appearance.or(terminal_appearance) {
+            Some(Appearance::Light) => &self.theme_light,
+            Some(Appearance::Dark) | None => &self.theme_dark,
+        }
+    }
+
+    /// Whether the theme depends on the appearance the terminal reports.
+    pub fn follows_terminal_appearance(&self) -> bool {
+        self.appearance.is_none() && self.theme_preset.as_deref() == Some(AUTO_THEME_PRESET)
+    }
 }
 
-pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
-pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().icons.icons()));
+static COMMAND_TIMEOUT_SECONDS: Lazy<AtomicU64> =
+    Lazy::new(|| AtomicU64::new(initial_command_timeout().as_secs()));
+
+#[cfg(not(test))]
+fn initial_command_timeout() -> Duration {
+    Config::load().command_timeout()
+}
+
+/// Unit tests start from the default timeout, so the first test that runs a
+/// subprocess does not read the developer's config files.
+#[cfg(test)]
+fn initial_command_timeout() -> Duration {
+    Config::default().command_timeout()
+}
+
+/// The `command_timeout_seconds` every `gh`/`glab` subprocess runs under.
+pub fn command_timeout() -> Duration {
+    Duration::from_secs(COMMAND_TIMEOUT_SECONDS.load(Ordering::Relaxed))
+}
 
 pub fn all_theme_presets() -> Vec<String> {
-    let mut presets: Vec<String> = BUNDLED_THEMES
-        .iter()
-        .map(|(name, _)| name.to_string())
+    let mut presets: Vec<String> = std::iter::once(AUTO_THEME_PRESET)
+        .chain(BUNDLED_THEMES.iter().map(|(name, _)| *name))
+        .map(str::to_string)
         .collect();
 
     // Scan user themes directory for additional .toml files
-    let dir = themes_dir();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    if let Some(entries) = user_themes_dir().and_then(|dir| std::fs::read_dir(dir).ok()) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "toml") {
@@ -2141,7 +1792,7 @@ impl Config {
             SaveMenu::Local => {
                 if let Some(root) = find_git_root() {
                     let repo_config_dir = root.join(".glab-tui");
-                    let _ = std::fs::create_dir_all(&repo_config_dir);
+                    let _ = private_fs::create_dir_all(&repo_config_dir);
                     repo_config_dir.join("config.toml")
                 } else {
                     actual_target = SaveMenu::Global;
@@ -2262,7 +1913,7 @@ impl Config {
         ] {
             if pane != base_pane {
                 let val = pane_to_value(pane);
-                if val.as_table().map_or(false, |t| !t.is_empty()) {
+                if val.as_table().is_some_and(|t| !t.is_empty()) {
                     table.insert(tab_name.to_string(), val);
                 } else {
                     table.remove(*tab_name);
@@ -2273,35 +1924,71 @@ impl Config {
         }
 
         let toml_str = toml::to_string_pretty(&merged_value)?;
-        std::fs::write(&target_path, &toml_str)?;
+        private_fs::write(&target_path, &toml_str)?;
 
         Ok(())
     }
 }
 
-pub fn reload_theme() {
-    if let Ok(mut theme) = THEME.write() {
-        *theme = Config::load().resolve_theme();
-    }
-}
-
-pub fn reload_icons() {
-    if let Ok(mut icons) = ICONS.write() {
-        *icons = Config::load().icons.icons();
-    }
-}
-
-pub fn set_theme_preset(name: &str) {
-    if let Some(preset) = Theme::preset(name) {
-        if let Ok(mut theme) = THEME.write() {
-            *theme = preset;
-        }
-    }
+pub fn reload_command_timeout() {
+    COMMAND_TIMEOUT_SECONDS.store(
+        Config::load().command_timeout().as_secs(),
+        Ordering::Relaxed,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bundled_theme(name: &str) -> &'static str {
+        BUNDLED_THEMES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, toml)| *toml)
+            .unwrap()
+    }
+
+    /// The bundled `default` theme with its `bg` replaced.
+    fn user_default_with_bg(bg: &str) -> String {
+        let mut theme = String::new();
+        for line in bundled_theme("default").lines() {
+            if line.starts_with("bg = ") {
+                theme.push_str(&format!("bg = \"{bg}\"\n"));
+            } else {
+                theme.push_str(line);
+                theme.push('\n');
+            }
+        }
+        theme
+    }
+
+    #[test]
+    fn presets_ignore_the_user_themes_dir() {
+        let _home = isolate_home();
+        let themes = themes_dir();
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(themes.join("default.toml"), user_default_with_bg("#010203")).unwrap();
+        std::fs::write(themes.join("mine.toml"), bundled_theme("default")).unwrap();
+
+        assert_eq!(Theme::preset("default"), Some(Theme::default()));
+        assert!(!all_theme_presets().contains(&"mine".to_string()));
+    }
+
+    #[test]
+    fn current_dir_guard_restores_the_directory_after_a_panic() {
+        let _home = isolate_home();
+        let original = std::env::current_dir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            let _dir = CurrentDirGuard::enter(elsewhere.path());
+            panic!("test body failed");
+        });
+
+        assert!(result.is_err());
+        assert_eq!(std::env::current_dir().unwrap(), original);
+    }
 
     #[test]
     fn ascii_icon_set_uses_only_single_width_ascii() {
@@ -2314,9 +2001,9 @@ mod tests {
 
     #[test]
     fn empty_color_string_maps_to_reset() {
-        assert_eq!(hex_to_color(""), Some(Color::Reset));
-        assert_eq!(hex_to_color("   "), Some(Color::Reset));
-        assert_eq!(hex_to_color("\t\n"), Some(Color::Reset));
+        assert_eq!(parse_color(""), Some(Color::Reset));
+        assert_eq!(parse_color("   "), Some(Color::Reset));
+        assert_eq!(parse_color("\t\n"), Some(Color::Reset));
     }
 
     #[test]
@@ -2326,10 +2013,10 @@ mod tests {
 
     #[test]
     fn empty_color_round_trips_through_hex() {
-        let parsed = hex_to_color("").expect("empty string must parse");
+        let parsed = parse_color("").expect("empty string must parse");
         assert_eq!(parsed, Color::Reset);
         assert_eq!(color_to_hex(parsed), "");
-        assert_eq!(hex_to_color(&color_to_hex(parsed)), Some(Color::Reset));
+        assert_eq!(parse_color(&color_to_hex(parsed)), Some(Color::Reset));
     }
 
     #[test]
@@ -2342,9 +2029,10 @@ mod tests {
 
     #[test]
     fn api_per_page_clamped_bounds_to_gitlab_range() {
-        let mut cfg = Config::default();
-
-        cfg.api_per_page = 0;
+        let mut cfg = Config {
+            api_per_page: 0,
+            ..Config::default()
+        };
         assert_eq!(cfg.api_per_page_clamped(), 1);
 
         cfg.api_per_page = 250;
@@ -2377,44 +2065,16 @@ page_size = 250
 
     #[test]
     fn test_config_load_override() {
-        let _guard = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let conf_dir = temp_dir.path().join("glab-tui");
-        std::fs::create_dir_all(&conf_dir).unwrap();
+        let _config = isolate_config();
         std::fs::write(
-            conf_dir.join("config.toml"),
+            Config::config_path(),
             "page_size = 250\napi_per_page = 20\n",
         )
         .unwrap();
 
-        let old_xdg = std::env::var("XDG_CONFIG_HOME");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        }
         let cfg = Config::load();
-        if let Ok(old) = old_xdg {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
         assert_eq!(cfg.page_size, 250);
         assert_eq!(cfg.api_per_page, 20);
-    }
-
-    #[test]
-    fn revoke_mr_defaults_to_shift_a() {
-        let cfg = Config::default();
-        assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");
-    }
-
-    #[test]
-    fn rebase_mr_defaults_to_shift_r() {
-        let cfg = Config::default();
-        assert_eq!(cfg.keybindings.mrs.rebase_mr, "R");
     }
 
     #[test]
@@ -2438,69 +2098,12 @@ page_size = 250
     }
 
     #[test]
-    fn copy_issue_reference_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.issues.copy_reference, "y");
-    }
-
-    #[test]
-    fn copy_mr_reference_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.mrs.copy_reference, "y");
-    }
-
-    #[test]
-    fn view_stack_defaults_to_y() {
-        // Reusing `Y` (capital) keeps `y` free for `copy_reference`. The
-        // mnemonic is `Y` → "stacK" or "stack list"; users can rebind.
-        assert_eq!(Config::default().keybindings.mrs.view_stack, "Y");
-    }
-
-    #[test]
-    fn copy_sha_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.pipelines.copy_sha, "y");
-        assert_eq!(Config::default().keybindings.jobs.copy_sha, "y");
-    }
-
-    #[test]
-    fn copy_branch_defaults_to_y() {
-        assert_eq!(Config::default().keybindings.branches.copy_branch, "y");
-    }
-
-    #[test]
-    fn page_scroll_defaults_to_pager_keys() {
-        let global = Config::default().keybindings.global;
-        assert_eq!(global.scroll_page_down, "PageDown");
-        assert_eq!(global.scroll_page_up, "PageUp");
-        assert_eq!(global.scroll_half_page_down, "Ctrl+d");
-        assert_eq!(global.scroll_half_page_up, "Ctrl+u");
-    }
-
-    #[test]
-    fn mr_keybindings_do_not_collide() {
-        let cfg = Config::default();
-
-        // Enumerate fields via the struct's own `Serialize` impl instead of a
-        // hand-maintained array: a manually listed array silently excludes
-        // whatever field the author forgot to add (this happened once
-        // already -- `select_mr` was missing), so a newly added
-        // `KeybindingMrs` field is picked up automatically here with no
-        // extra step required.
-        let value = serde_json::to_value(&cfg.keybindings.mrs).expect("serialize KeybindingMrs");
-        let fields = value
-            .as_object()
-            .expect("KeybindingMrs serializes to a JSON object");
-        assert!(!fields.is_empty(), "KeybindingMrs serialized to no fields");
-
-        let mut seen: HashMap<&str, &str> = HashMap::new();
-        for (field, binding) in fields {
-            let binding = binding
-                .as_str()
-                .expect("every KeybindingMrs field is a string");
-            if let Some(other_field) = seen.insert(binding, field) {
-                panic!(
-                    "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
-                );
-            }
-        }
+    fn default_config_is_what_loading_without_config_files_yields() {
+        let from_default_toml: Config = toml::from_str(&Config::generate_default_toml()).unwrap();
+        assert_eq!(
+            toml::Value::try_from(Config::default()).unwrap(),
+            toml::Value::try_from(from_default_toml).unwrap(),
+        );
     }
 
     #[test]
@@ -2515,33 +2118,31 @@ page_size = 250
 
     #[test]
     fn test_preset_falls_back_to_bundled_when_user_theme_is_invalid() {
-        let _guard = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let themes_dir = temp_dir.path().join("glab-tui").join("themes");
-        std::fs::create_dir_all(&themes_dir).unwrap();
+        let themes_dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            themes_dir.join("default.toml"),
+            themes_dir.path().join("default.toml"),
             "bg = \"\"\ninactive_bg = \"\"\n",
         )
         .unwrap();
 
-        let old_xdg = std::env::var("XDG_CONFIG_HOME");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        }
-        let preset = Theme::preset("default");
-        if let Ok(old) = old_xdg {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
+        let preset = Theme::preset_from(Some(themes_dir.path()), "default");
 
         let theme = preset.expect("invalid user override must fall back to bundled theme");
         assert_eq!(theme, Theme::default());
+    }
+
+    #[test]
+    fn preset_prefers_a_valid_user_theme_over_the_bundled_one() {
+        let themes_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            themes_dir.path().join("default.toml"),
+            user_default_with_bg("#010203"),
+        )
+        .unwrap();
+
+        let theme = Theme::preset_from(Some(themes_dir.path()), "default").unwrap();
+
+        assert_eq!(theme.bg, Color::Rgb(1, 2, 3));
     }
 
     #[test]
@@ -2563,7 +2164,7 @@ page_size = 250
 
     #[test]
     fn test_home_dir_resolution() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let _lock = lock_test_env();
         let temp_dir = tempfile::tempdir().unwrap();
         let guard = EnvGuard::isolate_home(temp_dir.path());
 
@@ -2633,12 +2234,12 @@ page_size = 250
 
     #[test]
     fn test_save_layout_persists_prefetch_tabs() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let guard = EnvGuard::isolate_home(temp_dir.path());
+        let _config = isolate_config();
 
-        let mut config = Config::default();
-        config.prefetch_tabs = true;
+        let mut config = Config {
+            prefetch_tabs: true,
+            ..Config::default()
+        };
         config.save_layout(SaveMenu::Global).unwrap();
 
         let loaded = Config::load();
@@ -2649,8 +2250,56 @@ page_size = 250
 
         let reloaded = Config::load();
         assert!(!reloaded.prefetch_tabs);
+    }
 
-        drop(guard);
+    #[cfg(unix)]
+    #[test]
+    fn config_dir_and_files_are_owner_only() {
+        use crate::utils::private_fs::mode_of;
+        let config = isolate_config();
+
+        Config::load();
+        Config::default().save_layout(SaveMenu::Global).unwrap();
+
+        let config_dir = config.path().join(".config").join("glab-tui");
+        assert_eq!(mode_of(&config_dir), 0o700);
+        assert_eq!(mode_of(&config_dir.join("config.toml")), 0o600);
+        assert_eq!(mode_of(&config_dir.join("themes")), 0o700);
+        assert_eq!(
+            mode_of(&config_dir.join("themes").join("default.toml")),
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_dir_left_world_readable_is_tightened_on_load() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let config = isolate_config();
+        let config_dir = config.path().join(".config").join("glab-tui");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        Config::load();
+
+        assert_eq!(mode_of(&config_dir), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn glab_tui_config_parent_keeps_its_mode() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let config = isolate_config();
+        let chosen = config.path().join("dotfiles");
+        std::fs::create_dir_all(&chosen).unwrap();
+        std::fs::set_permissions(&chosen, std::fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe { std::env::set_var("GLAB_TUI_CONFIG", chosen.join("glab-tui.toml")) };
+
+        Config::load();
+
+        assert_eq!(mode_of(&chosen), 0o755);
     }
 
     #[test]
@@ -2680,6 +2329,8 @@ diff_addition_fg = "#141414"
 diff_addition_bg = "#151515"
 diff_deletion_fg = "#161616"
 diff_deletion_bg = "#171717"
+diff_addition_emph_bg = "#2e2e2e"
+diff_deletion_emph_bg = "#2f2f2f"
 diff_gutter_bg = "#181818"
 diff_sep = "#191919"
 comment_bg = "#1a1a1a"
@@ -2702,10 +2353,16 @@ label_palette_6 = "#2a2a2a"
 label_palette_7 = "#2b2b2b"
 label_palette_8 = "#2c2c2c"
 label_palette_9 = "#2d2d2d"
+accent = "#2e2e2e"
+key_hint = "#2f2f2f"
+danger_border = "#303030"
+backdrop_dim = "#313131"
+diff_search_bg = "#323232"
+diff_search_fg = "#333333"
 "##;
         let config: Config =
             toml::from_str(toml_str).expect("deserialize config with full theme overrides");
-        let theme = config.resolve_theme();
+        let theme = config.resolve_theme(None);
 
         assert_eq!(theme.bg, Color::Rgb(1, 1, 1));
         assert_eq!(theme.border, Color::Rgb(2, 2, 2));
@@ -2752,5 +2409,200 @@ label_palette_9 = "#2d2d2d"
         assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
         assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
         assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
+        assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Rgb(47, 47, 47));
+        assert_eq!(theme.accent, Color::Rgb(46, 46, 46));
+        assert_eq!(theme.key_hint, Color::Rgb(47, 47, 47));
+        assert_eq!(theme.danger_border, Color::Rgb(48, 48, 48));
+        assert_eq!(theme.backdrop_dim, Color::Rgb(49, 49, 49));
+        assert_eq!(theme.diff_search_bg, Color::Rgb(50, 50, 50));
+        assert_eq!(theme.diff_search_fg, Color::Rgb(51, 51, 51));
+    }
+
+    #[test]
+    fn every_bundled_theme_sets_the_form_tokens_itself() {
+        let missing: Vec<String> = BUNDLED_THEMES
+            .iter()
+            .flat_map(|(name, toml_str)| {
+                let table: toml::Table = toml::from_str(toml_str).expect("bundled theme parses");
+                ["accent", "key_hint", "danger_border", "backdrop_dim"]
+                    .into_iter()
+                    .filter(move |key| !table.contains_key(*key))
+                    .map(move |key| format!("{name}: {key}"))
+            })
+            .collect();
+        assert_eq!(missing, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_theme_without_form_tokens_takes_purple_yellow_red_and_text_muted() {
+        let mut table: toml::Table =
+            toml::from_str(include_str!("themes/default.toml")).expect("default theme parses");
+        for key in ["accent", "key_hint", "danger_border", "backdrop_dim"] {
+            table.remove(key);
+        }
+        let theme = toml::Value::Table(table)
+            .try_into::<ThemeToml>()
+            .expect("theme without form tokens parses")
+            .to_theme()
+            .expect("theme without form tokens maps");
+        assert_eq!(
+            [
+                theme.accent,
+                theme.key_hint,
+                theme.danger_border,
+                theme.backdrop_dim
+            ],
+            [theme.purple, theme.yellow, theme.red, theme.text_muted]
+        );
+    }
+
+    #[test]
+    fn a_theme_without_emphasis_tokens_mixes_them_from_the_diff_row_colors() {
+        let theme_toml = r##"
+bg = "#000000"
+border = "#000000"
+border_focused = "#000000"
+header_fg = "#000000"
+highlight_bg = "#000000"
+inactive_bg = "#000000"
+text_normal = "#000000"
+text_muted = "#000000"
+checked_bg = "#000000"
+green = "#00c800"
+green_bg = "#003200"
+red = "#c80000"
+red_bg = "#320000"
+blue = "#000000"
+blue_bg = "#000000"
+yellow = "#000000"
+yellow_bg = "#000000"
+purple = "#000000"
+purple_bg = "#000000"
+diff_deletion_fg = "#ffffff"
+diff_deletion_bg = ""
+"##;
+        let theme = toml::from_str::<ThemeToml>(theme_toml)
+            .expect("theme parses")
+            .to_theme()
+            .expect("theme resolves");
+
+        assert_eq!(theme.diff_addition_emph_bg, Color::Rgb(0, 95, 0));
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Reset);
+    }
+
+    #[test]
+    fn a_row_color_override_rederives_the_emphasis_unless_it_sets_one() {
+        let config: Config = toml::from_str(
+            r##"
+[theme]
+diff_addition_bg = ""
+diff_deletion_fg = "#ffffff"
+diff_deletion_bg = "#000000"
+"##,
+        )
+        .expect("config parses");
+        let theme = config.resolve_theme(None);
+        assert_eq!(theme.diff_addition_emph_bg, Color::Reset);
+        assert_eq!(theme.diff_deletion_emph_bg, Color::Rgb(77, 77, 77));
+
+        let config: Config = toml::from_str(
+            r##"
+[theme]
+diff_addition_bg = "#000000"
+diff_addition_emph_bg = "#123456"
+"##,
+        )
+        .expect("config parses");
+        assert_eq!(
+            config.resolve_theme(None).diff_addition_emph_bg,
+            Color::Rgb(0x12, 0x34, 0x56)
+        );
+    }
+
+    #[test]
+    fn color_names_and_palette_indexes_parse_to_terminal_colors() {
+        assert_eq!(parse_color("red"), Some(Color::Red));
+        assert_eq!(parse_color("light-blue"), Some(Color::LightBlue));
+        assert_eq!(parse_color("dark-gray"), Some(Color::DarkGray));
+        assert_eq!(parse_color("8"), Some(Color::Indexed(8)));
+        assert_eq!(parse_color("31bf67"), Some(Color::Rgb(0x31, 0xbf, 0x67)));
+        assert_eq!(parse_color("#31bf67"), Some(Color::Rgb(0x31, 0xbf, 0x67)));
+        assert_eq!(parse_color("not-a-color"), None);
+    }
+
+    #[test]
+    fn terminal_preset_draws_only_with_the_terminal_palette() {
+        let theme = Theme::preset("terminal").expect("terminal preset parses");
+
+        assert!(!format!("{theme:?}").contains("Rgb"), "{theme:?}");
+        assert_eq!(theme.bg, Color::Reset);
+        assert_eq!(theme.text_normal, Color::Reset);
+        assert_eq!(theme.text_muted, Color::DarkGray);
+        assert_eq!(theme.highlight_bg, Color::Blue);
+    }
+
+    #[test]
+    fn every_bundled_preset_keeps_diff_search_matches_readable() {
+        for (name, _) in BUNDLED_THEMES {
+            let theme = Theme::preset(name).expect("bundled preset parses");
+            for (token, color) in [
+                ("bg", theme.bg),
+                ("highlight_bg", theme.highlight_bg),
+                ("diff_addition_bg", theme.diff_addition_bg),
+                ("diff_deletion_bg", theme.diff_deletion_bg),
+            ] {
+                assert_ne!(
+                    theme.diff_search_bg, color,
+                    "preset {name}: diff_search_bg matches {token}"
+                );
+            }
+            assert_ne!(
+                theme.diff_search_fg, theme.diff_search_bg,
+                "preset {name}: diff_search_fg matches diff_search_bg"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_preset_follows_the_terminal_appearance() {
+        let config: Config = toml::from_str(
+            "theme_preset = \"auto\"\ntheme_dark = \"nord\"\ntheme_light = \"nord-light\"\n",
+        )
+        .unwrap();
+
+        assert!(config.follows_terminal_appearance());
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Light)),
+            Theme::preset("nord-light").unwrap()
+        );
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Dark)),
+            Theme::preset("nord").unwrap()
+        );
+        assert_eq!(config.resolve_theme(None), Theme::preset("nord").unwrap());
+    }
+
+    #[test]
+    fn configured_appearance_wins_over_the_terminal() {
+        let config: Config =
+            toml::from_str("theme_preset = \"auto\"\nappearance = \"light\"\n").unwrap();
+
+        assert!(!config.follows_terminal_appearance());
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Dark)),
+            Theme::preset(DEFAULT_LIGHT_THEME).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_named_preset_ignores_the_terminal_appearance() {
+        let config: Config = toml::from_str("theme_preset = \"nord\"\n").unwrap();
+
+        assert!(!config.follows_terminal_appearance());
+        assert_eq!(
+            config.resolve_theme(Some(Appearance::Light)),
+            Theme::preset("nord").unwrap()
+        );
     }
 }

@@ -1,0 +1,314 @@
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+/// How long a notice stays on screen.
+pub const NOTICE_LIFETIME: Duration = Duration::from_secs(5);
+
+/// Second line of an error whose full CLI stderr is in the Terminal tab.
+pub const CLI_LOG_HINT: &str = "Full details in the terminal log below";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeLevel {
+    Info,
+    Error,
+}
+
+/// Names one request a modal started. A notice carrying it is drawn inside
+/// that modal while the modal still holds the same tag, and falls back to
+/// the toast or the header bar once the modal is gone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RequestTag(u64);
+
+impl RequestTag {
+    pub fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Notice {
+    level: NoticeLevel,
+    text: String,
+    detail: Option<String>,
+    origin: Option<RequestTag>,
+    raised_at: Instant,
+}
+
+impl Notice {
+    pub fn info(text: impl Into<String>) -> Self {
+        Self::new(NoticeLevel::Info, text.into())
+    }
+
+    pub fn error(text: impl Into<String>) -> Self {
+        Self::new(NoticeLevel::Error, text.into())
+    }
+
+    fn new(level: NoticeLevel, text: String) -> Self {
+        Notice {
+            level,
+            text,
+            detail: None,
+            origin: None,
+            raised_at: Instant::now(),
+        }
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn from_request(mut self, origin: RequestTag) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
+    pub fn level(&self) -> NoticeLevel {
+        self.level
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+
+    fn is_expired_at(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.raised_at) >= NOTICE_LIFETIME
+    }
+
+    fn is_routed_to(&self, open_request: Option<RequestTag>) -> bool {
+        self.origin.is_some() && self.origin == open_request
+    }
+}
+
+/// Every notice still on screen, oldest first. A new notice replaces only an
+/// older one of the same level and origin, which no surface could draw any
+/// more: each surface draws the newest notice meant for it.
+#[derive(Debug, Default)]
+pub struct NoticeQueue {
+    notices: VecDeque<Notice>,
+}
+
+impl NoticeQueue {
+    pub fn push(&mut self, notice: Notice) {
+        self.notices
+            .retain(|queued| queued.level != notice.level || queued.origin != notice.origin);
+        self.notices.push_back(notice);
+    }
+
+    /// Drops notices past their lifetime, except those the open modal draws:
+    /// they stay while the user is looking at them.
+    pub fn expire(&mut self, now: Instant, open_request: Option<RequestTag>) {
+        self.notices
+            .retain(|notice| notice.is_routed_to(open_request) || !notice.is_expired_at(now));
+    }
+
+    pub fn dismiss(&mut self, level: NoticeLevel, open_request: Option<RequestTag>) {
+        self.notices
+            .retain(|notice| notice.level != level || notice.is_routed_to(open_request));
+    }
+
+    /// The newest notice of `level` that the open modal does not show itself
+    /// and that is still within its lifetime at `now`. A modal's notice
+    /// outlives its lifetime while the modal is open, so it can be expired
+    /// in the frame drawn as the modal closes, before `expire` drops it.
+    pub fn latest_outside(
+        &self,
+        level: NoticeLevel,
+        open_request: Option<RequestTag>,
+        now: Instant,
+    ) -> Option<&Notice> {
+        self.notices.iter().rev().find(|notice| {
+            notice.level == level
+                && !notice.is_routed_to(open_request)
+                && !notice.is_expired_at(now)
+        })
+    }
+
+    /// The newest notice, of any level, about the request `tag`.
+    pub fn latest_for(&self, tag: RequestTag) -> Option<&Notice> {
+        self.notices
+            .iter()
+            .rev()
+            .find(|notice| notice.origin == Some(tag))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts(queue: &NoticeQueue) -> Vec<&str> {
+        queue.notices.iter().map(Notice::text).collect()
+    }
+
+    #[test]
+    fn newer_error_is_the_one_drawn() {
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("first"));
+        queue.push(Notice::error("second"));
+
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
+                .map(Notice::text),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn burst_of_info_notices_keeps_the_live_error() {
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("push rejected"));
+        for i in 0..100 {
+            queue.push(Notice::info(format!("Selected all {i} items")));
+        }
+
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
+                .map(Notice::text),
+            Some("push rejected")
+        );
+        assert_eq!(texts(&queue), ["push rejected", "Selected all 99 items"]);
+    }
+
+    #[test]
+    fn errors_and_infos_are_looked_up_separately() {
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::info("Selected all 3 items"));
+        queue.push(Notice::error("push rejected"));
+
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Info, None, Instant::now())
+                .map(Notice::text),
+            Some("Selected all 3 items")
+        );
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
+                .map(Notice::text),
+            Some("push rejected")
+        );
+    }
+
+    #[test]
+    fn notice_of_the_open_modal_request_stays_out_of_the_toast() {
+        let tag = RequestTag::default().next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("toast error"));
+        queue.push(Notice::error("labels failed").from_request(tag));
+
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, Some(tag), Instant::now())
+                .map(Notice::text),
+            Some("toast error")
+        );
+        assert_eq!(
+            queue.latest_for(tag).map(Notice::text),
+            Some("labels failed")
+        );
+    }
+
+    #[test]
+    fn notice_of_a_closed_modal_falls_back_to_the_toast() {
+        let closed = RequestTag::default().next();
+        let open = closed.next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("labels failed").from_request(closed));
+
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, Some(open), Instant::now())
+                .map(Notice::text),
+            Some("labels failed")
+        );
+        assert_eq!(
+            queue
+                .latest_outside(NoticeLevel::Error, None, Instant::now())
+                .map(Notice::text),
+            Some("labels failed")
+        );
+    }
+
+    #[test]
+    fn expire_drops_notices_once_their_lifetime_passed() {
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("old"));
+        let pushed = queue.notices[0].raised_at;
+
+        queue.expire(pushed + NOTICE_LIFETIME - Duration::from_millis(1), None);
+        assert_eq!(texts(&queue), ["old"]);
+
+        queue.expire(pushed + NOTICE_LIFETIME, None);
+        assert!(queue.notices.is_empty());
+    }
+
+    #[test]
+    fn notice_of_the_open_modal_outlives_its_lifetime_until_the_modal_closes() {
+        let open = RequestTag::default().next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("labels failed").from_request(open));
+        let pushed = queue.notices[0].raised_at;
+
+        queue.expire(pushed + NOTICE_LIFETIME, Some(open));
+        assert_eq!(texts(&queue), ["labels failed"]);
+
+        queue.expire(pushed + NOTICE_LIFETIME, None);
+        assert!(queue.notices.is_empty());
+    }
+
+    #[test]
+    fn expired_notice_of_a_closed_modal_is_not_drawn_before_expire_drops_it() {
+        let open = RequestTag::default().next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::error("labels failed").from_request(open));
+        let expired_at = queue.notices[0].raised_at + NOTICE_LIFETIME;
+        queue.expire(expired_at, Some(open));
+
+        assert_eq!(
+            queue
+                .latest_outside(
+                    NoticeLevel::Error,
+                    None,
+                    expired_at - Duration::from_millis(1)
+                )
+                .map(Notice::text),
+            Some("labels failed")
+        );
+        assert_eq!(
+            queue.latest_outside(NoticeLevel::Error, None, expired_at),
+            None
+        );
+    }
+
+    #[test]
+    fn dismiss_keeps_notices_of_the_other_level() {
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::info("Loading the stack of PR #4…"));
+        queue.push(Notice::error("push rejected"));
+
+        queue.dismiss(NoticeLevel::Info, None);
+
+        assert_eq!(texts(&queue), ["push rejected"]);
+    }
+
+    #[test]
+    fn dismiss_keeps_notices_routed_to_the_open_modal() {
+        let open = RequestTag::default().next();
+        let closed = open.next();
+        let mut queue = NoticeQueue::default();
+        queue.push(Notice::info("Offline fallback: cached selector items.").from_request(open));
+        queue.push(Notice::info("closed selector fallback").from_request(closed));
+        queue.push(Notice::info("Loading…"));
+
+        queue.dismiss(NoticeLevel::Info, Some(open));
+
+        assert_eq!(texts(&queue), ["Offline fallback: cached selector items."]);
+    }
+}

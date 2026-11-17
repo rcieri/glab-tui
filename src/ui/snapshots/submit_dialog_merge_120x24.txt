@@ -1,0 +1,24 @@
+
+
+
+
+
+                            ┌ + Merge Merge Request #2 ────────────────────────────────────┐
+                            │ Merging: feature/pagination → main                           │
+                            │                                                              │
+                            │ Strategy                                                     │
+                            │ o Merge commit  * Squash  o Rebase                           │
+                            │                                                              │
+                            │ Options                                                      │
+                            │ + Delete source branch                                       │
+                            │ - Auto-merge                                                 │
+                            │ ──────────────────────────────────────────────────────────── │
+                            │           [ Merge ]                     [ Cancel ]           │
+                            │ h/l button  Tab next  Enter merge  Esc cancel                │
+                            └──────────────────────────────────────────────────────────────┘
+
+
+
+
+
+

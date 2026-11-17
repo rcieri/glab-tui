@@ -1,0 +1,15 @@
+{
+  "total_count": 2,
+  "environments": [
+    {
+      "id": 1,
+      "name": "production",
+      "html_url": "https://github.com/test-owner/test-repo/deployments/production"
+    },
+    {
+      "id": 2,
+      "name": "staging",
+      "html_url": "https://github.com/test-owner/test-repo/deployments/staging"
+    }
+  ]
+}

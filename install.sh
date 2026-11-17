@@ -113,6 +113,40 @@ pick_asset_url() {
     return 1
 }
 
+download() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -sSfL "$1" -o "$2"
+    else
+        wget -q "$1" -O "$2"
+    fi
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d ' ' -f 1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d ' ' -f 1
+    else
+        echo "Neither sha256sum nor shasum found; cannot verify the download" >&2
+        return 1
+    fi
+}
+
+# Compare an archive against the release's "<sha256>  <name>" checksum file.
+verify_checksum() {
+    archive="$1"
+    checksum_file="$2"
+    expected=$(head -n 1 "$checksum_file" | cut -d ' ' -f 1 | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+    actual=$(sha256_of "$archive") || exit 1
+    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        echo "Checksum mismatch for $(basename "$archive"); refusing to install." >&2
+        echo "  expected: ${expected:-<empty checksum file>}" >&2
+        echo "  actual:   ${actual}" >&2
+        exit 1
+    fi
+    echo "Checksum verified: sha256 ${actual}"
+}
+
 main() {
     platform=$(detect_os_arch)
     os="${platform%-*}"
@@ -152,15 +186,18 @@ main() {
 
     echo "Selected asset: $asset"
 
+    if ! checksum_url=$(printf '%s\n' "${asset}.sha256" | pick_asset_url "$json"); then
+        echo "Release ${tag} publishes no ${asset}.sha256; refusing to install an unverified binary" >&2
+        exit 1
+    fi
+
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
     echo "Downloading ${asset}..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -sSfL "$download_url" -o "${tmpdir}/${asset}"
-    else
-        wget -q "$download_url" -O "${tmpdir}/${asset}"
-    fi
+    download "$download_url" "${tmpdir}/${asset}"
+    download "$checksum_url" "${tmpdir}/${asset}.sha256"
+    verify_checksum "${tmpdir}/${asset}" "${tmpdir}/${asset}.sha256"
 
     echo "Extracting..."
     case "$ext" in

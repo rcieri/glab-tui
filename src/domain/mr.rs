@@ -136,6 +136,18 @@ pub enum MergeMethod {
 }
 
 impl MergeMethod {
+    pub const ALL: [Self; 3] = [Self::Merge, Self::Squash, Self::Rebase];
+    /// The strategy a merge dialog opens on.
+    pub const DEFAULT: Self = Self::Squash;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Merge => "Merge commit",
+            Self::Squash => "Squash",
+            Self::Rebase => "Rebase",
+        }
+    }
+
     pub fn as_api_str(self) -> &'static str {
         match self {
             Self::Merge => "merge",
@@ -232,7 +244,9 @@ impl NotePosition {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DiscussionNote {
-    pub id: u64,
+    /// The note's REST id. `None` for a GitHub review summary, which
+    /// `gh pr view` lists by its GraphQL node id only.
+    pub id: Option<u64>,
     pub body: String,
     pub author: Author,
     pub created_at: String,
@@ -245,16 +259,60 @@ pub struct DiscussionNote {
     pub resolved: Option<bool>,
     #[serde(default)]
     pub resolvable: Option<bool>,
+    #[serde(default)]
+    pub kind: NoteKind,
+}
+
+/// What a note is on the forge, which decides what can be done with it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum NoteKind {
+    /// A note in a discussion that takes replies: every GitLab note and every
+    /// GitHub review comment.
+    #[default]
+    Discussion,
+    /// A comment on a GitHub pull request's Conversation tab.
+    Conversation,
+    /// The body submitted with a GitHub review.
+    ReviewSummary(ReviewState),
+}
+
+impl NoteKind {
+    /// GitHub conversation comments and review summaries are not threads on
+    /// the forge: nothing can be posted in reply to them.
+    pub fn accepts_replies(self) -> bool {
+        self == Self::Discussion
+    }
+}
+
+/// The verdict of a submitted GitHub review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+}
+
+impl ReviewState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Approved => "APPROVED",
+            Self::ChangesRequested => "CHANGES REQUESTED",
+            Self::Commented => "COMMENTED",
+            Self::Dismissed => "DISMISSED",
+        }
+    }
 }
 
 pub async fn list_mrs(
     client: &GitlabClient,
     scope: &crate::scope::Scope,
-    show_closed: bool,
+    state: crate::domain::state_query::StateQuery,
 ) -> Result<Vec<MergeRequest>> {
     client
         .backend
-        .list_mrs(scope, show_closed, client.page_size, client.api_per_page)
+        .list_mrs(scope, state, client.page_size, client.api_per_page)
         .await
 }
 
@@ -267,15 +325,27 @@ pub async fn get_mr_diff(client: &GitlabClient, project_path: &str, mr_iid: u64)
     client.backend.get_mr_diff(project_path, mr_iid).await
 }
 
+/// Most bytes of one diff glab-tui reads.
+pub const MR_DIFF_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Refuses a diff read that stopped at `MR_DIFF_MAX_BYTES`: a diff cut short
+/// would let a review look complete when files are missing from it.
+pub fn ensure_complete_diff(is_truncated: bool, subject: &str) -> Result<()> {
+    if is_truncated {
+        anyhow::bail!(
+            "the diff of {subject} is larger than {} MiB, the most glab-tui reads of a diff",
+            MR_DIFF_MAX_BYTES / (1024 * 1024)
+        );
+    }
+    Ok(())
+}
+
 pub async fn list_mr_notes(
     client: &GitlabClient,
     project_path: &str,
     mr_iid: u64,
 ) -> Result<Vec<DiscussionNote>> {
-    client
-        .backend
-        .list_mr_notes(project_path, mr_iid, client.page_size)
-        .await
+    client.backend.list_mr_notes(project_path, mr_iid).await
 }
 
 pub async fn fetch_related_issues(
@@ -374,8 +444,7 @@ mod tests {
         let serialized = serde_json::to_string(&mr).unwrap();
         assert!(
             serialized.contains("related_issues"),
-            "related_issues must be serialized with cache: {}",
-            serialized
+            "related_issues must be serialized with cache: {serialized}"
         );
 
         let round_trip: MergeRequest = serde_json::from_str(&serialized).unwrap();

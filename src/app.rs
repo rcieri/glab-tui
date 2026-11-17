@@ -1,33 +1,39 @@
-#![allow(dead_code)]
-
 use crate::backend::BackendKind;
-use crate::config::{Config, KeybindingConfig, THEME, Theme};
-use crate::domain::mr::{DiscussionNote, NotePosition};
+use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
+use crate::config::{Config, Icons, Theme};
+use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
+use crate::domain::state_query::{StateQueries, StateQuery};
 use crate::domain::viewed_files::{FileViewedState, Fingerprint, PrViewedFiles, ViewedSync};
 use crate::domain::workflow_inputs::WorkflowInput;
+use crate::form::{
+    Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel,
+    Radio, Toggle, Toggles,
+};
+use crate::syntax::{DiffHighlighter, DiffSide, SyntaxToken, styled_tokens};
+use crate::ui::list_tab::branches::BranchColumn;
+use crate::ui::list_tab::environments::EnvironmentColumn;
+use crate::ui::list_tab::releases::ReleaseColumn;
+use crate::ui::list_tab::runners::RunnerColumn;
+use crate::ui::list_tab::{
+    ListNavigation, ListTab, ViewInputs, column_labels, default_column_labels,
+};
 use crate::utils::format::{expand_tabs, strip_ansi_escapes};
-use crate::utils::ui::StatefulTable;
+use crate::utils::ui::{StatefulTable, step_clamped};
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
-use syntect::highlighting::Highlighter;
-use syntect::highlighting::Style as SyntectStyle;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use syntect::parsing::{ParseState, ScopeStack};
+use std::ops::Range;
+use std::sync::{Arc, LazyLock};
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
 /// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
 /// key press).
-static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
+pub(crate) static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
 
 trait ClipboardWriter {
     fn set_text(&mut self, text: String) -> anyhow::Result<()>;
@@ -51,181 +57,6 @@ impl ClipboardWriter for SystemClipboard {
     }
 }
 
-fn file_extension(file_path: &str) -> Option<&str> {
-    let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
-    let ext = file_name.rsplit('.').next()?;
-    if ext.is_empty() || ext == file_name {
-        None
-    } else {
-        Some(ext)
-    }
-}
-
-/// Highlight a single line's content using syntect, returning colored spans.
-///
-/// Colors are derived from the active theme's semantic tokens (mapped from each
-/// token's syntect scope name) so highlighting always matches the active theme
-/// rather than a hardcoded syntect palette. Font modifiers (bold/italic) come
-/// from syntect's resolved style.
-pub fn highlight_line_syntax(
-    file_path: &str,
-    line_content: &str,
-    ext: Option<&str>,
-) -> Option<Vec<(ratatui::style::Style, String)>> {
-    let ext = ext.or_else(|| file_extension(file_path))?;
-    let syntax = SYNTAX_SET
-        .find_syntax_by_extension(ext)
-        .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
-
-    let theme = THEME.read().unwrap();
-    let theme = theme.clone();
-
-    // Remove the leading +/-/space for syntax highlighting, but keep the actual code.
-    let code = if line_content.starts_with('+')
-        || line_content.starts_with('-')
-        || line_content.starts_with(' ')
-    {
-        if line_content.len() > 1 {
-            &line_content[1..]
-        } else {
-            ""
-        }
-    } else {
-        line_content
-    };
-
-    if code.is_empty() {
-        return Some(vec![(
-            syntect_style_to_ratatui(SyntectStyle::default()),
-            code.to_string(),
-        )]);
-    }
-
-    let mut parse_state = ParseState::new(syntax);
-    let ops = parse_state.parse_line(code, &SYNTAX_SET).ok()?;
-    if ops.is_empty() {
-        return Some(vec![(
-            Style::default().fg(theme.text_normal),
-            code.to_string(),
-        )]);
-    }
-
-    let syntax_theme = THEME_SET.themes.values().next()?;
-    let highlighter = Highlighter::new(syntax_theme);
-    let mut scope_stack = ScopeStack::new();
-    let mut result: Vec<(Style, String)> = Vec::new();
-    let mut pos = 0usize;
-    for (end, op) in ops {
-        if pos < end {
-            let text = &code[pos..end];
-            let top = scope_stack.as_slice().last().copied();
-            let style = highlighter.style_for_stack(scope_stack.as_slice());
-            let color = top
-                .map(|s| scope_color(&format!("{}", s), &theme))
-                .unwrap_or(theme.text_normal);
-            let mut span_style = Style::default().fg(color);
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::BOLD)
-            {
-                span_style = span_style.add_modifier(Modifier::BOLD);
-            }
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::ITALIC)
-            {
-                span_style = span_style.add_modifier(Modifier::ITALIC);
-            }
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::UNDERLINE)
-            {
-                span_style = span_style.add_modifier(Modifier::UNDERLINED);
-            }
-            result.push((span_style, text.to_string()));
-        }
-        let _ = scope_stack.apply(&op);
-        pos = end;
-    }
-    if pos < code.len() {
-        let text = &code[pos..];
-        let top = scope_stack.as_slice().last().copied();
-        let color = top
-            .map(|s| scope_color(&format!("{}", s), &theme))
-            .unwrap_or(theme.text_normal);
-        result.push((Style::default().fg(color), text.to_string()));
-    }
-
-    Some(result)
-}
-
-/// Map a syntect scope name (e.g. "keyword.control.rust") to a semantic theme
-/// color so syntax highlighting tracks the active theme rather than a hardcoded
-/// palette.
-fn scope_color(name: &str, theme: &Theme) -> Color {
-    if name.contains("comment") {
-        theme.text_muted
-    } else if name.contains("string")
-        || name.contains("regexp")
-        || name.contains("character")
-        || name.contains("quote")
-    {
-        theme.green
-    } else if name.contains("number") || name.contains("numeric") || name.contains("constant") {
-        theme.red
-    } else if name.contains("keyword")
-        || name.contains("storage")
-        || name.contains("control")
-        || name.contains("operator")
-    {
-        theme.purple
-    } else if name.contains("function")
-        || name.contains("method")
-        || name.contains("entity.name")
-        || name.contains("decorator")
-    {
-        theme.yellow
-    } else if name.contains("type")
-        || name.contains("class")
-        || name.contains("struct")
-        || name.contains("enum")
-        || name.contains("trait")
-        || name.contains("interface")
-        || name.contains("support.type")
-    {
-        theme.blue
-    } else if name.contains("variable") || name.contains("property") {
-        theme.text_normal
-    } else if name.contains("tag") || name.contains("markup") {
-        theme.blue
-    } else {
-        theme.text_normal
-    }
-}
-
-fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
-    let mut modifier = Modifier::empty();
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::BOLD)
-    {
-        modifier |= Modifier::BOLD;
-    }
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::ITALIC)
-    {
-        modifier |= Modifier::ITALIC;
-    }
-    if style
-        .font_style
-        .contains(syntect::highlighting::FontStyle::UNDERLINE)
-    {
-        modifier |= Modifier::UNDERLINED;
-    }
-    ratatui::style::Style::default().add_modifier(modifier)
-}
-
 pub use crate::config::SaveMenu;
 
 #[derive(
@@ -246,6 +77,17 @@ pub enum Tab {
     Terminal,
 }
 
+/// `labels` without the columns `kind` has no data for: GitHub lists
+/// environments without their last deployment.
+fn environment_columns(mut labels: Vec<&'static str>, kind: BackendKind) -> Vec<&'static str> {
+    if kind.is_github() {
+        let unavailable =
+            crate::ui::list_tab::ColumnDef::label(EnvironmentColumn::DeploymentStatus);
+        labels.retain(|label| *label != unavailable);
+    }
+    labels
+}
+
 impl Tab {
     pub const ALL: [Tab; 11] = [
         Tab::Issues,
@@ -261,7 +103,7 @@ impl Tab {
         Tab::Terminal,
     ];
 
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             Tab::Issues => "issues",
             Tab::MergeRequests => "mrs",
@@ -289,6 +131,16 @@ impl Tab {
         }
     }
 
+    /// Whether this tab's list can be fetched in `scope` on `kind`.
+    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope, kind: BackendKind) -> bool {
+        match self {
+            Tab::Runners => scope.is_repository(),
+            // GitLab has no group pipelines endpoint.
+            Tab::Pipelines => scope.is_repository() || kind.is_github(),
+            _ => true,
+        }
+    }
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "issues" => Some(Tab::Issues),
@@ -310,8 +162,7 @@ impl Tab {
         }
     }
 
-    pub fn title(&self, kind: BackendKind) -> String {
-        let icons = crate::config::ICONS.read().unwrap();
+    pub fn title(&self, kind: BackendKind, icons: &Icons) -> String {
         match self {
             Tab::Issues => format!("{} Issues", icons.tab_issue),
             Tab::MergeRequests => {
@@ -425,19 +276,12 @@ impl Tab {
                 cols.push("Duration");
                 cols
             }
-            Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec![
-                "Tag",
-                "Release Name",
-                "Date",
-                "Author",
-                "Assets",
-                "Release Notes",
-            ],
+            Tab::Runners => column_labels::<RunnerColumn>(),
+            Tab::Releases => column_labels::<ReleaseColumn>(),
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
-            Tab::Branches => vec!["Name", "Default", "Protected", "SHA"],
-            Tab::Environments => vec!["Name", "State", "Deployment Status", "URL"],
+            Tab::Branches => column_labels::<BranchColumn>(),
+            Tab::Environments => environment_columns(column_labels::<EnvironmentColumn>(), kind),
             Tab::Terminal => vec![],
         }
     }
@@ -492,12 +336,14 @@ impl Tab {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
                 }
             }
-            Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec!["Tag", "Release Name", "Date"],
+            Tab::Runners => default_column_labels::<RunnerColumn>(),
+            Tab::Releases => default_column_labels::<ReleaseColumn>(),
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
-            Tab::Branches => vec!["Name", "Default", "Protected"],
-            Tab::Environments => vec!["Name", "State", "Deployment Status"],
+            Tab::Branches => default_column_labels::<BranchColumn>(),
+            Tab::Environments => {
+                environment_columns(default_column_labels::<EnvironmentColumn>(), kind)
+            }
             Tab::Terminal => vec![],
         }
     }
@@ -599,6 +445,8 @@ pub struct EditMenu {
     pub cursor_pos: usize,
     pub editing: bool,
     pub desc_scroll: u16,
+    /// When true, the source branch already exists on the forge (e.g. opened from Branches tab).
+    pub source_on_forge: bool,
 }
 
 impl EditMenu {
@@ -639,10 +487,6 @@ pub enum InspectorContent {
     MilestoneRelated {
         description: String,
         issues: Option<Vec<crate::domain::issues::Issue>>,
-    },
-    AnsiTrace {
-        trace: String,
-        wrap: bool,
     },
     PipelineStages(Vec<crate::domain::pipelines::Job>),
     Custom(Vec<ratatui::text::Line<'static>>),
@@ -763,6 +607,9 @@ pub struct Selector {
     pub field_type: String,  // "labels", "assignees", "reviewers", "milestone"
     pub multi_select: bool,
     pub state: ListState,
+    /// The item fetch this selector started. Its notices are drawn inside
+    /// the selector rather than as a toast.
+    pub request: Option<crate::notice::RequestTag>,
 }
 
 impl Selector {
@@ -804,7 +651,7 @@ impl Selector {
                         let parsed = item
                             .split(':')
                             .next()
-                            .and_then(|p| parse_jump_input(p));
+                            .and_then(parse_jump_input);
                         matches!(parsed, Some((k, iid)) if iid == id && (kind.is_none() || k == kind))
                     });
                     if !loaded {
@@ -817,7 +664,7 @@ impl Selector {
                     }
                 }
             } else {
-                items.push((format!("+ Create \"{}\"", query), None));
+                items.push((format!("+ Create \"{query}\""), None));
             }
         }
         items
@@ -828,6 +675,15 @@ impl Selector {
             .into_iter()
             .map(|(item, _)| item)
             .collect()
+    }
+
+    pub fn move_by(&mut self, down: bool, rows: usize) {
+        let len = self.get_filtered_items().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor_idx = step_clamped(self.cursor_idx, len, down, rows);
+        self.state.select(Some(self.cursor_idx));
     }
 
     fn single_choice(
@@ -850,30 +706,64 @@ impl Selector {
             field_type: field_type.to_string(),
             multi_select: false,
             state: ListState::default(),
+            request: None,
         }
+    }
+
+    pub fn theme_picker(presets: Vec<String>, current: &str) -> Self {
+        let cursor = presets
+            .iter()
+            .position(|preset| preset == current)
+            .or_else(|| presets.iter().position(|preset| preset == "default"))
+            .unwrap_or(0);
+        let mut picker = Self::single_choice(
+            " Select Theme ".to_string(),
+            presets,
+            0,
+            THEME_PICKER_FIELD_TYPE.to_string(),
+            THEME_PICKER_FIELD_TYPE,
+        );
+        picker.cursor_idx = cursor;
+        picker.state.select(Some(cursor));
+        picker
+    }
+
+    /// The preset under a theme picker's cursor. `None` for any other
+    /// selector and on the `+ Create` row a search appends.
+    pub fn highlighted_theme(&self) -> Option<String> {
+        if self.field_type != THEME_PICKER_FIELD_TYPE {
+            return None;
+        }
+        let item = self.get_filtered_items().into_iter().nth(self.cursor_idx)?;
+        self.all_items.contains(&item).then_some(item)
     }
 
     /// Actions on one pushed review comment. The `comment_action_select`
     /// handler reads the comment id from `entity_iid` and parses the MR iid
-    /// back out of `entity_type`.
-    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Self {
-        let mut actions = vec!["Reply to Thread".to_string()];
-        if !is_github {
-            actions.push(if comment.resolved.unwrap_or(false) {
-                "Unresolve Thread".to_string()
-            } else {
-                "Resolve Thread".to_string()
-            });
+    /// back out of `entity_type`. `None` for a note without a REST id (a
+    /// GitHub review summary): nothing can be done with it.
+    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
+        let comment_id = comment.id?;
+        let mut actions = Vec::new();
+        if comment.kind.accepts_replies() {
+            actions.push("Reply to Thread".to_string());
+            if !is_github {
+                actions.push(if comment.resolved.unwrap_or(false) {
+                    "Unresolve Thread".to_string()
+                } else {
+                    "Resolve Thread".to_string()
+                });
+            }
         }
         actions.push("Edit Comment".to_string());
         actions.push("Delete Comment".to_string());
-        Self::single_choice(
-            format!(" Actions for Comment {} ", comment.id),
+        Some(Self::single_choice(
+            format!(" Actions for Comment {comment_id} "),
             actions,
-            comment.id,
+            comment_id,
             mr_iid.to_string(),
             "comment_action_select",
-        )
+        ))
     }
 
     /// Actions on a local draft; `entity_iid` is the 0-based draft index.
@@ -900,13 +790,15 @@ impl Selector {
         )
     }
 
-    pub fn comment_choice_item(comment: &DiscussionNote) -> String {
-        format!(
+    /// `None` for a note without a REST id, which the `comment_select`
+    /// handler could not find again.
+    pub fn comment_choice_item(comment: &DiscussionNote) -> Option<String> {
+        Some(format!(
             "ID: {} | @{}: {}",
-            comment.id,
+            comment.id?,
             comment.author.username,
             crate::utils::format::truncate(&comment.body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
-        )
+        ))
     }
 
     pub fn draft_choice_item(draft_idx: usize, body: &str) -> String {
@@ -918,7 +810,31 @@ impl Selector {
     }
 }
 
+pub const THEME_PICKER_FIELD_TYPE: &str = "theme_selector";
+
 const COMMENT_EXCERPT_CHARS: usize = 40;
+
+/// The Terminal tab's detail modal over one log entry. It follows `row`, so
+/// it keeps showing the same entry while newer ones are logged, and closes
+/// once that entry leaves the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalInspector {
+    pub row: LogRow,
+    /// First visible line; the render clamps it to the content.
+    pub scroll: usize,
+    /// Text rows visible at the last render, the step of a half-page scroll.
+    pub page_height: usize,
+}
+
+impl TerminalInspector {
+    pub fn new(row: LogRow) -> Self {
+        Self {
+            row,
+            scroll: 0,
+            page_height: 0,
+        }
+    }
+}
 
 /// The review threads overlay opened from the diff view. `threads` is a
 /// snapshot of the MR's notes classified against the loaded diff; it is
@@ -944,9 +860,9 @@ impl ReviewThreadsOverview {
     /// Rebuilds the threads, keeping the cursor on the same thread when it
     /// still exists.
     pub fn refresh(&mut self, comments: &[DiscussionNote], diff_view: &DiffView) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.threads = group_threads(comments, |position| diff_view.contains_anchor(position));
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
     pub fn visible_threads(&self) -> impl Iterator<Item = &ReviewThread> {
@@ -1002,15 +918,14 @@ impl ReviewThreadsOverview {
     }
 
     pub fn toggle_unresolved_only(&mut self) {
-        let selected_root = self.selected_thread().map(|t| t.root().id);
+        let selected_thread = self.selected_thread().map(|t| t.id.clone());
         self.unresolved_only = !self.unresolved_only;
-        self.select_root_or_clamp(selected_root);
+        self.select_thread_or_clamp(selected_thread);
     }
 
-    fn select_root_or_clamp(&mut self, root_id: Option<u64>) {
+    fn select_thread_or_clamp(&mut self, thread_id: Option<String>) {
         let count = self.visible_threads().count();
-        let position =
-            root_id.and_then(|id| self.visible_threads().position(|t| t.root().id == id));
+        let position = thread_id.and_then(|id| self.visible_threads().position(|t| t.id == id));
         match position {
             Some(idx) => {
                 self.cursor_idx = idx;
@@ -1041,8 +956,85 @@ pub struct DiffLine {
     pub file_path: String,
     pub old_line_num: Option<u32>,
     pub new_line_num: Option<u32>,
-    pub syntax_highlighted: Option<Vec<(ratatui::style::Style, String)>>,
+    /// Token runs over [`DiffLine::code`]; colours are resolved from the
+    /// theme at render time by [`DiffLine::syntax_spans`].
+    pub syntax_highlighted: Option<Vec<SyntaxToken>>,
+    /// Byte ranges of [`DiffLine::code`] that differ from the line it was
+    /// paired with: the added line replacing a removed one, or the reverse.
+    /// Empty for context rows and for changed lines left unpaired.
+    pub changed_ranges: Vec<Range<usize>>,
     pub fuzzy_indices: Option<Vec<usize>>,
+}
+
+impl DiffLine {
+    /// The line's source text, without its `+`/`-`/space diff marker.
+    pub fn code(&self) -> &str {
+        strip_diff_marker(&self.content)
+    }
+
+    /// The highlighted runs of [`DiffLine::code`], styled by `theme`.
+    pub fn syntax_spans<'a>(
+        &'a self,
+        theme: &'a Theme,
+    ) -> Option<impl Iterator<Item = (Style, &'a str)> + 'a> {
+        let tokens = self.syntax_highlighted.as_deref()?;
+        Some(styled_tokens(tokens, self.code(), theme))
+    }
+}
+
+pub fn strip_diff_marker(line: &str) -> &str {
+    line.strip_prefix(['+', '-', ' ']).unwrap_or(line)
+}
+
+/// Pairs each run of removed lines with the added lines that follow it, the
+/// first removed line with the first added one and so on, and marks the words
+/// each pair changed. A run ends at any row other than a change or a
+/// missing-newline note. Runs of different lengths get no marks: which
+/// removed line an added one replaces is then unknown, and pairing them by
+/// position marks renames that never happened.
+fn mark_changed_words(lines: &mut [DiffLine]) {
+    let mut removed: Vec<usize> = Vec::new();
+    let mut added: Vec<usize> = Vec::new();
+    for idx in 0..lines.len() {
+        match lines[idx].line_type {
+            DiffLineType::Deletion => {
+                if !added.is_empty() {
+                    mark_changed_pairs(lines, &removed, &added);
+                    removed.clear();
+                    added.clear();
+                }
+                removed.push(idx);
+            }
+            DiffLineType::Addition => added.push(idx),
+            _ if is_missing_newline_note(&lines[idx]) => {}
+            _ => {
+                mark_changed_pairs(lines, &removed, &added);
+                removed.clear();
+                added.clear();
+            }
+        }
+    }
+    mark_changed_pairs(lines, &removed, &added);
+}
+
+/// `\ No newline at end of file`, which git puts between the two halves of a
+/// last-line edit.
+fn is_missing_newline_note(line: &DiffLine) -> bool {
+    line.line_type == DiffLineType::Meta && line.content.starts_with('\\')
+}
+
+fn mark_changed_pairs(lines: &mut [DiffLine], removed: &[usize], added: &[usize]) {
+    if removed.len() != added.len() {
+        return;
+    }
+    for (&old, &new) in removed.iter().zip(added) {
+        if let Some(changed) =
+            crate::word_diff::changed_ranges(lines[old].code(), lines[new].code())
+        {
+            lines[old].changed_ranges = changed.old;
+            lines[new].changed_ranges = changed.new;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1064,81 +1056,56 @@ pub enum DiffTreeNode {
     },
 }
 
+/// One changed file placed into the diff tree by `DiffTreeNode::insert`.
+pub struct DiffFileEntry<'a> {
+    pub full_path: &'a str,
+    pub old_path: Option<&'a str>,
+    pub is_new_file: bool,
+    pub is_deleted_file: bool,
+    pub additions: u32,
+    pub deletions: u32,
+    pub line_idx: usize,
+}
+
 impl DiffTreeNode {
-    pub fn insert(
-        &mut self,
-        path_parts: &[&str],
-        full_path: &str,
-        old_path: Option<&str>,
-        is_new_file: bool,
-        is_deleted_file: bool,
-        additions: u32,
-        deletions: u32,
-        line_idx: usize,
-    ) {
+    pub fn insert(&mut self, path_parts: &[&str], entry: &DiffFileEntry) {
         if path_parts.is_empty() {
             return;
         }
         let name = path_parts[0].to_string();
         if path_parts.len() == 1 {
-            match self {
-                DiffTreeNode::Directory { children, .. } => {
-                    let file_exists = children.iter().any(|child| match child {
-                        DiffTreeNode::File { file_path: p, .. } => p == full_path,
-                        _ => false,
+            if let DiffTreeNode::Directory { children, .. } = self {
+                let file_exists = children.iter().any(|child| match child {
+                    DiffTreeNode::File { file_path: p, .. } => p == entry.full_path,
+                    _ => false,
+                });
+                if !file_exists {
+                    children.push(DiffTreeNode::File {
+                        name,
+                        file_path: entry.full_path.to_string(),
+                        old_file_path: entry.old_path.map(|s| s.to_string()),
+                        is_new_file: entry.is_new_file,
+                        is_deleted_file: entry.is_deleted_file,
+                        line_idx: entry.line_idx,
+                        additions: entry.additions,
+                        deletions: entry.deletions,
                     });
-                    if !file_exists {
-                        children.push(DiffTreeNode::File {
-                            name,
-                            file_path: full_path.to_string(),
-                            old_file_path: old_path.map(|s| s.to_string()),
-                            is_new_file,
-                            is_deleted_file,
-                            line_idx,
-                            additions,
-                            deletions,
-                        });
-                    }
                 }
-                _ => {}
             }
-        } else {
-            match self {
-                DiffTreeNode::Directory { children, .. } => {
-                    if let Some(pos) = children.iter().position(|child| match child {
-                        DiffTreeNode::Directory { name: n, .. } => n == &name,
-                        _ => false,
-                    }) {
-                        children[pos].insert(
-                            &path_parts[1..],
-                            full_path,
-                            old_path,
-                            is_new_file,
-                            is_deleted_file,
-                            additions,
-                            deletions,
-                            line_idx,
-                        );
-                    } else {
-                        let mut new_dir = DiffTreeNode::Directory {
-                            name,
-                            is_expanded: true,
-                            children: Vec::new(),
-                        };
-                        new_dir.insert(
-                            &path_parts[1..],
-                            full_path,
-                            old_path,
-                            is_new_file,
-                            is_deleted_file,
-                            additions,
-                            deletions,
-                            line_idx,
-                        );
-                        children.push(new_dir);
-                    }
-                }
-                _ => {}
+        } else if let DiffTreeNode::Directory { children, .. } = self {
+            if let Some(pos) = children.iter().position(|child| match child {
+                DiffTreeNode::Directory { name: n, .. } => n == &name,
+                _ => false,
+            }) {
+                children[pos].insert(&path_parts[1..], entry);
+            } else {
+                let mut new_dir = DiffTreeNode::Directory {
+                    name,
+                    is_expanded: true,
+                    children: Vec::new(),
+                };
+                new_dir.insert(&path_parts[1..], entry);
+                children.push(new_dir);
             }
         }
     }
@@ -1168,7 +1135,7 @@ impl DiffTreeNode {
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{}", prefix, name)
+                    format!("{prefix}/{name}")
                 };
                 if hide_reviewed && !self.has_unreviewed_file(reviewed) {
                     return;
@@ -1193,14 +1160,8 @@ impl DiffTreeNode {
                 if name == "root" || *is_expanded {
                     let mut sorted_children = children.clone();
                     sorted_children.sort_by(|a, b| {
-                        let a_is_dir = match a {
-                            DiffTreeNode::Directory { .. } => true,
-                            _ => false,
-                        };
-                        let b_is_dir = match b {
-                            DiffTreeNode::Directory { .. } => true,
-                            _ => false,
-                        };
+                        let a_is_dir = matches!(a, DiffTreeNode::Directory { .. });
+                        let b_is_dir = matches!(b, DiffTreeNode::Directory { .. });
                         b_is_dir.cmp(&a_is_dir).then_with(|| a.name().cmp(b.name()))
                     });
                     for child in sorted_children {
@@ -1231,7 +1192,7 @@ impl DiffTreeNode {
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{}", prefix, name)
+                    format!("{prefix}/{name}")
                 };
                 out.push(FlatDiffTreeNode {
                     name: name.clone(),
@@ -1341,28 +1302,26 @@ impl DiffTreeNode {
     }
 
     pub fn toggle_expanded(&mut self, target_path_id: &str, current_prefix: &str) -> bool {
-        match self {
-            DiffTreeNode::Directory {
-                name,
-                is_expanded,
-                children,
-            } => {
-                let path_id = if current_prefix.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}/{}", current_prefix, name)
-                };
-                if path_id == target_path_id {
-                    *is_expanded = !*is_expanded;
+        if let DiffTreeNode::Directory {
+            name,
+            is_expanded,
+            children,
+        } = self
+        {
+            let path_id = if current_prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{current_prefix}/{name}")
+            };
+            if path_id == target_path_id {
+                *is_expanded = !*is_expanded;
+                return true;
+            }
+            for child in children {
+                if child.toggle_expanded(target_path_id, &path_id) {
                     return true;
                 }
-                for child in children {
-                    if child.toggle_expanded(target_path_id, &path_id) {
-                        return true;
-                    }
-                }
             }
-            _ => {}
         }
         false
     }
@@ -1431,6 +1390,27 @@ pub fn note_position_anchors(
     path_matches && (new_line_matches || old_line_matches)
 }
 
+/// The session's diff layout: picked from the diff pane width, or pinned by a layout key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiffLayout {
+    /// Side by side when the diff pane is wide enough, unified otherwise.
+    #[default]
+    Auto,
+    SideBySide,
+    Unified,
+}
+
+impl DiffLayout {
+    /// Whether a diff pane `columns` wide shows its rows side by side.
+    pub fn is_side_by_side(self, columns: u16) -> bool {
+        match self {
+            Self::Auto => crate::ui::compaction::fits_side_by_side_diff(columns),
+            Self::SideBySide => true,
+            Self::Unified => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct DiffView {
@@ -1451,6 +1431,10 @@ pub struct DiffView {
     pub selection_end: Option<usize>,
     pub side_by_side: bool,
     pub side_by_side_lines: Vec<SideBySideLine>,
+    /// Unified row the cursor left when the view last went side by side. A row
+    /// pairing a removal with an addition shows two unified lines, so the row
+    /// alone cannot say which one to return to.
+    unified_cursor_before_split: Option<usize>,
     pub viewport_height: usize,
     pub search_query: String,
     pub search_matches: Vec<usize>,
@@ -1527,8 +1511,28 @@ fn expand_diff_line_tabs(line: &str) -> String {
 }
 
 impl DiffView {
-    #[allow(clippy::too_many_lines)]
     pub fn new(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
+        Self::parse(
+            mr_iid,
+            project_path,
+            raw_diff,
+            Some(DiffHighlighter::default()),
+        )
+    }
+
+    /// Parses the diff without syntax highlighting or word marks, for callers
+    /// that only read its structure (anchors, line numbers) and never render it.
+    pub fn without_highlighting(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
+        Self::parse(mr_iid, project_path, raw_diff, None)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn parse(
+        mr_iid: u64,
+        project_path: String,
+        raw_diff: String,
+        mut highlighter: Option<DiffHighlighter>,
+    ) -> Self {
         // Expand tabs once, here: everything downstream — the stored line
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
@@ -1553,7 +1557,6 @@ impl DiffView {
 
         struct DiffChunkMeta {
             new_path: Option<String>,
-            old_path: Option<String>,
             is_new_file: bool,
             is_deleted_file: bool,
         }
@@ -1615,38 +1618,39 @@ impl DiffView {
                         .as_ref()
                         .and_then(|m| m.new_path.clone())
                         .or_else(|| rename_to.clone()),
-                    old_path: rename_from.clone(),
                     is_new_file: false,
                     is_deleted_file: false,
                 });
             } else if let Some(rest) = line.strip_prefix("rename to ") {
                 rename_to = Some(unquote_git_path(rest));
                 let new_path = rename_to.clone();
-                let old_path = rename_from.clone();
                 if let Some(new) = &new_path {
                     current_file = new.clone();
                     let already_exists = files.iter().any(|(f, _, _, _, _)| f == new);
                     if !already_exists {
-                        files.push((new.clone(), old_path.clone(), false, false, all_lines.len()));
+                        files.push((
+                            new.clone(),
+                            rename_from.clone(),
+                            false,
+                            false,
+                            all_lines.len(),
+                        ));
                     }
                 }
                 chunk_meta = Some(DiffChunkMeta {
                     new_path,
-                    old_path,
                     is_new_file: false,
                     is_deleted_file: false,
                 });
             } else if line.starts_with("new file mode ") {
                 chunk_meta = Some(DiffChunkMeta {
                     new_path: rename_to.clone(),
-                    old_path: None,
                     is_new_file: true,
                     is_deleted_file: false,
                 });
             } else if line.starts_with("deleted file mode ") {
                 chunk_meta = Some(DiffChunkMeta {
                     new_path: None,
-                    old_path: rename_from.clone(),
                     is_new_file: false,
                     is_deleted_file: true,
                 });
@@ -1664,7 +1668,6 @@ impl DiffView {
                     if chunk_meta.as_ref().is_none_or(|m| m.new_path.is_none()) {
                         chunk_meta = Some(DiffChunkMeta {
                             new_path: Some(cleaned_path),
-                            old_path: rename_from.clone(),
                             is_new_file: chunk_meta.as_ref().is_some_and(|m| m.is_new_file),
                             is_deleted_file: chunk_meta.as_ref().is_some_and(|m| m.is_deleted_file),
                         });
@@ -1715,6 +1718,9 @@ impl DiffView {
                 }
                 Row::Meta => (DiffLineType::Meta, None, None, None),
                 Row::HunkHeader => {
+                    if let Some(highlighter) = highlighter.as_mut() {
+                        highlighter.start_hunk();
+                    }
                     let range = parse_hunk_header(line);
                     old_line_num = range.map(|r| r.old_start);
                     new_line_num = range.map(|r| r.new_start);
@@ -1730,7 +1736,14 @@ impl DiffView {
                         .entry(current_file.clone())
                         .or_insert((0, 0))
                         .1 += 1;
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlighter.as_mut().and_then(|h| {
+                        h.highlight_row(
+                            &current_file,
+                            DiffSide::New,
+                            strip_diff_marker(line),
+                            line_new,
+                        )
+                    });
                     (DiffLineType::Addition, None, line_new, highlighted)
                 }
                 Row::Deletion => {
@@ -1741,7 +1754,14 @@ impl DiffView {
                         .entry(current_file.clone())
                         .or_insert((0, 0))
                         .0 += 1;
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlighter.as_mut().and_then(|h| {
+                        h.highlight_row(
+                            &current_file,
+                            DiffSide::Old,
+                            strip_diff_marker(line),
+                            line_old,
+                        )
+                    });
                     (DiffLineType::Deletion, line_old, None, highlighted)
                 }
                 Row::Context => {
@@ -1750,7 +1770,14 @@ impl DiffView {
                     new_line_num = new_line_num.map(|n| n + 1);
                     hunk_old_left = hunk_old_left.saturating_sub(1);
                     hunk_new_left = hunk_new_left.saturating_sub(1);
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlighter.as_mut().and_then(|h| {
+                        h.highlight_row(
+                            &current_file,
+                            DiffSide::Both,
+                            strip_diff_marker(line),
+                            line_new,
+                        )
+                    });
                     (DiffLineType::Normal, line_old, line_new, highlighted)
                 }
             };
@@ -1761,8 +1788,12 @@ impl DiffView {
                 old_line_num: line_old,
                 new_line_num: line_new,
                 syntax_highlighted: highlighted,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             });
+        }
+        if highlighter.is_some() {
+            mark_changed_words(&mut all_lines);
         }
 
         let mut root_node = DiffTreeNode::Directory {
@@ -1772,17 +1803,19 @@ impl DiffView {
         };
 
         for (file_path, old_path, is_new, is_del, line_idx) in &files {
-            let parts: Vec<&str> = file_path.split(|c| c == '/' || c == '\\').collect();
+            let parts: Vec<&str> = file_path.split(['/', '\\']).collect();
             let counts = change_counts.get(file_path).copied().unwrap_or((0, 0));
             root_node.insert(
                 &parts,
-                file_path,
-                old_path.as_deref(),
-                *is_new,
-                *is_del,
-                counts.1,
-                counts.0,
-                *line_idx,
+                &DiffFileEntry {
+                    full_path: file_path,
+                    old_path: old_path.as_deref(),
+                    is_new_file: *is_new,
+                    is_deleted_file: *is_del,
+                    additions: counts.1,
+                    deletions: counts.0,
+                    line_idx: *line_idx,
+                },
             );
         }
 
@@ -1827,6 +1860,7 @@ impl DiffView {
             selection_end: None,
             side_by_side: false,
             side_by_side_lines: Vec::new(),
+            unified_cursor_before_split: None,
             viewport_height: 15,
             search_query: String::new(),
             search_matches: Vec::new(),
@@ -1983,8 +2017,8 @@ impl DiffView {
             return node.file_path.clone().into_iter().collect();
         }
         let rel_path = node.path_id.strip_prefix("root/").unwrap_or(&node.path_id);
-        let prefix1 = format!("{}/", rel_path);
-        let prefix2 = format!("{}\\", rel_path);
+        let prefix1 = format!("{rel_path}/");
+        let prefix2 = format!("{rel_path}\\");
         let mut paths = Vec::new();
         self.root_node.collect_file_paths(&mut paths);
         paths.retain(|p| p.starts_with(&prefix1) || p.starts_with(&prefix2));
@@ -2041,6 +2075,13 @@ impl DiffView {
         self.all_lines
             .iter()
             .any(|line| note_position_anchors(position, Some(line), Some(line)))
+    }
+
+    /// Whether every line the draft is anchored to is still in the diff.
+    pub fn contains_draft_anchor(&self, draft: &DraftComment) -> bool {
+        draft
+            .anchor_positions()
+            .all(|position| self.contains_anchor(&position))
     }
 
     /// Opens the anchor's file and puts the diff cursor on the anchor line, or
@@ -2185,34 +2226,39 @@ impl DiffView {
                 if rel_path.is_empty() {
                     self.all_lines.clone()
                 } else {
-                    let prefix1 = format!("{}/", rel_path);
-                    let prefix2 = format!("{}\\", rel_path);
+                    let prefix1 = format!("{rel_path}/");
+                    let prefix2 = format!("{rel_path}\\");
                     self.all_lines
                         .iter()
                         .filter(|line| {
                             line.file_path.starts_with(&prefix1)
                                 || line.file_path.starts_with(&prefix2)
-                                || &line.file_path == rel_path
+                                || line.file_path == rel_path
                         })
                         .cloned()
                         .collect()
                 }
+            } else if !rel_path.is_empty() {
+                self.all_lines
+                    .iter()
+                    .filter(|line| line.file_path == rel_path)
+                    .cloned()
+                    .collect()
             } else {
-                if !rel_path.is_empty() {
-                    self.all_lines
-                        .iter()
-                        .filter(|line| &line.file_path == rel_path)
-                        .cloned()
-                        .collect()
-                } else {
-                    self.all_lines.clone()
-                }
+                self.all_lines.clone()
             }
         };
 
         self.lines = new_lines;
         self.side_by_side_lines = build_side_by_side_lines(&self.lines);
 
+        self.index_active_rows();
+    }
+
+    /// Clamps the cursor to the active layout's rows and rebuilds its hunk
+    /// list and search matches: everything that depends on the layout once
+    /// both row lists are built.
+    fn index_active_rows(&mut self) {
         let active_len = if self.side_by_side {
             self.side_by_side_lines.len()
         } else {
@@ -2243,6 +2289,74 @@ impl DiffView {
         if !self.search_query.is_empty() {
             let query = self.search_query.clone();
             self.search(&query);
+        }
+    }
+
+    /// Switches between side-by-side and unified rows, keeping the cursor on
+    /// the same diff line. A line selection is dropped, since its row indices
+    /// refer to the layout being left.
+    pub fn set_side_by_side(&mut self, side_by_side: bool) {
+        if self.side_by_side == side_by_side {
+            return;
+        }
+        let old_cursor = self.cursor_idx;
+        self.side_by_side = side_by_side;
+        self.selection_start = None;
+        self.selection_end = None;
+        self.index_active_rows();
+
+        let new_cursor = if side_by_side {
+            self.unified_cursor_before_split = Some(old_cursor);
+            self.side_by_side_row_of(old_cursor)
+        } else {
+            self.unified_cursor_before_split
+                .take()
+                .filter(|&line| self.side_by_side_row_of(line) == Some(old_cursor))
+                .or_else(|| self.unified_line_of(old_cursor))
+        };
+        if let Some(new_cursor) = new_cursor {
+            self.cursor_idx = new_cursor;
+        }
+        if let Some(position) = self
+            .search_matches
+            .iter()
+            .position(|&m| m == self.cursor_idx)
+        {
+            self.search_cursor = position;
+        }
+        self.scroll_offset = self.cursor_idx.saturating_sub(5);
+    }
+
+    /// Moves the file-tree selection or the diff cursor `rows` down or up,
+    /// stopping at the ends.
+    pub fn move_by(&mut self, down: bool, rows: usize, extend_selection: bool) {
+        if self.focus_on_files {
+            if self.visible_nodes.is_empty() {
+                return;
+            }
+            let old_idx = self.selected_visible_idx;
+            self.selected_visible_idx = step_clamped(old_idx, self.visible_nodes.len(), down, rows);
+            if self.selected_visible_idx != old_idx {
+                self.cursor_idx = 0;
+                self.scroll_offset = 0;
+                self.file_tree_scroll_offset = 0;
+                self.update_active_lines();
+            }
+        } else {
+            let len = if self.side_by_side {
+                self.side_by_side_lines.len()
+            } else {
+                self.lines.len()
+            };
+            if len == 0 {
+                return;
+            }
+            let new_idx = step_clamped(self.cursor_idx, len, down, rows);
+            if extend_selection {
+                self.selection_end = Some(new_idx);
+            }
+            self.cursor_idx = new_idx;
+            self.update_selected_file_from_cursor();
         }
     }
 
@@ -2319,7 +2433,7 @@ impl DiffView {
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{}", prefix, name)
+                    format!("{prefix}/{name}")
                 };
                 let (adds, dels) = Self::compute_dir_counts_raw(node);
                 if let Some(fnode) = flat.iter_mut().find(|n| n.is_dir && n.path_id == path_id) {
@@ -2407,26 +2521,35 @@ impl DiffView {
         self.rebuild_visible_nodes();
     }
 
+    /// Ranks the rows of the active layout against `query`: a side-by-side row
+    /// matches once, with the better score of its two sides.
     pub fn search(&mut self, query: &str) {
         self.search_query = query.to_string();
-        self.search_matches.clear();
-
-        // Clear previous fuzzy indices on all lines
-        for line in &mut self.lines {
-            line.fuzzy_indices = None;
-        }
+        self.clear_fuzzy_indices();
 
         let matcher = &*FUZZY_MATCHER;
-        let mut scored: Vec<(i64, usize)> = self
-            .lines
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, line)| {
-                let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
-                line.fuzzy_indices = Some(indices);
-                Some((score, i))
-            })
-            .collect();
+        let score = |line: &mut DiffLine| {
+            let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
+            line.fuzzy_indices = Some(indices);
+            Some(score)
+        };
+        let mut scored: Vec<(i64, usize)> = if self.side_by_side {
+            self.side_by_side_lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, row)| {
+                    let left = row.left.as_mut().and_then(score);
+                    let right = row.right.as_mut().and_then(score);
+                    Some((left.max(right)?, i))
+                })
+                .collect()
+        } else {
+            self.lines
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, line)| Some((score(line)?, i)))
+                .collect()
+        };
         scored.sort_by_key(|(score, _)| -(*score));
         self.search_matches = scored.into_iter().map(|(_, i)| i).collect();
         self.search_cursor = 0;
@@ -2466,7 +2589,15 @@ impl DiffView {
         self.search_matches.clear();
         self.search_cursor = 0;
         self.search_active = false;
-        for line in &mut self.lines {
+        self.clear_fuzzy_indices();
+    }
+
+    fn clear_fuzzy_indices(&mut self) {
+        let halves = self
+            .side_by_side_lines
+            .iter_mut()
+            .flat_map(|row| row.left.iter_mut().chain(row.right.iter_mut()));
+        for line in self.lines.iter_mut().chain(halves) {
             line.fuzzy_indices = None;
         }
     }
@@ -2491,7 +2622,7 @@ impl DiffView {
                                 sline
                                     .right
                                     .as_ref()
-                                    .map_or(false, |r| r.new_line_num.is_some())
+                                    .is_some_and(|r| r.new_line_num.is_some())
                             });
 
                     if has_any_right {
@@ -2685,6 +2816,72 @@ impl DiffView {
             (right, None) => right.as_ref(),
         }
     }
+
+    /// Side-by-side row showing the unified line `line`.
+    fn side_by_side_row_of(&self, line: usize) -> Option<usize> {
+        let unified = self.lines.get(line)?;
+        if is_marker(unified.line_type) {
+            let nth = self.lines[..line]
+                .iter()
+                .filter(|l| is_marker(l.line_type))
+                .count();
+            return nth_marker(self.side_by_side_lines.iter().map(|row| row.line_type), nth);
+        }
+        self.side_by_side_lines
+            .iter()
+            .position(|row| side_by_side_row_shows(row, unified))
+    }
+
+    /// Unified line shown by the side-by-side row `row_idx`.
+    fn unified_line_of(&self, row_idx: usize) -> Option<usize> {
+        let row = self.side_by_side_lines.get(row_idx)?;
+        if is_marker(row.line_type) {
+            let nth = self.side_by_side_lines[..row_idx]
+                .iter()
+                .filter(|r| is_marker(r.line_type))
+                .count();
+            return nth_marker(self.lines.iter().map(|line| line.line_type), nth);
+        }
+        unified_row_of(row, &self.lines)
+    }
+}
+
+/// Hunk headers and meta lines carry no line numbers, but
+/// `build_side_by_side_lines` gives each exactly one row, in order, so they
+/// map between the layouts by ordinal.
+fn is_marker(line_type: DiffLineType) -> bool {
+    matches!(line_type, DiffLineType::HunkHeader | DiffLineType::Meta)
+}
+
+fn nth_marker(types: impl Iterator<Item = DiffLineType>, nth: usize) -> Option<usize> {
+    types
+        .enumerate()
+        .filter(|&(_, line_type)| is_marker(line_type))
+        .nth(nth)
+        .map(|(i, _)| i)
+}
+
+/// Whether the side-by-side `row` shows the unified content line `unified`.
+fn side_by_side_row_shows(row: &SideBySideLine, unified: &DiffLine) -> bool {
+    let same_line = |side: &Option<DiffLine>| {
+        side.as_ref().is_some_and(|l| {
+            l.old_line_num == unified.old_line_num
+                && l.new_line_num == unified.new_line_num
+                && l.file_path == unified.file_path
+        })
+    };
+    same_line(&row.left) || same_line(&row.right)
+}
+
+/// Unified row of the line `row` shows on its new side, else on its old side.
+fn unified_row_of(row: &SideBySideLine, lines: &[DiffLine]) -> Option<usize> {
+    let target = row.right.as_ref().or(row.left.as_ref())?;
+    lines.iter().position(|line| {
+        line.file_path == target.file_path
+            && line.old_line_num == target.old_line_num
+            && line.new_line_num == target.new_line_num
+            && line.line_type == target.line_type
+    })
 }
 
 pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
@@ -2949,7 +3146,6 @@ pub enum TextInputAction {
     },
     CreateIssue,
     AddReviewComment {
-        mr_iid: u64,
         file_path: String,
         line_num: Option<u32>,
         old_line_num: Option<u32>,
@@ -2957,12 +3153,7 @@ pub enum TextInputAction {
         end_old_line_num: Option<u32>,
     },
     EnterPipelineId,
-    CreateRelease,
     CreateMilestone,
-    SubmitReviewFinal {
-        mr_iid: u64,
-        status: String,
-    },
     ReplyToComment {
         mr_iid: u64,
         comment_id: u64,
@@ -2972,12 +3163,112 @@ pub enum TextInputAction {
     EditPageSize,
 }
 
+/// Text being edited, with a cursor counted in characters so
+/// multibyte text edits whole characters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextBuffer {
+    value: String,
+    cursor_char_idx: usize,
+}
+
+impl TextBuffer {
+    /// Starts with the cursor after the last character of `value`.
+    pub fn new(value: String) -> Self {
+        let cursor_char_idx = value.chars().count();
+        Self {
+            value,
+            cursor_char_idx,
+        }
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Replaces the whole value and moves the cursor to its end.
+    pub fn set_value(&mut self, value: String) {
+        *self = Self::new(value);
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        let at = self.byte_offset(self.cursor_char_idx);
+        self.value.insert(at, c);
+        self.cursor_char_idx += 1;
+    }
+
+    pub fn delete_char_before_cursor(&mut self) {
+        let Some(previous) = self.cursor_char_idx.checked_sub(1) else {
+            return;
+        };
+        let at = self.byte_offset(previous);
+        self.value.remove(at);
+        self.cursor_char_idx = previous;
+    }
+
+    pub fn delete_char_at_cursor(&mut self) {
+        let at = self.byte_offset(self.cursor_char_idx);
+        if at < self.value.len() {
+            self.value.remove(at);
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        self.cursor_char_idx = self.cursor_char_idx.saturating_sub(1);
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        if self.byte_offset(self.cursor_char_idx) < self.value.len() {
+            self.cursor_char_idx += 1;
+        }
+    }
+
+    /// The value with `cursor` inserted between the characters around the cursor.
+    pub fn value_with_cursor(&self, cursor: char) -> String {
+        let mut rendered = self.value.clone();
+        rendered.insert(self.byte_offset(self.cursor_char_idx), cursor);
+        rendered
+    }
+
+    pub fn cursor_byte_offset(&self) -> usize {
+        self.byte_offset(self.cursor_char_idx)
+    }
+
+    pub fn apply_edit_key(&mut self, code: crossterm::event::KeyCode) {
+        use crossterm::event::KeyCode;
+        match code {
+            KeyCode::Char(c) => self.insert_char(c),
+            KeyCode::Backspace => self.delete_char_before_cursor(),
+            KeyCode::Delete => self.delete_char_at_cursor(),
+            KeyCode::Left => self.move_cursor_left(),
+            KeyCode::Right => self.move_cursor_right(),
+            _ => {}
+        }
+    }
+
+    fn byte_offset(&self, char_idx: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_idx)
+            .map_or(self.value.len(), |(offset, _)| offset)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TextInput {
     pub title: String,
-    pub value: String,
-    pub cursor_idx: usize,
+    pub buffer: TextBuffer,
     pub action: TextInputAction,
+}
+
+impl TextInput {
+    /// Opens the input with the cursor after the last character of `value`.
+    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        Self {
+            title: title.into(),
+            buffer: TextBuffer::new(value),
+            action,
+        }
+    }
 }
 
 /// Target kind parsed from the "go to issue/MR by ID" prompt value.
@@ -3119,11 +3410,29 @@ impl DatePicker {
 /// Prefix of every terminal-log entry written for a custom keybinding.
 pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 
-#[derive(Debug, Clone)]
-pub struct TerminalCommand {
-    pub timestamp: String,
-    pub command: String,
-    pub status: String,
+/// Prefix of every terminal-log entry written for a re-run from the Terminal
+/// tab. Like custom commands, those entries settle their own row.
+pub const RERUN_LOG_PREFIX: &str = "Rerun: ";
+
+/// Prefix of the terminal-log entry written while the submit-review overlay
+/// posts a review. The overlay settles that row itself once the post ends.
+pub const REVIEW_SUBMIT_LOG_PREFIX: &str = "Submit review: ";
+
+fn settles_own_row(cmd: &TerminalCommand) -> bool {
+    [
+        CUSTOM_COMMAND_LOG_PREFIX,
+        RERUN_LOG_PREFIX,
+        REVIEW_SUBMIT_LOG_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| cmd.command.starts_with(prefix))
+}
+
+fn outcome_status(outcome: &Result<(), String>) -> String {
+    match outcome {
+        Ok(()) => "Success".to_string(),
+        Err(error) => format!("Failed: {error}"),
+    }
 }
 
 #[derive(Debug)]
@@ -3143,6 +3452,8 @@ pub enum OverlayKind {
     ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
+    ReviewSubmit,
+    TerminalInspector,
 }
 
 /// A PR action that needs the PR's stack, so it waits for an on-demand stack
@@ -3157,23 +3468,36 @@ pub enum StackAction {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64),             // milestone iid
-    DeleteRelease(String),            // release tag_name
-    DeleteBranch(String),             // branch name
-    DeleteIssue(u64),                 // issue iid
-    DeleteMr(u64),                    // mr iid
-    CloseIssue(u64),                  // issue iid
-    CloseMr(u64),                     // mr iid
-    CloseMilestone(u64),              // milestone iid
-    ReopenIssue(u64),                 // issue iid
-    ReopenMr(u64),                    // mr iid
-    ReopenMilestone(u64),             // milestone iid
+    DeleteMilestone(crate::domain::milestones::Milestone),
+    DeleteRelease(String), // release tag_name
+    DeleteBranch(String),  // branch name
+    DeleteIssue(u64),      // issue iid
+    DeleteMr(u64),         // mr iid
+    CloseIssue(u64),       // issue iid
+    CloseMr(u64),          // mr iid
+    CloseMilestone(crate::domain::milestones::Milestone),
+    ReopenIssue(u64), // issue iid
+    ReopenMr(u64),    // mr iid
+    ReopenMilestone(crate::domain::milestones::Milestone),
     MergeMr(u64),                     // mr iid
     MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
-    RevokeMr(u64),                    // mr iid
-    RebaseMr(u64),                    // mr iid
-    SubmitReview(u64),                // mr iid
+    BulkDeleteBranches(Vec<String>),
+    RevokeMr(u64),     // mr iid
+    RebaseMr(u64),     // mr iid
+    SubmitReview(u64), // mr iid
+    MarkAllTodosRead,
+    CancelPipeline(u64), // pipeline id
+    CancelJobs {
+        pipeline_id: u64,
+        job_ids: Vec<u64>,
+    },
+    RerunCommand(Invocation),
+    StopEnvironment(Box<crate::domain::deployments::Environment>),
+    RollbackDeployment {
+        environment: String,
+        deployment: Box<crate::domain::deployments::Deployment>,
+    },
 }
 
 impl ConfirmAction {
@@ -3183,6 +3507,7 @@ impl ConfirmAction {
             Self::DeleteMilestone(_)
                 | Self::DeleteRelease(_)
                 | Self::DeleteBranch(_)
+                | Self::BulkDeleteBranches(_)
                 | Self::DeleteIssue(_)
                 | Self::DeleteMr(_)
                 | Self::CloseIssue(_)
@@ -3192,229 +3517,148 @@ impl ConfirmAction {
                 | Self::ReopenMr(_)
                 | Self::ReopenMilestone(_)
                 | Self::RevokeMr(_)
+                | Self::MarkAllTodosRead
+                | Self::CancelPipeline(_)
+                | Self::CancelJobs { .. }
+                | Self::StopEnvironment(_)
+                | Self::RollbackDeployment { .. }
         )
     }
 }
 
-/// Toggleable option shown inside a [`SubmitDialog`] body.
-///
-/// Used for actions that have additional knobs (merge options such as
-/// "Squash commits" or "Delete source branch"). The user flips these
-/// with `Space` / `Enter` before pressing the Submit button; nothing is
-/// sent to the API until Submit is activated.
-#[derive(Clone, Debug)]
-pub struct SubmitOption {
-    pub label: String,
-    pub checked: bool,
+/// A button between Submit and Cancel in a [`SubmitDialog`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogChoice {
+    /// Close the diff view and leave the review drafts saved for later.
+    KeepDrafts,
+    /// Throw the review drafts away and close the diff view.
+    DiscardDrafts,
 }
 
-impl SubmitOption {
-    pub fn new(label: impl Into<String>, checked: bool) -> Self {
-        Self {
-            label: label.into(),
-            checked,
+impl DialogChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::KeepDrafts => "Keep drafts",
+            Self::DiscardDrafts => "Discard",
+        }
+    }
+
+    pub fn is_destructive(self) -> bool {
+        matches!(self, Self::DiscardDrafts)
+    }
+}
+
+/// What the strategy radio and the option toggles of a merge dialog chose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MergeChoices {
+    pub method: MergeMethod,
+    pub delete_branch: bool,
+    pub auto_merge: bool,
+}
+
+impl MergeChoices {
+    /// The flags `Backend::merge_mr` takes for these choices, with `sha` the
+    /// head commit the merge must find.
+    pub fn options<'a>(&self, sha: Option<&'a str>) -> crate::backend::MergeOptions<'a> {
+        crate::backend::MergeOptions {
+            squash: self.method == MergeMethod::Squash,
+            delete_branch: self.delete_branch,
+            strategy: (self.method != MergeMethod::Squash).then(|| self.method.as_api_str()),
+            auto_merge: self.auto_merge,
+            sha,
         }
     }
 }
 
-/// A modal dialog that gates a mutating API call behind an explicit
-/// Submit button click. Replaces the old two-button YES/NO popup
-/// (issue #315).
-///
-/// Layout:
-///
-/// ```text
-/// ┌─ <title> ─────────────────────┐
-/// │                                │
-/// │ <body, wrapped>                │
-/// │                                │
-/// │ [ ] <option label>             │   ← only if options is non-empty
-/// │ [x] <option label>             │
-/// │                                │
-/// ├────────────────────────────────┤
-/// │  [ Submit ]      [ Cancel ]    │
-/// └────────────────────────────────┘
-/// ```
-///
-/// Cursor layout: index `0` is Submit (leftmost button), `1..=options.len()`
-/// are the options (one per toggle), `options.len() + 1` is Cancel
-/// (rightmost button).
-///
-/// Keyboard:
-/// - `Tab` / `Shift-Tab` — move vertically through all rows (options + buttons)
-/// - `j` / `Down` / `k` / `Up` — move vertically through options only
-/// - `h` / `Left` (on a button) — jump to the Submit button
-/// - `l` / `Right` (on a button) — jump to the Cancel button
-/// - `Enter` — activate focused (Cancel closes, option toggles, Submit runs the action)
-/// - `Space` — toggle the focused option (no-op on buttons)
-/// - `Esc` — cancel (equivalent to Cancel)
+/// The toggles of a merge dialog's Options group, top to bottom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MergeToggle {
+    DeleteSourceBranch,
+    AutoMerge,
+}
+
+impl MergeToggle {
+    const ALL: [Self; 2] = [Self::DeleteSourceBranch, Self::AutoMerge];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::DeleteSourceBranch => "Delete source branch",
+            Self::AutoMerge => "Auto-merge",
+        }
+    }
+
+    fn is_on_by_default(self) -> bool {
+        self == Self::DeleteSourceBranch
+    }
+}
+
+/// A [`Form`] that gates a mutating API call behind an explicit Submit
+/// button: the body text, any choices the action takes (merge strategy and
+/// options) and the buttons Submit, then any extra choices the action
+/// offers, then Cancel. Destructive actions open in the form's danger tone,
+/// on Cancel.
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
     pub project_path: String,
-    pub title: String,
-    pub body: String,
-    pub options: Vec<SubmitOption>,
-    pub submit_label: String,
-    /// `0` = Submit, `1..=options.len()` = options, `options.len() + 1` = Cancel.
-    pub cursor_idx: usize,
+    /// Buttons between Submit and Cancel, left to right.
+    extra_buttons: Vec<DialogChoice>,
+    /// The merge methods the `Strategy` radio offers, in its order.
+    strategies: Vec<MergeMethod>,
+    pub form: Form,
 }
 
 impl SubmitDialog {
-    /// Leftmost position: the Submit button (rendered on the left).
-    pub const SUBMIT_IDX: usize = 0;
+    pub const SUBMIT_BUTTON_INDEX: usize = 0;
+    const BODY: GroupId = GroupId("body");
+    const STRATEGY: GroupId = GroupId("strategy");
+    const MERGE_OPTIONS: GroupId = GroupId("merge_options");
 
-    /// Outer width of the dialog (including borders/padding).
-    pub const DIALOG_WIDTH: u16 = 64;
-    /// Inner width available for the wrapped body text. Derived from
-    /// `DIALOG_WIDTH` minus the block's borders and horizontal padding.
-    pub const BODY_INNER_WIDTH: usize = 56;
-
-    /// Index of the Cancel button (rendered on the right, after the options).
-    pub fn cancel_idx(&self) -> usize {
-        self.options.len() + 1
+    /// The extra button at form button index `button`, if it is one.
+    pub fn choice_at(&self, button: usize) -> Option<DialogChoice> {
+        button
+            .checked_sub(Self::SUBMIT_BUTTON_INDEX + 1)
+            .and_then(|i| self.extra_buttons.get(i).copied())
     }
 
-    pub fn is_on_submit(&self) -> bool {
-        self.cursor_idx == Self::SUBMIT_IDX
-    }
-
-    pub fn is_on_cancel(&self) -> bool {
-        self.cursor_idx == self.cancel_idx()
-    }
-
-    /// `None` when on a button, `Some(i)` when on the `i`-th option.
-    pub fn option_idx(&self) -> Option<usize> {
-        if self.cursor_idx >= 1 && self.cursor_idx <= self.options.len() {
-            Some(self.cursor_idx - 1)
-        } else {
-            None
+    /// The merge the dialog's strategy and options ask for. A dialog without
+    /// one of the groups contributes that group's defaults.
+    pub fn merge_choices(&self) -> MergeChoices {
+        let method = self
+            .form
+            .radio(Self::STRATEGY)
+            .and_then(|radio| self.strategies.get(radio.selected).copied())
+            .unwrap_or(MergeMethod::DEFAULT);
+        let is_on = |toggle: MergeToggle| {
+            let row = MergeToggle::ALL.iter().position(|&t| t == toggle);
+            self.form
+                .toggles(Self::MERGE_OPTIONS)
+                .and_then(|toggles| toggles.items.get(row?))
+                .map_or(toggle.is_on_by_default(), |item| item.is_on)
+        };
+        MergeChoices {
+            method,
+            delete_branch: is_on(MergeToggle::DeleteSourceBranch),
+            auto_merge: is_on(MergeToggle::AutoMerge),
         }
     }
 
-    /// Construct a SubmitDialog that defaults its cursor to Submit (left).
-    /// Used for reversible actions (merge, rebase, submit review).
-    pub fn new(
-        action: ConfirmAction,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self::new_with_project(action, String::new(), title, body, submit_label, options)
+    /// Build the dialog for an action whose target carries no project of
+    /// its own (a branch, a bulk merge whose items each name theirs): it
+    /// acts on the current scope. Actions on a listed issue, MR, milestone
+    /// or release go through [`Self::build_with_project`] instead.
+    pub fn build(action: ConfirmAction, app: &App) -> Self {
+        Self::build_with_project(action, app.scope.as_str().to_string(), app)
     }
 
-    pub fn new_with_project(
-        action: ConfirmAction,
-        project_path: impl Into<String>,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self {
-            action,
-            project_path: project_path.into(),
-            title: title.into(),
-            body: body.into(),
-            options,
-            submit_label: submit_label.into(),
-            cursor_idx: Self::SUBMIT_IDX,
-        }
-    }
-
-    /// Construct a SubmitDialog that defaults its cursor to Cancel (right).
-    /// Used for destructive actions where the safer default is opt-in.
-    pub fn new_safe(
-        action: ConfirmAction,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        Self::new_safe_with_project(action, String::new(), title, body, submit_label, options)
-    }
-
-    pub fn new_safe_with_project(
-        action: ConfirmAction,
-        project_path: impl Into<String>,
-        title: impl Into<String>,
-        body: impl Into<String>,
-        submit_label: impl Into<String>,
-        options: Vec<SubmitOption>,
-    ) -> Self {
-        let options_len = options.len();
-        Self {
-            action,
-            project_path: project_path.into(),
-            title: title.into(),
-            body: body.into(),
-            options,
-            submit_label: submit_label.into(),
-            cursor_idx: options_len + 1,
-        }
-    }
-
-    pub fn move_next(&mut self) {
-        let max = self.cancel_idx();
-        if self.cursor_idx < max {
-            self.cursor_idx += 1;
-        }
-    }
-
-    pub fn move_prev(&mut self) {
-        if self.cursor_idx > Self::SUBMIT_IDX {
-            self.cursor_idx -= 1;
-        }
-    }
-
-    pub fn toggle_focused_option(&mut self) {
-        if let Some(idx) = self.option_idx() {
-            let label = self.options[idx].label.clone();
-            let is_radio = label.starts_with("Strategy: ");
-            if is_radio {
-                // For radio buttons, only check it and uncheck others in the group
-                for opt in &mut self.options {
-                    if opt.label.starts_with("Strategy: ") {
-                        opt.checked = false;
-                    }
-                }
-                self.options[idx].checked = true;
-            } else {
-                self.options[idx].checked = !self.options[idx].checked;
-            }
-        }
-    }
-
-    /// Build the default SubmitDialog for a [`ConfirmAction`], pulling
-    /// any context-aware body text from the live `App` (e.g. the merge
-    /// target branch, the release tag, the issue/MR iid).
+    /// Build the default SubmitDialog for a [`ConfirmAction`] on
+    /// `project_path`, the project of the row the user selected: in group
+    /// scope the same iid recurs across projects, so the iid alone does not
+    /// identify the target. Body text comes from the live `App` (e.g. the
+    /// merge target branch, the release tag, the issue/MR iid).
     ///
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
-    pub fn build(action: ConfirmAction, app: &App) -> Self {
-        let project_path = match &action {
-            ConfirmAction::DeleteMilestone(iid)
-            | ConfirmAction::CloseMilestone(iid)
-            | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
-            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
-            ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
-            ConfirmAction::CloseIssue(iid)
-            | ConfirmAction::DeleteIssue(iid)
-            | ConfirmAction::ReopenIssue(iid) => app.project_path_for_issue(*iid),
-            ConfirmAction::CloseMr(iid)
-            | ConfirmAction::ReopenMr(iid)
-            | ConfirmAction::DeleteMr(iid)
-            | ConfirmAction::MergeMr(iid)
-            | ConfirmAction::MergeStack(iid)
-            | ConfirmAction::RevokeMr(iid)
-            | ConfirmAction::RebaseMr(iid)
-            | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
-            ConfirmAction::BulkMergeMrs(_) => app.scope.as_str().to_string(),
-        };
-        Self::build_with_project(action, project_path, app)
-    }
-
     pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
@@ -3422,76 +3666,96 @@ impl SubmitDialog {
         let marker = if kind.is_github() { "#" } else { "!" };
 
         let action_clone = action.clone();
-        let (title, body, submit_label, options, safe) = match &action {
-            ConfirmAction::DeleteMilestone(iid) => (
-                format!("Delete Milestone #{iid}"),
-                format!("Are you sure you want to delete milestone #{iid}?"),
+        let strategies = match &action {
+            ConfirmAction::MergeMr(_)
+            | ConfirmAction::MergeStack(_)
+            | ConfirmAction::BulkMergeMrs(_) => MergeMethod::ALL.to_vec(),
+            _ => Vec::new(),
+        };
+        let (title, body, submit_label, options) = match &action {
+            ConfirmAction::DeleteMilestone(milestone) => (
+                format!("Delete Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to delete milestone #{}?",
+                    milestone.iid
+                ),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteRelease(tag_name) => (
                 format!("Delete Release {tag_name}"),
                 format!("Are you sure you want to delete release {tag_name}?"),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteBranch(branch_name) => (
                 format!("Delete Branch '{branch_name}'"),
                 format!("Are you sure you want to delete branch \'{branch_name}\'?"),
                 "Delete".to_string(),
                 vec![],
-                true,
+            ),
+            ConfirmAction::BulkDeleteBranches(branch_names) => (
+                format!("Delete {} Branches", branch_names.len()),
+                format!(
+                    "Are you sure you want to delete {} selected branches?",
+                    branch_names.len()
+                ),
+                "Delete All".to_string(),
+                vec![Group::new(GroupKind::ItemList(ItemList {
+                    entries: branch_names
+                        .iter()
+                        .cloned()
+                        .map(ListEntry::queued)
+                        .collect(),
+                }))],
             ),
             ConfirmAction::CloseIssue(iid) => (
                 format!("Close Issue #{iid}"),
                 format!("Are you sure you want to close issue #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteIssue(iid) => (
                 format!("Delete Issue #{iid}"),
                 format!("Are you sure you want to delete issue #{iid}? This action is permanent."),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::CloseMr(iid) => (
                 format!("Close {mr} #{iid}"),
                 format!("Are you sure you want to close {mr_short} #{iid}?"),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
-            ConfirmAction::CloseMilestone(iid) => (
-                format!("Close Milestone #{iid}"),
-                format!("Are you sure you want to close milestone #{iid}?"),
+            ConfirmAction::CloseMilestone(milestone) => (
+                format!("Close Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to close milestone #{}?",
+                    milestone.iid
+                ),
                 "Close".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenIssue(iid) => (
                 format!("Reopen Issue #{iid}"),
                 format!("Are you sure you want to reopen issue #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::ReopenMr(iid) => (
                 format!("Reopen {mr} #{iid}"),
                 format!("Are you sure you want to reopen {mr_short} #{iid}?"),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
-            ConfirmAction::ReopenMilestone(iid) => (
-                format!("Reopen Milestone #{iid}"),
-                format!("Are you sure you want to reopen milestone #{iid}?"),
+            ConfirmAction::ReopenMilestone(milestone) => (
+                format!("Reopen Milestone #{}", milestone.iid),
+                format!(
+                    "Are you sure you want to reopen milestone #{}?",
+                    milestone.iid
+                ),
                 "Reopen".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::DeleteMr(iid) => (
                 format!("Delete {mr} #{iid}"),
@@ -3500,15 +3764,14 @@ impl SubmitDialog {
                 ),
                 "Delete".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::MergeMr(iid) => {
                 let (source, target) = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == *iid)
-                    .map(|m| (m.source_branch.clone(), m.target_branch.clone()))
+                    .mr_index(&project_path, *iid)
+                    .map(|i| {
+                        let m = &app.mrs.items[i];
+                        (m.source_branch.clone(), m.target_branch.clone())
+                    })
                     .unwrap_or_default();
                 let body = if source.is_empty() && target.is_empty() {
                     String::new()
@@ -3516,18 +3779,14 @@ impl SubmitDialog {
                     format!("Merging: {source} \u{2192} {target}")
                 };
                 let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                    SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
+                    Self::strategy_group(&strategies),
+                    Self::merge_options_group(),
                 ];
                 (
                     format!("Merge {mr} #{iid}"),
                     body,
                     "Merge".to_string(),
                     options,
-                    false,
                 )
             }
             ConfirmAction::MergeStack(iid) => {
@@ -3539,47 +3798,40 @@ impl SubmitDialog {
                     Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
                     None => format!("Merge Stack through #{iid}"),
                 };
-                let body = stack
-                    .map(|stack| {
-                        let merged: Vec<String> = stack
+                let (body, mut options) = match stack {
+                    Some(stack) => {
+                        let entries: Vec<ListEntry> = stack
                             .downstack_open_entries()
                             .map(|e| {
-                                format!(
+                                ListEntry::queued(format!(
                                     "#{}: {}{}",
                                     e.number,
-                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    e.title,
                                     if e.is_draft { " [draft]" } else { "" }
-                                )
+                                ))
                             })
                             .collect();
-                        format!(
-                            "Merges {} PRs together, all or nothing:\n{}",
-                            merged.len(),
-                            merged.join("\n")
+                        (
+                            format!("Merges {} PRs together, all or nothing:", entries.len()),
+                            vec![Group::new(GroupKind::ItemList(ItemList { entries }))],
                         )
-                    })
-                    .unwrap_or_default();
-                let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                ];
-                (title, body, "Merge".to_string(), options, false)
+                    }
+                    None => (String::new(), Vec::new()),
+                };
+                options.push(Self::strategy_group(&strategies));
+                (title, body, "Merge".to_string(), options)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
-                    SubmitOption::new("Strategy: Merge commit", false),
-                    SubmitOption::new("Strategy: Squash", true),
-                    SubmitOption::new("Strategy: Rebase", false),
-                    SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
+                    Self::bulk_merge_items(app, iids, marker),
+                    Self::strategy_group(&strategies),
+                    Self::merge_options_group(),
                 ];
                 (
                     format!("Merge {} {}s", iids.len(), mr),
                     format!("Merging {} {}s", iids.len(), mr_short),
                     "Merge".to_string(),
                     options,
-                    false,
                 )
             }
             ConfirmAction::RevokeMr(iid) => (
@@ -3587,15 +3839,11 @@ impl SubmitDialog {
                 format!("Are you sure you want to revoke your approval on {mr_short} #{iid}?"),
                 "Revoke".to_string(),
                 vec![],
-                true,
             ),
             ConfirmAction::RebaseMr(iid) => {
                 let target = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == *iid)
-                    .map(|m| m.target_branch.clone())
+                    .mr_index(&project_path, *iid)
+                    .map(|i| app.mrs.items[i].target_branch.clone())
                     .unwrap_or_else(|| "target".to_string());
                 (
                     format!("Rebase {mr_short} {marker}{iid}"),
@@ -3604,89 +3852,243 @@ impl SubmitDialog {
                     ),
                     "Rebase".to_string(),
                     vec![],
-                    false,
                 )
             }
-            ConfirmAction::SubmitReview(iid) => (
-                "Submit Review".to_string(),
-                format!(
-                    "You have pending draft comments on {mr_short} #{iid}.\nSubmit your review now?"
-                ),
-                "Submit".to_string(),
-                vec![],
-                false,
-            ),
+            ConfirmAction::SubmitReview(iid) => {
+                let count = app.draft_comments.len();
+                let noun = if count == 1 { "comment" } else { "comments" };
+                (
+                    "Submit Review".to_string(),
+                    format!(
+                        "You have {count} draft {noun} on {mr_short} #{iid}.\n\
+                         Submit them as a review, keep them for later or discard them. \
+                         Cancel returns to the diff."
+                    ),
+                    "Submit".to_string(),
+                    vec![],
+                )
+            }
+            ConfirmAction::CancelPipeline(id) => {
+                let pipeline = kind.term("pipeline");
+                (
+                    format!("Cancel {pipeline} #{id}"),
+                    format!(
+                        "Are you sure you want to cancel {} #{id}?",
+                        pipeline.to_lowercase()
+                    ),
+                    format!("Cancel {pipeline}"),
+                    vec![],
+                )
+            }
+            ConfirmAction::CancelJobs {
+                pipeline_id,
+                job_ids,
+            } => {
+                let pipeline = kind.term("pipeline").to_lowercase();
+                let count = job_ids.len();
+                let jobs = if count == 1 { "Job" } else { "Jobs" };
+                (
+                    format!("Cancel {count} {jobs}"),
+                    format!(
+                        "Are you sure you want to cancel {count} {} in {pipeline} #{pipeline_id}?",
+                        jobs.to_lowercase()
+                    ),
+                    format!("Cancel {jobs}"),
+                    vec![],
+                )
+            }
+            ConfirmAction::RerunCommand(invocation) => {
+                let body_note = if invocation.stdin.is_some() {
+                    " with its recorded request body"
+                } else {
+                    ""
+                };
+                (
+                    "Re-run Command".to_string(),
+                    format!(
+                        "Run again{body_note}: {}",
+                        crate::utils::format::sanitize_untrusted(&invocation.command_line())
+                    ),
+                    "Re-run".to_string(),
+                    vec![],
+                )
+            }
+            ConfirmAction::MarkAllTodosRead => {
+                let todos = kind.term("todo_plural");
+                let body = if kind.is_github() {
+                    "Mark every notification in your inbox as read, across all repositories?"
+                        .to_string()
+                } else {
+                    "Mark every pending todo as done, across all projects?".to_string()
+                };
+                (
+                    format!("Mark All {todos} Read"),
+                    body,
+                    "Mark All".to_string(),
+                    vec![],
+                )
+            }
+            ConfirmAction::StopEnvironment(environment) => {
+                let name = crate::utils::format::sanitize_untrusted(&environment.name);
+                let body = if kind.is_github() {
+                    format!(
+                        "Mark environment '{name}' inactive? GitHub has no stop action, so its \
+                         live deployment, the newest that succeeded, is marked inactive."
+                    )
+                } else {
+                    format!(
+                        "Stop environment '{name}'? GitLab runs its stop action, which tears \
+                         down review and other ephemeral environments."
+                    )
+                };
+                (
+                    format!("Stop Environment '{name}'"),
+                    body,
+                    "Stop".to_string(),
+                    vec![],
+                )
+            }
+            ConfirmAction::RollbackDeployment {
+                environment,
+                deployment,
+            } => {
+                let environment = crate::utils::format::sanitize_untrusted(environment);
+                let sha = deployment.short_sha();
+                let ref_name = crate::utils::format::sanitize_untrusted(&deployment.ref_name);
+                let how = match &deployment.deployable {
+                    Some(job) if !kind.is_github() => format!(
+                        "re-runs its job '{}'",
+                        crate::utils::format::sanitize_untrusted(&job.name)
+                    ),
+                    _ => "creates a deployment record of that commit, which only deploys if a \
+                          workflow runs on the `deployment` event"
+                        .to_string(),
+                };
+                (
+                    format!("Roll Back '{environment}' to {sha}"),
+                    format!(
+                        "Re-deploy {sha} ({ref_name}) from deployment #{} to '{environment}'? \
+                         This {how}.",
+                        deployment.iid
+                    ),
+                    "Roll Back".to_string(),
+                    vec![],
+                )
+            }
+        };
+        let extra_buttons = match &action {
+            ConfirmAction::SubmitReview(_) => {
+                vec![DialogChoice::KeepDrafts, DialogChoice::DiscardDrafts]
+            }
+            _ => Vec::new(),
         };
 
-        let cursor_idx = if safe {
-            options.len() + 1
+        let mut groups = Vec::new();
+        if !body.is_empty() {
+            groups.push(Group::note(NoteLevel::Info, body).with_id(Self::BODY));
+        }
+        groups.extend(options);
+        let is_destructive = action.is_destructive();
+        let submit_tone = if is_destructive {
+            ButtonTone::Destructive
         } else {
-            Self::SUBMIT_IDX
+            ButtonTone::Positive
         };
+        let extras = extra_buttons.iter().map(|choice| {
+            let tone = if choice.is_destructive() {
+                ButtonTone::Destructive
+            } else {
+                ButtonTone::Neutral
+            };
+            Button::new(choice.label(), tone)
+        });
+        let buttons = ButtonRow::new(
+            Button::new(submit_label, submit_tone),
+            extras,
+            Button::new("Cancel", ButtonTone::Neutral),
+        );
+        let form = Form::new(title, groups, buttons);
+
         Self {
             action: action_clone,
             project_path,
-            title,
-            body,
-            options,
-            submit_label,
-            cursor_idx,
+            extra_buttons,
+            strategies,
+            form: if is_destructive { form.danger() } else { form },
+        }
+    }
+
+    fn strategy_group(strategies: &[MergeMethod]) -> Group {
+        let choices = strategies
+            .iter()
+            .map(|method| method.label().to_string())
+            .collect();
+        let default = strategies
+            .iter()
+            .position(|&method| method == MergeMethod::DEFAULT)
+            .unwrap_or_default();
+        Group::new(GroupKind::Radio(Radio::new(choices, default)))
+            .with_id(Self::STRATEGY)
+            .with_label("Strategy")
+    }
+
+    fn merge_options_group() -> Group {
+        let toggles = MergeToggle::ALL
+            .iter()
+            .map(|toggle| Toggle::new(toggle.label(), toggle.is_on_by_default()))
+            .collect();
+        Group::new(GroupKind::Toggles(Toggles::new(toggles)))
+            .with_id(Self::MERGE_OPTIONS)
+            .with_label("Options")
+    }
+
+    /// The items of a bulk merge, by title when the row is listed, else by
+    /// reference alone. The reference names the project in group scope,
+    /// where the same iid recurs across projects, and for an unlisted row.
+    fn bulk_merge_items(app: &App, items: &[(String, u64)], marker: &str) -> Group {
+        let entries = items
+            .iter()
+            .map(|(project_path, iid)| {
+                let title = app
+                    .mr_index(project_path, *iid)
+                    .map(|i| &app.mrs.items[i].title);
+                let project = if app.scope.is_group() || title.is_none() {
+                    project_path.as_str()
+                } else {
+                    ""
+                };
+                let reference = format!("{project}{marker}{iid}");
+                ListEntry::queued(match title {
+                    Some(title) => format!("{reference}: {title}"),
+                    None => reference,
+                })
+            })
+            .collect();
+        Group::new(GroupKind::ItemList(ItemList { entries }))
+    }
+}
+
+#[cfg(test)]
+impl SubmitDialog {
+    pub(crate) fn is_on_submit(&self) -> bool {
+        self.form.focused_button() == Some(Self::SUBMIT_BUTTON_INDEX)
+    }
+
+    pub(crate) fn is_on_cancel(&self) -> bool {
+        self.form.focused_button() == Some(self.form.cancel())
+    }
+
+    pub(crate) fn body(&self) -> &str {
+        match self.form.group(Self::BODY).map(|group| &group.kind) {
+            Some(GroupKind::Note(note)) => &note.text,
+            _ => "",
         }
     }
 }
 
-/// A captured first keypress of a not-yet-completed key sequence (e.g. the
-/// `g` of `gg`), waiting for its second keystroke or a timeout.
-pub struct PendingKey {
-    pub event: crossterm::event::KeyEvent,
-    pub since: std::time::Instant,
-}
-
-/// Splits every string leaf of `keybindings` into sequence-prefix
-/// characters (the first character of a two-character binding, e.g. `gg`)
-/// and standalone characters (a one-character binding). Non-string values
-/// and bindings of any other length are skipped.
-fn keybinding_char_sets(
-    keybindings: &KeybindingConfig,
-) -> (
-    std::collections::HashSet<char>,
-    std::collections::HashSet<char>,
-) {
-    fn walk(
-        value: &toml::Value,
-        prefixes: &mut std::collections::HashSet<char>,
-        standalone: &mut std::collections::HashSet<char>,
-    ) {
-        match value {
-            toml::Value::Table(table) => {
-                for v in table.values() {
-                    walk(v, prefixes, standalone);
-                }
-            }
-            toml::Value::String(s) => {
-                let mut chars = s.chars();
-                match (chars.next(), chars.next(), chars.next()) {
-                    (Some(c), None, None) => {
-                        standalone.insert(c);
-                    }
-                    (Some(first), Some(_), None)
-                        if !crate::keybinding::is_named_two_char_binding(s) =>
-                    {
-                        prefixes.insert(first);
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut prefixes = std::collections::HashSet::new();
-    let mut standalone = std::collections::HashSet::new();
-    if let Ok(value) = toml::Value::try_from(keybindings) {
-        walk(&value, &mut prefixes, &mut standalone);
-    }
-    (prefixes, standalone)
+/// Every key sequence bound to any action.
+fn key_sequences(keybindings: &crate::keymap::Keymap) -> crate::keybinding::KeySequences {
+    crate::keybinding::KeySequences::new(keybindings.all_bindings())
 }
 
 pub struct NavFrame {
@@ -3697,35 +4099,76 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
+/// Why a tab shows rows that may be out of date. Kept per tab in
+/// `App::stale_tabs` until that tab's own fetch succeeds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaleData {
+    /// Loaded from the offline cache; the tab's refresh has not landed yet.
+    FromCache,
+    /// The tab's refresh failed, so the cached rows are still on screen.
+    RefreshFailed,
+}
+
+impl StaleData {
+    pub fn label(self) -> &'static str {
+        match self {
+            StaleData::FromCache => "Loaded from offline cache",
+            StaleData::RefreshFailed => "Offline: refresh failed, showing cached data",
+        }
+    }
+}
+
+/// Deployments fetched for one environment, shown in the Environments detail
+/// pane only while that environment stays highlighted.
+pub struct EnvironmentDeployments {
+    pub environment: String,
+    pub table: StatefulTable<crate::domain::deployments::Deployment>,
+    /// Navigation keys move through the deployments instead of the
+    /// environment list.
+    pub is_focused: bool,
+}
+
+impl EnvironmentDeployments {
+    pub fn selected(&self) -> Option<&crate::domain::deployments::Deployment> {
+        self.table
+            .state
+            .selected()
+            .and_then(|idx| self.table.items.get(idx))
+    }
+}
+
 pub struct App {
     pub config: Config,
-    /// The first keypress of an in-progress key sequence (e.g. the `g` of
-    /// `gg`), if one hasn't resolved or timed out yet. Set by the event loop
-    /// when a plain-character event lands on a configured sequence prefix;
-    /// cleared when the next keypress arrives or `keybinding_timeout_ms`
-    /// elapses on the tick.
-    pub pending_key: Option<PendingKey>,
-    /// First characters of every configured two-character sequence binding.
-    /// Built once from the keybindings TOML at startup; the event loop uses
-    /// it to decide whether a keypress should be deferred as a prefix.
-    pub sequence_prefixes: std::collections::HashSet<char>,
-    /// Characters of every configured one-character binding. The timeout
-    /// path dispatches a stale prefix key through this set so a character
-    /// that is both a prefix and a standalone binding still does its single
-    /// action when the sequence lapses.
-    pub standalone_chars: std::collections::HashSet<char>,
+    /// Resolved from `config.theme_preset`, `config.theme` and
+    /// `terminal_appearance`. Only `apply_config`, `set_terminal_appearance`
+    /// and the theme picker's preview (`sync_theme_preview`) refresh it.
+    pub theme: Theme,
+    /// What the terminal reported about its background at startup. Only
+    /// asked when the startup config follows it.
+    pub terminal_appearance: Option<crate::config::Appearance>,
+    /// The preset the open theme picker paints `theme` with.
+    pub theme_preview: Option<String>,
+    /// Built from `config.icons`. Only `apply_config` refreshes it.
+    pub icons: Arc<Icons>,
+    /// Keys typed towards a key sequence. The event loop feeds every
+    /// keypress through `receive_key` and dispatches what it resolves to.
+    pub key_buffer: crate::keybinding::KeyBuffer,
     /// Validated `[[custom_keybindings.<pane>]]` entries, rebuilt whenever
     /// the config is loaded.
     pub custom_commands: crate::custom_commands::CustomCommands,
     pub active_tab: Tab,
-    pub running: bool,
     pub scope: crate::scope::Scope,
     pub prev_scope: Option<crate::scope::Scope>,
+    /// Bumped on every repository/group switch; background fetches carry the
+    /// value current when they started (see `scoped_sender`).
+    pub scope_generation: crate::event::ScopeGeneration,
     pub group_repos: Vec<String>,
     pub project_cache: crate::utils::cache::ProjectCache,
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
-    pub terminal_commands: Vec<TerminalCommand>,
+    pub terminal_commands: CommandLog,
     pub terminal_wrap: bool,
+    pub terminal_status_filter: StatusFilter,
+    pub terminal_inspector: Option<TerminalInspector>,
     pub issues: StatefulTable<crate::domain::issues::Issue>,
     pub mrs: StatefulTable<crate::domain::mr::MergeRequest>,
     pub pipelines: StatefulTable<crate::domain::pipelines::Pipeline>,
@@ -3736,16 +4179,11 @@ pub struct App {
     pub pending_pipeline_select: Option<u64>,
     pub pending_mr_select: Option<u64>,
     pub pending_issue_select: Option<u64>,
-    pub job_trace: Option<String>,
-    pub error_message: Option<String>,
-    pub error_message_at: Option<std::time::Instant>,
-    /// True when the current error toast originated from a real glab/gh CLI
-    /// failure (stderr is captured in the terminal log).  False for guard
-    /// rejections that never ran a CLI command.  Controls the hint line shown
-    /// in the toast.
-    pub error_has_cli_detail: bool,
-    pub runners: StatefulTable<crate::domain::runners::Runner>,
-    pub releases: StatefulTable<crate::domain::releases::Release>,
+    pub job_trace: Option<crate::ui::job_trace::JobTraceView>,
+    notices: crate::notice::NoticeQueue,
+    last_request_tag: crate::notice::RequestTag,
+    pub runners: ListTab<RunnerColumn>,
+    pub releases: ListTab<ReleaseColumn>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
     pub pipeline_nav: Vec<NavFrame>,
     pub pending_triggers: Vec<crate::domain::pipelines::PendingTrigger>,
@@ -3789,6 +4227,9 @@ pub struct App {
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
+    /// The server state queries in effect when `take_state_query_refetches`
+    /// last ran; `None` until it first runs for the current scope.
+    pub observed_state_queries: Option<StateQueries>,
     pub edit_menu: Option<EditMenu>,
     pub selector: Option<Selector>,
     /// Mapping from the `all_items` display strings to the absolute on-disk
@@ -3815,6 +4256,17 @@ pub struct App {
     pub selected_jobs: std::collections::HashSet<u64>,
     pub selected_issues: std::collections::HashSet<(String, u64)>,
     pub selected_mrs: std::collections::HashSet<(String, u64)>,
+    pub selected_branches: std::collections::HashSet<String>,
+    /// Notification ids picked for a batch read/done on the Todos tab.
+    pub selected_todos: std::collections::HashSet<String>,
+    /// GitHub notifications whose detail fetch is in flight.
+    pub fetching_todo_details: std::collections::HashSet<String>,
+    /// Why a notification's detail fetch failed, by id. Kept so the
+    /// inspector says so instead of fetching again on every tick.
+    pub failed_todo_details: std::collections::HashMap<String, String>,
+    /// Notification in the inspector whose detail fetch waits for the cursor
+    /// to rest, and since when.
+    pub todo_detail_candidate: Option<(String, std::time::Instant)>,
     /// When true, moving the cursor through Issues/MRs marks each visited
     /// item into the selection set (yazi-style "select mode"). `Space` still
     /// toggles the current item individually regardless of this flag.
@@ -3831,10 +4283,24 @@ pub struct App {
     /// `max`, so it resolves the flag in the same frame and clears it.
     pub detail_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
+    /// Job whose trace opens in the editor once its in-flight fetch lands.
+    pub pending_job_trace_editor: Option<u64>,
+    /// Deployment whose job log opens in the editor once its in-flight fetch
+    /// lands.
+    pub pending_deployment_log: Option<u64>,
+    /// Job whose log scrolls to its first failure once its in-flight fetch
+    /// lands.
+    pub pending_job_trace_failure: Option<u64>,
+    /// Log line the job trace pane scrolls to on its next draw, which alone
+    /// knows the row a line starts at once wrapped.
+    pub job_trace_scroll_to_line: Option<usize>,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
     pub job_trace_follow: bool,
+    /// A follow-mode read of the shown job log is in flight. Unlike
+    /// `job_trace_loading` it keeps the log on screen.
+    pub job_trace_poll_in_flight: bool,
     pub job_trace_last_refresh: std::time::Instant,
 
     pub show_help: bool,
@@ -3846,29 +4312,41 @@ pub struct App {
     pub help_table_state: ratatui::widgets::TableState,
     pub diff_view: Option<DiffView>,
     pub review_threads: Option<ReviewThreadsOverview>,
+    pub review_submit: Option<crate::review_submit::ReviewSubmit>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
     pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
-    pub status_message: Option<String>,
+    pub stale_tabs: std::collections::HashMap<Tab, StaleData>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
-    pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    /// Where background tasks report. `App::default()` holds a sender whose
+    /// receiver is already gone, so whatever is sent before the event loop
+    /// installs its own is dropped.
+    pub tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
     pub enabled_columns: std::collections::HashMap<Tab, std::collections::HashSet<String>>,
     pub focus_column_checklist: bool,
     pub column_checklist_idx: usize,
     pub in_review_mode: bool,
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
+    /// Session-wide diff layout, `Auto` until a layout key pins one.
+    pub diff_layout: DiffLayout,
     pub draft_comments: Vec<DraftComment>,
+    /// Saved drafts of the open diff whose lines are no longer in it. They
+    /// are never shown or submitted, and are written back with
+    /// `draft_comments` so the cache keeps them until they match again or
+    /// the user discards.
+    pub stale_draft_comments: Vec<DraftComment>,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub page_size: usize,
     pub milestones: StatefulTable<crate::domain::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::domain::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
+    pub milestone_prefetch: Option<crate::effect::CancelHandle>,
     pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
     /// `(closed, total)` issue counts per milestone iid, derived from
     /// `issues.items.iter().filter_map(|i| i.milestone.as_ref())`.
@@ -3876,9 +4354,9 @@ pub struct App {
     /// Milestones progress column to avoid per-row API calls.
     pub milestone_progress_cache: std::collections::HashMap<u64, (usize, usize)>,
     pub terminal_scroll: usize,
-    pub branches: StatefulTable<crate::domain::branches::Branch>,
-    pub environments: StatefulTable<crate::domain::deployments::Environment>,
-    pub deployments: StatefulTable<crate::domain::deployments::Deployment>,
+    pub branches: ListTab<BranchColumn>,
+    pub environments: ListTab<EnvironmentColumn>,
+    pub environment_deployments: Option<EnvironmentDeployments>,
     pub group_by_column: std::collections::HashMap<Tab, Option<String>>,
     pub group_ascending: std::collections::HashMap<Tab, bool>,
     pub group_list_state: ratatui::widgets::ListState,
@@ -3897,29 +4375,45 @@ pub struct App {
     pub label_colors: std::collections::HashMap<String, ratatui::style::Color>,
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
-    pub pending_delete_milestone_iid: Option<u64>,
-    pub pending_delete_release_tag: Option<String>,
+    /// When the active tab's list was last refreshed, by the user or by the
+    /// periodic refresh of `refresh_timer_tab`.
+    pub last_list_refresh: std::time::Instant,
+    /// The tab `last_list_refresh` times. Switching tabs restarts the timer.
+    pub refresh_timer_tab: Tab,
+    /// (project path, iid) of the milestone whose deletion is in flight.
+    pub pending_delete_milestone: Option<(String, u64)>,
+    /// (project path, tag) of the release whose deletion is in flight.
+    pub pending_delete_release: Option<(String, String)>,
 }
 
 impl Default for App {
     fn default() -> Self {
-        let config = Config::load();
-        let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&config.keybindings);
+        Self::with_config(Config::default())
+    }
+}
+
+impl App {
+    fn with_config(config: Config) -> Self {
+        let key_buffer = crate::keybinding::KeyBuffer::new(key_sequences(&config.keybindings));
         Self {
+            theme: config.resolve_theme(None),
+            terminal_appearance: None,
+            theme_preview: None,
+            icons: Arc::new(config.icons.icons()),
             config: config.clone(),
-            pending_key: None,
-            sequence_prefixes,
-            standalone_chars,
+            key_buffer,
             custom_commands: crate::custom_commands::CustomCommands::default(),
             active_tab: Tab::default(),
-            running: true,
             scope: crate::scope::Scope::default(),
             prev_scope: None,
+            scope_generation: crate::event::ScopeGeneration::default(),
             group_repos: vec![],
             project_cache: crate::utils::cache::ProjectCache::default(),
             gitlab_client: None,
-            terminal_commands: vec![],
+            terminal_commands: CommandLog::default(),
             terminal_wrap: false,
+            terminal_status_filter: StatusFilter::default(),
+            terminal_inspector: None,
             issues: StatefulTable::with_items(vec![]),
             mrs: StatefulTable::with_items(vec![]),
             pipelines: StatefulTable::with_items(vec![]),
@@ -3931,11 +4425,10 @@ impl Default for App {
             pending_mr_select: None,
             pending_issue_select: None,
             job_trace: None,
-            error_message: None,
-            error_message_at: None,
-            error_has_cli_detail: false,
-            runners: StatefulTable::with_items(vec![]),
-            releases: StatefulTable::with_items(vec![]),
+            notices: crate::notice::NoticeQueue::default(),
+            last_request_tag: crate::notice::RequestTag::default(),
+            runners: ListTab::default(),
+            releases: ListTab::default(),
             pipeline_jobs: std::collections::HashMap::new(),
             pipeline_nav: Vec::new(),
             pending_triggers: Vec::new(),
@@ -3952,6 +4445,7 @@ impl Default for App {
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
+            observed_state_queries: None,
             edit_menu: None,
             selector: None,
             switch_repo_paths: std::collections::HashMap::new(),
@@ -3966,6 +4460,11 @@ impl Default for App {
             selected_jobs: std::collections::HashSet::new(),
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
+            selected_branches: std::collections::HashSet::new(),
+            selected_todos: std::collections::HashSet::new(),
+            fetching_todo_details: std::collections::HashSet::new(),
+            failed_todo_details: std::collections::HashMap::new(),
+            todo_detail_candidate: None,
             select_mode: false,
             select_anchor: None,
             details_zoomed: false,
@@ -3973,10 +4472,15 @@ impl Default for App {
             detail_visible: false,
             detail_scroll_to_bottom: false,
             job_trace_loading: false,
+            pending_job_trace_editor: None,
+            pending_deployment_log: None,
+            pending_job_trace_failure: None,
+            job_trace_scroll_to_line: None,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),
             job_trace_searching: false,
             job_trace_follow: false,
+            job_trace_poll_in_flight: false,
             job_trace_last_refresh: std::time::Instant::now(),
 
             show_help: false,
@@ -3985,15 +4489,16 @@ impl Default for App {
             help_table_state: ratatui::widgets::TableState::default(),
             diff_view: None,
             review_threads: None,
+            review_submit: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             submit_dialog: None,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
-            status_message: None,
+            stale_tabs: std::collections::HashMap::new(),
             clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
-            tx: None,
+            tx: tokio::sync::mpsc::unbounded_channel().0,
             enabled_columns: {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
@@ -4010,19 +4515,22 @@ impl Default for App {
             column_checklist_idx: 0,
             in_review_mode: false,
             hide_reviewed_files: false,
+            diff_layout: DiffLayout::Auto,
             draft_comments: Vec::new(),
+            stale_draft_comments: Vec::new(),
             save_menu_open: false,
             save_menu_selection: None,
             page_size: config.page_size,
             milestones: StatefulTable::with_items(vec![]),
             selected_milestone_issues: None,
             selected_milestone_iid: None,
+            milestone_prefetch: None,
             milestone_issues_cache: std::collections::HashMap::new(),
             milestone_progress_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
-            branches: StatefulTable::with_items(vec![]),
-            environments: StatefulTable::with_items(vec![]),
-            deployments: StatefulTable::with_items(vec![]),
+            branches: ListTab::default(),
+            environments: ListTab::default(),
+            environment_deployments: None,
             group_by_column: std::collections::HashMap::new(),
             group_ascending: std::collections::HashMap::new(),
             group_list_state: ratatui::widgets::ListState::default(),
@@ -4037,18 +4545,13 @@ impl Default for App {
             label_colors: std::collections::HashMap::new(),
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
-            pending_delete_milestone_iid: None,
-            pending_delete_release_tag: None,
+            last_list_refresh: std::time::Instant::now(),
+            refresh_timer_tab: Tab::default(),
+            pending_delete_milestone: None,
+            pending_delete_release: None,
         }
     }
 }
-
-/// Build the zero-padded percent string used as the sort/group key for the
-/// Milestones "Progress" column. Prefers the cheap aggregate derived from
-/// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
-/// falls back to the per-milestone issue list when that has been fetched
-/// on demand (e.g. the user drilled in). Anything missing either way is
-/// "000%".
 
 /// Map a milestone's raw `state` field to the uppercase display text shown
 /// in the table cell. Used by both `milestone_filter_values` (the column
@@ -4057,23 +4560,71 @@ pub(crate) fn milestone_state_display(raw: &str) -> &'static str {
     match raw {
         "active" => "ACTIVE",
         "closed" => "CLOSED",
-        // Unknown states fall back to the raw value uppercased. Empty
-        // string for unset (the API defaults to "active" but the field
-        // may be missing for very old cached data).
-        other => "",
+        // Unknown or missing states (very old cached data may lack the
+        // field) render as an empty cell.
+        _ => "",
     }
 }
 
-/// Map a runner's raw `status` field to the uppercase display text shown
-/// in the table cell. Used by both `runner_filter_values` (the column
-/// filter picker) and `render_tab_runners`.
-pub(crate) fn runner_status_display(raw: &str) -> &'static str {
-    match raw {
-        "online" => "ONLINE",
-        "paused" => "PAUSED",
-        "offline" => "OFFLINE",
-        other => "UNKNOWN",
+/// The Runners Status filters the `cycle_status` key steps through, in order,
+/// before it shows every status again.
+const RUNNER_STATUS_CYCLE: &[crate::domain::runners::RunnerStatus] = &[
+    crate::domain::runners::RunnerStatus::Online,
+    crate::domain::runners::RunnerStatus::Paused,
+    crate::domain::runners::RunnerStatus::Offline,
+];
+
+/// `RUNNER_STATUS_CYCLE` without `Paused`, for a backend whose runners can
+/// never be paused, where the step would otherwise empty the table.
+const UNPAUSABLE_RUNNER_STATUS_CYCLE: &[crate::domain::runners::RunnerStatus] = &[
+    crate::domain::runners::RunnerStatus::Online,
+    crate::domain::runners::RunnerStatus::Offline,
+];
+
+const PIPELINE_STATUS_COLUMN: &str = "Status";
+
+/// The Status cell texts the pipeline status filter key steps through.
+const PIPELINE_STATUS_FILTER_CYCLE: [&str; 3] = ["RUNNING", "FAILED", "SUCCESS"];
+
+/// Whether a row whose `col` cell has `values` passes the column filter
+/// `selected`. Text columns match case-insensitive substrings; the rest
+/// match exactly, also accepting the raw API values older configs saved.
+pub(crate) fn column_filter_matches(
+    col: &str,
+    values: &[String],
+    selected: &HashSet<String>,
+) -> bool {
+    let is_text = matches!(
+        col,
+        "Project" | "Title" | "Name" | "Ref" | "Tag" | "Release Name"
+    );
+    if is_text {
+        values.iter().any(|v| {
+            selected.contains(v)
+                || selected.iter().any(|s| {
+                    let norm_v = v.to_lowercase();
+                    let norm_s = s.to_lowercase();
+                    norm_v == norm_s || norm_v.contains(&norm_s) || norm_s.contains(&norm_v)
+                })
+        })
+    } else {
+        values.iter().any(|v| {
+            let norm_v = App::normalize_filter_value(v);
+            selected.contains(v)
+                || selected.contains(norm_v)
+                || selected.iter().any(|s| {
+                    let norm_s = App::normalize_filter_value(s);
+                    norm_s == v.as_str() || norm_s == norm_v
+                })
+        })
     }
+}
+
+/// The Runners `Active` cell text, matching the `YES`/`NO` of the Branches
+/// boolean columns. The column filter picker, search, group-by and the
+/// inspector all read it so they agree with what the table shows.
+pub(crate) fn runner_active_display(active: bool) -> &'static str {
+    if active { "YES" } else { "NO" }
 }
 
 /// Build the zero-padded percent string used as the sort/group key for the
@@ -4100,6 +4651,20 @@ fn milestone_progress_sort_key(
         }
     }
     "000%".to_string()
+}
+
+fn ids_with_changed_status<'a>(
+    listed: &'a [crate::domain::pipelines::Pipeline],
+    fetched: &'a [crate::domain::pipelines::Pipeline],
+) -> impl Iterator<Item = u64> + 'a {
+    fetched
+        .iter()
+        .filter(move |new| {
+            listed
+                .iter()
+                .any(|old| old.id() == new.id() && old.status() != new.status())
+        })
+        .map(|pipeline| pipeline.id())
 }
 
 impl App {
@@ -4130,17 +4695,17 @@ impl App {
         self.scope.display()
     }
 
-    pub fn tab_supported_in_scope(&self, tab: &Tab) -> bool {
-        if self.scope.is_repository() {
-            return true;
-        }
-        matches!(
-            tab,
-            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Milestones
-        )
+    /// The sender for a background fetch started now: its results are dropped
+    /// if the scope changes before they arrive.
+    pub fn scoped_sender(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    ) -> crate::event::ScopedSender {
+        crate::event::ScopedSender::new(tx, self.scope_generation)
     }
 
     pub fn reset_on_scope_change(&mut self) {
+        self.scope_generation = self.scope_generation.next();
         if self.scope.is_group() {
             for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {
                 self.enabled_columns
@@ -4153,31 +4718,58 @@ impl App {
         self.text_input = None;
         self.edit_menu = None;
         self.submit_dialog = None;
-        self.status_message = None;
+        self.clear_info_notices();
+        self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
         self.column_filter_context = None;
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.selected_branches.clear();
+        self.selected_todos.clear();
+        self.fetching_todo_details.clear();
+        self.failed_todo_details.clear();
+        self.todo_detail_candidate = None;
         self.select_mode = false;
         self.select_anchor = None;
         self.loaded_tabs.clear();
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
+        self.observed_state_queries = None;
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
+        self.fetching_related_mrs.clear();
+        self.pending_related_mrs_iid = None;
+        self.pending_related_mrs_since = None;
+        self.fetching_mr_related_issues.clear();
+        self.pending_mr_related_issues_iid = None;
+        self.pending_mr_related_issues_since = None;
+        self.fetching_pr_stacks.clear();
+        self.pending_stack_action = None;
+        self.pr_stack_candidate = None;
+        self.diff_loading = false;
+        self.job_trace_loading = false;
+        self.job_trace_follow = false;
+        self.job_trace_poll_in_flight = false;
+        self.pending_issue_select = None;
+        self.pending_mr_select = None;
+        self.pending_pipeline_select = None;
+        self.pending_job_trace_editor = None;
+        self.pending_deployment_log = None;
+        self.pending_job_trace_failure = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
+        self.milestone_prefetch = None;
         self.issues.state.select(Some(0));
         self.mrs.state.select(Some(0));
         self.pipelines.state.select(Some(0));
-        self.runners.state.select(Some(0));
-        self.releases.state.select(Some(0));
+        self.runners.reset_cursor();
+        self.releases.reset_cursor();
         self.todos.state.select(Some(0));
         self.milestones.state.select(Some(0));
-        self.branches.state.select(Some(0));
-        self.environments.state.select(Some(0));
+        self.branches.reset_cursor();
+        self.environments.reset_cursor();
     }
 
     pub fn drill_into(&mut self, repo: String) {
@@ -4194,42 +4786,71 @@ impl App {
     }
 
     /// Switch to the Issues tab, drop filters that would hide the target, and
-    /// select + preview `iid`. Returns whether the item is already loaded.
-    pub fn focus_issue(&mut self, iid: u64) -> bool {
+    /// select + preview `iid` (in `project` when given). Returns whether the
+    /// item is already loaded.
+    pub fn focus_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
         self.active_tab = Tab::Issues;
         self.clear_tab_filters(Tab::Issues);
-        let idx = {
-            let filtered = self.filtered_issues();
-            filtered.iter().position(|i| i.iid == iid)
-        };
-        if let Some(idx) = idx {
-            self.issues.state.select(Some(idx));
+        let found = self.select_visible_issue(project, iid);
+        if found {
             self.detail_scroll = 0;
             self.details_zoomed = false;
-            true
-        } else {
-            false
         }
+        found
     }
 
     /// Switch to the MergeRequests tab, drop filters that would hide the
-    /// target, and select + preview `iid`. Returns whether the item is already
-    /// loaded.
-    pub fn focus_mr(&mut self, iid: u64) -> bool {
+    /// target, and select + preview `iid` (in `project` when given). Returns
+    /// whether the item is already loaded.
+    pub fn focus_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
         self.active_tab = Tab::MergeRequests;
         self.clear_tab_filters(Tab::MergeRequests);
-        let idx = {
-            let filtered = self.filtered_mrs();
-            filtered.iter().position(|m| m.iid == iid)
-        };
-        if let Some(idx) = idx {
-            self.mrs.state.select(Some(idx));
+        let found = self.select_visible_mr(project, iid);
+        if found {
             self.detail_scroll = 0;
             self.details_zoomed = false;
-            true
-        } else {
-            false
         }
+        found
+    }
+
+    /// Highlight issue `iid` (in `project` when given) among the rows the
+    /// Issues table shows. Returns false, leaving the selection alone, when no
+    /// visible row matches.
+    pub fn select_visible_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
+        let idx = self
+            .filtered_issues()
+            .iter()
+            .position(|issue| issue.iid == iid && self.is_listed_in(&issue.project_path, project));
+        if let Some(idx) = idx {
+            self.issues.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Highlight MR/PR `iid` (in `project` when given) among the rows the
+    /// MergeRequests table shows. Returns false, leaving the selection alone,
+    /// when no visible row matches.
+    pub fn select_visible_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
+        let idx = self
+            .filtered_mrs()
+            .iter()
+            .position(|mr| mr.iid == iid && self.is_listed_in(&mr.project_path, project));
+        if let Some(idx) = idx {
+            self.mrs.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Whether a row listed with `row_project` belongs to `project`; `None`
+    /// accepts every project.
+    pub fn is_listed_in(&self, row_project: &str, project: Option<&str>) -> bool {
+        // GitHub and GitLab resolve project paths case-insensitively, so the
+        // remote URL's spelling may differ from the one the API returns.
+        project.is_none_or(|project| {
+            self.scope
+                .project_of(row_project)
+                .eq_ignore_ascii_case(project)
+        })
     }
 
     pub fn project_path_for_issue(&self, iid: u64) -> String {
@@ -4252,23 +4873,58 @@ impl App {
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
-    /// The project a listed MR/PR belongs to: its own path, or the repository
-    /// in scope when the list left it empty.
-    fn mr_project<'a>(
-        scope: &'a crate::scope::Scope,
-        mr: &'a crate::domain::mr::MergeRequest,
-    ) -> &'a str {
-        if mr.project_path.is_empty() {
-            scope.as_str()
-        } else {
-            &mr.project_path
-        }
+    /// The project of MR `iid`, read from the open diff when it shows that
+    /// MR. In group scope the iid alone can match another project's MR.
+    pub fn project_path_for_open_mr(&self, iid: u64) -> String {
+        self.diff_view
+            .as_ref()
+            .filter(|diff| diff.mr_iid == iid)
+            .map(|diff| diff.project_path.clone())
+            .unwrap_or_else(|| self.project_path_for_mr(iid))
+    }
+
+    /// Position of issue `iid` of `project_path` in `issues.items`. Matching
+    /// on the iid alone would hit another project's issue in group scope.
+    pub fn issue_index(&self, project_path: &str, iid: u64) -> Option<usize> {
+        self.issues
+            .items
+            .iter()
+            .position(|i| i.iid == iid && self.scope.project_of(&i.project_path) == project_path)
+    }
+
+    /// Position of MR/PR `iid` of `project_path` in `mrs.items`.
+    pub fn mr_index(&self, project_path: &str, iid: u64) -> Option<usize> {
+        self.mrs
+            .items
+            .iter()
+            .position(|m| m.iid == iid && self.scope.project_of(&m.project_path) == project_path)
+    }
+
+    /// Position of milestone `iid` of `project_path` in `milestones.items`.
+    pub fn milestone_index(&self, project_path: &str, iid: u64) -> Option<usize> {
+        self.milestones
+            .items
+            .iter()
+            .position(|m| m.iid == iid && self.scope.project_of(&m.project_path) == project_path)
+    }
+
+    /// Milestone `iid` of `project_path` from `milestones.items`.
+    pub fn listed_milestone(
+        &self,
+        project_path: &str,
+        iid: u64,
+    ) -> anyhow::Result<crate::domain::milestones::Milestone> {
+        self.milestone_index(project_path, iid)
+            .map(|pos| self.milestones.items[pos].clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Milestone {iid} is not listed; refresh the Milestones tab")
+            })
     }
 
     /// An MR/PR as (project path, number), the key of the session's stack
     /// knowledge.
     pub fn mr_ref(&self, mr: &crate::domain::mr::MergeRequest) -> (String, u64) {
-        (Self::mr_project(&self.scope, mr).to_string(), mr.iid)
+        (self.scope.project_of(&mr.project_path).to_string(), mr.iid)
     }
 
     /// The highlighted MR/PR as (project path, number).
@@ -4349,7 +5005,7 @@ impl App {
         for mr in self.mrs.items.iter_mut() {
             let Some(lookup) = self
                 .pr_stacks
-                .get(Self::mr_project(&self.scope, mr))
+                .get(self.scope.project_of(&mr.project_path))
                 .and_then(|prs| prs.get(&mr.iid))
             else {
                 continue;
@@ -4371,23 +5027,71 @@ impl App {
         }
     }
 
-    pub fn project_path_for_pipeline(&self, id: u64) -> String {
-        if let Some(proj) = &self.active_pipeline_project {
-            if !proj.is_empty() {
-                return proj.clone();
-            }
-        }
+    /// The project a pipeline belongs to, when known: its own row's path,
+    /// then the project the Jobs tab was opened with when `id` is the active
+    /// pipeline. A listed row always wins so an older Jobs-tab project never
+    /// redirects actions on other pipelines.
+    pub fn pipeline_project(&self, id: u64) -> Option<&str> {
         self.pipelines
             .items
             .iter()
             .find(|p| p.id() == id)
-            .map(|p| p.project_path.clone())
+            .map(|p| p.project_path.as_str())
             .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| self.scope.as_str().to_string())
+            .or_else(|| {
+                self.active_pipeline_project
+                    .as_deref()
+                    .filter(|p| !p.is_empty() && self.active_pipeline_id == Some(id))
+            })
     }
 
-    pub fn project_path_for_release(&self, _tag_name: &str) -> String {
-        self.scope.as_str().to_string()
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        self.pipeline_project(id)
+            .unwrap_or(self.scope.as_str())
+            .to_string()
+    }
+
+    /// The project of the jobs on the Jobs tab, when known. Jobs carry no
+    /// project of their own: they all belong to the active pipeline.
+    pub fn jobs_project(&self) -> Option<&str> {
+        self.pipeline_project(self.active_pipeline_id?)
+    }
+
+    pub fn project_path_for_jobs(&self) -> String {
+        self.jobs_project()
+            .unwrap_or(self.scope.as_str())
+            .to_string()
+    }
+
+    /// Shows pipeline `id` on the Jobs tab. Refreshes fetch it until
+    /// `close_opened_pipeline`.
+    pub fn open_pipeline_in_jobs_tab(&mut self, id: u64) {
+        self.active_pipeline_project = self.pipeline_project(id).map(str::to_owned);
+        self.active_pipeline_id = Some(id);
+        let project = self.project_path_for_jobs();
+        let parents = self
+            .pipeline_nav
+            .iter()
+            .map(|frame| frame.parent_id)
+            .collect();
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.opened_pipeline = Some(Box::new(crate::domain::client::OpenedPipeline {
+                id,
+                project,
+                parents,
+            }));
+        }
+    }
+
+    /// Puts the Jobs tab back on the checked-out branch's pipeline, fetched
+    /// when the tab is next shown.
+    pub fn close_opened_pipeline(&mut self) {
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.opened_pipeline = None;
+        }
+        self.loading_tabs.remove(&Tab::Jobs);
+        self.loaded_tabs.remove(&Tab::Jobs);
+        self.refreshed_tabs.remove(&Tab::Jobs);
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -4481,6 +5185,24 @@ impl App {
                 }
                 self.selected_jobs.len().saturating_sub(before)
             }
+            Tab::Branches => {
+                let keys: Vec<String> = self.branches.view_rows().map(|b| b.name.clone()).collect();
+                let before = self.selected_branches.len();
+                for key in keys {
+                    self.selected_branches.insert(key);
+                }
+                self.selected_branches.len().saturating_sub(before)
+            }
+            Tab::Todos => {
+                let keys: Vec<String> = self
+                    .filtered_todos()
+                    .into_iter()
+                    .map(|t| t.id.clone())
+                    .collect();
+                let before = self.selected_todos.len();
+                self.selected_todos.extend(keys);
+                self.selected_todos.len().saturating_sub(before)
+            }
             _ => 0,
         }
     }
@@ -4492,11 +5214,15 @@ impl App {
         let cleared = !self.selected_issues.is_empty()
             || !self.selected_mrs.is_empty()
             || !self.selected_pipelines.is_empty()
-            || !self.selected_jobs.is_empty();
+            || !self.selected_jobs.is_empty()
+            || !self.selected_branches.is_empty()
+            || !self.selected_todos.is_empty();
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
+        self.selected_branches.clear();
+        self.selected_todos.clear();
         self.select_mode = false;
         self.select_anchor = None;
         cleared
@@ -4512,6 +5238,8 @@ impl App {
                 Tab::MergeRequests => self.mrs.state.selected(),
                 Tab::Pipelines => self.pipelines.state.selected(),
                 Tab::Jobs => self.jobs.state.selected(),
+                Tab::Branches => self.branches.cursor_pos(),
+                Tab::Todos => self.todos.state.selected(),
                 _ => None,
             };
             self.select_anchor = curr;
@@ -4585,6 +5313,33 @@ impl App {
                         if start <= end {
                             self.selected_jobs =
                                 filtered[start..=end].iter().map(|j| j.id()).collect();
+                        }
+                    }
+                }
+            }
+            Tab::Branches => {
+                if let Some(curr) = self.branches.cursor_pos() {
+                    let rows: Vec<&crate::domain::branches::Branch> =
+                        self.branches.view_rows().collect();
+                    if !rows.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(rows.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_branches =
+                                rows[start..=end].iter().map(|b| b.name.clone()).collect();
+                        }
+                    }
+                }
+            }
+            Tab::Todos => {
+                if let Some(curr) = self.todos.state.selected() {
+                    let filtered = self.filtered_todos();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_todos =
+                                filtered[start..=end].iter().map(|t| t.id.clone()).collect();
                         }
                     }
                 }
@@ -4672,11 +5427,13 @@ impl App {
         Ok(())
     }
 
+    fn cursor_pipeline(&self) -> Option<&crate::domain::pipelines::Pipeline> {
+        let index = self.pipelines.state.selected()?;
+        self.filtered_pipelines().get(index).copied()
+    }
+
     pub fn selected_pipeline_sha(&self) -> Option<String> {
-        self.pipelines
-            .state
-            .selected()
-            .and_then(|index| self.filtered_pipelines().get(index).copied())
+        self.cursor_pipeline()
             .map(|p| p.head_sha().to_string())
             .filter(|sha| !sha.is_empty())
     }
@@ -4687,6 +5444,68 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Pipelines tab"))?;
         self.clipboard.set_text(sha)?;
         Ok(())
+    }
+
+    pub fn copy_selected_pipeline_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .cursor_pipeline()
+            .and_then(|p| p.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Pipeline URL unavailable; refresh the Pipelines tab")
+            })?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_pipeline_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .cursor_pipeline()
+            .map(|p| format!("#{}", p.id()))
+            .ok_or_else(|| anyhow::anyhow!("No pipeline is selected"))?;
+        self.clipboard.set_text(id)?;
+        Ok(())
+    }
+
+    /// Moves the Pipelines Status filter to the next step of
+    /// `PIPELINE_STATUS_FILTER_CYCLE`, after its last step back to every
+    /// status. A filter set from the column picker that is not one of the
+    /// steps counts as every status. Returns the status now shown.
+    pub fn cycle_pipeline_status_filter(&mut self) -> Option<&'static str> {
+        let current = self
+            .get_column_filter(Tab::Pipelines, PIPELINE_STATUS_COLUMN)
+            .filter(|selected| selected.len() == 1)
+            .and_then(|selected| selected.iter().next())
+            .and_then(|value| {
+                let value = Self::normalize_filter_value(value);
+                PIPELINE_STATUS_FILTER_CYCLE
+                    .iter()
+                    .position(|status| *status == value)
+            });
+        let next = match current {
+            None => PIPELINE_STATUS_FILTER_CYCLE.first(),
+            Some(index) => PIPELINE_STATUS_FILTER_CYCLE.get(index + 1),
+        }
+        .copied();
+        match next {
+            Some(status) => self.set_column_filter(
+                Tab::Pipelines,
+                PIPELINE_STATUS_COLUMN,
+                std::collections::HashSet::from([status.to_string()]),
+            ),
+            None => self.remove_column_filter(Tab::Pipelines, PIPELINE_STATUS_COLUMN),
+        }
+        self.update_filter_selection();
+        next
+    }
+
+    /// The job a fetched log is shown for: the selected job of the Jobs tab.
+    pub fn trace_job_id(&self) -> Option<u64> {
+        let idx = self.jobs.state.selected()?;
+        match self.active_tab {
+            Tab::Jobs => self.filtered_jobs().get(idx).map(|job| job.id()),
+            _ => None,
+        }
     }
 
     pub fn selected_job_sha(&self) -> Option<String> {
@@ -4704,11 +5523,65 @@ impl App {
         Ok(())
     }
 
+    /// The highlighted row of the Jobs tab.
+    pub fn selected_job(&self) -> Option<&crate::domain::pipelines::Job> {
+        let index = self.jobs.state.selected()?;
+        self.filtered_jobs().get(index).copied()
+    }
+
+    /// The web page of the highlighted row of the Jobs tab.
+    pub fn selected_job_url(&self) -> anyhow::Result<String> {
+        self.selected_job()
+            .and_then(|job| job.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Job URL unavailable; refresh the Jobs tab"))
+    }
+
+    pub fn copy_selected_job_url(&mut self) -> anyhow::Result<()> {
+        let url = self.selected_job_url()?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_job_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .selected_job()
+            .map(|job| job.id)
+            .ok_or_else(|| anyhow::anyhow!("No job is selected"))?;
+        self.clipboard.set_text(id.to_string())?;
+        Ok(())
+    }
+
+    /// Closes the shown job log, ending follow mode and any pending jump in it.
+    pub fn close_job_trace(&mut self) {
+        self.job_trace = None;
+        self.job_trace_follow = false;
+        self.detail_scroll_to_bottom = false;
+        self.job_trace_scroll_to_line = None;
+    }
+
+    /// Scrolls the shown job log to the first failure line after line
+    /// `after` (from the top when `None`), wrapping around.
+    pub fn jump_to_trace_failure(&mut self, after: Option<usize>) {
+        let Some(view) = &self.job_trace else {
+            return;
+        };
+        match view.trace().next_failure_line(after) {
+            Some(line) => self.scroll_job_trace_to_line(line),
+            None => self.show_notice("No failure line in the job log"),
+        }
+    }
+
+    /// Scrolls the shown job log to `line`. A pending jump to the bottom is
+    /// cleared because it would override the target.
+    pub fn scroll_job_trace_to_line(&mut self, line: usize) {
+        self.job_trace_scroll_to_line = Some(line);
+        self.detail_scroll_to_bottom = false;
+    }
+
     pub fn selected_branch_name(&self) -> Option<String> {
         self.branches
-            .state
-            .selected()
-            .and_then(|index| self.filtered_branches().get(index).copied())
+            .cursor_row()
             .map(|b| b.name.clone())
             .filter(|name| !name.is_empty())
     }
@@ -4721,6 +5594,85 @@ impl App {
         Ok(())
     }
 
+    pub fn copy_selected_runner_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .runners
+            .cursor_row()
+            .and_then(|runner| runner.web_url.clone())
+            .ok_or_else(|| anyhow::anyhow!("Runner URL unavailable; refresh the Runners tab"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    /// The highlighted environment's external URL, stripped of escape
+    /// sequences: it is set by whoever writes the CI config and ends up pasted
+    /// into a terminal.
+    pub fn selected_environment_url(&self) -> Option<String> {
+        self.environments
+            .cursor_row()
+            .and_then(|env| env.external_url.as_deref())
+            .map(|url| crate::utils::format::sanitize_untrusted(url).into_owned())
+            .filter(|url| !url.is_empty())
+    }
+
+    pub fn copy_selected_environment_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_environment_url()
+            .ok_or_else(|| anyhow::anyhow!("environment has no external URL"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_runner_id(&mut self) -> anyhow::Result<()> {
+        let id = self
+            .runners
+            .cursor_row()
+            .map(|runner| runner.id.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No runner selected"))?;
+        self.clipboard.set_text(id)?;
+        Ok(())
+    }
+
+    /// Step the Runners Status column filter to the next entry of the
+    /// backend's status cycle (`RUNNER_STATUS_CYCLE`, or
+    /// `UNPAUSABLE_RUNNER_STATUS_CYCLE` where runners cannot be paused),
+    /// then back to every status. A Status filter that is not exactly one
+    /// cycle entry restarts the cycle at its first entry.
+    pub fn cycle_runner_status_filter(&mut self) {
+        let cycle = self.runner_status_cycle();
+        let column = crate::ui::list_tab::ColumnDef::label(RunnerColumn::Status);
+        let position = self
+            .get_column_filter(Tab::Runners, column)
+            .filter(|selected| selected.len() == 1)
+            .and_then(|selected| {
+                cycle
+                    .iter()
+                    .position(|status| selected.contains(status.label()))
+            });
+        let next = match position {
+            None => cycle.first(),
+            Some(index) => cycle.get(index + 1),
+        };
+        match next {
+            Some(status) => {
+                self.set_column_filter(Tab::Runners, column, [status.label().to_string()].into());
+                self.show_notice(format!("Runners: {} only", status.label()));
+            }
+            None => {
+                self.remove_column_filter(Tab::Runners, column);
+                self.show_notice("Runners: all statuses");
+            }
+        }
+        self.update_filter_selection();
+    }
+
+    fn runner_status_cycle(&self) -> &'static [crate::domain::runners::RunnerStatus] {
+        if self.kind().supports_runner_management() {
+            RUNNER_STATUS_CYCLE
+        } else {
+            UNPAUSABLE_RUNNER_STATUS_CYCLE
+        }
+    }
     /// Ids and titles of the current bulk selection, sorted by iid. Built from
     /// the full item collections — not the filtered views — so the list shown
     /// before a bulk update matches the set the update actually applies to,
@@ -4748,9 +5700,30 @@ impl App {
         rows
     }
 
-    /// Single entry point for surfacing a runtime error. Sets the transient
-    /// error toast (`error_message`) and marks the failed terminal command so
-    /// both UI surfaces stay in sync.
+    /// Single entry point for non-error feedback in the header bar. Stale
+    /// data has its own badge (`stale_tabs`), so a notice never hides it.
+    pub fn show_notice(&mut self, text: impl Into<String>) {
+        self.push_notice(crate::notice::Notice::info(text));
+    }
+
+    /// Takes down the header-bar notices, e.g. a "Loading…" notice once the
+    /// load it announced has landed. Error toasts stay until they expire, and
+    /// the open modal keeps the notices about its own request.
+    pub fn clear_info_notices(&mut self) {
+        let open_request = self.open_modal_request();
+        self.notices
+            .dismiss(crate::notice::NoticeLevel::Info, open_request);
+    }
+
+    /// Queues a notice as built, for one that names its own request or
+    /// detail. Errors raised this way mark no terminal entry failed.
+    pub fn push_notice(&mut self, notice: crate::notice::Notice) {
+        self.notices.push(notice);
+    }
+
+    /// Single entry point for surfacing a runtime error. Raises the error
+    /// toast and marks the failed terminal command so both UI surfaces stay
+    /// in sync.
     ///
     /// The failed command is matched with the same two-tier preference the
     /// `CommandCompleted` handler used before this helper: a still-running
@@ -4758,97 +5731,319 @@ impl App {
     /// bulk/submit operation takes precedence, falling back to the most
     /// recent running command.
     pub fn show_error(&mut self, msg: String) {
-        let failed_status = format!("Failed: {}", msg);
-        self.raise_error_toast(msg);
-        let pos = self
+        self.report_error(crate::notice::Notice::error(msg));
+    }
+
+    /// `show_error` for a failed glab/gh call whose stderr is in the
+    /// Terminal tab: the toast points there. Guard rejections that never ran
+    /// a CLI command use `show_error`.
+    pub fn show_cli_error(&mut self, msg: String) {
+        self.report_error(
+            crate::notice::Notice::error(msg).with_detail(crate::notice::CLI_LOG_HINT),
+        );
+    }
+
+    fn report_error(&mut self, notice: crate::notice::Notice) {
+        let failed_status = format!("Failed: {}", notice.text());
+        self.push_notice(notice);
+        let row = self
             .terminal_commands
-            .iter()
-            .rposition(|cmd| {
+            .find_latest(|cmd| {
                 (cmd.command.contains("glab")
                     || cmd.command.contains("gh")
                     || cmd.command.contains("submit")
                     || cmd.command.contains("bulk"))
                     && cmd.status == "Running"
-                    && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+                    && !settles_own_row(cmd)
             })
             .or_else(|| self.latest_running_cli_command());
-        if let Some(pos) = pos {
-            self.terminal_commands[pos].status = failed_status;
+        if let Some(row) = row {
+            self.terminal_commands.set_status(row, failed_status);
         }
     }
 
     /// Shows the error toast without marking any terminal entry failed, for
     /// failures already recorded with `record_command_outcome`.
     pub fn raise_error_toast(&mut self, msg: String) {
-        self.error_message_at = Some(std::time::Instant::now());
-        self.error_message = Some(msg);
+        self.push_notice(crate::notice::Notice::error(msg));
+    }
+
+    /// A fresh tag for a request a modal is about to start.
+    pub fn next_request_tag(&mut self) -> crate::notice::RequestTag {
+        self.last_request_tag = self.last_request_tag.next();
+        self.last_request_tag
+    }
+
+    /// The request of the modal on screen, whose notices it draws itself.
+    pub fn open_modal_request(&self) -> Option<crate::notice::RequestTag> {
+        self.selector.as_ref().and_then(|selector| selector.request)
+    }
+
+    /// The newest notice about the open modal's request.
+    pub fn modal_notice(&self) -> Option<&crate::notice::Notice> {
+        self.open_modal_request()
+            .and_then(|request| self.notices.latest_for(request))
+    }
+
+    /// The newest error for the toast: one the open modal does not draw.
+    pub fn toast_notice(&self) -> Option<&crate::notice::Notice> {
+        self.notices.latest_outside(
+            crate::notice::NoticeLevel::Error,
+            self.open_modal_request(),
+            std::time::Instant::now(),
+        )
+    }
+
+    /// The newest non-error notice for the header bar.
+    pub fn header_notice(&self) -> Option<&crate::notice::Notice> {
+        self.notices.latest_outside(
+            crate::notice::NoticeLevel::Info,
+            self.open_modal_request(),
+            std::time::Instant::now(),
+        )
     }
 
     /// Appends a finished command to the terminal log. A failure also raises
     /// the error toast; unlike `show_error`, the entry it marks failed is
     /// this one rather than whichever command is still running.
     pub fn log_command_outcome(&mut self, command: String, outcome: Result<(), String>) {
-        self.record_command_outcome(command, &outcome);
+        self.record_command_outcome(command, &outcome, crate::command_log::Execution::default());
         if let Err(error) = outcome {
             self.raise_error_toast(error);
         }
     }
 
     /// Appends a finished command to the terminal log without a toast.
-    pub fn record_command_outcome(&mut self, command: String, outcome: &Result<(), String>) {
-        let row = self.start_command(command);
-        self.settle_command(row, outcome);
-    }
-
-    /// Appends a command still running to the terminal log and returns its
-    /// row for `settle_command`. The log is append-only, so the row stays valid.
-    pub fn start_command(&mut self, command: String) -> usize {
+    /// `execution` holds when it ran; a command refused before running has
+    /// none.
+    pub fn record_command_outcome(
+        &mut self,
+        command: String,
+        outcome: &Result<(), String>,
+        execution: crate::command_log::Execution,
+    ) {
         self.terminal_commands.push(TerminalCommand {
             timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
             command,
-            status: "Running".to_string(),
+            status: outcome_status(outcome),
+            execution,
         });
-        self.terminal_commands.len() - 1
     }
 
-    /// Stamps the outcome on a row returned by `start_command`.
-    pub fn settle_command(&mut self, row: usize, outcome: &Result<(), String>) {
-        if let Some(entry) = self.terminal_commands.get_mut(row) {
-            entry.status = match outcome {
-                Ok(()) => "Success".to_string(),
-                Err(error) => format!("Failed: {error}"),
-            };
-        }
-    }
-
-    /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands are skipped: they settle their own row by index, and
-    /// an unrelated completion must not stamp a background command finished.
-    pub fn latest_running_cli_command(&self) -> Option<usize> {
-        self.terminal_commands.iter().rposition(|cmd| {
-            cmd.status == "Running" && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+    /// Appends a command still running to the terminal log and returns its
+    /// row for `settle_command`. The row stays valid when older entries are
+    /// dropped; it stops resolving once its own entry is dropped or cleared.
+    pub fn start_command(&mut self, command: String) -> LogRow {
+        let started_at = chrono::Local::now();
+        self.terminal_commands.push(TerminalCommand {
+            timestamp: started_at.format("%H:%M:%S").to_string(),
+            command,
+            status: "Running".to_string(),
+            execution: crate::command_log::Execution {
+                started_at: Some(started_at),
+                ..Default::default()
+            },
         })
     }
 
+    /// Stamps the outcome on a row returned by `start_command`. `execution`
+    /// replaces what the row knew about its run; without one, the row is
+    /// timed from when it started.
+    pub fn settle_command(
+        &mut self,
+        row: LogRow,
+        outcome: &Result<(), String>,
+        execution: Option<crate::command_log::Execution>,
+    ) {
+        self.terminal_commands
+            .settle(row, outcome_status(outcome), execution);
+    }
+
+    /// Most recent running entry started by the `glab`/`gh` event plumbing.
+    /// Custom commands, re-runs and review submissions are skipped: they
+    /// settle their own row, and an unrelated completion must not stamp them
+    /// finished.
+    pub fn latest_running_cli_command(&self) -> Option<LogRow> {
+        self.terminal_commands
+            .find_latest(|cmd| cmd.status == "Running" && !settles_own_row(cmd))
+    }
+
+    /// Logs a call a backend finished. It settles the running entry with the
+    /// same text. Otherwise the call is appended as its own row, and the most
+    /// recent running CLI entry (an action logged by `CommandStarted`) only
+    /// takes its status: nothing ties that action to this particular call, so
+    /// its invocation and output stay on the call's row.
+    pub fn log_cli_command(&mut self, entry: TerminalCommand) {
+        if entry.status == "Running" {
+            self.terminal_commands.push(entry);
+            return;
+        }
+        match self
+            .terminal_commands
+            .find_latest(|cmd| cmd.command == entry.command && cmd.status == "Running")
+        {
+            Some(row) => self
+                .terminal_commands
+                .settle(row, entry.status, Some(entry.execution)),
+            None => {
+                if let Some(action) = self.latest_running_cli_command() {
+                    self.terminal_commands
+                        .set_status(action, entry.status.clone());
+                }
+                self.terminal_commands.push(entry);
+            }
+        }
+    }
+
+    /// Terminal-log entries the Terminal tab lists: those passing the status
+    /// filter and matching the search bar, oldest first.
+    fn filtered_terminal_rows(&self) -> impl Iterator<Item = (LogRow, &TerminalCommand)> {
+        let query = self.search_query.trim();
+        let status_filter = self.terminal_status_filter;
+        let matcher = &*FUZZY_MATCHER;
+        self.terminal_commands.rows().filter(move |(_, cmd)| {
+            status_filter.admits(cmd)
+                && (query.is_empty()
+                    || matcher.fuzzy_match(&cmd.command, query).is_some()
+                    || matcher.fuzzy_match(&cmd.status, query).is_some())
+        })
+    }
+
+    pub fn filtered_terminal_commands(&self) -> Vec<&TerminalCommand> {
+        self.filtered_terminal_rows().map(|(_, cmd)| cmd).collect()
+    }
+
+    /// Position, within `filtered_terminal_commands`, of the highlighted
+    /// entry: the bottom row of the unwrapped view, which is the newest
+    /// entry unless the log is scrolled back. Wrapped mode scrolls by screen
+    /// line rather than by entry, so there it is always the newest entry.
+    pub fn terminal_cursor(&self, filtered_len: usize) -> Option<usize> {
+        let scrolled_back = if self.terminal_wrap {
+            0
+        } else {
+            self.terminal_scroll
+        };
+        filtered_len.checked_sub(scrolled_back + 1)
+    }
+
+    pub fn selected_terminal_row(&self) -> Option<LogRow> {
+        let rows: Vec<LogRow> = self.filtered_terminal_rows().map(|(row, _)| row).collect();
+        self.terminal_cursor(rows.len())
+            .and_then(|index| rows.get(index).copied())
+    }
+
+    /// The entry the Terminal tab's actions apply to: the inspected one
+    /// while the inspector is open, else the highlighted one.
+    fn terminal_action_target(&self) -> anyhow::Result<&TerminalCommand> {
+        let row = match self.terminal_inspector {
+            Some(inspector) => Some(inspector.row),
+            None => self.selected_terminal_row(),
+        };
+        row.and_then(|row| self.terminal_commands.get(row))
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry selected"))
+    }
+
+    pub fn copy_terminal_command(&mut self) -> anyhow::Result<()> {
+        let line = self.terminal_action_target()?.command_line().into_owned();
+        self.clipboard.set_text(line)?;
+        Ok(())
+    }
+
+    pub fn copy_terminal_output(&mut self) -> anyhow::Result<()> {
+        let output = self
+            .terminal_action_target()?
+            .output()
+            .ok_or_else(|| anyhow::anyhow!("the command has no captured output"))?;
+        self.clipboard.set_text(output)?;
+        Ok(())
+    }
+
+    pub fn open_terminal_inspector(&mut self) -> anyhow::Result<()> {
+        let row = self
+            .selected_terminal_row()
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to inspect"))?;
+        self.terminal_inspector = Some(TerminalInspector::new(row));
+        Ok(())
+    }
+
+    /// Asks to run the selected entry's CLI call again.
+    pub fn confirm_terminal_rerun(&mut self) -> anyhow::Result<()> {
+        let invocation = self
+            .terminal_action_target()?
+            .execution
+            .invocation
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("this entry records no glab, gh or git call to re-run")
+            })?;
+        self.submit_dialog = Some(SubmitDialog::build(
+            ConfirmAction::RerunCommand(invocation),
+            self,
+        ));
+        Ok(())
+    }
+
+    /// Logs a re-run as running and returns its row for `finish_rerun`.
+    pub fn start_rerun(&mut self, invocation: &Invocation) -> LogRow {
+        self.start_command(format!("{RERUN_LOG_PREFIX}{}", invocation.command_line()))
+    }
+
+    pub fn finish_rerun(
+        &mut self,
+        row: LogRow,
+        status: String,
+        execution: crate::command_log::Execution,
+    ) {
+        let failure = status.strip_prefix("Failed: ").map(str::to_string);
+        self.terminal_commands.settle(row, status, Some(execution));
+        match failure {
+            Some(reason) => self.raise_error_toast(format!("Re-run failed: {reason}")),
+            None => self.show_notice("Re-run succeeded"),
+        }
+    }
+
+    pub fn cycle_terminal_status_filter(&mut self) {
+        self.terminal_status_filter = self.terminal_status_filter.next();
+        self.terminal_scroll = 0;
+    }
+
+    pub fn clear_terminal_log(&mut self) {
+        self.terminal_commands.clear();
+        self.terminal_scroll = 0;
+    }
+
     /// Rebuilds `custom_commands` from the current config, logging every
-    /// ignored or shadowed entry in the terminal log.
-    pub fn load_custom_commands(&mut self) {
-        let (commands, problems) = crate::custom_commands::CustomCommands::load(&self.config);
-        let (_, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
-        self.standalone_chars = standalone_chars;
-        self.standalone_chars.extend(commands.character_keys());
+    /// `[keybindings]` entry that binds nothing and every ignored or shadowed
+    /// custom keybinding in the terminal log.
+    pub fn load_keybindings(&mut self) {
+        let (commands, custom_problems) =
+            crate::custom_commands::CustomCommands::load(&self.config);
         self.custom_commands = commands;
+        let problems: Vec<_> = self
+            .config
+            .keybindings
+            .problems()
+            .iter()
+            .cloned()
+            .map(|problem| ("Keybinding", problem))
+            .chain(
+                custom_problems
+                    .into_iter()
+                    .map(|problem| ("Custom keybinding", problem)),
+            )
+            .collect();
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        for problem in &problems {
+        for (kind, problem) in &problems {
             self.terminal_commands.push(TerminalCommand {
                 timestamp: timestamp.clone(),
-                command: format!("Custom keybinding: {}", problem.binding),
+                command: format!("{kind}: {}", problem.binding),
                 status: format!("Failed: {}", problem.problem),
+                ..Default::default()
             });
         }
         if !problems.is_empty() {
             self.raise_error_toast(format!(
-                "{} custom keybinding problem(s); see the Terminal tab",
+                "{} keybinding problem(s); see the Terminal tab",
                 problems.len()
             ));
         }
@@ -4861,19 +6056,117 @@ impl App {
             .unwrap_or(BackendKind::GitLab)
     }
 
-    pub fn active_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
+    /// Table state of a tab not yet backed by a `ListTab`.
+    fn legacy_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
         match self.active_tab {
             Tab::Issues => Some(&mut self.issues.state),
             Tab::MergeRequests => Some(&mut self.mrs.state),
             Tab::Pipelines => Some(&mut self.pipelines.state),
             Tab::Jobs => Some(&mut self.jobs.state),
-            Tab::Runners => Some(&mut self.runners.state),
-            Tab::Releases => Some(&mut self.releases.state),
             Tab::Todos => Some(&mut self.todos.state),
             Tab::Milestones => Some(&mut self.milestones.state),
-            Tab::Branches => Some(&mut self.branches.state),
-            Tab::Environments => Some(&mut self.environments.state),
-            Tab::Terminal => None,
+            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {
+                None
+            }
+        }
+    }
+
+    /// The `ListTab` behind `tab`. Only the active tab's view is brought up
+    /// to date, so pass `self.active_tab`.
+    pub fn list_navigation_mut(&mut self, tab: Tab) -> Option<&mut dyn ListNavigation> {
+        self.sync_list_views();
+        match tab {
+            Tab::Runners => Some(&mut self.runners),
+            Tab::Releases => Some(&mut self.releases),
+            Tab::Branches => Some(&mut self.branches),
+            Tab::Environments => Some(&mut self.environments),
+            _ => None,
+        }
+    }
+
+    fn list_navigation(&self, tab: Tab) -> Option<&dyn ListNavigation> {
+        match tab {
+            Tab::Runners => Some(&self.runners),
+            Tab::Releases => Some(&self.releases),
+            Tab::Branches => Some(&self.branches),
+            Tab::Environments => Some(&self.environments),
+            _ => None,
+        }
+    }
+
+    /// Rebuild the active tab's `ListTab` view if its rows or view inputs
+    /// changed. Hidden tabs are left alone: the search query is shared by
+    /// every tab, and rebuilding a hidden view with it would move that tab's
+    /// cursor off a row the search hides.
+    pub fn sync_list_views(&mut self) {
+        if self.list_navigation(self.active_tab).is_none() {
+            return;
+        }
+        let offered = self.active_tab.columns(self.kind(), self.scope.is_group());
+        // A saved or default column the host offers no data for is not drawn.
+        let offered_enabled: Option<HashSet<String>> = self
+            .enabled_columns
+            .get(&self.active_tab)
+            .filter(|set| set.iter().any(|col| !offered.contains(&col.as_str())))
+            .map(|set| {
+                set.iter()
+                    .filter(|col| offered.contains(&col.as_str()))
+                    .cloned()
+                    .collect()
+            });
+        let Self {
+            active_tab,
+            ref mut runners,
+            ref mut releases,
+            ref mut branches,
+            ref mut environments,
+            ref search_query,
+            ref enabled_columns,
+            ref column_filters,
+            ref group_by_column,
+            ref group_ascending,
+            ..
+        } = *self;
+        let inputs = |tab: Tab| ViewInputs {
+            query: search_query,
+            enabled_columns: offered_enabled
+                .as_ref()
+                .or_else(|| enabled_columns.get(&tab)),
+            column_filters: column_filters.get(&tab),
+            sort: group_by_column
+                .get(&tab)
+                .and_then(Option::as_deref)
+                .map(|col| (col, group_ascending.get(&tab).copied().unwrap_or(true))),
+        };
+        match active_tab {
+            Tab::Runners => runners.refresh(inputs(Tab::Runners)),
+            Tab::Releases => releases.refresh(inputs(Tab::Releases)),
+            Tab::Branches => branches.refresh(inputs(Tab::Branches)),
+            Tab::Environments => environments.refresh(inputs(Tab::Environments)),
+            _ => {}
+        }
+    }
+
+    /// Mouse wheel over the active table: move the selection one row.
+    pub fn scroll_active_table(&mut self, down: bool) {
+        if let Some(list) = self.list_navigation_mut(self.active_tab) {
+            list.step(down);
+        } else if let Some(state) = self.legacy_table_state_mut() {
+            let selected = state.selected().unwrap_or(0);
+            state.select(Some(if down {
+                selected.saturating_add(1)
+            } else {
+                selected.saturating_sub(1)
+            }));
+        }
+    }
+
+    /// Mouse click on the `row`-th drawn line of the active table.
+    pub fn click_active_table_row(&mut self, row: usize) {
+        if let Some(list) = self.list_navigation_mut(self.active_tab) {
+            list.select_visible_row(row);
+        } else if let Some(state) = self.legacy_table_state_mut() {
+            state.select(Some(row));
         }
     }
 
@@ -4891,6 +6184,33 @@ impl App {
         self.loading_tabs.remove(&tab);
         self.loaded_tabs.insert(tab);
         self.refreshed_tabs.insert(tab);
+    }
+
+    /// Whether a list tab has rows on screen. Jobs, which belong to one
+    /// pipeline, and the Terminal tab never count.
+    pub fn has_rows(&self, tab: Tab) -> bool {
+        match tab {
+            Tab::Issues => !self.issues.items.is_empty(),
+            Tab::MergeRequests => !self.mrs.items.is_empty(),
+            Tab::Pipelines => !self.pipelines.items.is_empty(),
+            Tab::Runners => !self.runners.items().is_empty(),
+            Tab::Releases => !self.releases.items().is_empty(),
+            Tab::Todos => !self.todos.items.is_empty(),
+            Tab::Milestones => !self.milestones.items.is_empty(),
+            Tab::Branches => !self.branches.items().is_empty(),
+            Tab::Environments => !self.environments.items().is_empty(),
+            Tab::Jobs | Tab::Terminal => false,
+        }
+    }
+
+    /// Flags every tab just filled from the offline cache as stale until its
+    /// own fetch succeeds.
+    pub fn mark_cached_tabs_stale(&mut self) {
+        for tab in Tab::ALL {
+            if self.has_rows(tab) {
+                self.stale_tabs.insert(tab, StaleData::FromCache);
+            }
+        }
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
@@ -4921,6 +6241,53 @@ impl App {
         }
     }
 
+    /// The tab's sort column and whether it is ascending.
+    pub fn sort_for(&self, tab: Tab) -> Option<(&str, bool)> {
+        let col = self.group_by_column.get(&tab)?.as_deref()?;
+        Some((col, self.group_ascending.get(&tab).copied().unwrap_or(true)))
+    }
+
+    /// Moves the active tab's sort to the next (or previous) visible column.
+    /// "Unsorted" sits between the last and the first column.
+    pub fn cycle_sort_column(&mut self, forward: bool) {
+        let tab = self.active_tab;
+        let mut options: Vec<Option<&str>> = vec![None];
+        options.extend(
+            tab.columns(self.kind(), self.scope.is_group())
+                .into_iter()
+                .filter(|col| self.is_column_visible(tab, col))
+                .map(Some),
+        );
+        if options.len() == 1 {
+            return;
+        }
+        let current = self.group_by_column.get(&tab).cloned().flatten();
+        let pos = options
+            .iter()
+            .position(|opt| *opt == current.as_deref())
+            .unwrap_or(0);
+        let len = options.len();
+        let next = if forward {
+            (pos + 1) % len
+        } else {
+            (pos + len - 1) % len
+        };
+        let next = options[next].map(str::to_string);
+        self.group_by_column.insert(tab, next);
+        self.update_filter_selection();
+    }
+
+    /// Does nothing while the tab is unsorted: the flip would be invisible
+    /// and surprise the user on the next `cycle_sort_column`.
+    pub fn reverse_sort_order(&mut self) {
+        if self.sort_for(self.active_tab).is_none() {
+            return;
+        }
+        let ascending = self.group_ascending.entry(self.active_tab).or_insert(true);
+        *ascending = !*ascending;
+        self.update_filter_selection();
+    }
+
     pub fn available_tabs(&self) -> Vec<Tab> {
         let kind = self.kind();
         let mut tabs: Vec<Tab> = Tab::ALL
@@ -4930,9 +6297,9 @@ impl App {
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {
             tabs.retain(|t| {
-                !disabled
-                    .iter()
-                    .any(|d| Tab::from_str(d).as_ref() == Some(t) || d == &t.title(kind))
+                !disabled.iter().any(|d| {
+                    Tab::from_str(d).as_ref() == Some(t) || d == &t.title(kind, &self.icons)
+                })
             });
         }
         tabs
@@ -4948,7 +6315,7 @@ impl App {
 
     pub fn has_column_filter(&self, tab: Tab, col: &str) -> bool {
         self.get_column_filter(tab, col)
-            .map_or(false, |v| !v.is_empty())
+            .is_some_and(|v| !v.is_empty())
     }
 
     pub fn set_column_filter(
@@ -4993,6 +6360,103 @@ impl App {
         }
     }
 
+    /// The narrowest state query whose rows contain everything `tab`'s State
+    /// column filter shows. Several states, an unknown value or no filter
+    /// need every state.
+    pub fn state_filter_query(&self, tab: Tab) -> StateQuery {
+        let Some(selected) = self.get_column_filter(tab, "State") else {
+            return StateQuery::All;
+        };
+        let mut queries = selected
+            .iter()
+            .map(|value| match Self::normalize_filter_value(value) {
+                "OPEN" => StateQuery::Open,
+                "CLOSED" => StateQuery::Closed,
+                "MERGED" => StateQuery::Merged,
+                _ => StateQuery::All,
+            });
+        let Some(first) = queries.next() else {
+            return StateQuery::All;
+        };
+        if queries.all(|query| query == first) {
+            first
+        } else {
+            StateQuery::All
+        }
+    }
+
+    /// Whether rows listed with `listed` contain every row `tab`'s State
+    /// column filter shows.
+    pub fn covers_state_filter(&self, tab: Tab, listed: StateQuery) -> bool {
+        listed.includes(self.state_filter_query(tab))
+    }
+
+    /// The states to list from the server for `tab`.
+    pub fn requested_state_query(&self, tab: Tab) -> StateQuery {
+        let filtered = self.state_filter_query(tab);
+        self.gitlab_client
+            .as_ref()
+            .map_or(StateQuery::All, |client| {
+                client.backend.server_state_query(&self.scope, filtered)
+            })
+    }
+
+    pub fn requested_state_queries(&self) -> StateQueries {
+        StateQueries {
+            issues: self.requested_state_query(Tab::Issues),
+            mrs: self.requested_state_query(Tab::MergeRequests),
+        }
+    }
+
+    /// List tabs whose server state query changed since the last call and
+    /// that show or are loading rows listed for the previous query. The first
+    /// call for a scope only records the queries: the scope's first fetch
+    /// already used them.
+    pub fn take_state_query_refetches(&mut self) -> Vec<Tab> {
+        let requested = self.requested_state_queries();
+        let Some(observed) = self.observed_state_queries.replace(requested) else {
+            return Vec::new();
+        };
+        [
+            (Tab::Issues, observed.issues, requested.issues),
+            (Tab::MergeRequests, observed.mrs, requested.mrs),
+        ]
+        .into_iter()
+        .filter(|(tab, before, now)| {
+            before != now && (self.loaded_tabs.contains(tab) || self.loading_tabs.contains(tab))
+        })
+        .map(|(tab, ..)| tab)
+        .collect()
+    }
+
+    /// Show cached issues, unless they were listed for fewer states than the
+    /// State column filter shows: the tab's fetch fills it instead.
+    pub fn restore_cached_issues(
+        &mut self,
+        issues: Vec<crate::domain::issues::Issue>,
+        listed: StateQuery,
+    ) {
+        self.issues.items = if self.covers_state_filter(Tab::Issues, listed) {
+            issues
+        } else {
+            Vec::new()
+        };
+    }
+
+    /// Show cached MRs/PRs, unless they were listed for fewer states than the
+    /// State column filter shows: the tab's fetch fills it instead.
+    pub fn restore_cached_mrs(
+        &mut self,
+        mrs: Vec<crate::domain::mr::MergeRequest>,
+        listed: StateQuery,
+    ) {
+        self.mrs.items = if self.covers_state_filter(Tab::MergeRequests, listed) {
+            mrs
+        } else {
+            Vec::new()
+        };
+    }
+
     /// How many levels down the pipeline descent currently is.
     pub fn nav_depth(&self) -> usize {
         self.pipeline_nav.len()
@@ -5013,6 +6477,32 @@ impl App {
         }
     }
 
+    /// Forgets the cached jobs of every listed pipeline whose status differs in
+    /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
+    pub fn drop_jobs_of_changed_pipelines(
+        &mut self,
+        fetched: &[crate::domain::pipelines::Pipeline],
+    ) {
+        let root = self
+            .pipeline_nav
+            .first()
+            .map_or(&self.pipelines.items, |frame| &frame.items);
+        for id in ids_with_changed_status(root, fetched) {
+            self.pipeline_jobs.remove(&id);
+        }
+    }
+
+    /// Forgets the cached jobs of every child on screen whose status differs in
+    /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
+    pub fn drop_jobs_of_changed_children(
+        &mut self,
+        fetched: &[crate::domain::pipelines::Pipeline],
+    ) {
+        for id in ids_with_changed_status(&self.pipelines.items, fetched) {
+            self.pipeline_jobs.remove(&id);
+        }
+    }
+
     /// The descent path for the tab title, e.g. `#1002 › #2001`. Empty at the
     /// top level, where the plain tab name says everything.
     pub fn nav_breadcrumb(&self) -> String {
@@ -5023,9 +6513,33 @@ impl App {
             .join(" › ")
     }
 
+    /// The pipeline path in the Jobs tab title: the opened pipeline and its
+    /// parents, e.g. `#1002 › #2001`. Empty for the branch's pipeline.
+    pub fn jobs_breadcrumb(&self) -> String {
+        let Some(opened) = self
+            .gitlab_client
+            .as_ref()
+            .and_then(|client| client.opened_pipeline.as_ref())
+        else {
+            return String::new();
+        };
+        opened
+            .parents
+            .iter()
+            .chain(std::iter::once(&opened.id))
+            .map(|id| format!("#{id}"))
+            .collect::<Vec<_>>()
+            .join(" › ")
+    }
+
     /// Show one level down in the Pipelines tab, remembering the current level
-    /// so `ascend` can restore it without another API call.
+    /// so `ascend` can restore it without another API call. Forgets the cached
+    /// jobs of the level's children: there is no earlier status to compare
+    /// against, and one may have changed since its jobs were fetched.
     pub fn descend_into(&mut self, parent_id: u64, level: crate::domain::pipelines::ChildLevel) {
+        for child in &level.children {
+            self.pipeline_jobs.remove(&child.id());
+        }
         self.pipeline_nav.push(NavFrame {
             parent_id,
             items: std::mem::take(&mut self.pipelines.items),
@@ -5053,21 +6567,22 @@ impl App {
     }
 
     pub fn new() -> Self {
-        let mut app = Self::default();
+        let mut app = Self::with_config(Config::load());
         if let Some(ref active_tab_str) = app.config.active_tab {
             if let Some(tab) = Tab::from_str(active_tab_str) {
                 app.active_tab = tab;
             }
         }
         app.apply_config();
-        app.load_custom_commands();
+        app.load_keybindings();
         app
     }
 
     pub fn apply_config(&mut self) {
-        let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
-        self.sequence_prefixes = sequence_prefixes;
-        self.standalone_chars = standalone_chars;
+        self.key_buffer
+            .set_sequences(key_sequences(&self.config.keybindings));
+        self.theme = self.config.resolve_theme(self.terminal_appearance);
+        self.icons = Arc::new(self.config.icons.icons());
 
         for tab in Tab::ALL {
             let pane = match tab {
@@ -5100,7 +6615,41 @@ impl App {
         }
     }
 
-    pub fn tick(&mut self) {}
+    pub fn set_terminal_appearance(&mut self, appearance: Option<crate::config::Appearance>) {
+        self.terminal_appearance = appearance;
+        self.theme = self.config.resolve_theme(appearance);
+    }
+
+    /// Opens the theme picker on the configured preset.
+    pub fn open_theme_picker(&mut self) {
+        let current = self.config.theme_preset.as_deref().unwrap_or("default");
+        self.selector = Some(Selector::theme_picker(
+            crate::config::all_theme_presets(),
+            current,
+        ));
+    }
+
+    /// Paints `theme` with the preset highlighted in the open theme picker,
+    /// and with the configured one again once the picker closes, whichever
+    /// key or click closed it. Runs before each draw.
+    pub fn sync_theme_preview(&mut self) {
+        let highlighted = self.selector.as_ref().and_then(Selector::highlighted_theme);
+        if highlighted == self.theme_preview {
+            return;
+        }
+        self.theme = match highlighted.as_deref() {
+            Some(preset) => self
+                .config
+                .resolve_theme_with_preset(Some(preset), self.terminal_appearance),
+            None => self.config.resolve_theme(self.terminal_appearance),
+        };
+        self.theme_preview = highlighted;
+    }
+
+    pub fn tick(&mut self) {
+        let open_request = self.open_modal_request();
+        self.notices.expire(std::time::Instant::now(), open_request);
+    }
 
     pub fn unresolved_threads_count(&self) -> usize {
         use std::collections::HashMap;
@@ -5148,6 +6697,86 @@ impl App {
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
+    /// Draft review comments saved for an MR/PR, restored from the project cache.
+    pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
+        self.project_cache
+            .draft_comments
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Loads the saved drafts of `diff_view`'s MR/PR into `draft_comments`.
+    /// Drafts whose lines left the diff go to `stale_draft_comments` instead.
+    /// Returns how many were held back.
+    pub fn restore_draft_comments(&mut self, diff_view: &DiffView) -> usize {
+        let (anchored, stale) = self
+            .draft_comments_for_mr(&diff_view.project_path, diff_view.mr_iid)
+            .into_iter()
+            .partition(|draft| diff_view.contains_draft_anchor(draft));
+        self.draft_comments = anchored;
+        self.stale_draft_comments = stale;
+        self.stale_draft_comments.len()
+    }
+
+    /// Saves `draft_comments` plus the held-back `stale_draft_comments` as the
+    /// drafts of an MR/PR and writes the project cache to disk, so drafts
+    /// outlive the diff view and the process.
+    pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
+        let drafts = &mut self.project_cache.draft_comments;
+        if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
+            if let Some(project_drafts) = drafts.get_mut(project_path) {
+                project_drafts.remove(&mr_iid);
+                if project_drafts.is_empty() {
+                    drafts.remove(project_path);
+                }
+            }
+        } else {
+            let saved = self
+                .draft_comments
+                .iter()
+                .chain(&self.stale_draft_comments)
+                .cloned()
+                .collect();
+            drafts
+                .entry(project_path.to_string())
+                .or_default()
+                .insert(mr_iid, saved);
+        }
+        crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+    }
+
+    /// Removes the drafts a posted review carried, by value and one occurrence
+    /// each, from the pending and the held-back drafts: a diff refetched while
+    /// the review was posted can have moved them from one list to the other.
+    pub fn drop_sent_drafts(&mut self, sent: &[DraftComment]) {
+        let mut unmatched = sent.to_vec();
+        for drafts in [&mut self.draft_comments, &mut self.stale_draft_comments] {
+            drafts.retain(
+                |draft| match unmatched.iter().position(|sent| sent == draft) {
+                    Some(index) => {
+                        unmatched.swap_remove(index);
+                        false
+                    }
+                    None => true,
+                },
+            );
+        }
+    }
+
+    pub fn all_draft_count(&self) -> usize {
+        self.draft_comments.len() + self.stale_draft_comments.len()
+    }
+
+    pub fn all_drafts_phrase(&self) -> String {
+        crate::domain::review::draft_comments_phrase(self.all_draft_count())
+    }
+
+    pub fn kept_drafts_notice(&self) -> String {
+        format!("Kept {} for later", self.all_drafts_phrase())
+    }
+
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -5160,12 +6789,12 @@ impl App {
                 if let Some(ref pos) = c.position {
                     let matches_path = |file_path: &str| {
                         file_path == path
-                            || file_path.starts_with(&format!("{}/", path))
+                            || file_path.starts_with(&format!("{path}/"))
                             || path == "root"
                             || path.is_empty()
                     };
-                    let path_matches = pos.old_path.as_deref().map_or(false, matches_path)
-                        || pos.new_path.as_deref().map_or(false, matches_path);
+                    let path_matches = pos.old_path.as_deref().is_some_and(matches_path)
+                        || pos.new_path.as_deref().is_some_and(matches_path);
                     if path_matches {
                         if let Some(ref disc_id) = c.discussion_id {
                             let is_resolved = c.resolved.unwrap_or(false);
@@ -5185,10 +6814,6 @@ impl App {
             .count()
     }
 
-    pub fn quit(&mut self) {
-        self.running = false;
-    }
-
     pub fn next_tab(&mut self) {
         let tabs = self.available_tabs();
         if tabs.is_empty() {
@@ -5201,6 +6826,8 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.selected_branches.clear();
+        self.selected_todos.clear();
         self.select_mode = false;
         self.select_anchor = None;
         self.details_zoomed = false;
@@ -5224,6 +6851,8 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.selected_branches.clear();
+        self.selected_todos.clear();
         self.select_mode = false;
         self.select_anchor = None;
         self.details_zoomed = false;
@@ -5660,7 +7289,7 @@ impl App {
             "Title" => vec![m.title.clone()],
             "Approval" => {
                 vec![
-                    match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
+                    match crate::domain::mr_state::approval_tone(m.approval.as_ref(), false) {
                         crate::domain::mr_state::ApprovalTone::Unknown => "—",
                         crate::domain::mr_state::ApprovalTone::ChangesRequested => "CHG",
                         crate::domain::mr_state::ApprovalTone::AwaitingYou => "AWAITING",
@@ -5672,7 +7301,7 @@ impl App {
             }
             "Mergeable" => {
                 vec![
-                    match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
+                    match crate::domain::mr_state::mergeable_tone(m.mergeability.as_ref()) {
                         crate::domain::mr_state::MergeTone::Unknown => "—",
                         crate::domain::mr_state::MergeTone::Conflict => "CONFLICT",
                         crate::domain::mr_state::MergeTone::Rebase => "REBASE",
@@ -5750,7 +7379,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::MergeRequests,
-            |item, col| Self::mr_filter_values(item, col),
+            Self::mr_filter_values,
         );
         list
     }
@@ -5867,7 +7496,7 @@ impl App {
                     "Actor" => a.actor_login().to_string(),
                     "Created" => a
                         .created_at()
-                        .map(|c| crate::utils::format::time_ago(c))
+                        .map(crate::utils::format::time_ago)
                         .unwrap_or_default(),
                     "Source" => a.source().unwrap_or_default().to_string(),
                     "Duration" => a
@@ -5886,7 +7515,7 @@ impl App {
                     "Actor" => b.actor_login().to_string(),
                     "Created" => b
                         .created_at()
-                        .map(|c| crate::utils::format::time_ago(c))
+                        .map(crate::utils::format::time_ago)
                         .unwrap_or_default(),
                     "Source" => b.source().unwrap_or_default().to_string(),
                     "Duration" => b
@@ -6074,205 +7703,11 @@ impl App {
         list
     }
 
-    pub fn filter_runners_list<'a>(
-        items: &'a [crate::domain::runners::Runner],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::runners::Runner> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("ID") {
-                    check_match(&item.id.to_string());
-                }
-                if enabled_cols.contains("Description") {
-                    if let Some(desc) = &item.description {
-                        check_match(desc);
-                    }
-                }
-                if enabled_cols.contains("Status") {
-                    check_match(&item.status);
-                }
-                if enabled_cols.contains("Active") {
-                    let active_str = if item.active { "active" } else { "inactive" };
-                    check_match(active_str);
-                    check_match(&item.active.to_string());
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn runner_filter_values(item: &crate::domain::runners::Runner, col: &str) -> Vec<String> {
-        match col {
-            "ID" => vec![item.id.to_string()],
-            // Match the table cell text (`render_tab_runners` shows
-            // "ONLINE"/"PAUSED"/"OFFLINE"/"UNKNOWN"), not the raw API
-            // value. The picker is a multi-select on displayed text, so a
-            // lowercase entry would never match anything in the column.
-            "Status" => vec![runner_status_display(&item.status).to_string()],
-            "Active" => vec![item.active.to_string()],
-            "Description" => item
-                .description
-                .as_ref()
-                .map(|d| vec![d.clone()])
-                .unwrap_or_default(),
-            _ => vec![],
-        }
-    }
-
-    pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Runners)
-            .unwrap_or(&default_set);
-        let mut list: Vec<&crate::domain::runners::Runner> =
-            Self::filter_runners_list(&self.runners.items, &self.search_query, enabled_cols);
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Runners,
-            Self::runner_filter_values,
-        );
-        list
-    }
-
-    pub fn filter_releases_list<'a>(
-        items: &'a [crate::domain::releases::Release],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::releases::Release> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("Tag") {
-                    check_match(&item.tag_name);
-                }
-                if enabled_cols.contains("Release Name") {
-                    check_match(&item.name);
-                }
-                if enabled_cols.contains("Date") {
-                    check_match(&item.released_at);
-                    check_match(&crate::utils::format::time_ago(&item.released_at));
-                }
-                if enabled_cols.contains("Description") {
-                    if let Some(ref desc) = item.description {
-                        check_match(desc);
-                    }
-                }
-                if enabled_cols.contains("Author") {
-                    if let Some(ref a) = item.author_name {
-                        check_match(a);
-                    }
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn filtered_releases_list<'a>(
-        items: &'a [crate::domain::releases::Release],
-        query: &str,
-        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
-        ascending: bool,
-        group_by_column: &Option<String>,
-    ) -> Vec<&'a crate::domain::releases::Release> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = enabled_columns.get(&Tab::Releases).unwrap_or(&default_set);
-        let mut list = Self::filter_releases_list(items, query, enabled_cols);
-        if let Some(col) = group_by_column {
-            list.sort_by(|a, b| {
-                let val_a = match col.as_str() {
-                    "Tag" => a.tag_name.clone(),
-                    "Release Name" => a.name.clone(),
-                    "Date" => a.released_at.clone(),
-                    "Description" => a.description.clone().unwrap_or_default(),
-                    "Author" => a.author_name.clone().unwrap_or_default(),
-                    _ => String::new(),
-                };
-                let val_b = match col.as_str() {
-                    "Tag" => b.tag_name.clone(),
-                    "Release Name" => b.name.clone(),
-                    "Date" => b.released_at.clone(),
-                    "Description" => b.description.clone().unwrap_or_default(),
-                    "Author" => b.author_name.clone().unwrap_or_default(),
-                    _ => String::new(),
-                };
-                let cmp = val_a.cmp(&val_b);
-                if !ascending { cmp.reverse() } else { cmp }
-            });
-        }
-        list
-    }
-
-    pub fn release_filter_values(
-        item: &crate::domain::releases::Release,
-        col: &str,
-    ) -> Vec<String> {
-        match col {
-            "Tag" => vec![item.tag_name.clone()],
-            "Release Name" => vec![item.name.clone()],
-            "Description" => item
-                .description
-                .clone()
-                .map(|d| vec![d])
-                .unwrap_or_default(),
-            "Author" => item
-                .author_name
-                .clone()
-                .map(|a| vec![a])
-                .unwrap_or_default(),
-            _ => vec![],
-        }
-    }
-
-    pub fn filtered_releases(&self) -> Vec<&crate::domain::releases::Release> {
-        let mut list = Self::filtered_releases_list(
-            &self.releases.items,
-            &self.search_query,
-            &self.enabled_columns,
-            self.group_ascending
-                .get(&Tab::Releases)
-                .copied()
-                .unwrap_or(true),
-            self.group_by_column.get(&Tab::Releases).unwrap_or(&None),
-        );
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Releases,
-            Self::release_filter_values,
-        );
-        list
-    }
-
     pub fn filter_todos_list<'a>(
         items: &'a [crate::domain::notifications::Notification],
         query: &str,
         enabled_cols: &std::collections::HashSet<String>,
+        kind: BackendKind,
     ) -> Vec<&'a crate::domain::notifications::Notification> {
         if query.trim().is_empty() {
             return items.iter().collect();
@@ -6289,16 +7724,13 @@ impl App {
                 };
                 if enabled_cols.contains("State") {
                     try_match(&item.state);
-                    try_match(if item.state == "unread" || item.state == "pending" {
-                        "NEW"
-                    } else {
-                        "READ"
-                    });
+                    try_match(if item.is_unread() { "NEW" } else { "READ" });
                 }
                 if enabled_cols.contains("Project") {
                     try_match(&item.project_path);
                 }
                 if enabled_cols.contains("Type") {
+                    try_match(item.type_label(kind));
                     try_match(&item.target_type);
                 }
                 if enabled_cols.contains("ID") {
@@ -6328,15 +7760,16 @@ impl App {
         enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
         ascending: bool,
         group_by_column: &Option<String>,
+        kind: BackendKind,
     ) -> Vec<&'a crate::domain::notifications::Notification> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns.get(&Tab::Todos).unwrap_or(&default_set);
-        let mut list = Self::filter_todos_list(items, query, enabled_cols);
+        let mut list = Self::filter_todos_list(items, query, enabled_cols, kind);
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
                 let val_a = match col.as_str() {
                     "State" => a.state.clone(),
-                    "Type" => a.target_type.clone(),
+                    "Type" => a.type_label(kind).to_string(),
                     "Project" => a.project_path.clone(),
                     "ID" => a.target_iid.to_string(),
                     "Title" => a.title.clone(),
@@ -6345,7 +7778,7 @@ impl App {
                 };
                 let val_b = match col.as_str() {
                     "State" => b.state.clone(),
-                    "Type" => b.target_type.clone(),
+                    "Type" => b.type_label(kind).to_string(),
                     "Project" => b.project_path.clone(),
                     "ID" => b.target_iid.to_string(),
                     "Title" => b.title.clone(),
@@ -6362,18 +7795,28 @@ impl App {
         list
     }
 
+    /// The Type column's values are the label it shows, then the raw type that
+    /// filters saved before the label still name.
     pub fn todo_filter_values(
         item: &crate::domain::notifications::Notification,
         col: &str,
+        kind: BackendKind,
     ) -> Vec<String> {
         match col {
-            "State" => vec![if item.state == "unread" || item.state == "pending" {
+            "State" => vec![if item.is_unread() {
                 "NEW".to_string()
             } else {
                 "READ".to_string()
             }],
             "Project" => vec![item.project_path.clone()],
-            "Type" => vec![item.target_type.clone()],
+            "Type" => {
+                let label = item.type_label(kind);
+                if label == item.target_type {
+                    vec![label.to_string()]
+                } else {
+                    vec![label.to_string(), item.target_type.clone()]
+                }
+            }
             "ID" => vec![item.id.to_string()],
             "Title" => vec![item.title.clone()],
             "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
@@ -6382,6 +7825,7 @@ impl App {
     }
 
     pub fn filtered_todos(&self) -> Vec<&crate::domain::notifications::Notification> {
+        let kind = self.kind();
         let mut list = Self::filtered_todos_list(
             &self.todos.items,
             &self.search_query,
@@ -6391,14 +7835,313 @@ impl App {
                 .copied()
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Todos).unwrap_or(&None),
+            kind,
         );
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Todos,
-            Self::todo_filter_values,
-        );
+        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
+            Self::todo_filter_values(item, col, kind)
+        });
         list
+    }
+
+    pub fn selected_todo(&self) -> Option<&crate::domain::notifications::Notification> {
+        let idx = self.todos.state.selected()?;
+        self.filtered_todos().get(idx).copied()
+    }
+
+    /// Whether the Todos tab lists read (GitHub) or done (GitLab) items too.
+    pub fn shows_read_todos(&self) -> bool {
+        self.gitlab_client
+            .as_ref()
+            .is_some_and(|client| client.show_read_notifications)
+    }
+
+    /// Flips the Todos tab between unread-only and everything. The list
+    /// follows on the next fetch, which the caller starts.
+    pub fn toggle_show_read_todos(&mut self) {
+        if let Some(client) = self.gitlab_client.as_mut() {
+            client.show_read_notifications = !client.show_read_notifications;
+        }
+    }
+
+    /// Replaces the listed todos with a fresh fetch. A notification that has
+    /// not changed since its detail was fetched keeps it, a failed detail
+    /// fetch is tried again, and selections of notifications that left the
+    /// list are dropped.
+    pub fn set_todos(
+        &mut self,
+        mut notifications: Vec<crate::domain::notifications::Notification>,
+    ) {
+        for todo in notifications.iter_mut().filter(|t| t.body.is_none()) {
+            if let Some(known) = self
+                .todos
+                .items
+                .iter()
+                .find(|k| k.id == todo.id && k.updated_at == todo.updated_at)
+            {
+                todo.body = known.body.clone();
+                todo.author = known.author.clone();
+            }
+        }
+        self.failed_todo_details.clear();
+        self.todos.items = notifications;
+        self.prune_todo_selection();
+    }
+
+    /// Toggles the highlighted todo in or out of the batch selection.
+    pub fn toggle_todo_selection(&mut self) {
+        let Some(id) = self.selected_todo().map(|todo| todo.id.clone()) else {
+            return;
+        };
+        if !self.selected_todos.remove(&id) {
+            self.selected_todos.insert(id);
+        }
+    }
+
+    /// The todos a read or done key acts on: every selected one, in list
+    /// order and whether the search shows it or not, else the highlighted one.
+    pub fn todo_ids_to_act_on(&self) -> Vec<String> {
+        if self.selected_todos.is_empty() {
+            return self
+                .selected_todo()
+                .map(|t| t.id.clone())
+                .into_iter()
+                .collect();
+        }
+        self.todos
+            .items
+            .iter()
+            .filter(|t| self.selected_todos.contains(&t.id))
+            .map(|t| t.id.clone())
+            .collect()
+    }
+
+    /// `todo_ids_to_act_on` without the todos already read, which a read
+    /// mark would leave unchanged.
+    pub fn unread_todo_ids_to_act_on(&self) -> Vec<String> {
+        let mut ids = self.todo_ids_to_act_on();
+        ids.retain(|id| {
+            self.todos
+                .items
+                .iter()
+                .any(|t| &t.id == id && t.is_unread())
+        });
+        ids
+    }
+
+    pub fn copy_selected_todo_url(&mut self) -> anyhow::Result<()> {
+        let url = self
+            .selected_todo()
+            .map(|todo| todo.web_url.clone())
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("URL unavailable; refresh the tab"))?;
+        self.clipboard.set_text(url)?;
+        Ok(())
+    }
+
+    pub fn copy_selected_todo_reference(&mut self) -> anyhow::Result<()> {
+        let kind = self.kind();
+        let todo = self
+            .selected_todo()
+            .ok_or_else(|| anyhow::anyhow!("nothing selected"))?;
+        let reference = todo.reference(kind).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} {} have no reference",
+                todo.target_type,
+                kind.term("todo_plural").to_lowercase()
+            )
+        })?;
+        self.clipboard.set_text(reference)?;
+        Ok(())
+    }
+
+    /// Stores the outcome of a notification's detail fetch. A result for a
+    /// path the notification no longer points at is dropped, so the next tick
+    /// fetches the current one.
+    pub fn apply_todo_detail(
+        &mut self,
+        id: &str,
+        detail_api_path: &str,
+        result: Result<crate::domain::notifications::NotificationDetail, String>,
+    ) {
+        self.fetching_todo_details.remove(id);
+        let Some(todo) = self
+            .todos
+            .items
+            .iter_mut()
+            .find(|t| t.id == id && t.detail_api_path.as_deref() == Some(detail_api_path))
+        else {
+            return;
+        };
+        match result {
+            Ok(detail) => {
+                self.failed_todo_details.remove(id);
+                todo.apply_detail(detail);
+            }
+            Err(error) => {
+                self.failed_todo_details.insert(id.to_string(), error);
+            }
+        }
+    }
+
+    /// Fills the open selector with the items its own request fetched, or
+    /// with cached items when the fetch failed or came back empty. A reply
+    /// for a selector that has since closed or been replaced is dropped.
+    /// Returns whether the fetched items were stored, in which case the
+    /// caller saves `project_cache`.
+    pub fn apply_selector_items(
+        &mut self,
+        request: crate::notice::RequestTag,
+        items: Result<Vec<String>, String>,
+    ) -> bool {
+        if self.selector.as_ref().and_then(|s| s.request) != Some(request) {
+            return false;
+        }
+        let (items, failure) = match items {
+            Ok(items) => (items, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        if items.is_empty() {
+            if let Some(cached) = self.cached_selector_items() {
+                let notice =
+                    crate::notice::Notice::info("Offline fallback: cached selector items.")
+                        .from_request(request);
+                self.push_notice(match failure.as_deref() {
+                    Some(error) => notice.with_detail(error),
+                    None => notice,
+                });
+                if let Some(selector) = self.selector.as_mut() {
+                    selector.all_items = cached;
+                    selector.is_loading = false;
+                }
+                return false;
+            }
+        }
+        if let Some(error) = failure {
+            self.push_notice(
+                crate::notice::Notice::error(format!("Failed to load options: {error}"))
+                    .from_request(request),
+            );
+            if let Some(selector) = self.selector.as_mut() {
+                selector.is_loading = false;
+            }
+            return false;
+        }
+        let Some(selector) = self.selector.as_mut() else {
+            return false;
+        };
+        match selector.field_type.as_str() {
+            "labels" => {
+                self.cached_labels = items.clone();
+                self.project_cache.labels = items.clone();
+            }
+            "assignees" | "reviewers" => {
+                self.cached_members = items.clone();
+                self.project_cache.members = items.clone();
+            }
+            _ => {}
+        }
+        if selector.field_type == "project" {
+            selector.all_items.extend(items);
+            selector.all_items.sort();
+            selector.all_items.dedup();
+        } else {
+            selector.all_items = items;
+        }
+        selector.is_loading = false;
+        true
+    }
+
+    /// The open selector's options known without a fetch, if any.
+    fn cached_selector_items(&self) -> Option<Vec<String>> {
+        let cached: Vec<String> = match self.selector.as_ref()?.field_type.as_str() {
+            "labels" => self.cached_labels.clone(),
+            "assignees" | "reviewers" => self.cached_members.clone(),
+            "milestone" => self
+                .milestones
+                .items
+                .iter()
+                .map(|m| m.title.clone())
+                .collect(),
+            "source_branch" | "target_branch" | "pipeline_branch" | "create_from" => self
+                .branches
+                .items()
+                .iter()
+                .map(|b| b.name.clone())
+                .collect(),
+            "project" => {
+                let mut known: Vec<String> = self
+                    .issues
+                    .items
+                    .iter()
+                    .map(|i| &i.project_path)
+                    .chain(self.mrs.items.iter().map(|m| &m.project_path))
+                    .chain(self.pipelines.items.iter().map(|p| &p.project_path))
+                    .chain(self.milestones.items.iter().map(|ms| &ms.project_path))
+                    .filter(|path| !path.is_empty())
+                    .cloned()
+                    .collect();
+                known.sort();
+                known.dedup();
+                known
+            }
+            _ => return None,
+        };
+        (!cached.is_empty()).then_some(cached)
+    }
+
+    /// Applies a todo mutation the server accepted to the local list. Read
+    /// and done items stay listed only while the tab shows them. GitHub's
+    /// done notifications leave the inbox whatever the filter.
+    pub fn apply_todo_change(&mut self, change: &crate::domain::notifications::TodoChange) {
+        use crate::domain::notifications::TodoChange;
+        let kind = self.kind();
+        let shows_read = self.shows_read_todos();
+        let read_state = crate::domain::notifications::read_state(kind);
+        match change {
+            TodoChange::MarkedRead(ids) => self.settle_todos(ids, shows_read.then_some(read_state)),
+            TodoChange::MarkedDone(ids) => {
+                let stays_listed = shows_read && kind.is_gitlab();
+                self.settle_todos(ids, stays_listed.then_some(read_state));
+            }
+            TodoChange::MarkedAllRead if shows_read => {
+                for todo in self.todos.items.iter_mut().filter(|t| t.is_unread()) {
+                    todo.state = read_state.to_string();
+                }
+            }
+            TodoChange::MarkedAllRead => self.todos.items.clear(),
+            TodoChange::Unsubscribed(_) => {}
+        }
+        self.prune_todo_selection();
+        self.clamp_todo_selection();
+    }
+
+    /// Restates the todos `ids` as `state`, or drops them from the list for
+    /// `None`.
+    fn settle_todos(&mut self, ids: &[String], state: Option<&str>) {
+        match state {
+            Some(state) => {
+                for todo in self.todos.items.iter_mut().filter(|t| ids.contains(&t.id)) {
+                    todo.state = state.to_string();
+                }
+            }
+            None => self.todos.items.retain(|t| !ids.contains(&t.id)),
+        }
+    }
+
+    fn prune_todo_selection(&mut self) {
+        let items = &self.todos.items;
+        self.selected_todos
+            .retain(|id| items.iter().any(|todo| &todo.id == id));
+    }
+
+    fn clamp_todo_selection(&mut self) {
+        let len = self.filtered_todos().len();
+        let selected = match (len, self.todos.state.selected()) {
+            (0, _) => None,
+            (_, Some(idx)) => Some(idx.min(len - 1)),
+            (_, None) => Some(0),
+        };
+        self.todos.state.select(selected);
     }
 
     pub fn filter_milestones_list<'a>(
@@ -6513,18 +8256,23 @@ impl App {
         }
     }
 
-    /// Recompute `milestone_progress_cache` from `issues.items`. Walks the
-    /// issue list once and groups by `issue.milestone.iid`, counting closed
-    /// vs total. Issues without a milestone (or with iid == 0) are skipped.
-    /// Cheap enough to call on every IssuesFetched and on cache load.
+    /// Recompute `milestone_progress_cache`, preferring each milestone's own issue list over `issues.items`.
     pub fn rebuild_milestone_progress_cache(&mut self) {
         let mut map: std::collections::HashMap<u64, (usize, usize)> =
             std::collections::HashMap::new();
+        for (&iid, issues) in &self.milestone_issues_cache {
+            if iid == 0 {
+                continue;
+            }
+            let total = issues.len();
+            let closed = issues.iter().filter(|i| i.state == "closed").count();
+            map.insert(iid, (closed, total));
+        }
         for issue in &self.issues.items {
             let Some(m) = issue.milestone.as_ref() else {
                 continue;
             };
-            if m.iid == 0 {
+            if m.iid == 0 || self.milestone_issues_cache.contains_key(&m.iid) {
                 continue;
             }
             let entry = map.entry(m.iid).or_insert((0, 0));
@@ -6534,6 +8282,19 @@ impl App {
             }
         }
         self.milestone_progress_cache = map;
+    }
+
+    /// Returns the issues for `iid`: prefers the per-milestone cache, then falls back
+    /// to the single-buffer preview if it matches `iid`.
+    pub fn milestone_issues(&self, iid: u64) -> Option<&[crate::domain::issues::Issue]> {
+        self.milestone_issues_cache
+            .get(&iid)
+            .map(Vec::as_slice)
+            .or_else(|| {
+                (self.selected_milestone_iid == Some(iid))
+                    .then_some(self.selected_milestone_issues.as_deref())
+                    .flatten()
+            })
     }
 
     pub fn filtered_milestones(&self) -> Vec<&crate::domain::milestones::Milestone> {
@@ -6558,126 +8319,152 @@ impl App {
         list
     }
 
-    pub fn filter_branches_list<'a>(
-        items: &'a [crate::domain::branches::Branch],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::branches::Branch> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("Name") {
-                    check_match(&item.name);
-                }
-                if enabled_cols.contains("SHA") {
-                    check_match(&item.commit_sha);
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn branch_filter_values(item: &crate::domain::branches::Branch, col: &str) -> Vec<String> {
-        match col {
-            "Name" => vec![item.name.clone()],
-            "Default" => vec![item.default.to_string()],
-            "Protected" => vec![item.protected.to_string()],
-            _ => vec![],
+    /// Drops the fetched deployments once their environment is no longer the
+    /// highlighted row of the Environments tab. Selection moves come from many
+    /// places (keys, mouse, search, column filters, refetches, tab switches),
+    /// so the event loop reconciles here once per frame instead.
+    pub fn discard_stale_deployments(&mut self) {
+        self.sync_list_views();
+        let is_stale = self
+            .environment_deployments
+            .as_ref()
+            .is_some_and(|shown| !self.is_highlighted_environment(&shown.environment));
+        if is_stale {
+            self.environment_deployments = None;
         }
     }
 
-    pub fn filtered_branches(&self) -> Vec<&crate::domain::branches::Branch> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Branches)
-            .unwrap_or(&default_set);
-        let mut list =
-            Self::filter_branches_list(&self.branches.items, &self.search_query, enabled_cols);
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Branches,
-            Self::branch_filter_values,
-        );
-        list
+    pub fn is_highlighted_environment(&self, name: &str) -> bool {
+        self.active_tab == Tab::Environments
+            && self
+                .environments
+                .cursor_row()
+                .is_some_and(|env| env.name == name)
     }
 
-    pub fn environment_filter_values(
-        item: &crate::domain::deployments::Environment,
-        col: &str,
-    ) -> Vec<String> {
-        match col {
-            "Name" => vec![item.name.clone()],
-            "State" => vec![item.state.clone()],
-            "Deployment Status" => item
-                .last_deployment
+    /// Shows `deployments` in the detail pane while `environment` is still
+    /// the highlighted row, focused so the keys navigate them. A refetch for
+    /// the environment already shown keeps its focus and selected deployment.
+    pub fn show_deployments(
+        &mut self,
+        environment: String,
+        deployments: Vec<crate::domain::deployments::Deployment>,
+    ) {
+        if !self.is_highlighted_environment(&environment) {
+            return;
+        }
+        let previous = self
+            .environment_deployments
+            .take()
+            .filter(|shown| shown.environment == environment);
+        let selected_id = previous
+            .as_ref()
+            .and_then(EnvironmentDeployments::selected)
+            .map(|deployment| deployment.id);
+        let mut table = StatefulTable::with_items(deployments);
+        if !table.items.is_empty() {
+            let idx = selected_id
+                .and_then(|id| table.items.iter().position(|d| d.id == id))
+                .unwrap_or(0);
+            table.state.select(Some(idx));
+        }
+        let is_focused = !table.items.is_empty() && previous.is_none_or(|shown| shown.is_focused);
+        self.environment_deployments = Some(EnvironmentDeployments {
+            environment,
+            table,
+            is_focused,
+        });
+    }
+
+    /// The shown deployments, when the navigation keys belong to them.
+    pub fn focused_deployments_mut(&mut self) -> Option<&mut EnvironmentDeployments> {
+        if self.active_tab != Tab::Environments || !self.is_detail_pane_on_screen() {
+            return None;
+        }
+        self.environment_deployments
+            .as_mut()
+            .filter(|shown| shown.is_focused)
+    }
+
+    /// Whether the last frame drew the detail pane. `detail_rect` covers the
+    /// terminal being too small for it, `detail_visible` a `q` pressed since.
+    fn is_detail_pane_on_screen(&self) -> bool {
+        self.detail_visible && self.detail_rect.is_some()
+    }
+
+    pub fn selected_deployment(&self) -> Option<&crate::domain::deployments::Deployment> {
+        self.environment_deployments.as_ref()?.selected()
+    }
+
+    /// Consumes the pending log request for `deployment_id` and says whether
+    /// its log should open, which it does only while that deployment is still
+    /// selected on the Environments tab.
+    pub fn take_pending_deployment_log(&mut self, deployment_id: u64) -> bool {
+        if self.pending_deployment_log != Some(deployment_id) {
+            return false;
+        }
+        self.pending_deployment_log = None;
+        self.active_tab == Tab::Environments
+            && self.selected_deployment().map(|d| d.id) == Some(deployment_id)
+    }
+
+    /// Whether `key` moves focus between the environment list and the shown
+    /// deployments. The event loop asks before the global configure key,
+    /// which is also bound to Tab by default.
+    pub fn is_deployments_focus_key(&self, key: &crate::keybinding::KeyPress) -> bool {
+        self.active_tab == Tab::Environments
+            && self.is_detail_pane_on_screen()
+            && self
+                .environment_deployments
                 .as_ref()
-                .map(|d| vec![d.status.clone()])
-                .unwrap_or_default(),
-            _ => vec![],
+                .is_some_and(|shown| !shown.table.items.is_empty())
+            && self
+                .config
+                .keybindings
+                .matches(crate::keymap::Action::EnvironmentsFocusDeployments, key)
+    }
+
+    /// Whether a keypress goes into a text field (a search, a filter, an
+    /// inline edit) rather than to a binding.
+    pub fn is_capturing_text(&self) -> bool {
+        self.text_input.is_some()
+            || self.show_help
+            || self.is_typing_search
+            || self.job_trace_searching
+            || self.editing_page_size
+            || self.selector.as_ref().is_some_and(|s| s.is_filtering)
+            || self.edit_menu.as_ref().is_some_and(|m| m.editing)
+            || self.diff_view.as_ref().is_some_and(|d| d.search_active)
+            || self
+                .submit_dialog
+                .as_ref()
+                .is_some_and(|d| d.form.is_editing())
+    }
+
+    fn keybinding_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.config.keybinding_timeout_ms)
+    }
+
+    /// Feeds a keypress from the terminal into `key_buffer`; what it resolves
+    /// to comes out of `key_buffer.pop_ready()`.
+    pub fn receive_key(&mut self, event: crossterm::event::KeyEvent) {
+        let is_quit = self.config.keybindings.matches(
+            crate::keymap::Action::GlobalForceQuit,
+            &crate::keybinding::KeyPress::Key(event),
+        );
+        if is_quit || self.is_capturing_text() {
+            self.key_buffer.pass_through(event);
+        } else {
+            let timeout = self.keybinding_timeout();
+            self.key_buffer
+                .push(event, std::time::Instant::now(), timeout);
         }
     }
 
-    pub fn filter_environments_list<'a>(
-        items: &'a [crate::domain::deployments::Environment],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::deployments::Environment> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("Name") {
-                    check_match(&item.name);
-                }
-                if enabled_cols.contains("State") {
-                    check_match(&item.state);
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn filtered_environments(&self) -> Vec<&crate::domain::deployments::Environment> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Environments)
-            .unwrap_or(&default_set);
-        let mut list = Self::filter_environments_list(
-            &self.environments.items,
-            &self.search_query,
-            enabled_cols,
-        );
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Environments,
-            Self::environment_filter_values,
-        );
-        list
+    /// Resolves keys that waited `keybinding_timeout_ms` for a longer binding.
+    pub fn expire_typed_keys(&mut self) {
+        let timeout = self.keybinding_timeout();
+        self.key_buffer.expire(std::time::Instant::now(), timeout);
     }
 
     /// Canonicalise a saved filter value to the display string that
@@ -6795,12 +8582,15 @@ impl App {
                 // but normalize maps them too for saved-filter compat
                 if v == "unread" { "NEW" } else { "READ" }
             }
+            // Runners Active: bool strings saved before the YES/NO cell text
+            "true" => "YES",
+            "false" => "NO",
             other => other,
         }
     }
 
-    pub fn apply_column_filters<'a, T>(
-        list: &mut Vec<&'a T>,
+    pub fn apply_column_filters<T>(
+        list: &mut Vec<&T>,
         column_filters: &std::collections::HashMap<
             Tab,
             std::collections::HashMap<String, std::collections::HashSet<String>>,
@@ -6815,41 +8605,26 @@ impl App {
             if selected.is_empty() {
                 continue;
             }
-            let is_text = matches!(
-                col.as_str(),
-                "Project" | "Title" | "Name" | "Ref" | "Tag" | "Release Name"
-            );
-            list.retain(|item| {
-                let vals = get_values(item, col);
-                if is_text {
-                    vals.iter().any(|v| {
-                        selected.contains(v)
-                            || selected.iter().any(|s| {
-                                let norm_v = v.to_lowercase();
-                                let norm_s = s.to_lowercase();
-                                norm_v == norm_s
-                                    || norm_v.contains(&norm_s)
-                                    || norm_s.contains(&norm_v)
-                            })
-                    })
-                } else {
-                    vals.iter().any(|v| {
-                        let norm_v = Self::normalize_filter_value(v);
-                        selected.contains(v)
-                            || selected.contains(norm_v)
-                            || selected.iter().any(|s| {
-                                let norm_s = Self::normalize_filter_value(s);
-                                norm_s == v.as_str() || norm_s == norm_v
-                            })
-                    })
-                }
-            });
+            list.retain(|item| column_filter_matches(col, &get_values(item, col), selected));
         }
     }
 
     pub fn collect_unique_column_values(&self, tab: Tab, col: &str) -> Vec<String> {
         use std::collections::BTreeSet;
+        if let Some(list) = self.list_navigation(tab) {
+            return list.distinct_filter_values(col);
+        }
         let mut values: BTreeSet<String> = BTreeSet::new();
+        // Rows listed for one state cannot offer the others, so every state
+        // stays selectable while the server narrows the list.
+        if col == "State" && self.requested_state_query(tab) != StateQuery::All {
+            let states: &[&str] = match tab {
+                Tab::Issues => &["OPEN", "CLOSED"],
+                Tab::MergeRequests => &["OPEN", "MERGED", "CLOSED"],
+                _ => &[],
+            };
+            values.extend(states.iter().map(|state| state.to_string()));
+        }
         match tab {
             Tab::Issues => {
                 let is_gh = self.is_github();
@@ -6874,10 +8649,10 @@ impl App {
             Tab::MergeRequests => {
                 for item in &self.mrs.items {
                     for v in Self::mr_filter_values(item, col) {
-                        if matches!(col, "Closes" | "Linked Issues") {
-                            if v == "Has Issues" || v == "—" {
-                                continue;
-                            }
+                        if matches!(col, "Closes" | "Linked Issues")
+                            && (v == "Has Issues" || v == "—")
+                        {
+                            continue;
                         }
                         values.insert(v);
                     }
@@ -6900,23 +8675,10 @@ impl App {
                     }
                 }
             }
-            Tab::Runners => {
-                for item in &self.runners.items {
-                    for v in Self::runner_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
-            Tab::Releases => {
-                for item in &self.releases.items {
-                    for v in Self::release_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
             Tab::Todos => {
+                let kind = self.kind();
                 for item in &self.todos.items {
-                    for v in Self::todo_filter_values(item, col) {
+                    if let Some(v) = Self::todo_filter_values(item, col, kind).into_iter().next() {
                         values.insert(v);
                     }
                 }
@@ -6928,21 +8690,7 @@ impl App {
                     }
                 }
             }
-            Tab::Branches => {
-                for item in &self.branches.items {
-                    for v in Self::branch_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
-            Tab::Environments => {
-                for item in &self.environments.items {
-                    for v in Self::environment_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
-            Tab::Terminal => {}
+            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {}
         }
         values.into_iter().collect()
     }
@@ -7095,13 +8843,14 @@ impl App {
                 map
             }
             Tab::Todos => {
+                let kind = self.kind();
                 let items = self.filtered_todos();
                 let mut map: std::collections::BTreeMap<String, Vec<usize>> =
                     std::collections::BTreeMap::new();
                 for (idx, n) in items.iter().enumerate() {
                     let key = match col.as_str() {
                         "State" => n.state.clone(),
-                        "Type" => n.target_type.clone(),
+                        "Type" => n.type_label(kind).to_string(),
                         "Project" => n.project_path.clone(),
                         "ID" => format!("#{}", n.target_iid),
                         "Title" => {
@@ -7130,7 +8879,7 @@ impl App {
                         "Actor" => p.actor_login().to_string(),
                         "Created" => p
                             .created_at()
-                            .map(|c| crate::utils::format::time_ago(c))
+                            .map(crate::utils::format::time_ago)
                             .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
@@ -7160,10 +8909,9 @@ impl App {
                 map
             }
             Tab::Releases => {
-                let items = self.filtered_releases();
                 let mut map: std::collections::BTreeMap<String, Vec<usize>> =
                     std::collections::BTreeMap::new();
-                for (idx, r) in items.iter().enumerate() {
+                for (idx, r) in self.releases.view_rows().enumerate() {
                     let key = match col.as_str() {
                         "Date" => {
                             if r.released_at.len() >= 10 {
@@ -7205,7 +8953,7 @@ impl App {
         };
         for (name, indices) in &groups {
             self.group_items
-                .push(GroupItem::Header(format!("{}: {}", column_label, name)));
+                .push(GroupItem::Header(format!("{column_label}: {name}")));
             for &i in indices {
                 self.group_items.push(GroupItem::Item(i));
             }
@@ -7225,6 +8973,7 @@ impl App {
     }
 
     pub fn update_filter_selection(&mut self) {
+        self.sync_list_views();
         match self.active_tab {
             Tab::Issues => {
                 let len = self.filtered_issues().len();
@@ -7276,42 +9025,6 @@ impl App {
                         }
                         None => {
                             self.pipelines.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Runners => {
-                let len = self.filtered_runners().len();
-                let sel = self.runners.state.selected();
-                if len == 0 {
-                    self.runners.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.runners.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.runners.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Releases => {
-                let len = self.filtered_releases().len();
-                let sel = self.releases.state.selected();
-                if len == 0 {
-                    self.releases.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.releases.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.releases.state.select(Some(0));
                         }
                     }
                 }
@@ -7370,43 +9083,7 @@ impl App {
                     }
                 }
             }
-            Tab::Branches => {
-                let len = self.filtered_branches().len();
-                let sel = self.branches.state.selected();
-                if len == 0 {
-                    self.branches.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.branches.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.branches.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Environments => {
-                let len = self.filtered_environments().len();
-                let sel = self.environments.state.selected();
-                if len == 0 {
-                    self.environments.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.environments.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.environments.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Terminal => {}
+            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {}
         }
         self.rebuild_group_map();
     }
@@ -7525,7 +9202,7 @@ impl App {
         );
 
         if let Err(e) = cfg.save_layout(target) {
-            eprintln!("Failed to save layout: {}", e);
+            eprintln!("Failed to save layout: {e}");
         }
     }
 }
@@ -7537,6 +9214,16 @@ mod tests {
     use crate::domain::milestones::Milestone;
 
     #[test]
+    fn pipelines_are_not_fetched_in_gitlab_group_scope() {
+        let group = crate::scope::Scope::Group("acme".to_string());
+        let repo = crate::scope::Scope::Repository("acme/app".to_string());
+        assert!(!Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitLab));
+        assert!(Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitHub));
+        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitLab));
+        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitHub));
+    }
+
+    #[test]
     fn milestone_state_display_uppercases_known_states() {
         assert_eq!(milestone_state_display("active"), "ACTIVE");
         assert_eq!(milestone_state_display("closed"), "CLOSED");
@@ -7544,11 +9231,323 @@ mod tests {
     }
 
     #[test]
-    fn runner_status_display_uppercases_known_states() {
-        assert_eq!(runner_status_display("online"), "ONLINE");
-        assert_eq!(runner_status_display("paused"), "PAUSED");
-        assert_eq!(runner_status_display("offline"), "OFFLINE");
-        assert_eq!(runner_status_display("not_a_state"), "UNKNOWN");
+    fn listed_milestone_finds_the_row_of_its_project_or_reports_it_missing() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..App::default()
+        };
+        let milestone = |id: u64, project: &str| Milestone {
+            id,
+            iid: 3,
+            project_path: project.to_string(),
+            ..Milestone::default()
+        };
+        app.milestones.items = vec![milestone(10, "acme/alpha"), milestone(20, "acme/beta")];
+
+        let found = app.listed_milestone("acme/beta", 3).expect("listed");
+        assert_eq!(found.id, 20);
+        let missing = app.listed_milestone("acme/beta", 4).unwrap_err();
+        assert_eq!(
+            missing.to_string(),
+            "Milestone 4 is not listed; refresh the Milestones tab"
+        );
+    }
+
+    fn runner(
+        id: u64,
+        description: &str,
+        status: &str,
+        active: bool,
+    ) -> crate::domain::runners::Runner {
+        crate::domain::runners::Runner {
+            id,
+            description: Some(description.to_string()),
+            status: status.to_string(),
+            active,
+            ..Default::default()
+        }
+    }
+
+    fn runner_ids<'a>(
+        list: impl IntoIterator<Item = &'a crate::domain::runners::Runner>,
+    ) -> Vec<u64> {
+        list.into_iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn runner_search_ranks_the_closer_match_first() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(
+                1,
+                "dedicated orchestrator cache keeper extra runner",
+                "online",
+                true,
+            ),
+            runner(2, "docker", "online", true),
+            runner(3, "shell", "online", true),
+        ];
+        let enabled: std::collections::HashSet<String> = Tab::Runners
+            .default_columns(BackendKind::GitLab, false)
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let mut list = ListTab::<RunnerColumn>::default();
+        list.set_items(runners);
+        list.refresh(ViewInputs {
+            query: "docker",
+            enabled_columns: Some(&enabled),
+            column_filters: None,
+            sort: None,
+        });
+
+        assert_eq!(runner_ids(list.view_rows()), vec![2, 1]);
+    }
+
+    #[test]
+    fn runner_search_matches_the_displayed_active_text() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(1, "a", "online", true),
+            runner(2, "b", "paused", false),
+        ];
+        let enabled: std::collections::HashSet<String> = ["Active".to_string()].into();
+
+        let mut list1 = ListTab::<RunnerColumn>::default();
+        list1.set_items(runners.clone());
+        list1.refresh(ViewInputs {
+            query: "YES",
+            enabled_columns: Some(&enabled),
+            column_filters: None,
+            sort: None,
+        });
+        assert_eq!(runner_ids(list1.view_rows()), vec![1]);
+
+        let mut list2 = ListTab::<RunnerColumn>::default();
+        list2.set_items(runners);
+        list2.refresh(ViewInputs {
+            query: "NO",
+            enabled_columns: Some(&enabled),
+            column_filters: None,
+            sort: None,
+        });
+        assert_eq!(runner_ids(list2.view_rows()), vec![2]);
+    }
+
+    #[test]
+    fn runner_status_cycle_steps_online_paused_offline_then_all() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..Default::default()
+        };
+        app.runners.set_items(vec![
+            runner(1, "a", "online", true),
+            runner(2, "b", "paused", false),
+            runner(3, "c", "offline", true),
+            runner(4, "d", "stale", true),
+        ]);
+
+        let mut views = Vec::new();
+        for _ in 0..4 {
+            app.cycle_runner_status_filter();
+            app.sync_list_views();
+            views.push(runner_ids(app.runners.view_rows()));
+        }
+
+        assert_eq!(views, vec![vec![1], vec![2], vec![3], vec![1, 2, 3, 4]]);
+    }
+
+    #[test]
+    fn runner_status_cycle_restarts_from_a_multi_value_filter() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..Default::default()
+        };
+        app.set_column_filter(
+            Tab::Runners,
+            "Status",
+            ["OFFLINE".to_string(), "STALE".to_string()].into(),
+        );
+
+        app.cycle_runner_status_filter();
+
+        assert_eq!(
+            app.get_column_filter(Tab::Runners, "Status"),
+            Some(&["ONLINE".to_string()].into())
+        );
+    }
+
+    #[test]
+    fn runner_status_cycle_skips_paused_where_runners_cannot_be_paused() {
+        let mut app = app_on(true, crate::scope::Scope::Repository("o/r".to_string()));
+        app.active_tab = Tab::Runners;
+
+        let mut filters = Vec::new();
+        for _ in 0..3 {
+            app.cycle_runner_status_filter();
+            filters.push(
+                app.get_column_filter(Tab::Runners, "Status")
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        assert_eq!(
+            filters,
+            [
+                ["ONLINE".to_string()].into(),
+                ["OFFLINE".to_string()].into(),
+                Vec::<String>::new()
+            ]
+        );
+    }
+
+    #[test]
+    fn runner_tags_filter_keeps_runners_carrying_any_selected_tag() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..Default::default()
+        };
+        let tagged = |id, tags: &[&str]| crate::domain::runners::Runner {
+            tags: tags.iter().map(ToString::to_string).collect(),
+            ..runner(id, "r", "online", true)
+        };
+        app.runners.set_items(vec![
+            tagged(1, &["docker", "linux"]),
+            tagged(2, &["macos"]),
+            tagged(3, &[]),
+        ]);
+
+        assert_eq!(
+            crate::ui::list_tab::ListNavigation::distinct_filter_values(&app.runners, "Tags"),
+            vec![
+                "docker".to_string(),
+                "linux".to_string(),
+                "macos".to_string()
+            ]
+        );
+        app.set_column_filter(
+            Tab::Runners,
+            "Tags",
+            ["linux".to_string(), "macos".to_string()].into(),
+        );
+        app.sync_list_views();
+
+        assert_eq!(runner_ids(app.runners.view_rows()), vec![1, 2]);
+    }
+
+    #[test]
+    fn runner_copy_keys_copy_the_highlighted_runner_url_and_id() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Runners;
+        app.runners.set_items(vec![crate::domain::runners::Runner {
+            web_url: Some("https://gitlab.com/a/b/-/runners/42".to_string()),
+            ..runner(42, "r", "online", true)
+        }]);
+        app.sync_list_views();
+
+        app.copy_selected_runner_url().unwrap();
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some("https://gitlab.com/a/b/-/runners/42")
+        );
+        app.copy_selected_runner_id().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn runner_url_copy_without_a_url_asks_for_a_refresh() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Runners;
+        app.runners.set_items(vec![runner(42, "r", "online", true)]);
+        app.sync_list_views();
+
+        let error = app.copy_selected_runner_url().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Runner URL unavailable; refresh the Runners tab"
+        );
+        assert_eq!(*copied.borrow(), None);
+    }
+
+    #[test]
+    fn runners_group_by_status_orders_by_displayed_status() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(1, "a", "paused", false),
+            runner(2, "b", "online", true),
+            runner(3, "c", "offline", true),
+            runner(4, "d", "online", true),
+            runner(5, "e", "never_contacted", true),
+        ];
+
+        let mut list_asc = ListTab::<RunnerColumn>::default();
+        list_asc.set_items(runners.clone());
+        list_asc.refresh(ViewInputs {
+            query: "",
+            enabled_columns: None,
+            column_filters: None,
+            sort: Some(("Status", true)),
+        });
+
+        let mut list_desc = ListTab::<RunnerColumn>::default();
+        list_desc.set_items(runners);
+        list_desc.refresh(ViewInputs {
+            query: "",
+            enabled_columns: None,
+            column_filters: None,
+            sort: Some(("Status", false)),
+        });
+
+        assert_eq!(runner_ids(list_asc.view_rows()), vec![5, 3, 2, 4, 1]);
+        assert_eq!(runner_ids(list_desc.view_rows()), vec![1, 2, 4, 3, 5]);
+    }
+
+    #[test]
+    fn runners_group_by_id_sorts_numerically() {
+        use crate::ui::list_tab::runners::RunnerColumn;
+        use crate::ui::list_tab::{ListTab, ViewInputs};
+
+        let runners = vec![
+            runner(10, "a", "online", true),
+            runner(9, "b", "online", true),
+        ];
+
+        let mut list = ListTab::<RunnerColumn>::default();
+        list.set_items(runners);
+        list.refresh(ViewInputs {
+            query: "",
+            enabled_columns: None,
+            column_filters: None,
+            sort: Some(("ID", true)),
+        });
+
+        assert_eq!(runner_ids(list.view_rows()), vec![9, 10]);
+    }
+
+    #[test]
+    fn runner_active_filter_values_match_the_yes_no_cell() {
+        use crate::ui::list_tab::ColumnDef;
+        use crate::ui::list_tab::runners::RunnerColumn;
+
+        assert_eq!(
+            RunnerColumn::Active.filter_values(&runner(1, "a", "online", true)),
+            vec!["YES".to_string()]
+        );
+        assert_eq!(
+            RunnerColumn::Active.filter_values(&runner(2, "b", "paused", false)),
+            vec!["NO".to_string()]
+        );
     }
 
     #[test]
@@ -7563,6 +9562,7 @@ mod tests {
             due_date: None,
             created_at: String::new(),
             project_path: String::new(),
+            web_url: None,
         };
         let values = App::milestone_filter_values(&m, "State");
         assert_eq!(values, vec!["ACTIVE".to_string()]);
@@ -7573,6 +9573,269 @@ mod tests {
         };
         let values = App::milestone_filter_values(&closed, "State");
         assert_eq!(values, vec!["CLOSED".to_string()]);
+    }
+
+    #[test]
+    fn release_project_is_its_own_and_falls_back_to_scope_when_unknown() {
+        let scope = crate::scope::Scope::Group("group".to_string());
+        let listed = crate::domain::releases::Release {
+            project_path: "group/repo-a".to_string(),
+            ..release_fixture("v1.0.0", "")
+        };
+        let cached_without_project = release_fixture("v1.0.0", "");
+
+        assert_eq!(listed.project_or(&scope), "group/repo-a");
+        assert_eq!(cached_without_project.project_or(&scope), "group");
+    }
+
+    fn release_fixture(tag: &str, notes: &str) -> crate::domain::releases::Release {
+        serde_json::from_value(serde_json::json!({
+            "name": tag,
+            "tag_name": tag,
+            "released_at": "2026-01-01T00:00:00Z",
+            "description": notes,
+        }))
+        .unwrap()
+    }
+
+    fn branch_fixture(
+        name: &str,
+        is_default: bool,
+        is_protected: bool,
+    ) -> crate::domain::branches::Branch {
+        serde_json::from_value(serde_json::json!({
+            "name": name,
+            "default": is_default,
+            "protected": is_protected,
+            "web_url": "",
+        }))
+        .unwrap()
+    }
+
+    fn column_filter(
+        tab: Tab,
+        col: &str,
+        value: &str,
+    ) -> std::collections::HashMap<
+        Tab,
+        std::collections::HashMap<String, std::collections::HashSet<String>>,
+    > {
+        std::collections::HashMap::from([(
+            tab,
+            std::collections::HashMap::from([(
+                col.to_string(),
+                std::collections::HashSet::from([value.to_string()]),
+            )]),
+        )])
+    }
+
+    fn release_tags(app: &mut App) -> Vec<String> {
+        app.sync_list_views();
+        app.releases
+            .view_rows()
+            .map(|r| r.tag_name.clone())
+            .collect()
+    }
+
+    fn branch_names(app: &mut App) -> Vec<String> {
+        app.sync_list_views();
+        app.branches.view_rows().map(|b| b.name.clone()).collect()
+    }
+
+    #[test]
+    fn release_notes_column_searches_groups_and_filters_by_notes_text() {
+        let mut app = App {
+            active_tab: Tab::Releases,
+            ..App::default()
+        };
+        app.releases.set_items(vec![
+            release_fixture("v1", "Zeta rollback"),
+            release_fixture("v2", "Alpha hotfix"),
+        ]);
+        app.enabled_columns.insert(
+            Tab::Releases,
+            std::collections::HashSet::from(["Release Notes".to_string()]),
+        );
+
+        app.search_query = "hotfix".to_string();
+        assert_eq!(release_tags(&mut app), vec!["v2"]);
+
+        app.search_query.clear();
+        app.group_by_column
+            .insert(Tab::Releases, Some("Release Notes".to_string()));
+        assert_eq!(release_tags(&mut app), vec!["v2", "v1"]);
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Releases, "Release Notes"),
+            vec!["Alpha hotfix", "Zeta rollback"]
+        );
+        app.column_filters = column_filter(Tab::Releases, "Release Notes", "Zeta rollback");
+        assert_eq!(release_tags(&mut app), vec!["v1"]);
+    }
+
+    #[test]
+    fn branch_flag_filters_offer_and_match_the_cell_text() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.branches.set_items(vec![
+            branch_fixture("main", true, true),
+            branch_fixture("feature", false, false),
+        ]);
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Branches, "Default"),
+            vec!["NO", "YES"]
+        );
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Branches, "Protected"),
+            vec!["NO", "YES"]
+        );
+
+        app.column_filters = column_filter(Tab::Branches, "Default", "YES");
+        assert_eq!(branch_names(&mut app), vec!["main"]);
+        app.column_filters = column_filter(Tab::Branches, "Protected", "NO");
+        assert_eq!(branch_names(&mut app), vec!["feature"]);
+    }
+
+    #[test]
+    fn branch_flag_filters_saved_as_true_false_still_match() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.branches.set_items(vec![
+            branch_fixture("main", true, true),
+            branch_fixture("feature", false, false),
+        ]);
+        app.column_filters = column_filter(Tab::Branches, "Protected", "false");
+        assert_eq!(branch_names(&mut app), vec!["feature"]);
+    }
+
+    #[test]
+    fn group_by_orders_runners_by_cell_text_with_numeric_ids() {
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..App::default()
+        };
+        app.runners.set_items(
+            serde_json::from_value(serde_json::json!([
+                {"id": 10, "description": "b", "status": "paused", "active": true},
+                {"id": 9, "description": "c", "status": "online", "active": true},
+                {"id": 100, "description": "a", "status": "offline", "active": true},
+            ]))
+            .unwrap(),
+        );
+        let ids = |app: &mut App| {
+            app.sync_list_views();
+            app.runners.view_rows().map(|r| r.id).collect::<Vec<_>>()
+        };
+
+        app.group_by_column
+            .insert(Tab::Runners, Some("ID".to_string()));
+        assert_eq!(ids(&mut app), vec![9, 10, 100]);
+
+        app.group_ascending.insert(Tab::Runners, false);
+        assert_eq!(ids(&mut app), vec![100, 10, 9]);
+
+        app.group_ascending.insert(Tab::Runners, true);
+        app.group_by_column
+            .insert(Tab::Runners, Some("Status".to_string()));
+        assert_eq!(ids(&mut app), vec![100, 9, 10]);
+    }
+
+    #[test]
+    fn group_by_orders_branches_by_cell_text() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.branches.set_items(vec![
+            branch_fixture("feature", false, true),
+            branch_fixture("main", true, false),
+            branch_fixture("docs", false, false),
+        ]);
+        app.group_by_column
+            .insert(Tab::Branches, Some("Default".to_string()));
+        app.group_ascending.insert(Tab::Branches, false);
+        assert_eq!(branch_names(&mut app), vec!["main", "feature", "docs"]);
+
+        app.group_ascending.insert(Tab::Branches, true);
+        app.group_by_column
+            .insert(Tab::Branches, Some("Name".to_string()));
+        assert_eq!(branch_names(&mut app), vec!["docs", "feature", "main"]);
+    }
+
+    #[test]
+    fn group_by_orders_environments_by_cell_text() {
+        let mut app = App {
+            active_tab: Tab::Environments,
+            ..App::default()
+        };
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([
+                {"id": 1, "name": "staging", "state": "stopped", "external_url": "https://b.example"},
+                {"id": 2, "name": "production", "state": "available", "external_url": "https://a.example"},
+                {"id": 3, "name": "review", "state": "available"},
+            ]))
+            .unwrap(),
+        );
+        let names = |app: &mut App| {
+            app.sync_list_views();
+            app.environments
+                .view_rows()
+                .map(|e| e.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        app.group_by_column
+            .insert(Tab::Environments, Some("State".to_string()));
+        assert_eq!(names(&mut app), vec!["production", "review", "staging"]);
+
+        app.group_by_column
+            .insert(Tab::Environments, Some("URL".to_string()));
+        assert_eq!(names(&mut app), vec!["review", "production", "staging"]);
+    }
+
+    #[test]
+    fn cycle_sort_column_walks_visible_columns_and_wraps_through_unsorted() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.enabled_columns.insert(
+            Tab::Branches,
+            ["Name", "Default"].map(String::from).into_iter().collect(),
+        );
+        let sort = |app: &App| app.group_by_column.get(&Tab::Branches).cloned().flatten();
+
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Name"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Default"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app), None);
+        app.cycle_sort_column(false);
+        assert_eq!(sort(&app).as_deref(), Some("Default"));
+    }
+
+    #[test]
+    fn reverse_sort_order_flips_the_active_tab_only() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.reverse_sort_order();
+        assert_eq!(app.group_ascending.get(&Tab::Branches), None);
+
+        app.group_by_column
+            .insert(Tab::Branches, Some("Name".to_string()));
+        app.reverse_sort_order();
+        assert_eq!(app.group_ascending.get(&Tab::Branches), Some(&false));
+        app.reverse_sort_order();
+        assert_eq!(app.group_ascending.get(&Tab::Branches), Some(&true));
+        assert_eq!(app.group_ascending.get(&Tab::Issues), None);
     }
 
     #[test]
@@ -7592,6 +9855,24 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_milestone_progress_cache_prefers_milestone_issues_cache() {
+        let mut app = App::default();
+        app.issues.items = vec![
+            issue_with_milestone(101, "opened", 7),
+            issue_with_milestone(110, "opened", 8),
+        ];
+        let cached_issues = vec![
+            issue_with_milestone(101, "opened", 7),
+            issue_with_milestone(102, "closed", 7),
+            issue_with_milestone(103, "closed", 7),
+        ];
+        app.milestone_issues_cache.insert(7, cached_issues);
+        app.rebuild_milestone_progress_cache();
+        assert_eq!(app.milestone_progress_cache.get(&7), Some(&(2, 3)));
+        assert_eq!(app.milestone_progress_cache.get(&8), Some(&(0, 1)));
+    }
+
+    #[test]
     fn rebuild_milestone_progress_cache_ignores_unset_milestones() {
         let mut app = App::default();
         app.issues.items = vec![
@@ -7603,10 +9884,66 @@ mod tests {
         assert_eq!(app.milestone_progress_cache.get(&7), Some(&(1, 1)));
     }
 
+    #[test]
+    fn milestone_issues_prefers_cache_then_selected_issues() {
+        let mut app = App::default();
+        let cached = vec![issue_with_milestone(1, "opened", 5)];
+        app.milestone_issues_cache.insert(5, cached);
+
+        let selected = vec![issue_with_milestone(2, "opened", 5)];
+        app.selected_milestone_iid = Some(5);
+        app.selected_milestone_issues = Some(selected);
+
+        let issues = app.milestone_issues(5).expect("issues found");
+        assert_eq!(issues[0].iid, 1);
+
+        app.selected_milestone_iid = Some(6);
+        app.selected_milestone_issues = Some(vec![issue_with_milestone(3, "opened", 6)]);
+        let issues6 = app.milestone_issues(6).expect("issues found");
+        assert_eq!(issues6[0].iid, 3);
+
+        assert!(app.milestone_issues(7).is_none());
+    }
+
+    #[test]
+    fn reset_on_scope_change_ends_job_trace_follow() {
+        let mut app = App {
+            job_trace_follow: true,
+            job_trace_poll_in_flight: true,
+            ..App::default()
+        };
+
+        app.reset_on_scope_change();
+
+        assert!(!app.job_trace_follow);
+        assert!(!app.job_trace_poll_in_flight);
+    }
+
+    #[tokio::test]
+    async fn reset_on_scope_change_cancels_running_milestone_prefetch() {
+        let mut app = App::default();
+        let mut fx = crate::effect::Effects::default();
+        app.milestone_prefetch = Some(fx.spawn_cancellable(std::future::pending()));
+        let [crate::effect::Effect::Spawn(prefetch)] =
+            <[_; 1]>::try_from(fx.into_vec()).expect("one effect")
+        else {
+            panic!("the prefetch is a spawned task");
+        };
+        let prefetch = tokio::spawn(prefetch);
+
+        app.reset_on_scope_change();
+
+        assert!(app.milestone_prefetch.is_none());
+        tokio::time::timeout(std::time::Duration::from_secs(5), prefetch)
+            .await
+            .expect("the prefetch ends once cancelled")
+            .expect("the prefetch task does not panic");
+    }
+
     fn issue_with_milestone(iid: u64, state: &str, milestone_iid: u64) -> Issue {
         Issue {
             iid,
-            title: format!("Issue {}", iid),
+            title: format!("Issue {iid}"),
             state: state.to_string(),
             labels: vec![],
             updated_at: String::new(),
@@ -7616,7 +9953,7 @@ mod tests {
                 username: "u".to_string(),
             },
             milestone: Some(crate::domain::issues::Milestone {
-                title: format!("M{}", milestone_iid),
+                title: format!("M{milestone_iid}"),
                 iid: milestone_iid,
                 id: 0,
                 state: "active".to_string(),
@@ -7696,6 +10033,61 @@ mod tests {
         assert_eq!(parse_jump_input("#123abc"), None);
     }
 
+    fn text_buffer(value: &str) -> TextBuffer {
+        TextBuffer::new(value.to_string())
+    }
+
+    #[test]
+    fn text_buffer_typing_multibyte_characters_keeps_the_cursor_after_them() {
+        let mut input = text_buffer("");
+        for c in ['é', '日', 'a'] {
+            input.insert_char(c);
+        }
+        assert_eq!(input.value(), "é日a");
+        assert_eq!(input.value_with_cursor('|'), "é日a|");
+    }
+
+    #[test]
+    fn text_buffer_inserts_between_multibyte_characters_after_moving_left() {
+        let mut input = text_buffer("é日");
+        input.move_cursor_left();
+        input.insert_char('x');
+        assert_eq!(input.value(), "éx日");
+        assert_eq!(input.value_with_cursor('|'), "éx|日");
+    }
+
+    #[test]
+    fn text_buffer_backspace_and_delete_remove_whole_multibyte_characters() {
+        let mut input = text_buffer("aé日b");
+        input.move_cursor_left();
+        input.move_cursor_left();
+        assert_eq!(input.value_with_cursor('|'), "aé|日b");
+        input.delete_char_before_cursor();
+        assert_eq!(input.value_with_cursor('|'), "a|日b");
+        input.delete_char_at_cursor();
+        assert_eq!(input.value_with_cursor('|'), "a|b");
+    }
+
+    #[test]
+    fn text_buffer_cursor_edits_stop_at_both_ends_of_multibyte_text() {
+        let mut input = text_buffer("日");
+        input.move_cursor_right();
+        input.delete_char_at_cursor();
+        assert_eq!(input.value_with_cursor('|'), "日|");
+        input.move_cursor_left();
+        input.move_cursor_left();
+        input.delete_char_before_cursor();
+        assert_eq!(input.value_with_cursor('|'), "|日");
+    }
+
+    #[test]
+    fn text_buffer_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
+        let mut input = text_buffer("");
+        input.set_value("ñandú".to_string());
+        input.delete_char_before_cursor();
+        assert_eq!(input.value_with_cursor('|'), "ñand|");
+    }
+
     #[test]
     fn selected_issue_reference_uses_the_highlighted_issue() {
         let mut app = App::default();
@@ -7733,8 +10125,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
         app.issues.items = vec![
             serde_json::from_str(
                 r#"{
@@ -7750,7 +10144,8 @@ mod tests {
             .unwrap(),
         ];
         app.issues.state.select(Some(0));
-        app.status_message = Some("Loaded from offline cache".to_string());
+        app.show_notice("Selected all 3 items");
+        let status = app.header_notice().cloned();
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -7758,10 +10153,7 @@ mod tests {
             copied.borrow().as_deref(),
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
-        assert_eq!(
-            app.status_message.as_deref(),
-            Some("Loaded from offline cache")
-        );
+        assert_eq!(app.header_notice(), status.as_ref());
     }
 
     #[test]
@@ -7797,8 +10189,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
         app.mrs.items = vec![
             serde_json::from_str(
                 r#"{
@@ -7815,7 +10209,8 @@ mod tests {
             .unwrap(),
         ];
         app.mrs.state.select(Some(0));
-        app.status_message = Some("Offline".to_string());
+        app.show_notice("Selected all 3 items");
+        let status = app.header_notice().cloned();
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -7832,13 +10227,67 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message.as_deref(), Some("Offline"));
+        assert_eq!(app.header_notice(), status.as_ref());
+    }
+
+    #[test]
+    fn job_url_and_id_are_copied_from_the_highlighted_job() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.active_tab = Tab::Jobs;
+        app.jobs.items = serde_json::from_str(
+            r#"[
+                {"id": 11, "status": "success", "stage": "build", "name": "compile",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/11"},
+                {"id": 12, "status": "failed", "stage": "test", "name": "rspec",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/12"}
+            ]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(1));
+
+        app.copy_selected_job_url().unwrap();
+        app.copy_selected_job_id().unwrap();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec!["https://gitlab.com/acme/app/-/jobs/12", "12"]
+        );
+    }
+
+    #[test]
+    fn job_url_copy_fails_when_the_job_has_no_url() {
+        let mut app = App::default();
+        app.jobs.items = serde_json::from_str(
+            r#"[{"id": 11, "status": "success", "stage": "build", "name": "compile"}]"#,
+        )
+        .unwrap();
+        app.jobs.state.select(Some(0));
+
+        assert_eq!(
+            app.copy_selected_job_url().unwrap_err().to_string(),
+            "Job URL unavailable; refresh the Jobs tab"
+        );
     }
 
     #[test]
     fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("owner/repo".to_string()),
+            ..App::default()
+        };
         app.mrs.items = vec![
             serde_json::from_str(
                 r#"{
@@ -7873,8 +10322,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
 
         app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
             id: 555,
@@ -7891,6 +10342,7 @@ mod tests {
             source: None,
             project_path: "acme/project".to_string(),
             web_url: None,
+            commit: None,
         }];
         app.pipelines.state.select(Some(0));
 
@@ -7921,18 +10373,23 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
 
-        app.branches.items = vec![crate::domain::branches::Branch {
-            name: "feature/new-api".to_string(),
-            default: false,
-            protected: true,
-            can_push: true,
-            commit_sha: "abc1234".to_string(),
-            web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
-        }];
-        app.branches.state.select(Some(0));
+        app.branches
+            .set_items(vec![crate::domain::branches::Branch {
+                name: "feature/new-api".to_string(),
+                default: false,
+                protected: true,
+                can_push: true,
+                commit_sha: "abc1234".to_string(),
+                web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
+                ..Default::default()
+            }]);
+        app.sync_list_views();
 
         assert_eq!(
             app.selected_branch_name().as_deref(),
@@ -7940,6 +10397,39 @@ mod tests {
         );
         app.copy_selected_branch_name().unwrap();
         assert_eq!(copied.borrow().as_deref(), Some("feature/new-api"));
+    }
+
+    #[test]
+    fn search_typed_on_another_tab_keeps_the_hidden_branch_selected() {
+        let branch = |name: &str| crate::domain::branches::Branch {
+            name: name.to_string(),
+            default: false,
+            protected: false,
+            can_push: true,
+            commit_sha: "abc1234".to_string(),
+            web_url: String::new(),
+            ..Default::default()
+        };
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.branches
+            .set_items(vec![branch("main"), branch("release/2.0"), branch("fix/b")]);
+        if let Some(list) = app.list_navigation_mut(Tab::Branches) {
+            list.next();
+        }
+        assert_eq!(app.selected_branch_name().as_deref(), Some("release/2.0"));
+
+        app.active_tab = Tab::Issues;
+        app.search_query = "fix".to_string();
+        app.sync_list_views();
+        app.search_query.clear();
+        app.sync_list_views();
+        app.active_tab = Tab::Branches;
+        app.sync_list_views();
+
+        assert_eq!(app.selected_branch_name().as_deref(), Some("release/2.0"));
     }
 
     #[test]
@@ -8024,24 +10514,30 @@ mod tests {
 
     #[test]
     fn pop_search_word_drops_trailing_word_and_whitespace() {
-        let mut app = App::default();
-        app.search_query = "foo bar  baz ".to_string();
+        let mut app = App {
+            search_query: "foo bar  baz ".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "foo bar  ");
     }
 
     #[test]
     fn pop_search_word_removes_unicode_word() {
-        let mut app = App::default();
-        app.search_query = "héllo wörld".to_string();
+        let mut app = App {
+            search_query: "héllo wörld".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "héllo ");
     }
 
     #[test]
     fn pop_search_word_on_only_whitespace_is_noop() {
-        let mut app = App::default();
-        app.search_query = "   ".to_string();
+        let mut app = App {
+            search_query: "   ".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "");
     }
@@ -8055,16 +10551,20 @@ mod tests {
 
     #[test]
     fn pop_search_word_handles_tab_separated_words() {
-        let mut app = App::default();
-        app.search_query = "one\ttwo\tthree".to_string();
+        let mut app = App {
+            search_query: "one\ttwo\tthree".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "one\ttwo\t");
     }
 
     #[test]
     fn clear_search_query_wipes_query_and_refreshes_filter() {
-        let mut app = App::default();
-        app.search_query = "anything".to_string();
+        let mut app = App {
+            search_query: "anything".to_string(),
+            ..App::default()
+        };
         app.clear_search_query();
         assert_eq!(app.search_query, "");
     }
@@ -8231,7 +10731,7 @@ mod tests {
             matrix: None,
             duration_seconds: None,
             runner: None,
-            needs: vec![],
+            ..Default::default()
         };
         app.jobs.items = vec![job];
         app.active_tab = Tab::Jobs;
@@ -8244,8 +10744,10 @@ mod tests {
 
     #[test]
     fn select_all_filtered_is_a_noop_outside_supported_tabs() {
-        let mut app = App::default();
-        app.active_tab = Tab::Runners;
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..App::default()
+        };
 
         let added = app.select_all_filtered();
         assert_eq!(added, 0);
@@ -8309,94 +10811,551 @@ mod tests {
         assert_eq!(dp.value_string(), "2026-05-29");
     }
 
-    #[test]
-    fn test_submit_dialog_cursor_and_toggle() {
-        let mut dialog = SubmitDialog::new(
-            ConfirmAction::MergeMr(42),
-            "Merge MR #42",
-            "Merge with the selected options.",
-            "Merge",
-            vec![
-                SubmitOption::new("Squash", true),
-                SubmitOption::new("Delete source branch", true),
-            ],
-        );
-
-        // Default cursor sits on Submit (leftmost).
-        assert!(dialog.is_on_submit());
-        assert_eq!(dialog.cancel_idx(), 3);
-        assert_eq!(dialog.cursor_idx, 0);
-
-        // Move right/down: Submit -> Squash -> Delete source branch -> Cancel.
-        dialog.move_next();
-        assert_eq!(dialog.option_idx(), Some(0));
-        dialog.move_next();
-        assert_eq!(dialog.option_idx(), Some(1));
-        dialog.move_next();
-        assert!(dialog.is_on_cancel());
-        dialog.move_next();
-        assert!(dialog.is_on_cancel(), "Cancel must clamp at the right");
-
-        // Move left/up: Cancel -> Delete source branch -> Squash -> Submit.
-        dialog.move_prev();
-        assert_eq!(dialog.option_idx(), Some(1));
-        dialog.move_prev();
-        assert_eq!(dialog.option_idx(), Some(0));
-        dialog.move_prev();
-        assert!(dialog.is_on_submit());
-        dialog.move_prev();
-        assert!(dialog.is_on_submit(), "Submit must clamp at the left");
-
-        // Toggle flips state and stays in place.
-        dialog.cursor_idx = 1;
-        assert!(dialog.options[0].checked);
-        dialog.toggle_focused_option();
-        assert!(!dialog.options[0].checked);
-        dialog.toggle_focused_option();
-        assert!(dialog.options[0].checked);
-
-        // Toggling on a button row is a no-op.
-        dialog.cursor_idx = 0;
-        let before = dialog.options[0].checked;
-        dialog.toggle_focused_option();
-        assert_eq!(dialog.options[0].checked, before);
+    fn press_in_form(dialog: &mut SubmitDialog, keys: &[crossterm::event::KeyCode]) {
+        for &code in keys {
+            dialog.form.handle_key(&crossterm::event::KeyEvent::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
     }
 
     #[test]
-    fn test_submit_dialog_build_safe_vs_submit_focus() {
+    fn the_merge_dialog_sends_the_strategy_and_options_the_user_picked() {
+        use crossterm::event::KeyCode::{Char, Tab};
         let app = App::default();
-        // Destructive action defaults to Cancel.
+        let mut dialog = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
+        assert_eq!(
+            dialog.merge_choices(),
+            MergeChoices {
+                method: MergeMethod::Squash,
+                delete_branch: true,
+                auto_merge: false,
+            }
+        );
+
+        press_in_form(
+            &mut dialog,
+            &[
+                Tab,
+                Char('h'),
+                Char(' '),
+                Tab,
+                Char(' '),
+                Char('j'),
+                Char(' '),
+            ],
+        );
+
+        let choices = dialog.merge_choices();
+        assert_eq!(
+            choices,
+            MergeChoices {
+                method: MergeMethod::Merge,
+                delete_branch: false,
+                auto_merge: true,
+            }
+        );
+        assert_eq!(
+            choices.options(Some("abc123")),
+            crate::backend::MergeOptions {
+                squash: false,
+                delete_branch: false,
+                strategy: Some("merge"),
+                auto_merge: true,
+                sha: Some("abc123"),
+            }
+        );
+    }
+
+    #[test]
+    fn destructive_dialogs_open_in_the_danger_tone_on_cancel_and_reversible_ones_on_submit() {
+        let app = App::default();
         let close = SubmitDialog::build(ConfirmAction::CloseIssue(7), &app);
         assert!(close.is_on_cancel());
-        assert_eq!(close.options.len(), 0);
-        assert_eq!(close.submit_label, "Close");
+        assert_eq!(close.form.tone(), crate::form::FormTone::Danger);
+        assert_eq!(close.form.buttons()[0].label, "Close");
 
-        // Reversible action defaults to Submit.
         let merge = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
         assert!(merge.is_on_submit());
-        assert_eq!(merge.options.len(), 5);
-        assert!(merge.options.iter().any(|o| o.label == "Strategy: Squash"));
-        assert!(
+        assert_eq!(merge.form.tone(), crate::form::FormTone::Normal);
+        assert_eq!(
             merge
-                .options
-                .iter()
-                .any(|o| o.label == "Delete source branch")
+                .form
+                .radio(SubmitDialog::STRATEGY)
+                .map(|r| r.choices.clone()),
+            Some(vec![
+                "Merge commit".to_string(),
+                "Squash".to_string(),
+                "Rebase".to_string()
+            ])
         );
 
         let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
         assert!(rebase.is_on_submit());
-        assert_eq!(rebase.submit_label, "Rebase");
+        assert_eq!(rebase.form.buttons()[0].label, "Rebase");
+    }
+
+    const RUST_BLOCK_COMMENT_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,5 @@
+ fn kept() {}
++/* added opening
++   still inside the comment
++*/
++let after = 1;
+";
+
+    fn row_styles(line: &DiffLine, theme: &Theme) -> Vec<(Style, String)> {
+        line.syntax_spans(theme)
+            .expect("row is highlighted")
+            .map(|(style, text)| (style, text.to_string()))
+            .collect()
     }
 
     #[test]
-    fn test_highlight_line_syntax_returns_theme_colors() {
-        // A Rust keyword line should produce spans carrying a non-default fg
-        // color derived from the active theme (not a hardcoded palette).
-        let spans = highlight_line_syntax("main.rs", "let x = 1;", None);
-        let spans = spans.expect("highlighting should succeed");
-        assert!(!spans.is_empty());
-        // At least one token (e.g. the `let` keyword) should carry an fg color.
-        assert!(spans.iter().any(|(style, _)| style.fg.is_some()));
+    fn a_block_comment_in_a_hunk_colors_the_lines_it_spans() {
+        let view = DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string());
+        let theme = Theme::default();
+        let comment = crate::syntax::TokenKind::Comment.style(&theme);
+        assert_eq!(
+            row_styles(diff_line(&view, "+   still inside the comment"), &theme),
+            [(comment, "   still inside the comment".to_string())]
+        );
+        assert_eq!(
+            row_styles(diff_line(&view, "+*/"), &theme),
+            [(comment, "*/".to_string())]
+        );
+        let after = row_styles(diff_line(&view, "+let after = 1;"), &theme);
+        assert_eq!(
+            after[0],
+            (
+                crate::syntax::TokenKind::Keyword.style(&theme),
+                "let".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_removed_line_is_not_swallowed_by_a_comment_opened_on_the_new_side() {
+        use crate::syntax::TokenKind::{Constant, Keyword, Plain};
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
+ fn kept() {}
++/* added opening
+ fn also_kept() {}
+-let removed = 2;
++*/
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let theme = Theme::default();
+        assert_eq!(
+            row_styles(diff_line(&view, "-let removed = 2;"), &theme),
+            [
+                (Keyword.style(&theme), "let".to_string()),
+                (Plain.style(&theme), " removed ".to_string()),
+                (Keyword.style(&theme), "=".to_string()),
+                (Plain.style(&theme), " ".to_string()),
+                (Constant.style(&theme), "2".to_string()),
+                (Plain.style(&theme), ";".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn submit_review_dialog_buttons_run_submit_keep_discard_cancel_and_stop_at_the_ends() {
+        let app = App::default();
+        let mut dialog = SubmitDialog::build(ConfirmAction::SubmitReview(3), &app);
+        let focused = |d: &SubmitDialog| {
+            d.form
+                .focused_button()
+                .map_or(String::new(), |b| d.form.buttons()[b].label.clone())
+        };
+        let mut visited = vec![focused(&dialog)];
+        for _ in 0..4 {
+            press_in_form(&mut dialog, &[crossterm::event::KeyCode::Right]);
+            visited.push(focused(&dialog));
+        }
+        for _ in 0..4 {
+            press_in_form(&mut dialog, &[crossterm::event::KeyCode::Left]);
+            visited.push(focused(&dialog));
+        }
+        assert_eq!(
+            visited,
+            [
+                "Submit",
+                "Keep drafts",
+                "Discard",
+                "Cancel",
+                "Cancel",
+                "Discard",
+                "Keep drafts",
+                "Submit",
+                "Submit"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_extensionless_makefile_in_a_diff_is_highlighted() {
+        let diff = "\
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -1 +1 @@
+-# old build
++# new build
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let theme = Theme::default();
+        assert_eq!(
+            row_styles(diff_line(&view, "+# new build"), &theme),
+            [(
+                crate::syntax::TokenKind::Comment.style(&theme),
+                "# new build".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn an_open_diff_takes_its_colors_from_the_theme_it_is_rendered_with() {
+        let view = DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string());
+        let row = diff_line(&view, "+let after = 1;");
+        let before = Theme::default();
+        let reloaded_purple = ratatui::style::Color::Rgb(1, 2, 3);
+        let reloaded = Theme {
+            purple: reloaded_purple,
+            ..Theme::default()
+        };
+        assert_ne!(before.purple, reloaded_purple);
+        assert_eq!(row_styles(row, &before)[0].0.fg, Some(before.purple));
+        assert_eq!(row_styles(row, &reloaded)[0].0.fg, Some(reloaded_purple));
+    }
+
+    #[test]
+    fn a_diff_parsed_without_highlighting_has_no_syntax_tokens() {
+        let view = DiffView::without_highlighting(
+            1,
+            "o/r".to_string(),
+            RUST_BLOCK_COMMENT_DIFF.to_string(),
+        );
+        let unhighlighted: Vec<bool> = view
+            .all_lines
+            .iter()
+            .map(|l| l.syntax_highlighted.is_none())
+            .collect();
+        assert_eq!(unhighlighted, vec![true; view.all_lines.len()]);
+        assert_eq!(
+            view.all_lines.len(),
+            DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string())
+                .all_lines
+                .len()
+        );
+    }
+
+    fn changed_words(view: &DiffView) -> Vec<(String, Vec<String>)> {
+        view.all_lines
+            .iter()
+            .filter(|l| matches!(l.line_type, DiffLineType::Addition | DiffLineType::Deletion))
+            .map(|l| {
+                let words = l
+                    .changed_ranges
+                    .iter()
+                    .map(|r| l.code()[r.clone()].to_string())
+                    .collect();
+                (l.content.clone(), words)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn removed_lines_pair_with_the_added_lines_after_them_word_by_word() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,6 +1,6 @@
+ fn main() {
+-    let timeout = 30;
+-    let retries = 3;
++    let timeout = 60;
++    let retries = 5;
+ }
+-let unpaired = 1;
+ // context
++let other = 2;
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let words = |content: &str, changed: &[&str]| {
+            (
+                content.to_string(),
+                changed.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            changed_words(&view),
+            [
+                words("-    let timeout = 30;", &["30"]),
+                words("-    let retries = 3;", &["3"]),
+                words("+    let timeout = 60;", &["60"]),
+                words("+    let retries = 5;", &["5"]),
+                words("-let unpaired = 1;", &[]),
+                words("+let other = 2;", &[]),
+            ]
+        );
+    }
+
+    #[test]
+    fn uneven_runs_of_removed_and_added_lines_get_no_word_marks() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,4 +1,3 @@
+ fn main() {
+-    let alpha = compute(x, y);
+-    let beta = compute(x, z);
++    let beta = compute(x, w);
+ }
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        let unmarked = |content: &str| (content.to_string(), Vec::<String>::new());
+        assert_eq!(
+            changed_words(&view),
+            [
+                unmarked("-    let alpha = compute(x, y);"),
+                unmarked("-    let beta = compute(x, z);"),
+                unmarked("+    let beta = compute(x, w);"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_newline_note_does_not_split_a_last_line_edit() {
+        let diff = "\
+diff --git a/VERSION b/VERSION
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-version = 1.2.3
+\\ No newline at end of file
++version = 1.2.4
+\\ No newline at end of file
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
+        assert_eq!(
+            changed_words(&view),
+            [
+                ("-version = 1.2.3".to_string(), vec!["1.2.3".to_string()]),
+                ("+version = 1.2.4".to_string(), vec!["1.2.4".to_string()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_comment_action_in_group_scope_targets_the_open_diffs_project() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
+        let mut listed_first = mr_fixture(5, "opened", "a", false, "alpha !5");
+        listed_first.project_path = "acme/alpha".to_string();
+        let mut opened = mr_fixture(5, "opened", "b", false, "beta !5");
+        opened.project_path = "acme/beta".to_string();
+        app.mrs.items = vec![listed_first, opened];
+        app.diff_view = Some(DiffView::without_highlighting(
+            5,
+            "acme/beta".to_string(),
+            String::new(),
+        ));
+
+        assert_eq!(app.project_path_for_open_mr(5), "acme/beta");
+        assert_eq!(app.project_path_for_open_mr(9), "acme");
+    }
+
+    #[test]
+    fn pipeline_project_prefers_the_listed_row_over_an_older_jobs_tab_project() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
+        let mut in_project_b = nav_pipe(7);
+        in_project_b.project_path = "acme/project-b".to_string();
+        app.pipelines.items = vec![nav_pipe(5), in_project_b];
+        app.active_pipeline_id = Some(5);
+        app.active_pipeline_project = Some("acme/project-a".to_string());
+
+        assert_eq!(app.project_path_for_pipeline(7), "acme/project-b");
+        assert_eq!(app.project_path_for_pipeline(5), "acme/project-a");
+        assert_eq!(app.project_path_for_pipeline(9), "acme");
+        assert_eq!(app.pipeline_project(9), None);
+        assert_eq!(app.project_path_for_jobs(), "acme/project-a");
+        assert_eq!(app.jobs_project(), Some("acme/project-a"));
+
+        app.active_pipeline_id = None;
+        assert_eq!(app.jobs_project(), None);
+        assert_eq!(app.project_path_for_jobs(), "acme");
+    }
+
+    #[test]
+    fn cancel_pipeline_and_cancel_jobs_dialogs_default_to_cancel() {
+        let app = App::default();
+
+        let cancel_pipeline = SubmitDialog::build(ConfirmAction::CancelPipeline(7), &app);
+        assert!(cancel_pipeline.is_on_cancel());
+        assert!(cancel_pipeline.action.is_destructive());
+
+        let cancel_jobs = SubmitDialog::build(
+            ConfirmAction::CancelJobs {
+                pipeline_id: 7,
+                job_ids: vec![1, 2],
+            },
+            &app,
+        );
+        assert!(cancel_jobs.is_on_cancel());
+        assert!(cancel_jobs.action.is_destructive());
+    }
+
+    fn loading_labels_selector(request: crate::notice::RequestTag) -> Selector {
+        Selector {
+            title: "Select Labels".to_string(),
+            all_items: Vec::new(),
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: true,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ListState::default(),
+            request: Some(request),
+        }
+    }
+
+    #[test]
+    fn selector_reply_for_a_replaced_selector_is_dropped() {
+        let mut app = App::default();
+        let stale = app.next_request_tag();
+        let current = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(current));
+
+        let applied = app.apply_selector_items(stale, Ok(vec!["bug".to_string()]));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(selector.is_loading);
+        assert!(selector.all_items.is_empty());
+        assert!(app.cached_labels.is_empty());
+    }
+
+    #[test]
+    fn selector_reply_after_the_selector_closed_is_dropped() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        assert_eq!(app.toast_notice(), None);
+        assert!(app.cached_labels.is_empty());
+    }
+
+    #[test]
+    fn selector_reply_fills_the_selector_and_the_label_cache() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+        let labels = vec!["bug".to_string(), "docs".to_string()];
+
+        let applied = app.apply_selector_items(request, Ok(labels.clone()));
+
+        assert!(applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, labels);
+        assert_eq!(app.cached_labels, labels);
+        assert_eq!(app.project_cache.labels, labels);
+    }
+
+    #[test]
+    fn failed_selector_fetch_falls_back_to_cached_labels() {
+        let mut app = App {
+            cached_labels: vec!["bug".to_string()],
+            ..App::default()
+        };
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, ["bug"]);
+        let notice = app.modal_notice().expect("notice inside the selector");
+        assert_eq!(notice.level(), crate::notice::NoticeLevel::Info);
+        assert_eq!(notice.text(), "Offline fallback: cached selector items.");
+        assert_eq!(notice.detail(), Some("HTTP 502"));
+    }
+
+    #[test]
+    fn failed_selector_fetch_without_a_cache_reports_inside_and_leaves_the_cache() {
+        let mut app = App::default();
+        app.project_cache.labels = vec!["persisted".to_string()];
+        let request = app.next_request_tag();
+        app.selector = Some(loading_labels_selector(request));
+
+        let applied = app.apply_selector_items(request, Err("HTTP 502".to_string()));
+
+        assert!(!applied);
+        let selector = app.selector.as_ref().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert!(selector.all_items.is_empty());
+        assert_eq!(
+            app.modal_notice().map(crate::notice::Notice::text),
+            Some("Failed to load options: HTTP 502")
+        );
+        assert_eq!(app.toast_notice(), None);
+        assert!(app.cached_labels.is_empty());
+        assert_eq!(app.project_cache.labels, ["persisted"]);
+    }
+
+    #[test]
+    fn selector_move_by_clamps_to_the_filtered_items() {
+        let mut selector = Selector {
+            title: "Labels".to_string(),
+            all_items: (0..20).map(|i| format!("label-{i}")).collect(),
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ListState::default(),
+            request: None,
+        };
+
+        selector.move_by(true, 15);
+        assert_eq!(
+            (selector.cursor_idx, selector.state.selected()),
+            (15, Some(15))
+        );
+        selector.move_by(true, 15);
+        assert_eq!(selector.cursor_idx, 19, "stops on the last item");
+        selector.move_by(false, 15);
+        assert_eq!(selector.cursor_idx, 4);
+        selector.move_by(false, 15);
+        assert_eq!(selector.cursor_idx, 0, "stops on the first item");
     }
 
     #[test]
@@ -8419,6 +11378,7 @@ mod tests {
             field_type: "labels".to_string(),
             multi_select: true,
             state: ListState::default(),
+            request: None,
         };
 
         let filtered = selector.get_filtered_items();
@@ -8698,6 +11658,43 @@ index abcdef..ffffff 100644
     }
 
     #[test]
+    fn diff_move_by_clamps_and_extends_the_selection() {
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
+        diff_view.focus_on_files = false;
+        let last = diff_view.lines.len() - 1;
+
+        diff_view.move_by(true, 3, false);
+        assert_eq!(diff_view.cursor_idx, 3);
+        assert_eq!(diff_view.selection_end, None);
+
+        diff_view.move_by(true, usize::MAX, true);
+        assert_eq!(diff_view.cursor_idx, last);
+        assert_eq!(diff_view.selection_end, Some(last));
+        assert_eq!(selected_tree_file(&diff_view), Some("src/main.rs"));
+
+        diff_view.move_by(false, usize::MAX, false);
+        assert_eq!(diff_view.cursor_idx, 0);
+    }
+
+    #[test]
+    fn diff_move_by_with_file_focus_moves_the_tree_selection() {
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
+        diff_view.focus_on_files = true;
+        let last = diff_view.visible_nodes.len() - 1;
+        diff_view.cursor_idx = 2;
+
+        diff_view.move_by(true, usize::MAX, false);
+        assert_eq!(diff_view.selected_visible_idx, last);
+        assert_eq!(
+            diff_view.cursor_idx, 0,
+            "a new file starts at its first line"
+        );
+
+        diff_view.move_by(false, usize::MAX, false);
+        assert_eq!(diff_view.selected_visible_idx, 0);
+    }
+
+    #[test]
     fn jump_to_anchor_lands_on_line_or_falls_back_to_file_start() {
         let at = note_position;
         let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
@@ -8821,6 +11818,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: None,
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -8830,6 +11828,7 @@ index abcdef..ffffff 100644
                 old_line_num: Some(1),
                 new_line_num: None,
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -8839,6 +11838,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(1),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -8848,6 +11848,7 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(2),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
             DiffLine {
@@ -8857,6 +11858,7 @@ index abcdef..ffffff 100644
                 old_line_num: Some(2),
                 new_line_num: Some(3),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             },
         ];
@@ -8989,6 +11991,191 @@ deleted file mode 100644
     }
 
     #[test]
+    fn switching_the_diff_layout_keeps_the_cursor_on_its_line_and_drops_the_selection() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "+added eleven");
+        view.selection_start = Some(0);
+        view.selection_end = Some(view.cursor_idx);
+
+        view.set_side_by_side(true);
+        let row = &view.side_by_side_lines[view.cursor_idx];
+        assert_eq!(
+            row.right.as_ref().map(|line| line.content.as_str()),
+            Some("+added eleven")
+        );
+        assert_eq!((view.selection_start, view.selection_end), (None, None));
+
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "+added eleven"));
+
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+        view.set_side_by_side(true);
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "-removed eleven"));
+    }
+
+    #[test]
+    fn leaving_side_by_side_ignores_the_remembered_line_once_the_cursor_moved_off_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+
+        view.set_side_by_side(true);
+        view.cursor_idx = side_by_side_row(&view, " context twelve");
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, " context twelve"));
+    }
+
+    const REPEATED_MARKER_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+-old one
++new one
+ two
+@@ -20,2 +20,2 @@
+-old twenty
++new twenty
+ twenty-one
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone one
+-gone two
+diff --git a/src/also_gone.rs b/src/also_gone.rs
+deleted file mode 100644
+--- a/src/also_gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-also gone one
+-also gone two
+";
+
+    #[test]
+    fn leaving_side_by_side_on_a_later_hunk_header_stays_on_it() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.cursor_idx = view.hunks[1];
+        view.set_side_by_side(false);
+        assert_eq!(view.cursor_idx, diff_row(&view, "@@ -20,2 +20,2 @@"));
+    }
+
+    #[test]
+    fn switching_the_diff_layout_on_a_marker_repeated_in_an_earlier_file_keeps_its_file() {
+        let mut view = DiffView::new(1, "o/r".to_string(), REPEATED_MARKER_DIFF.to_string());
+        view.focus_on_files = false;
+
+        for marker in [
+            "deleted file mode 100644",
+            "+++ /dev/null",
+            "@@ -1,2 +0,0 @@",
+        ] {
+            let last_line = view
+                .lines
+                .iter()
+                .rposition(|line| line.content == marker)
+                .unwrap();
+            let last_row = view
+                .side_by_side_lines
+                .iter()
+                .rposition(|row| row.left.as_ref().is_some_and(|line| line.content == marker))
+                .unwrap();
+
+            view.cursor_idx = last_line;
+            view.set_side_by_side(true);
+            assert_eq!(view.cursor_idx, last_row, "{marker:?} to side-by-side");
+            view.set_side_by_side(false);
+            assert_eq!(view.cursor_idx, last_line, "{marker:?} back to unified");
+        }
+    }
+
+    fn side_by_side_row(view: &DiffView, content: &str) -> usize {
+        view.side_by_side_lines
+            .iter()
+            .position(|row| {
+                [&row.left, &row.right]
+                    .into_iter()
+                    .flatten()
+                    .any(|line| line.content == content)
+            })
+            .unwrap_or_else(|| panic!("no side-by-side row {content:?}"))
+    }
+
+    #[test]
+    fn search_in_side_by_side_lands_on_the_matching_row() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("context twelve");
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+
+        view.search("gone two");
+        assert_eq!(view.cursor_idx, side_by_side_row(&view, "-gone two"));
+    }
+
+    #[test]
+    fn search_in_side_by_side_matches_a_paired_row_once_and_marks_both_sides() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.set_side_by_side(true);
+
+        view.search("eleven");
+        let eleven = side_by_side_row(&view, "-removed eleven");
+        assert_eq!(view.search_matches, vec![eleven]);
+        let row = &view.side_by_side_lines[eleven];
+        assert_eq!(
+            (
+                row.left.as_ref().map(|l| l.fuzzy_indices.is_some()),
+                row.right.as_ref().map(|l| l.fuzzy_indices.is_some())
+            ),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn search_made_in_unified_follows_a_switch_to_side_by_side() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context twelve");
+
+        view.set_side_by_side(true);
+        let twelve = side_by_side_row(&view, " context twelve");
+        assert_eq!(
+            (view.cursor_idx, view.search_matches.clone()),
+            (twelve, vec![twelve])
+        );
+    }
+
+    #[test]
+    fn switching_the_diff_layout_keeps_the_search_position_on_the_cursor_match() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.search("context");
+        view.search_next();
+        let unified_match = view.cursor_idx;
+
+        view.set_side_by_side(true);
+        assert_eq!(view.search_matches[view.search_cursor], view.cursor_idx);
+
+        view.set_side_by_side(false);
+        assert_eq!(
+            (view.cursor_idx, view.search_matches[view.search_cursor]),
+            (unified_match, unified_match)
+        );
+    }
+
+    #[test]
     fn cursor_file_position_on_a_tree_row_opens_the_file_at_its_first_line() {
         let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
         view.focus_on_files = true;
@@ -9097,6 +12284,7 @@ diff --git a/foo.txt b/foo.txt
                 new_line_num,
                 file_path: file_path.to_string(),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             }),
             right: Some(DiffLine {
@@ -9106,6 +12294,7 @@ diff --git a/foo.txt b/foo.txt
                 new_line_num,
                 file_path: file_path.to_string(),
                 syntax_highlighted: None,
+                changed_ranges: Vec::new(),
                 fuzzy_indices: None,
             }),
             line_type: DiffLineType::Normal,
@@ -9192,11 +12381,11 @@ diff --git a/foo.txt b/foo.txt
             username: "tester".to_string(),
         };
 
-        let mut app = App::new();
+        let mut app = App::default();
 
         // 1. Thread 1: unresolved
         let note1 = DiscussionNote {
-            id: 1,
+            id: Some(1),
             body: "note 1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -9212,11 +12401,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_1".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 2. Thread 2: resolved
         let note2 = DiscussionNote {
-            id: 2,
+            id: Some(2),
             body: "note 2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -9232,11 +12422,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_2".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // 3. Thread 3: unresolved because one reply is unresolved
         let note3_1 = DiscussionNote {
-            id: 3,
+            id: Some(3),
             body: "note 3.1".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -9252,9 +12443,10 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(true),
             resolvable: Some(true),
+            kind: Default::default(),
         };
         let note3_2 = DiscussionNote {
-            id: 4,
+            id: Some(4),
             body: "note 3.2".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -9270,11 +12462,12 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_3".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         // System comment (should be ignored)
         let note_system = DiscussionNote {
-            id: 5,
+            id: Some(5),
             body: "system note".to_string(),
             author: author.clone(),
             created_at: "now".to_string(),
@@ -9283,6 +12476,7 @@ diff --git a/foo.txt b/foo.txt
             discussion_id: Some("thread_system".to_string()),
             resolved: Some(false),
             resolvable: Some(true),
+            kind: Default::default(),
         };
 
         app.current_comments = vec![note1, note2, note3_1, note3_2, note_system];
@@ -9306,16 +12500,8 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_save_layout_and_active_tab_and_group_sorting() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
 
         let mut app = App::new();
         app.active_tab = Tab::MergeRequests;
@@ -9331,7 +12517,7 @@ diff --git a/foo.txt b/foo.txt
         // Save layout
         app.save_layout(SaveMenu::Global);
         let contents = std::fs::read_to_string(&config_path).unwrap();
-        println!("Saved config contents:\n{}", contents);
+        println!("Saved config contents:\n{contents}");
 
         // Load new App and verify
         let app2 = App::new();
@@ -9354,15 +12540,6 @@ diff --git a/foo.txt b/foo.txt
             app2.group_ascending.get(&Tab::MergeRequests).copied(),
             Some(true)
         );
-
-        std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            if let Some(old) = old_config {
-                std::env::set_var("GLAB_TUI_CONFIG", old);
-            } else {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
@@ -9403,13 +12580,8 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_app_new_honours_active_tab_config() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
         std::fs::write(
             &config_path,
             r#"active_tab = "milestones"
@@ -9419,27 +12591,12 @@ diff --git a/foo.txt b/foo.txt
 
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Milestones);
-
-        if let Some(prev) = previous {
-            unsafe {
-                std::env::set_var("GLAB_TUI_CONFIG", prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
     fn test_app_new_falls_back_to_issues_for_unknown_active_tab() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
         std::fs::write(
             &config_path,
             r#"active_tab = "this-is-not-a-tab"
@@ -9449,37 +12606,61 @@ diff --git a/foo.txt b/foo.txt
 
         let app = App::new();
         assert_eq!(app.active_tab, Tab::Issues);
+    }
 
-        if let Some(prev) = previous {
-            unsafe {
-                std::env::set_var("GLAB_TUI_CONFIG", prev);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
+    const REMAPPED_PAGE_KEYS: &str = r#"
+[keybindings.global]
+scroll_page_down = "Ctrl+f"
+scroll_page_up = "Ctrl+b"
+"#;
+
+    #[test]
+    fn app_default_ignores_the_config_file() {
+        let _home = crate::config::isolate_home();
+        std::fs::write(Config::config_path(), REMAPPED_PAGE_KEYS).unwrap();
+
+        let app = App::default();
+
+        let keys = &app.config.keybindings;
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageDown),
+            ["PageDown"]
+        );
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageUp),
+            ["PageUp"]
+        );
+    }
+
+    #[test]
+    fn app_new_reads_the_config_file() {
+        let _config = crate::config::isolate_config();
+        std::fs::write(Config::config_path(), REMAPPED_PAGE_KEYS).unwrap();
+
+        let app = App::new();
+
+        let keys = &app.config.keybindings;
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageDown),
+            ["Ctrl+f"]
+        );
+        assert_eq!(
+            keys.bindings(crate::keymap::Action::GlobalScrollPageUp),
+            ["Ctrl+b"]
+        );
     }
 
     #[test]
     fn test_app_inline_page_size_defaults() {
-        let app = App::new();
+        let app = App::default();
         assert!(!app.editing_page_size);
         assert_eq!(app.page_size_input, "");
     }
 
     #[test]
     fn test_save_layout_preserves_custom_settings() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
-        unsafe {
-            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
-        }
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _config = crate::config::isolate_config();
+        let config_path = Config::config_path();
 
         // Write an initial config with custom keybindings
         let initial_toml = r#"
@@ -9491,8 +12672,18 @@ help = "h"
 
         // Load App (which loads this config)
         let mut app = App::new();
-        assert_eq!(app.config.keybindings.global.quit, "ctrl+c");
-        assert_eq!(app.config.keybindings.global.help, "h");
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalQuit),
+            ["ctrl+c"]
+        );
+        assert_eq!(
+            app.config
+                .keybindings
+                .bindings(crate::keymap::Action::GlobalHelp),
+            ["h"]
+        );
 
         // Change layout/page size and save
         app.config.page_size = 456;
@@ -9500,7 +12691,7 @@ help = "h"
 
         // Verify the saved file has both the new page_size and the old keybindings!
         let contents = std::fs::read_to_string(&config_path).unwrap();
-        println!("Saved config contents:\n{}", contents);
+        println!("Saved config contents:\n{contents}");
 
         let val: toml::Value = toml::from_str(&contents).unwrap();
         let table = val.as_table().unwrap();
@@ -9518,15 +12709,6 @@ help = "h"
             .unwrap();
         assert_eq!(kb.get("quit").and_then(|v| v.as_str()), Some("ctrl+c"));
         assert_eq!(kb.get("help").and_then(|v| v.as_str()), Some("h"));
-
-        std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            if let Some(old) = old_config {
-                std::env::set_var("GLAB_TUI_CONFIG", old);
-            } else {
-                std::env::remove_var("GLAB_TUI_CONFIG");
-            }
-        }
     }
 
     #[test]
@@ -9756,8 +12938,7 @@ new mode 100755
     /// produces have a chosen number of digits.
     fn diff_starting_at(start_line: u32) -> String {
         format!(
-            "diff --git a/spec.yml b/spec.yml\n--- a/spec.yml\n+++ b/spec.yml\n@@ -{s},3 +{s},4 @@\n context\n+added\n-removed\n",
-            s = start_line
+            "diff --git a/spec.yml b/spec.yml\n--- a/spec.yml\n+++ b/spec.yml\n@@ -{start_line},3 +{start_line},4 @@\n context\n+added\n-removed\n"
         )
     }
 
@@ -9877,16 +13058,36 @@ new mode 100755
         let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
         let mut highlighted_lines = 0;
         for line in &view.all_lines {
-            if let Some(ref spans) = line.syntax_highlighted {
+            if let Some(spans) = line.syntax_spans(&Theme::default()) {
                 highlighted_lines += 1;
-                let text: String = spans.iter().map(|(_, t)| t.as_str()).collect();
-                assert!(!text.contains('\t'), "a span kept its tab: {text:?}");
+                let text: String = spans.map(|(_, t)| t).collect();
+                assert_eq!(text, line.code(), "tokens must cover the whole line");
             }
         }
         assert!(
             highlighted_lines > 0,
             "fixture produced no highlighted lines, so this proves nothing"
         );
+    }
+
+    #[test]
+    fn diff_view_highlights_each_hunk_line_without_its_marker() {
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
+        let theme = Theme::default();
+        let highlighted: Vec<(String, String)> = view
+            .all_lines
+            .iter()
+            .filter_map(|line| {
+                let spans = line.syntax_spans(&theme)?;
+                let text = spans.map(|(_, t)| t).collect();
+                Some((line.content[1..].to_string(), text))
+            })
+            .collect();
+
+        assert_eq!(highlighted.len(), 6);
+        for (code, text) in highlighted {
+            assert_eq!(text, code);
+        }
     }
 
     #[test]
@@ -10542,6 +13743,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -10558,6 +13760,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -10594,6 +13797,7 @@ index 123456..789012 100644
             target_iid: 1,
             title: "Task 1".to_string(),
             updated_at: "".to_string(),
+            ..Default::default()
         };
         let t_done = crate::domain::notifications::Notification {
             id: "102".to_string(),
@@ -10603,6 +13807,7 @@ index 123456..789012 100644
             target_iid: 2,
             title: "Task 2".to_string(),
             updated_at: "".to_string(),
+            ..Default::default()
         };
         app.todos.items = vec![t_unread, t_done];
 
@@ -10753,6 +13958,7 @@ index 123456..789012 100644
                 source: Some("push".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -10769,6 +13975,7 @@ index 123456..789012 100644
                 source: Some("schedule".to_string()),
                 project_path: String::new(),
                 web_url: None,
+                commit: None,
             },
         ];
         app.column_filters
@@ -10795,65 +14002,388 @@ index 123456..789012 100644
     #[test]
     fn show_error_sets_toast_and_marks_running_command() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "glab mr list".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("glab mr list", "Running"));
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.error_message, Some("boom".to_string()));
-        assert!(app.error_message_at.is_some());
-        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some("boom")
+        );
+        assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
     #[test]
     fn show_error_prefers_cli_command_over_older_running() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "deferred task".to_string(),
-            status: "Running".to_string(),
-        });
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "gh pr list".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("deferred task", "Running"));
+        app.terminal_commands
+            .push(log_entry("gh pr list", "Running"));
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Running");
-        assert_eq!(app.terminal_commands[1].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Running", "Failed: boom"]);
     }
 
     #[test]
     fn show_error_falls_back_to_most_recent_running_when_no_cli() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "deferred task".to_string(),
-            status: "Running".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("deferred task", "Running"));
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
     #[test]
     fn show_error_leaves_completed_commands_untouched() {
         let mut app = App::default();
-        app.terminal_commands.push(TerminalCommand {
-            timestamp: String::new(),
-            command: "glab mr list".to_string(),
-            status: "Success".to_string(),
-        });
+        app.terminal_commands
+            .push(log_entry("glab mr list", "Success"));
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Success");
+        assert_eq!(terminal_statuses(&app), ["Success"]);
+    }
+
+    fn terminal_statuses(app: &App) -> Vec<&str> {
+        app.terminal_commands
+            .iter()
+            .map(|cmd| cmd.status.as_str())
+            .collect()
+    }
+
+    fn log_entry(command: &str, status: &str) -> TerminalCommand {
+        TerminalCommand {
+            timestamp: String::new(),
+            command: command.to_string(),
+            status: status.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn app_with_recording_clipboard() -> (App, std::rc::Rc<std::cell::RefCell<Option<String>>>) {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..Default::default()
+        };
+        (app, copied)
+    }
+
+    #[test]
+    fn search_query_filters_terminal_log_by_command_and_status() {
+        let mut app = App::default();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Failed: HTTP 502"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Running"));
+
+        app.search_query = "glab".to_string();
+        let commands: Vec<&str> = app
+            .filtered_terminal_commands()
+            .iter()
+            .map(|cmd| cmd.command.as_str())
+            .collect();
+        assert_eq!(
+            commands,
+            ["Fetch issues: glab issue list", "Fetch MRs: glab mr list"]
+        );
+
+        app.search_query = "502".to_string();
+        let commands: Vec<&str> = app
+            .filtered_terminal_commands()
+            .iter()
+            .map(|cmd| cmd.command.as_str())
+            .collect();
+        assert_eq!(commands, ["Fetch PRs: gh pr list"]);
+    }
+
+    #[test]
+    fn copy_terminal_command_copies_the_newest_command_line() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list -R a/b", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list -R a/b", "Success"));
+
+        app.copy_terminal_command().unwrap();
+
+        assert_eq!(copied.borrow().as_deref(), Some("glab mr list -R a/b"));
+    }
+
+    #[test]
+    fn copy_terminal_command_follows_scroll_within_the_filtered_log() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Success"));
+        app.search_query = "glab".to_string();
+        app.terminal_scroll = 1;
+
+        app.copy_terminal_command().unwrap();
+
+        assert_eq!(copied.borrow().as_deref(), Some("glab issue list"));
+    }
+
+    #[test]
+    fn copy_terminal_command_on_an_empty_log_is_an_error() {
+        let (mut app, copied) = app_with_recording_clipboard();
+
+        assert!(app.copy_terminal_command().is_err());
+        assert_eq!(*copied.borrow(), None);
+    }
+
+    fn executed_entry(command: &str, status: &str, stdout: &str, stderr: &str) -> TerminalCommand {
+        let line = command.split_once(": ").map_or(command, |(_, line)| line);
+        TerminalCommand {
+            execution: crate::command_log::Execution {
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+                invocation: Some(Invocation::new(
+                    crate::command_log::Program::Glab,
+                    &line.split(' ').skip(1).collect::<Vec<_>>(),
+                )),
+                ..Default::default()
+            },
+            ..log_entry(command, status)
+        }
+    }
+
+    #[test]
+    fn status_filter_cycles_through_errors_and_successes_and_combines_with_search() {
+        let mut app = App::default();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Failed: HTTP 502"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Running"));
+        app.terminal_commands
+            .push(log_entry("Fetch runs: glab ci list", "Failed: HTTP 401"));
+        app.terminal_scroll = 2;
+        let listed = |app: &App| -> Vec<String> {
+            app.filtered_terminal_commands()
+                .iter()
+                .map(|cmd| cmd.command.clone())
+                .collect()
+        };
+
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::Failed);
+        assert_eq!(app.terminal_scroll, 0);
+        assert_eq!(
+            listed(&app),
+            ["Fetch PRs: gh pr list", "Fetch runs: glab ci list"]
+        );
+
+        app.search_query = "glab".to_string();
+        assert_eq!(listed(&app), ["Fetch runs: glab ci list"]);
+
+        app.search_query.clear();
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::Succeeded);
+        assert_eq!(listed(&app), ["Fetch issues: glab issue list"]);
+
+        app.cycle_terminal_status_filter();
+        assert_eq!(app.terminal_status_filter, StatusFilter::All);
+        assert_eq!(listed(&app).len(), 4);
+    }
+
+    #[test]
+    fn copy_terminal_output_copies_stdout_then_stderr_of_the_highlighted_entry() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands.push(executed_entry(
+            "FETCH: glab issue list",
+            "Failed: exit 1",
+            "[]",
+            "warning: deprecated flag",
+        ));
+
+        app.copy_terminal_output().unwrap();
+
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some("[]\nwarning: deprecated flag")
+        );
+    }
+
+    #[test]
+    fn copy_terminal_output_falls_back_to_the_failure_reason() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Creating branch: x", "Failed: branch exists"));
+        app.terminal_commands
+            .push(log_entry("Creating branch: y", "Success"));
+
+        assert!(app.copy_terminal_output().is_err());
+        assert_eq!(*copied.borrow(), None);
+
+        app.terminal_scroll = 1;
+        app.copy_terminal_output().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("branch exists"));
+    }
+
+    #[test]
+    fn actions_follow_the_inspected_entry_while_newer_entries_arrive() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(executed_entry("FETCH: glab mr list", "Success", "", ""));
+        app.open_terminal_inspector().unwrap();
+        app.terminal_commands
+            .push(executed_entry("FETCH: glab issue list", "Success", "", ""));
+
+        app.copy_terminal_command().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("glab mr list"));
+
+        app.terminal_inspector = None;
+        app.copy_terminal_command().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("glab issue list"));
+    }
+
+    #[test]
+    fn rerun_asks_for_confirmation_with_the_recorded_invocation() {
+        let mut app = App::default();
+        app.terminal_commands.push(executed_entry(
+            "DELETE BRANCH: glab api -X DELETE projects/1/repository/branches/x",
+            "Success",
+            "",
+            "",
+        ));
+
+        app.confirm_terminal_rerun().unwrap();
+
+        let dialog = app.submit_dialog.expect("confirmation is open");
+        let crate::app::ConfirmAction::RerunCommand(invocation) = &dialog.action else {
+            panic!("expected a rerun confirmation, got {:?}", dialog.action);
+        };
+        assert_eq!(
+            invocation.command_line(),
+            "glab api -X DELETE projects/1/repository/branches/x"
+        );
+        assert_eq!(
+            dialog.body(),
+            "Run again: glab api -X DELETE projects/1/repository/branches/x"
+        );
+    }
+
+    #[test]
+    fn rerun_of_an_entry_without_a_recorded_call_is_refused() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+
+        assert!(app.confirm_terminal_rerun().is_err());
+        assert!(app.submit_dialog.is_none());
+    }
+
+    #[test]
+    fn backend_log_stamps_the_running_action_and_keeps_its_call_on_its_own_row() {
+        let mut app = App::default();
+        app.start_command("Creating branch: x from main".to_string());
+        let logged = executed_entry("CREATE BRANCH: glab api -X POST b", "Success", "{}", "");
+
+        app.log_cli_command(logged.clone());
+
+        let entries: Vec<&TerminalCommand> = app.terminal_commands.iter().collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].command, "Creating branch: x from main");
+        assert_eq!(entries[0].status, "Success");
+        assert_eq!(entries[0].execution.invocation, None);
+        assert_eq!(entries[0].execution.stdout, "");
+        assert_eq!(entries[1].command, logged.command);
+        assert_eq!(entries[1].execution, logged.execution);
+    }
+
+    #[test]
+    fn backend_log_never_settles_a_running_rerun() {
+        let mut app = App::default();
+        let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
+        let rerun_row = app.start_rerun(&invocation);
+
+        app.log_cli_command(executed_entry("FETCH: glab mr list", "Success", "", ""));
+
+        assert_eq!(app.terminal_commands.len(), 2);
+        assert_eq!(
+            app.terminal_commands
+                .get(rerun_row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+    }
+
+    #[test]
+    fn backend_log_never_settles_a_running_review_submission() {
+        let mut app = App::default();
+        let row = app.start_command(format!("{REVIEW_SUBMIT_LOG_PREFIX}MR #7"));
+
+        app.log_cli_command(executed_entry(
+            "FETCHING MR DIFF REFS: glab mr view 7 --output json -R acme/widget",
+            "Success",
+            "{}",
+            "",
+        ));
+
+        assert_eq!(
+            app.terminal_commands
+                .get(row)
+                .map(|cmd| cmd.status.as_str()),
+            Some("Running")
+        );
+        assert_eq!(app.latest_running_cli_command(), None);
+    }
+
+    #[test]
+    fn finished_rerun_settles_its_row_and_toasts_a_failure() {
+        let mut app = App::default();
+        let invocation = Invocation::new(crate::command_log::Program::Gh, &["pr", "list"]);
+        let row = app.start_rerun(&invocation);
+        let execution = crate::command_log::Execution {
+            exit_code: Some(1),
+            stderr: "HTTP 401".to_string(),
+            invocation: Some(invocation),
+            ..Default::default()
+        };
+
+        app.finish_rerun(row, "Failed: HTTP 401".to_string(), execution.clone());
+
+        let entry = app.terminal_commands.get(row).expect("row is still logged");
+        assert_eq!(entry.command, "Rerun: gh pr list");
+        assert_eq!(entry.status, "Failed: HTTP 401");
+        assert_eq!(entry.execution, execution);
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some("Re-run failed: HTTP 401")
+        );
+    }
+
+    #[test]
+    fn clearing_the_terminal_log_stops_a_running_row_from_being_settled() {
+        let mut app = App::default();
+        let row = app.start_command("Custom command: sleep 5".to_string());
+        app.terminal_scroll = 3;
+
+        app.clear_terminal_log();
+        app.settle_command(row, &Ok(()), None);
+
+        assert!(app.terminal_commands.is_empty());
+        assert_eq!(app.terminal_scroll, 0);
     }
 
     #[test]
@@ -10878,6 +14408,7 @@ index 123456..789012 100644
             source: Some("merge_request_event".to_string()),
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -10941,8 +14472,10 @@ index 123456..789012 100644
                 .contains(&"Project")
         );
 
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("group/repo".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("group/repo".to_string()),
+            ..App::default()
+        };
         assert!(!app.is_column_visible(Tab::Issues, "Project"));
         assert!(!app.is_column_visible(Tab::MergeRequests, "Project"));
 
@@ -10971,8 +14504,10 @@ index 123456..789012 100644
 
     #[test]
     fn project_column_value_filtering_works() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
@@ -11002,9 +14537,42 @@ index 123456..789012 100644
     }
 
     #[test]
+    fn bulk_merge_items_name_their_project_in_group_scope() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..App::default()
+        };
+        let mut in_a = mr_fixture(12, "opened", "a", false, "Fix A");
+        in_a.project_path = "acme/a".to_string();
+        let mut in_b = mr_fixture(12, "opened", "b", false, "Fix B");
+        in_b.project_path = "acme/b".to_string();
+        app.mrs.items = vec![in_a, in_b];
+        let items = vec![
+            ("acme/a".to_string(), 12),
+            ("acme/b".to_string(), 12),
+            ("acme/c".to_string(), 7),
+        ];
+
+        let dialog = SubmitDialog::build(ConfirmAction::BulkMergeMrs(items), &app);
+        let labels: Vec<&str> = dialog
+            .form
+            .groups()
+            .iter()
+            .find_map(|group| match &group.kind {
+                GroupKind::ItemList(list) => Some(&list.entries),
+                _ => None,
+            })
+            .map(|entries| entries.iter().map(|e| e.label.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(labels, ["acme/a!12: Fix A", "acme/b!12: Fix B", "acme/c!7"]);
+    }
+
+    #[test]
     fn project_column_issue_value_filtering_works() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let issue1 = crate::domain::issues::Issue {
@@ -11076,8 +14644,10 @@ index 123456..789012 100644
 
     #[test]
     fn picker_empty_selection_clears_existing_filter() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
@@ -11123,8 +14693,10 @@ index 123456..789012 100644
 
     #[test]
     fn picker_non_empty_selection_preserves_set_behavior() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
@@ -11165,6 +14737,7 @@ index 123456..789012 100644
             source: None,
             project_path: "owner/repo".to_string(),
             web_url: Some(String::new()),
+            commit: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -11195,10 +14768,107 @@ index 123456..789012 100644
         );
     }
 
+    fn pipeline_with_status(id: u64, status: &str) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": status, "ref": "main", "updated_at": "",
+            "web_url": format!("https://gitlab.example.com/acme/app/-/pipelines/{id}")
+        }))
+        .expect("pipeline json")
+    }
+
+    fn visible_pipeline_ids(app: &App) -> Vec<u64> {
+        app.filtered_pipelines().iter().map(|p| p.id).collect()
+    }
+
+    #[test]
+    fn status_filter_cycles_running_failed_success_then_all() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            pipeline_with_status(1, "running"),
+            pipeline_with_status(2, "failed"),
+            pipeline_with_status(3, "success"),
+            pipeline_with_status(4, "canceled"),
+        ];
+
+        let mut steps = Vec::new();
+        for _ in 0..4 {
+            let shown = app.cycle_pipeline_status_filter();
+            steps.push((shown, visible_pipeline_ids(&app)));
+        }
+
+        assert_eq!(
+            steps,
+            vec![
+                (Some("RUNNING"), vec![1]),
+                (Some("FAILED"), vec![2]),
+                (Some("SUCCESS"), vec![3]),
+                (None, vec![1, 2, 3, 4]),
+            ]
+        );
+    }
+
+    #[test]
+    fn status_filter_cycle_restarts_from_a_picker_filter_it_does_not_step_through() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            pipeline_with_status(1, "running"),
+            pipeline_with_status(2, "canceled"),
+        ];
+        app.set_column_filter(
+            Tab::Pipelines,
+            "Status",
+            std::collections::HashSet::from(["CANCEL".to_string()]),
+        );
+
+        assert_eq!(app.cycle_pipeline_status_filter(), Some("RUNNING"));
+        assert_eq!(visible_pipeline_ids(&app), vec![1]);
+    }
+
+    #[test]
+    fn pipeline_url_and_id_are_copied_from_the_highlighted_row() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                self.0.borrow_mut().push(text);
+                Ok(())
+            }
+        }
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
+        app.pipelines.items = vec![pipeline_with_status(41, "success"), {
+            let mut no_url = pipeline_with_status(42, "failed");
+            no_url.web_url = None;
+            no_url
+        }];
+        app.pipelines.state.select(Some(0));
+
+        app.copy_selected_pipeline_url().unwrap();
+        app.copy_selected_pipeline_id().unwrap();
+        app.pipelines.state.select(Some(1));
+        let missing_url = app.copy_selected_pipeline_url().unwrap_err();
+
+        assert_eq!(
+            *copied.borrow(),
+            vec![
+                "https://gitlab.example.com/acme/app/-/pipelines/41".to_string(),
+                "#41".to_string(),
+            ]
+        );
+        assert_eq!(
+            missing_url.to_string(),
+            "Pipeline URL unavailable; refresh the Pipelines tab"
+        );
+    }
+
     #[test]
     fn visual_select_mode_range_and_shrink() {
-        let mut app = App::default();
-        app.active_tab = Tab::Issues;
+        let mut app = App {
+            active_tab: Tab::Issues,
+            ..App::default()
+        };
         app.issues.items = (1..=20)
             .map(|i| crate::domain::issues::Issue {
                 iid: i,
@@ -11270,8 +14940,10 @@ index 123456..789012 100644
 
     #[test]
     fn visual_select_mode_pipelines_and_jobs() {
-        let mut app = App::default();
-        app.active_tab = Tab::Pipelines;
+        let mut app = App {
+            active_tab: Tab::Pipelines,
+            ..App::default()
+        };
         app.pipelines.items = (100..110)
             .map(|id| crate::domain::pipelines::Pipeline {
                 id,
@@ -11288,6 +14960,7 @@ index 123456..789012 100644
                 source: None,
                 project_path: "owner/repo".to_string(),
                 web_url: None,
+                commit: None,
             })
             .collect();
         app.pipelines.state.select(Some(2));
@@ -11319,60 +14992,232 @@ index 123456..789012 100644
         assert!(!app.selected_pipelines.contains(&105));
     }
 
-    #[test]
-    fn keybinding_char_sets_records_two_char_and_single_char_bindings() {
-        let mut keybindings = crate::config::KeybindingConfig::default();
-        keybindings.global.next_tab = "gg".to_string();
+    fn typed(c: char) -> crossterm::event::KeyEvent {
+        let modifiers = if c.is_uppercase() {
+            crossterm::event::KeyModifiers::SHIFT
+        } else {
+            crossterm::event::KeyModifiers::NONE
+        };
+        crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char(c), modifiers)
+    }
 
-        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
-
-        assert!(prefixes.contains(&'g'));
-        // `jump_to_id = "g"` is the default, so `g` appears in both sets:
-        // pressing it starts the sequence, but the timeout path falls back
-        // to the single-key binding when the sequence lapses.
-        assert!(standalone.contains(&'g'));
-        assert!(standalone.contains(&'q'));
+    fn resolved(app: &mut App) -> Vec<crate::keybinding::KeyPress> {
+        std::iter::from_fn(|| app.key_buffer.pop_ready()).collect()
     }
 
     #[test]
-    fn keybinding_char_sets_drops_modifier_prefixed_bindings() {
-        let mut keybindings = crate::config::KeybindingConfig::default();
-        keybindings.global.refresh = "Ctrl+z".to_string();
-
-        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
-
-        assert!(
-            !prefixes.contains(&'z'),
-            "Ctrl+z must not contribute 'z' to either set",
-        );
-        assert!(
-            !standalone.contains(&'z'),
-            "Ctrl+z must not contribute 'z' to either set",
-        );
-    }
-
-    #[test]
-    fn keybinding_char_sets_does_not_treat_a_named_two_char_binding_as_a_prefix() {
-        // "Up" is a two-character *named* token (matched literally by
-        // keybinding_matches), not two literal characters. It must not
-        // register 'U' as a sequence-prefix char.
-        let mut keybindings = crate::config::KeybindingConfig::default();
-        keybindings.global.scroll_top = "Up".to_string();
-
-        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
-
-        assert!(!prefixes.contains(&'U'));
-        assert!(!standalone.contains(&'U'));
-    }
-
-    #[test]
-    fn apply_config_rebuilds_keybinding_sequence_sets() {
+    fn sequence_bound_in_any_table_resolves_after_apply_config() {
         let mut app = App::default();
-        app.config.keybindings.global.next_tab = "zz".to_string();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::TerminalClearLog, &["cc"]);
+        app.apply_config();
+
+        app.receive_key(typed('z'));
+        assert_eq!(resolved(&mut app), vec![]);
+        app.receive_key(typed('z'));
+        app.receive_key(typed('c'));
+        app.receive_key(typed('c'));
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![
+                crate::keybinding::KeyPress::Sequence("zz".to_string()),
+                crate::keybinding::KeyPress::Sequence("cc".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn key_typed_into_a_text_field_never_waits_for_a_sequence() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalNextTab, &["zz"]);
+        app.apply_config();
+        app.is_typing_search = true;
+
+        app.receive_key(typed('z'));
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(typed('z'))]
+        );
+    }
+
+    #[test]
+    fn function_key_binding_does_not_hold_back_its_letter() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["F1"]);
+        app.apply_config();
+
+        app.receive_key(typed('F'));
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(typed('F'))]
+        );
+    }
+
+    #[test]
+    fn ctrl_c_quits_while_a_sequence_is_waiting() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.apply_config();
+        let ctrl_c = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('c'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        app.receive_key(typed('g'));
+        app.receive_key(ctrl_c);
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(ctrl_c)]
+        );
+    }
+
+    #[test]
+    fn remapped_force_quit_quits_while_a_sequence_is_waiting() {
+        let mut app = App::default();
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalScrollTop, &["gg"]);
+        app.config
+            .keybindings
+            .set(crate::keymap::Action::GlobalForceQuit, &["Ctrl+q"]);
+        app.apply_config();
+        let ctrl_q = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        app.receive_key(typed('g'));
+        app.receive_key(ctrl_q);
+
+        assert_eq!(
+            resolved(&mut app),
+            vec![crate::keybinding::KeyPress::Key(ctrl_q)]
+        );
+    }
+
+    #[test]
+    fn an_unknown_keybinding_entry_is_logged_and_keeps_the_rest_of_the_config() {
+        let mut app = App {
+            config: toml::from_str(
+                "theme_preset = \"nord\"\n[keybindings]\nquit = \"x\"\n[keybindings.issues]\nfoo = 3\n",
+            )
+            .expect("config with stray keybinding entries parses"),
+            ..App::default()
+        };
+
+        app.load_keybindings();
+
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+        let logged: Vec<(&str, &str)> = app
+            .terminal_commands
+            .iter()
+            .map(|entry| (entry.command.as_str(), entry.status.as_str()))
+            .collect();
+        assert_eq!(
+            logged,
+            [
+                (
+                    "Keybinding: keybindings.issues.foo",
+                    "Failed: not an action glab-tui knows, ignored"
+                ),
+                (
+                    "Keybinding: keybindings.quit",
+                    "Failed: not a keybinding table glab-tui knows, ignored"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_config_keeps_color_overrides_on_top_of_a_picked_preset() {
+        let mut app = App::default();
+        app.config.theme = toml::from_str(r##"bg = "#123456""##).unwrap();
+        app.config.theme_preset = Some("nord".to_string());
 
         app.apply_config();
 
-        assert!(app.sequence_prefixes.contains(&'z'));
+        let nord = Theme::preset("nord").unwrap();
+        assert_eq!(app.theme.bg, ratatui::style::Color::Rgb(0x12, 0x34, 0x56));
+        assert_eq!(app.theme.border, nord.border);
+        assert_ne!(nord.bg, app.theme.bg);
+    }
+
+    fn app_with_theme_picker_open_on(preset: &str) -> App {
+        let mut app = App::default();
+        app.config.theme_preset = Some(preset.to_string());
+        app.apply_config();
+        app.open_theme_picker();
+        app
+    }
+
+    fn highlight_theme(app: &mut App, preset: &str) {
+        let selector = app.selector.as_mut().expect("theme picker is open");
+        selector.cursor_idx = selector
+            .get_filtered_items()
+            .iter()
+            .position(|item| item == preset)
+            .expect("preset is listed");
+    }
+
+    #[test]
+    fn theme_picker_previews_the_highlighted_preset_until_it_closes() {
+        let mut app = app_with_theme_picker_open_on("nord");
+        let nord = Theme::preset("nord").unwrap();
+
+        assert_eq!(
+            app.selector.as_ref().and_then(Selector::highlighted_theme),
+            Some("nord".to_string())
+        );
+
+        highlight_theme(&mut app, "dracula");
+        app.sync_theme_preview();
+        assert_eq!(app.theme, Theme::preset("dracula").unwrap());
+        assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
+
+        app.selector = None;
+        app.sync_theme_preview();
+        assert_eq!(app.theme, nord);
+        assert_eq!(app.theme_preview, None);
+    }
+
+    #[test]
+    fn theme_picker_previews_auto_with_the_reported_appearance() {
+        let mut app = app_with_theme_picker_open_on("nord");
+        app.config.theme_light = "solarized-light".to_string();
+        app.terminal_appearance = Some(crate::config::Appearance::Light);
+
+        highlight_theme(&mut app, crate::config::AUTO_THEME_PRESET);
+        app.sync_theme_preview();
+
+        assert_eq!(app.theme, Theme::preset("solarized-light").unwrap());
+    }
+
+    #[test]
+    fn theme_picker_search_row_keeps_the_configured_theme() {
+        let mut app = app_with_theme_picker_open_on("nord");
+        highlight_theme(&mut app, "dracula");
+        app.sync_theme_preview();
+
+        let selector = app.selector.as_mut().unwrap();
+        selector.search_query = "no-such-theme".to_string();
+        selector.cursor_idx = 0;
+        app.sync_theme_preview();
+
+        assert_eq!(app.theme, Theme::preset("nord").unwrap());
     }
 
     #[test]
@@ -11404,6 +15249,7 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+            commit: None,
         }
     }
 
@@ -11490,6 +15336,33 @@ index 123456..789012 100644
             Some(1),
             "the cursor still points at the pipeline we descended from"
         );
+    }
+
+    #[test]
+    fn refetched_pipelines_drop_the_cached_jobs_of_those_whose_status_changed() {
+        let mut app = App::default();
+        app.pipelines.items = vec![nav_pipe(1001), nav_pipe(1002)];
+        app.pipelines.state.select(Some(1));
+        app.descend_into(
+            1002,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![nav_pipe(2001)],
+                pending: Vec::new(),
+            },
+        );
+        for id in [1001, 1002, 2001] {
+            app.pipeline_jobs.insert(id, Vec::new());
+        }
+        let failed = crate::domain::pipelines::Pipeline {
+            status: "failed".to_string(),
+            ..nav_pipe(1002)
+        };
+
+        app.drop_jobs_of_changed_pipelines(&[nav_pipe(1001), failed]);
+
+        let mut cached: Vec<u64> = app.pipeline_jobs.keys().copied().collect();
+        cached.sort_unstable();
+        assert_eq!(cached, vec![1001, 2001]);
     }
 
     #[test]
@@ -11594,8 +15467,10 @@ index 123456..789012 100644
     }
 
     fn app_listing_prs(iids: &[u64]) -> App {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("owner/repo".to_string()),
+            ..App::default()
+        };
         app.mrs.items = iids
             .iter()
             .map(|&iid| mr_fixture(iid, "opened", "user1", false, "PR"))
@@ -11871,5 +15746,763 @@ index 123456..789012 100644
             .collect();
         assert!(mr_headers.iter().any(|h| h.contains("Closes Issues")));
         assert!(mr_headers.iter().any(|h| h.contains("No Issues")));
+    }
+
+    /// An app on the Todos tab holding todo `1` (unread), `2` (unread) and
+    /// `3` (already read), with the highlight on todo `2`.
+    fn app_with_todos(kind: BackendKind, shows_read: bool) -> App {
+        let mut app = App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: kind.is_github(),
+                backend: crate::backend::create_backend(kind.is_github()),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: shows_read,
+                opened_pipeline: None,
+            }),
+            active_tab: Tab::Todos,
+            ..Default::default()
+        };
+        let read_state = crate::domain::notifications::read_state(kind);
+        app.todos.items = serde_json::from_value(serde_json::json!([
+            {"id": "1", "project_path": "acme/api", "title": "One", "target_type": "Issue",
+             "target_iid": 1, "state": "pending", "updated_at": ""},
+            {"id": "2", "project_path": "acme/api", "title": "Two", "target_type": "MergeRequest",
+             "target_iid": 2, "state": "pending", "updated_at": ""},
+            {"id": "3", "project_path": "acme/api", "title": "Three", "target_type": "Issue",
+             "target_iid": 3, "state": read_state, "updated_at": ""},
+        ]))
+        .unwrap();
+        app.todos.state.select(Some(1));
+        app
+    }
+
+    fn todo_states(app: &App) -> Vec<(&str, &str)> {
+        app.todos
+            .items
+            .iter()
+            .map(|t| (t.id.as_str(), t.state.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn marking_a_todo_read_drops_it_while_only_unread_todos_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitHub, false);
+        app.todos.state.select(Some(2));
+
+        app.apply_todo_change(&TodoChange::MarkedRead(vec!["1".to_string()]));
+
+        assert_eq!(todo_states(&app), vec![("2", "pending"), ("3", "read")]);
+        assert_eq!(app.todos.state.selected(), Some(1));
+    }
+
+    #[test]
+    fn marking_a_todo_read_keeps_it_as_read_while_read_todos_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut github = app_with_todos(BackendKind::GitHub, true);
+        github.apply_todo_change(&TodoChange::MarkedRead(vec!["1".to_string()]));
+        assert_eq!(
+            todo_states(&github),
+            vec![("1", "read"), ("2", "pending"), ("3", "read")]
+        );
+
+        let mut gitlab = app_with_todos(BackendKind::GitLab, true);
+        gitlab.apply_todo_change(&TodoChange::MarkedRead(vec!["1".to_string()]));
+        assert_eq!(
+            todo_states(&gitlab),
+            vec![("1", "done"), ("2", "pending"), ("3", "done")]
+        );
+    }
+
+    fn app_on(is_github: bool, scope: crate::scope::Scope) -> App {
+        App {
+            scope,
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github,
+                backend: crate::backend::create_backend(is_github),
+                tx: None,
+                page_size: 100,
+                api_per_page: 100,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn github_repo_app() -> App {
+        app_on(true, crate::scope::Scope::Repository("o/r".to_string()))
+    }
+
+    fn filter_state(app: &mut App, tab: Tab, values: &[&str]) {
+        app.set_column_filter(tab, "State", values.iter().map(|v| v.to_string()).collect());
+    }
+
+    #[test]
+    fn state_filter_query_is_the_single_selected_state_and_all_otherwise() {
+        let cases: &[(&[&str], StateQuery)] = &[
+            (&["OPEN"], StateQuery::Open),
+            (&["opened"], StateQuery::Open),
+            (&["OPEN", "opened"], StateQuery::Open),
+            (&["CLOSED"], StateQuery::Closed),
+            (&["merged"], StateQuery::Merged),
+            (&["OPEN", "MERGED"], StateQuery::All),
+            (&["OPEN", "CLOSED", "MERGED"], StateQuery::All),
+            (&["LOCKED"], StateQuery::All),
+            (&[], StateQuery::All),
+        ];
+        for (values, expected) in cases {
+            let mut app = App::default();
+            filter_state(&mut app, Tab::MergeRequests, values);
+            assert_eq!(
+                app.state_filter_query(Tab::MergeRequests),
+                *expected,
+                "{values:?}"
+            );
+        }
+        assert_eq!(
+            App::default().state_filter_query(Tab::MergeRequests),
+            StateQuery::All
+        );
+    }
+
+    #[test]
+    fn a_done_github_notification_leaves_the_list_even_while_read_ones_are_shown() {
+        use crate::domain::notifications::TodoChange;
+        let mut github = app_with_todos(BackendKind::GitHub, true);
+        github.apply_todo_change(&TodoChange::MarkedDone(vec!["2".to_string()]));
+        assert_eq!(todo_states(&github), vec![("1", "pending"), ("3", "read")]);
+
+        let mut gitlab = app_with_todos(BackendKind::GitLab, true);
+        gitlab.apply_todo_change(&TodoChange::MarkedDone(vec!["2".to_string()]));
+        assert_eq!(
+            todo_states(&gitlab),
+            vec![("1", "pending"), ("2", "done"), ("3", "done")]
+        );
+    }
+
+    #[test]
+    fn only_a_github_repository_asks_the_server_for_the_filtered_state() {
+        let backends = [
+            (
+                true,
+                crate::scope::Scope::Repository("o/r".to_string()),
+                StateQuery::Merged,
+            ),
+            (
+                true,
+                crate::scope::Scope::Group("o".to_string()),
+                StateQuery::All,
+            ),
+            (
+                false,
+                crate::scope::Scope::Repository("g/r".to_string()),
+                StateQuery::All,
+            ),
+            (
+                false,
+                crate::scope::Scope::Group("g".to_string()),
+                StateQuery::All,
+            ),
+        ];
+        for (is_github, scope, expected) in backends {
+            let mut app = app_on(is_github, scope.clone());
+            filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+            assert_eq!(
+                app.requested_state_query(Tab::MergeRequests),
+                expected,
+                "github={is_github} scope={scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_the_state_filter_refetches_a_loaded_tab_once() {
+        let mut app = github_repo_app();
+        app.loaded_tabs.insert(Tab::Issues);
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+
+        filter_state(&mut app, Tab::Issues, &["CLOSED"]);
+        assert_eq!(app.take_state_query_refetches(), vec![Tab::Issues]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+
+        app.remove_column_filter(Tab::Issues, "State");
+        filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+        assert_eq!(
+            app.take_state_query_refetches(),
+            vec![Tab::Issues, Tab::MergeRequests]
+        );
+    }
+
+    #[test]
+    fn marking_all_read_clears_an_unread_only_list_and_restates_a_full_one() {
+        use crate::domain::notifications::TodoChange;
+        let mut unread_only = app_with_todos(BackendKind::GitLab, false);
+        unread_only.apply_todo_change(&TodoChange::MarkedAllRead);
+        assert_eq!(todo_states(&unread_only), vec![]);
+        assert_eq!(unread_only.todos.state.selected(), None);
+
+        let mut full = app_with_todos(BackendKind::GitHub, true);
+        full.apply_todo_change(&TodoChange::MarkedAllRead);
+        assert_eq!(
+            todo_states(&full),
+            vec![("1", "read"), ("2", "read"), ("3", "read")]
+        );
+    }
+
+    #[test]
+    fn unsubscribing_leaves_the_todo_listed_and_unread() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.apply_todo_change(&TodoChange::Unsubscribed("1".to_string()));
+        assert_eq!(
+            todo_states(&app),
+            vec![("1", "pending"), ("2", "pending"), ("3", "done")]
+        );
+        assert_eq!(app.todos.state.selected(), Some(1));
+    }
+
+    #[test]
+    fn a_batch_acts_on_every_selected_todo_even_those_the_search_hides() {
+        let mut app = app_with_todos(BackendKind::GitLab, true);
+        app.enabled_columns
+            .insert(Tab::Todos, ["Title".to_string()].into_iter().collect());
+        app.search_query = "Two".to_string();
+        app.todos.state.select(Some(0));
+        assert_eq!(app.todo_ids_to_act_on(), vec!["2".to_string()]);
+
+        app.selected_todos = ["3".to_string(), "1".to_string()].into_iter().collect();
+        assert_eq!(
+            app.todo_ids_to_act_on(),
+            vec!["1".to_string(), "3".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_read_batch_skips_the_selected_todos_already_read() {
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.selected_todos = ["3".to_string(), "1".to_string()].into_iter().collect();
+        assert_eq!(app.unread_todo_ids_to_act_on(), vec!["1".to_string()]);
+
+        app.selected_todos = ["3".to_string()].into_iter().collect();
+        assert!(app.unread_todo_ids_to_act_on().is_empty());
+    }
+
+    #[test]
+    fn todo_type_search_filter_and_picker_use_the_label_the_cell_shows() {
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.enabled_columns
+            .insert(Tab::Todos, ["Type".to_string()].into_iter().collect());
+        let listed = |app: &App| -> Vec<String> {
+            app.filtered_todos().iter().map(|t| t.id.clone()).collect()
+        };
+
+        app.search_query = "pr".to_string();
+        assert_eq!(listed(&app), vec!["2".to_string()]);
+        app.search_query.clear();
+
+        app.set_column_filter(Tab::Todos, "Type", ["PR".to_string()].into_iter().collect());
+        assert_eq!(listed(&app), vec!["2".to_string()]);
+        app.set_column_filter(
+            Tab::Todos,
+            "Type",
+            ["MergeRequest".to_string()].into_iter().collect(),
+        );
+        assert_eq!(listed(&app), vec!["2".to_string()]);
+        app.remove_column_filter(Tab::Todos, "Type");
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Todos, "Type"),
+            vec!["Issue".to_string(), "PR".to_string()]
+        );
+    }
+
+    #[test]
+    fn copying_a_reference_needs_a_target_with_a_view() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Todos;
+        app.todos.items = serde_json::from_value(serde_json::json!([
+            {"id": "1", "project_path": "acme/api", "title": "CI", "target_type": "CheckSuite",
+             "target_iid": 0, "state": "unread", "updated_at": ""},
+            {"id": "2", "project_path": "acme/api", "title": "Fix parser", "target_type": "Issue",
+             "target_iid": 7, "state": "unread", "updated_at": ""},
+        ]))
+        .unwrap();
+        app.todos.state.select(Some(0));
+        assert!(app.copy_selected_todo_reference().is_err());
+        assert_eq!(*copied.borrow(), None);
+
+        app.todos.state.select(Some(1));
+        app.copy_selected_todo_reference().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("#7"));
+    }
+
+    #[test]
+    fn space_toggles_the_highlighted_todo_in_and_out_of_the_selection() {
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.toggle_todo_selection();
+        assert_eq!(app.selected_todos, ["2".to_string()].into_iter().collect());
+        app.toggle_todo_selection();
+        assert!(app.selected_todos.is_empty());
+    }
+
+    #[test]
+    fn visual_select_covers_the_todos_between_the_anchor_and_the_cursor() {
+        let mut app = app_with_todos(BackendKind::GitLab, true);
+        app.todos.state.select(Some(0));
+        app.toggle_select_mode();
+        app.todos.state.select(Some(2));
+        app.update_visual_selection();
+        assert_eq!(
+            app.selected_todos,
+            ["1", "2", "3"].map(String::from).into_iter().collect()
+        );
+
+        app.todos.state.select(Some(1));
+        app.update_visual_selection();
+        assert_eq!(
+            app.selected_todos,
+            ["1", "2"].map(String::from).into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn marking_a_batch_done_drops_every_marked_todo_and_its_selection() {
+        use crate::domain::notifications::TodoChange;
+        let mut app = app_with_todos(BackendKind::GitHub, false);
+        app.selected_todos = ["1", "2"].map(String::from).into_iter().collect();
+
+        app.apply_todo_change(&TodoChange::MarkedDone(vec![
+            "1".to_string(),
+            "2".to_string(),
+        ]));
+
+        assert_eq!(todo_states(&app), vec![("3", "read")]);
+        assert!(app.selected_todos.is_empty());
+        assert_eq!(app.todos.state.selected(), Some(0));
+    }
+
+    #[test]
+    fn a_refetch_keeps_a_fetched_body_until_the_notification_changes() {
+        use crate::domain::notifications::NotificationDetail;
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.todos.items[0].detail_api_path = Some("repos/acme/api/issues/1".to_string());
+        let listed = app.todos.items.clone();
+        app.fetching_todo_details.insert("1".to_string());
+
+        app.apply_todo_detail(
+            "1",
+            "repos/acme/api/issues/1",
+            Ok(NotificationDetail {
+                author: "alice".to_string(),
+                body: "Please look".to_string(),
+            }),
+        );
+        assert!(app.fetching_todo_details.is_empty());
+
+        app.set_todos(listed.clone());
+        assert_eq!(app.todos.items[0].body.as_deref(), Some("Please look"));
+        assert_eq!(app.todos.items[0].author, "alice");
+
+        let mut updated = listed;
+        updated[0].updated_at = "2026-07-07T00:00:00Z".to_string();
+        app.set_todos(updated);
+        assert_eq!(app.todos.items[0].body, None);
+    }
+
+    #[test]
+    fn a_detail_fetched_for_a_path_the_notification_left_is_dropped() {
+        use crate::domain::notifications::NotificationDetail;
+        let mut app = app_with_todos(BackendKind::GitHub, true);
+        app.todos.items[0].detail_api_path = Some("repos/acme/api/issues/comments/2".to_string());
+
+        app.fetching_todo_details.insert("1".to_string());
+        app.apply_todo_detail(
+            "1",
+            "repos/acme/api/issues/comments/1",
+            Ok(NotificationDetail {
+                author: "alice".to_string(),
+                body: "Older comment".to_string(),
+            }),
+        );
+        app.apply_todo_detail(
+            "1",
+            "repos/acme/api/issues/comments/1",
+            Err("HTTP 502".to_string()),
+        );
+
+        assert!(app.fetching_todo_details.is_empty());
+        assert_eq!(app.todos.items[0].body, None);
+        assert_eq!(app.todos.items[0].author, "");
+        assert!(!app.failed_todo_details.contains_key("1"));
+    }
+
+    #[test]
+    fn toggling_show_read_flips_the_filter_the_todos_fetch_uses() {
+        let mut app = app_with_todos(BackendKind::GitLab, false);
+        app.toggle_show_read_todos();
+        assert!(app.shows_read_todos());
+        assert!(app.gitlab_client.as_ref().unwrap().show_read_notifications);
+        app.toggle_show_read_todos();
+        assert!(!app.shows_read_todos());
+    }
+
+    #[test]
+    fn focusing_an_issue_in_a_project_skips_the_same_number_in_another_project() {
+        let mut app = App {
+            scope: crate::scope::Scope::Group("acme".to_string()),
+            ..Default::default()
+        };
+        let mut web = issue_with_milestone(5, "opened", 1);
+        web.project_path = "acme/web".to_string();
+        let mut api = issue_with_milestone(5, "opened", 1);
+        api.project_path = "acme/api".to_string();
+        app.issues.items = vec![web, api];
+
+        assert!(app.focus_issue(Some("acme/api"), 5));
+        assert_eq!(app.active_tab, Tab::Issues);
+        let selected = app.filtered_issues()[app.issues.state.selected().unwrap()];
+        assert_eq!(selected.project_path, "acme/api");
+
+        assert!(!app.focus_issue(Some("acme/docs"), 5));
+    }
+
+    #[test]
+    fn rows_without_a_project_belong_to_the_repository_in_scope() {
+        let app = App {
+            scope: crate::scope::Scope::Repository("acme/api".to_string()),
+            ..Default::default()
+        };
+        assert!(app.is_listed_in("", Some("ACME/api")));
+        assert!(!app.is_listed_in("", Some("acme/web")));
+        assert!(app.is_listed_in("acme/web", Some("acme/web")));
+    }
+
+    fn app_showing_deployments_for(environment: &str) -> App {
+        let mut app = App {
+            active_tab: Tab::Environments,
+            ..Default::default()
+        };
+        app.search_query.clear();
+        app.column_filters.clear();
+        app.enabled_columns
+            .insert(Tab::Environments, HashSet::from(["Name".to_string()]));
+        app.environments.set_items(
+            serde_json::from_str(
+                r#"[
+                {"id": 1, "name": "production", "state": "available"},
+                {"id": 2, "name": "staging", "state": "available"}
+            ]"#,
+            )
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+        let deployments = serde_json::from_str(
+            r#"[{
+                "id": 10, "iid": 1, "ref_name": "main", "tag": false, "sha": "abc123",
+                "status": "success",
+                "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"
+            }]"#,
+        )
+        .expect("deployment fixture parses");
+        app.environment_deployments = Some(EnvironmentDeployments {
+            environment: environment.to_string(),
+            table: StatefulTable::with_items(deployments),
+            is_focused: false,
+        });
+        app
+    }
+
+    fn shown_deployments_environment(app: &App) -> Option<&str> {
+        app.environment_deployments
+            .as_ref()
+            .map(|shown| shown.environment.as_str())
+    }
+
+    #[test]
+    fn deployments_stay_while_their_environment_is_selected() {
+        let mut app = app_showing_deployments_for("production");
+        app.discard_stale_deployments();
+        assert_eq!(shown_deployments_environment(&app), Some("production"));
+    }
+
+    #[test]
+    fn deployments_are_discarded_when_another_environment_is_selected() {
+        let mut app = app_showing_deployments_for("production");
+        app.list_navigation_mut(Tab::Environments)
+            .expect("environments is a list tab")
+            .next();
+        app.discard_stale_deployments();
+        assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    #[test]
+    fn deployments_are_discarded_when_a_search_puts_another_environment_under_the_cursor() {
+        let mut app = app_showing_deployments_for("production");
+        app.search_query = "staging".to_string();
+        app.discard_stale_deployments();
+        assert_eq!(
+            app.environments.cursor_row().map(|env| env.name.as_str()),
+            Some("staging")
+        );
+        assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    #[test]
+    fn deployments_are_discarded_when_leaving_the_environments_tab() {
+        let mut app = app_showing_deployments_for("production");
+        app.active_tab = Tab::Issues;
+        app.discard_stale_deployments();
+        app.active_tab = Tab::Environments;
+        app.discard_stale_deployments();
+        assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    fn deployments(ids: &[u64]) -> Vec<crate::domain::deployments::Deployment> {
+        ids.iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "id": id, "iid": id, "ref_name": "main", "tag": false, "sha": "abc123",
+                    "status": "success",
+                    "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"
+                }))
+                .expect("deployment fixture parses")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fetched_deployments_open_focused_on_the_newest() {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+
+        app.show_deployments("production".to_string(), deployments(&[3, 2, 1]));
+
+        let shown = app
+            .environment_deployments
+            .as_ref()
+            .expect("deployments shown");
+        assert!(shown.is_focused);
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(3));
+    }
+
+    #[test]
+    fn refetched_deployments_keep_the_selected_deployment_and_the_focus() {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[2, 1]));
+        let shown = app
+            .environment_deployments
+            .as_mut()
+            .expect("deployments shown");
+        shown.table.next_item();
+        shown.is_focused = false;
+
+        app.show_deployments("production".to_string(), deployments(&[3, 2, 1]));
+
+        let shown = app
+            .environment_deployments
+            .as_ref()
+            .expect("deployments shown");
+        assert!(!shown.is_focused);
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(1));
+    }
+
+    #[test]
+    fn deployments_fetched_for_an_environment_no_longer_highlighted_are_dropped() {
+        let mut app = app_showing_deployments_for("production");
+
+        app.show_deployments("staging".to_string(), deployments(&[1]));
+
+        assert_eq!(shown_deployments_environment(&app), Some("production"));
+    }
+
+    /// Production's deployments 11 (selected) and 10.
+    fn app_selecting_deployment_11() -> App {
+        let mut app = app_showing_deployments_for("production");
+        app.environment_deployments = None;
+        app.show_deployments("production".to_string(), deployments(&[11, 10]));
+        app
+    }
+
+    #[test]
+    fn requested_deployment_log_opens_once() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+
+        assert!(app.take_pending_deployment_log(11));
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn deployment_log_for_a_deployment_no_longer_selected_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(10);
+
+        assert!(!app.take_pending_deployment_log(10));
+        assert_eq!(app.pending_deployment_log, None);
+    }
+
+    #[test]
+    fn deployment_log_landing_on_another_tab_stays_closed() {
+        let mut app = app_selecting_deployment_11();
+        app.pending_deployment_log = Some(11);
+        app.active_tab = Tab::Issues;
+
+        assert!(!app.take_pending_deployment_log(11));
+    }
+
+    #[test]
+    fn rollback_dialog_strips_escape_sequences_from_third_party_names() {
+        let deployment: crate::domain::deployments::Deployment =
+            serde_json::from_value(serde_json::json!({
+                "id": 10, "iid": 1, "ref_name": "main\u{1b}[2J", "tag": false,
+                "sha": "abc123", "status": "success",
+                "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z",
+                "deployable": { "id": 500, "name": "deploy\u{1b}]8;;https://evil.example\u{7}" }
+            }))
+            .expect("deployment fixture parses");
+
+        let dialog = SubmitDialog::build(
+            ConfirmAction::RollbackDeployment {
+                environment: "prod\u{1b}[31m".to_string(),
+                deployment: Box::new(deployment),
+            },
+            &App::default(),
+        );
+
+        assert_eq!(dialog.form.title, "Roll Back 'prod' to abc123");
+        assert_eq!(
+            dialog.body(),
+            "Re-deploy abc123 (main) from deployment #1 to 'prod'? This re-runs its job 'deploy'."
+        );
+    }
+
+    #[test]
+    fn copying_the_environment_url_strips_escape_sequences() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([{
+                "id": 1, "name": "production", "state": "available",
+                "external_url": "\u{1b}]8;;https://evil.example\u{7}https://prod.example\u{1b}]8;;\u{7}"
+            }]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+
+        app.copy_selected_environment_url()
+            .expect("the URL is copied");
+
+        assert_eq!(copied.borrow().as_deref(), Some("https://prod.example"));
+    }
+
+    #[test]
+    fn copying_the_url_of_an_environment_without_one_is_an_error() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.active_tab = Tab::Environments;
+        app.environments.set_items(
+            serde_json::from_value(serde_json::json!([
+                {"id": 1, "name": "production", "state": "available"}
+            ]))
+            .expect("environment fixture parses"),
+        );
+        app.sync_list_views();
+
+        let error = app.copy_selected_environment_url().unwrap_err();
+
+        assert_eq!(error.to_string(), "environment has no external URL");
+        assert_eq!(*copied.borrow(), None);
+    }
+
+    #[test]
+    fn a_state_filter_change_refetches_a_tab_still_loading_but_not_an_unvisited_one() {
+        let mut app = github_repo_app();
+        app.loading_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), vec![Tab::MergeRequests]);
+    }
+
+    #[test]
+    fn changing_the_state_filter_on_gitlab_never_refetches() {
+        let mut app = app_on(false, crate::scope::Scope::Repository("g/r".to_string()));
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+    }
+
+    #[test]
+    fn a_scope_change_lets_its_first_fetch_use_the_current_filter_without_a_refetch() {
+        let mut app = github_repo_app();
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        app.reset_on_scope_change();
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+    }
+
+    #[test]
+    fn cached_rows_listed_for_fewer_states_than_the_filter_shows_are_not_restored() {
+        let open = || vec![mr_fixture(1, "opened", "a", false, "open")];
+        let cases = [
+            (StateQuery::Open, None, false),
+            (StateQuery::Open, Some("MERGED"), false),
+            (StateQuery::Open, Some("OPEN"), true),
+            (StateQuery::All, Some("OPEN"), true),
+            (StateQuery::All, None, true),
+        ];
+        for (listed, filter, restored) in cases {
+            let mut app = App::default();
+            if let Some(value) = filter {
+                filter_state(&mut app, Tab::MergeRequests, &[value]);
+            }
+            app.restore_cached_mrs(open(), listed);
+            assert_eq!(
+                app.mrs.items.len(),
+                usize::from(restored),
+                "listed={listed:?} filter={filter:?}"
+            );
+        }
+
+        let mut app = App::default();
+        app.restore_cached_issues(vec![issue_with_no_milestone("opened")], StateQuery::Open);
+        assert!(app.issues.items.is_empty());
+    }
+
+    #[test]
+    fn state_picker_offers_every_state_while_the_server_lists_one() {
+        let mut app = github_repo_app();
+        app.mrs.items = vec![mr_fixture(1, "opened", "a", false, "open")];
+        app.issues.items = vec![issue_with_no_milestone("opened")];
+        assert_eq!(
+            app.collect_unique_column_values(Tab::MergeRequests, "State"),
+            vec!["OPEN".to_string()]
+        );
+
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        assert_eq!(
+            app.collect_unique_column_values(Tab::MergeRequests, "State"),
+            vec![
+                "CLOSED".to_string(),
+                "MERGED".to_string(),
+                "OPEN".to_string()
+            ]
+        );
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Issues, "State"),
+            vec!["CLOSED".to_string(), "OPEN".to_string()]
+        );
     }
 }

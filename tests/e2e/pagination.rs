@@ -37,12 +37,16 @@ fn issue_list_calls(session: &TestSession) -> Vec<String> {
 /// further ones arrive. Polling rather than sleeping a fixed interval keeps the
 /// test fast when the app is quick; the settle window is what makes
 /// "exactly N" a real assertion rather than "at least N".
-fn wait_for_issue_list_calls(session: &TestSession, expected: usize) -> Vec<String> {
+///
+/// The wait keeps reading the terminal: macOS blocks a PTY writer once about
+/// 2 KiB of output is unread, which stalls the app's draw and with it the
+/// fetch being waited for.
+fn wait_for_issue_list_calls(session: &mut TestSession, expected: usize) -> Vec<String> {
     let deadline = Instant::now() + Duration::from_millis(15000);
     while Instant::now() < deadline && issue_list_calls(session).len() < expected {
-        std::thread::sleep(Duration::from_millis(50));
+        session.settle(50);
     }
-    std::thread::sleep(Duration::from_millis(750));
+    session.settle(750);
     let calls = issue_list_calls(session);
     assert_eq!(
         calls.len(),
@@ -101,8 +105,8 @@ fn assert_all_use_per_page(calls: &[String], per_page: u32) {
 /// With no configuration, one request covers the default 100-item budget.
 #[test]
 fn test_pagination_normal_limit() {
-    let session = session_with(None);
-    let calls = wait_for_issue_list_calls(&session, 1);
+    let mut session = session_with(None);
+    let calls = wait_for_issue_list_calls(&mut session, 1);
     assert_eq!(pages_requested(&calls), vec![1]);
     assert_all_use_per_page(&calls, 100);
 }
@@ -111,8 +115,8 @@ fn test_pagination_normal_limit() {
 /// the default 100 items.
 #[test]
 fn test_pagination_large_limit() {
-    let session = session_with(Some("page_size = 250\n"));
-    let calls = wait_for_issue_list_calls(&session, 3);
+    let mut session = session_with(Some("page_size = 250\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 3);
     assert_eq!(pages_requested(&calls), vec![1, 2, 3]);
     assert_all_use_per_page(&calls, 100);
 }
@@ -121,8 +125,8 @@ fn test_pagination_large_limit() {
 /// the point of the setting, for servers that truncate large responses.
 #[test]
 fn test_pagination_small_limit() {
-    let session = session_with(Some("page_size = 100\napi_per_page = 20\n"));
-    let calls = wait_for_issue_list_calls(&session, 5);
+    let mut session = session_with(Some("page_size = 100\napi_per_page = 20\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 5);
     assert_eq!(pages_requested(&calls), vec![1, 2, 3, 4, 5]);
     assert_all_use_per_page(&calls, 20);
 }
@@ -131,8 +135,8 @@ fn test_pagination_small_limit() {
 /// than failing to start.
 #[test]
 fn test_pagination_fallback_invalid() {
-    let session = session_with(Some("page_size = 100\napi_per_page = \"twenty\"\n"));
-    let calls = wait_for_issue_list_calls(&session, 1);
+    let mut session = session_with(Some("page_size = 100\napi_per_page = \"twenty\"\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 1);
     assert_all_use_per_page(&calls, 100);
 }
 
@@ -141,8 +145,8 @@ fn test_pagination_fallback_invalid() {
 /// fetch that populates the edit-menu selector.
 #[test]
 fn test_pagination_custom_per_endpoint() {
-    let session = session_with(Some("page_size = 100\napi_per_page = 20\n"));
-    let calls = wait_for_issue_list_calls(&session, 5);
+    let mut session = session_with(Some("page_size = 100\napi_per_page = 20\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 5);
     assert_all_use_per_page(&calls, 20);
 
     let label_calls: Vec<String> = session
@@ -170,8 +174,8 @@ fn test_pagination_custom_per_endpoint() {
 /// one item per request instead of panicking.
 #[test]
 fn test_pagination_zero() {
-    let session = session_with(Some("page_size = 3\napi_per_page = 0\n"));
-    let calls = wait_for_issue_list_calls(&session, 3);
+    let mut session = session_with(Some("page_size = 3\napi_per_page = 0\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 3);
     assert_eq!(pages_requested(&calls), vec![1, 2, 3]);
     assert_all_use_per_page(&calls, 1);
 }
@@ -180,8 +184,8 @@ fn test_pagination_zero() {
 /// starts on defaults rather than refusing to run.
 #[test]
 fn test_pagination_negative() {
-    let session = session_with(Some("page_size = 100\napi_per_page = -5\n"));
-    let calls = wait_for_issue_list_calls(&session, 1);
+    let mut session = session_with(Some("page_size = 100\napi_per_page = -5\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 1);
     assert_all_use_per_page(&calls, 100);
 }
 
@@ -189,8 +193,8 @@ fn test_pagination_negative() {
 /// than sent through and refused by the server.
 #[test]
 fn test_pagination_max_bounds() {
-    let session = session_with(Some("page_size = 100\napi_per_page = 250\n"));
-    let calls = wait_for_issue_list_calls(&session, 1);
+    let mut session = session_with(Some("page_size = 100\napi_per_page = 250\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 1);
     assert_eq!(pages_requested(&calls), vec![1]);
     assert_all_use_per_page(&calls, 100);
 }
@@ -201,7 +205,7 @@ fn test_pagination_max_bounds() {
 #[test]
 fn test_pagination_empty_response() {
     let mut session = session_with(Some("page_size = 60\napi_per_page = 20\n"));
-    let calls = wait_for_issue_list_calls(&session, 3);
+    let calls = wait_for_issue_list_calls(&mut session, 3);
     assert_eq!(pages_requested(&calls), vec![1, 2, 3]);
     session
         .wait_for_screen_contains("Issues", 5000)
@@ -211,8 +215,8 @@ fn test_pagination_empty_response() {
 /// A single-item budget is one request for one item, not a rounded-up page.
 #[test]
 fn test_pagination_single_item() {
-    let session = session_with(Some("page_size = 1\napi_per_page = 1\n"));
-    let calls = wait_for_issue_list_calls(&session, 1);
+    let mut session = session_with(Some("page_size = 1\napi_per_page = 1\n"));
+    let calls = wait_for_issue_list_calls(&mut session, 1);
     assert_eq!(pages_requested(&calls), vec![1]);
     assert_all_use_per_page(&calls, 1);
 }

@@ -5,8 +5,8 @@ use pulldown_cmark::{
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::app::highlight_line_syntax;
 use crate::config::Theme;
+use crate::syntax::{highlight_code, styled_tokens, syntax_for_token};
 use crate::utils::format::sanitize_untrusted;
 
 pub fn render_markdown(markdown: &str, theme: &Theme, width: u16) -> Vec<Line<'static>> {
@@ -83,38 +83,21 @@ fn truncate_url(url: &str) -> String {
         url.to_string()
     } else {
         let truncated: String = url.chars().take(MAX_URL_LEN - 1).collect();
-        format!("{}…", truncated)
+        format!("{truncated}…")
     }
 }
 
-/// Map a fenced code block language token (e.g. `"rust"`, `"python"`) to the
-/// file extension syntect's `find_syntax_by_extension` expects (e.g. `"rs"`,
-/// `"py"`). Returns `None` when the token is already the right extension or
-/// simply unknown (caller falls back to the token itself).
+/// Maps a fenced code block language token that names no grammar by itself
+/// to the grammar it means. Every other token (`typescript`, `kotlin`, `toml`,
+/// `ts`, `c#`) is resolved directly by [`syntax_for_token`], by extension or
+/// by grammar name.
 fn resolve_syntax_lang(lang: &str) -> Option<&'static str> {
-    // Compare case-insensitively by ASCII-lowering the input byte-by-byte.
-    let lower = lang.to_ascii_lowercase();
-    match lower.as_str() {
-        "rust" => Some("rs"),
-        "python" | "python3" => Some("py"),
-        "javascript" => Some("js"),
-        "typescript" => Some("ts"),
-        "c++" | "cpp" => Some("cpp"),
-        "c#" | "csharp" => Some("cs"),
-        "kotlin" => Some("kt"),
-        "swift" => Some("swift"),
-        "scala" => Some("scala"),
-        "haskell" => Some("hs"),
-        "elixir" => Some("ex"),
-        "erlang" => Some("erl"),
-        "clojure" => Some("clj"),
-        "ocaml" => Some("ml"),
-        "f#" | "fsharp" => Some("fs"),
-        "dockerfile" => Some("dockerfile"),
-        "makefile" => Some("makefile"),
-        "toml" => Some("toml"),
-        "shell" | "zsh" | "bash" => Some("sh"),
-        _ => None, // pass token through unchanged
+    match lang.to_ascii_lowercase().as_str() {
+        "python3" => Some("Python"),
+        "shell" => Some("Bourne Again Shell (bash)"),
+        "csharp" => Some("C#"),
+        "fsharp" => Some("F#"),
+        _ => None,
     }
 }
 
@@ -227,7 +210,7 @@ impl<'a> MarkdownRenderer<'a> {
                 }
                 Event::FootnoteReference(label) => {
                     self.push_span(
-                        format!("[{}]", label),
+                        format!("[{label}]"),
                         Style::default()
                             .fg(self.theme.text_muted)
                             .add_modifier(Modifier::ITALIC),
@@ -244,8 +227,8 @@ impl<'a> MarkdownRenderer<'a> {
                         }),
                     );
                 }
-                Event::InlineMath(math) => self.push_text(&format!("${}$", math)),
-                Event::DisplayMath(math) => self.push_text(&format!("$${}$$", math)),
+                Event::InlineMath(math) => self.push_text(&format!("${math}$")),
+                Event::DisplayMath(math) => self.push_text(&format!("$${math}$$")),
             }
         }
         self.finish_line();
@@ -325,7 +308,7 @@ impl<'a> MarkdownRenderer<'a> {
                     })
                     .unwrap_or_else(|| "• ".to_string());
                 self.push_span(
-                    format!("{}{}", indent, marker),
+                    format!("{indent}{marker}"),
                     Style::default()
                         .fg(self.theme.purple)
                         .add_modifier(Modifier::BOLD),
@@ -480,7 +463,7 @@ impl<'a> MarkdownRenderer<'a> {
         let mut opening = vec![Span::styled("┌─".to_string(), border_style)];
         if let Some(language) = &code_block.language {
             opening.push(Span::styled(
-                format!(" {}", language),
+                format!(" {language}"),
                 Style::default()
                     .fg(self.theme.purple)
                     .bg(self.theme.inactive_bg)
@@ -489,32 +472,30 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
-        // Resolve the fenced language token to the file extension syntect expects
-        // (e.g. "rust" → "rs", "python" → "py"). If the token is already an
-        // extension or is unknown, resolve_syntax_lang returns None and we use
-        // the token itself as a fallback.
-        let resolved: Option<String> = code_block
+        let syntax = code_block
             .language
             .as_deref()
-            .map(|lang| resolve_syntax_lang(lang).unwrap_or(lang).to_string());
-        let lang_ext: Option<&str> = resolved.as_deref();
+            .and_then(|lang| syntax_for_token(resolve_syntax_lang(lang).unwrap_or(lang)));
+        let highlighted = syntax.map(|syntax| highlight_code(syntax, &code_block.content));
 
-        for code_line in code_block.content.lines() {
-            let content_spans: Vec<Span<'static>> = highlight_line_syntax("", code_line, lang_ext)
-                .map(|highlighted| {
-                    highlighted
-                        .into_iter()
-                        .map(|(style, text)| Span::styled(text, style.bg(self.theme.inactive_bg)))
-                        .collect()
-                })
-                .unwrap_or_else(|| {
-                    vec![Span::styled(
-                        code_line.to_string(),
-                        Style::default()
-                            .fg(self.theme.text_normal)
-                            .bg(self.theme.inactive_bg),
-                    )]
-                });
+        for (index, code_line) in code_block.content.lines().enumerate() {
+            let tokens = highlighted
+                .as_ref()
+                .and_then(|lines| lines.get(index))
+                .and_then(Option::as_deref);
+            let content_spans: Vec<Span<'static>> = match tokens {
+                Some(tokens) => styled_tokens(tokens, code_line, self.theme)
+                    .map(|(style, text)| {
+                        Span::styled(text.to_string(), style.bg(self.theme.inactive_bg))
+                    })
+                    .collect(),
+                None => vec![Span::styled(
+                    code_line.to_string(),
+                    Style::default()
+                        .fg(self.theme.text_normal)
+                        .bg(self.theme.inactive_bg),
+                )],
+            };
             let mut line_spans = vec![Span::styled("│ ".to_string(), border_style)];
             line_spans.extend(content_spans);
             self.lines.push(Line::from(line_spans));
@@ -608,7 +589,7 @@ impl<'a> MarkdownRenderer<'a> {
                 .unwrap_or_default();
             let display_text = if cell_text.chars().count() > *width {
                 let truncated: String = cell_text.chars().take(*width - 1).collect();
-                format!("{}…", truncated)
+                format!("{truncated}…")
             } else {
                 cell_text
             };
@@ -850,8 +831,72 @@ mod tests {
 
         assert_eq!(
             text,
-            "┌─ rust\n│ fn main() {\n│    println!(\"hello\");\n│ }\n└─"
+            "┌─ rust\n│ fn main() {\n│     println!(\"hello\");\n│ }\n└─"
         );
+    }
+
+    #[test]
+    fn fenced_code_lines_starting_with_a_diff_marker_character_render_whole() {
+        let md = "```yaml\n- item\n+ plus\n  nested: true\n```";
+        let text = render_markdown_for_test(md)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(text, "┌─ yaml\n│ - item\n│ + plus\n│   nested: true\n└─");
+    }
+
+    #[test]
+    fn fence_tokens_resolve_to_their_grammar() {
+        let resolved: Vec<(&str, Option<&str>)> = [
+            "typescript",
+            "kotlin",
+            "swift",
+            "dockerfile",
+            "toml",
+            "python3",
+            "shell",
+            "csharp",
+            "fsharp",
+            "f#",
+            "fs",
+        ]
+        .into_iter()
+        .map(|lang| {
+            let syntax = syntax_for_token(resolve_syntax_lang(lang).unwrap_or(lang));
+            (lang, syntax.map(|s| s.name.as_str()))
+        })
+        .collect();
+
+        assert_eq!(
+            resolved,
+            [
+                ("typescript", Some("TypeScript")),
+                ("kotlin", Some("Kotlin")),
+                ("swift", Some("Swift")),
+                ("dockerfile", Some("Dockerfile")),
+                ("toml", Some("TOML")),
+                ("python3", Some("Python")),
+                ("shell", Some("Bourne Again Shell (bash)")),
+                ("csharp", Some("C#")),
+                ("fsharp", Some("F#")),
+                ("f#", Some("F#")),
+                ("fs", Some("F#")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_typescript_fence_colors_its_keywords() {
+        let lines = render_markdown_for_test("```typescript\nconst answer = 42;\n```");
+        let theme = Theme::default();
+        let keyword = lines[1]
+            .spans
+            .iter()
+            .find(|span| span.content == "const")
+            .expect("keyword rendered as its own span");
+        assert_eq!(keyword.style.fg, Some(theme.purple));
     }
 
     #[test]

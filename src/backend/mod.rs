@@ -1,17 +1,23 @@
+mod bounded_output;
+pub(crate) mod browser;
 pub mod gh;
 pub mod glab;
+pub(crate) mod logged_command;
 pub mod rate_limit;
+pub mod subprocess;
 
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
+use crate::domain::job_trace::{JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
-use crate::domain::notifications::Notification;
+use crate::domain::notifications::{Notification, NotificationDetail};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::Result;
@@ -35,6 +41,12 @@ impl BackendKind {
         matches!(self, BackendKind::GitLab)
     }
 
+    /// Pausing, resuming and renaming runners. GitHub's runner API has no
+    /// pause, resume or description endpoint, so only GitLab can do it.
+    pub fn supports_runner_management(self) -> bool {
+        self.is_gitlab()
+    }
+
     pub fn term(self, key: &str) -> &'static str {
         match (self, key) {
             (BackendKind::GitLab, "mr") => "Merge Request",
@@ -54,6 +66,50 @@ impl BackendKind {
             _ => "",
         }
     }
+}
+
+/// Fields of a new issue. Empty strings leave the field unset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NewIssue<'a> {
+    pub title: &'a str,
+    pub description: &'a str,
+    pub labels: &'a str,
+    pub assignees: &'a str,
+    pub milestone: &'a str,
+    pub due_date: &'a str,
+    pub weight: &'a str,
+}
+
+/// Fields of a new MR/PR. Empty strings leave the field unset; `issue_iid`
+/// links the issue it closes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NewMr<'a> {
+    pub title: &'a str,
+    pub description: &'a str,
+    pub source_branch: &'a str,
+    pub target_branch: &'a str,
+    pub labels: &'a str,
+    pub assignees: &'a str,
+    pub reviewers: &'a str,
+    pub milestone: &'a str,
+    pub issue_iid: Option<u64>,
+    pub source_on_forge: bool,
+}
+
+/// How to merge an MR/PR.
+///
+/// `sha` is the head commit SHA of the source branch. Forwarded to GitLab as
+/// `glab mr merge --sha=<sha>` to satisfy GitLab 19.2+ instances and repos
+/// that require it for the merge API. GitLab-only: `GhBackend` ignores it.
+/// `None` skips the flag and lets `glab` fall back to its own heuristic on
+/// legacy installs (older GitLab returns 400 otherwise).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MergeOptions<'a> {
+    pub squash: bool,
+    pub delete_branch: bool,
+    pub strategy: Option<&'a str>,
+    pub auto_merge: bool,
+    pub sha: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -123,14 +179,21 @@ pub trait Backend: Send + Sync {
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
 
+    /// The states to list from the server for a tab whose State column
+    /// filter shows `filtered`. Rows of other states are filtered out on the
+    /// client, so a backend that cannot narrow lists every state.
+    fn server_state_query(&self, _scope: &Scope, _filtered: StateQuery) -> StateQuery {
+        StateQuery::All
+    }
+
     // ── Issues ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
-    /// in the group/org.
+    /// in the group/org. A backend may return more states than `state` asks for.
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>>;
@@ -148,17 +211,7 @@ pub trait Backend: Send + Sync {
         issue_iid: u64,
         page_size: usize,
     ) -> Result<Vec<RelatedMrRef>>;
-    async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()>;
+    async fn create_issue(&self, project: &str, issue: &NewIssue<'_>) -> Result<()>;
     async fn update_issue(&self, project: &str, iid: u64, update: &IssueUpdate) -> Result<()>;
     async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
         self.update_issue(
@@ -276,23 +329,18 @@ pub trait Backend: Send + Sync {
     // ── Merge Requests ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
-    /// in the group/org.
+    /// in the group/org. A backend may return more states than `state` asks for.
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>>;
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        page_size: usize,
-    ) -> Result<Vec<DiscussionNote>>;
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
     /// The viewer's "Viewed" state of every file of a pull request. GitHub
     /// only: GitLab keeps it in browser storage, out of reach of the API.
     async fn list_viewed_files(
@@ -322,36 +370,9 @@ pub trait Backend: Send + Sync {
     /// Rebase the source branch onto the target. Supported on both hosts.
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Merge the MR/PR.
-    ///
-    /// `sha` is the head commit SHA of the source branch. Forwarded to GitLab
-    /// as `glab mr merge --sha=<sha>` to satisfy GitLab 19.2+ instances and
-    /// repos that require it for the merge API. GitLab-only — `GhBackend`
-    /// ignores it. `None` skips the flag and lets `glab` fall back to its
-    /// own heuristic on legacy installs (older GitLab returns 400 otherwise).
-    async fn merge_mr(
-        &self,
-        project: &str,
-        iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
-        sha: Option<&str>,
-    ) -> Result<()>;
+    async fn merge_mr(&self, project: &str, iid: u64, options: &MergeOptions<'_>) -> Result<()>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
-    async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()>;
+    async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()>;
     /// Posts `comments` and `body` as one review carrying `event`.
     async fn submit_review(
         &self,
@@ -487,22 +508,26 @@ pub trait Backend: Send + Sync {
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()>;
     async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()>;
     async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()>;
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()>;
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()>;
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()>;
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()>;
     async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()>;
     async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()>;
 
     // ── Pipelines ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
-    /// items each HTTP call asks for.  For `Scope::Group` aggregates across all projects
-    /// in the group/org.
+    /// items each HTTP call asks for. For `Scope::Group`, GitHub aggregates across the
+    /// org's repositories and GitLab returns `Err`.
     async fn list_pipelines(
         &self,
         scope: &Scope,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Pipeline>>;
+
+    /// Id of the newest pipeline built for `branch`, counting GitLab's
+    /// merge-request pipelines (`refs/merge-requests/<iid>/head`) of the open
+    /// MR whose source branch it is. `Ok(None)` when no pipeline exists.
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>>;
 
     async fn list_pipeline_jobs(
         &self,
@@ -521,7 +546,15 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<crate::domain::pipelines::Bridge>> {
         Ok(Vec::new())
     }
-    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String>;
+    /// The job's log from its start, read up to `JOB_TRACE_MAX_BYTES`.
+    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<JobTrace>;
+    /// What the job's log gained since `cursor` was read.
+    async fn get_job_trace_since(
+        &self,
+        project: &str,
+        job_id: u64,
+        cursor: &TraceCursor,
+    ) -> Result<TraceUpdate>;
 
     /// For GitHub stacked PRs (`gh stack`), fetch one PR's stack: its own
     /// position plus every entry. `Ok(None)` means the PR is not in a stack;
@@ -557,7 +590,10 @@ pub trait Backend: Send + Sync {
     }
 
     // ── Pipeline / Job actions ──
+    /// Reruns the pipeline: on GitLab its failed and canceled jobs, on GitHub the whole run.
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
+    /// Reruns only the jobs of `pipeline_id` that failed; errors when none did.
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()>;
     async fn start_job(&self, project: &str, job_id: u64) -> Result<()>;
@@ -622,23 +658,33 @@ pub trait Backend: Send + Sync {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()>;
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         start_date: Option<&str>,
         due_date: Option<&str>,
     ) -> Result<()>;
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()>;
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()>;
 
     // ── Notifications ──
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>>;
+    /// GitLab todos have no read state, so on GitLab this marks the todo done.
     async fn mark_notification_as_read(&self, id: &str) -> Result<()>;
+    /// Removes the notification from the inbox (GitHub "done", GitLab todo done).
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()>;
+    async fn mark_all_notifications_as_read(&self) -> Result<()>;
+    /// Stops further notifications about the notification's issue, MR/PR or thread.
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()>;
+    /// The comment or description behind a notification, read from its
+    /// `detail_api_path`. Only GitHub notifications need it: GitLab todos
+    /// carry their body in the list.
+    async fn get_notification_detail(&self, detail_api_path: &str) -> Result<NotificationDetail>;
 
     // ── Branches ──
     async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;
@@ -654,6 +700,19 @@ pub trait Backend: Send + Sync {
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>>;
+    /// GitLab runs the environment's stop action. GitHub has no stop, so it
+    /// marks the deployment serving the environment, the newest one whose
+    /// latest status is `success`, inactive.
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()>;
+    /// Deploys `deployment`'s commit to `environment` again: GitLab re-runs the
+    /// deployment's job, GitHub records a new deployment of its SHA, which only
+    /// deploys once a workflow running on the `deployment` event picks it up.
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()>;
 
     // ── Labels / Members / Misc ──
     async fn fetch_labels(

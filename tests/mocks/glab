@@ -3,6 +3,24 @@ LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
 FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "glab $*" >> "$LOG_FILE"
+# One file per call with the exact argument boundaries, checked against the
+# generated CLI reference by the e2e harness. A shared file would interleave
+# concurrent calls. The record is written under a dot name and renamed once
+# complete, so the harness can wait for it.
+if [[ -n "$TEST_LOG_PATH" ]]; then
+    mkdir -p "$TEST_LOG_PATH.argv.d"
+    argv_record=$(mktemp "$TEST_LOG_PATH.argv.d/.XXXXXXXX")
+    printf '%s\x1f' glab "$@" > "$argv_record"
+    mv "$argv_record" "${argv_record%/.*}/${argv_record##*/.}"
+fi
+
+# A call this mock has no case for. The test harness fails the test when
+# <log>.unhandled is not empty (see `Sandbox::drop`).
+unhandled() {
+    echo "glab $*" >> "$LOG_FILE.unhandled"
+    echo "mock: unhandled: $*" >&2
+    exit 2
+}
 
 # Failure injection for tests that assert on error handling.
 if [[ -n "$TEST_GLAB_FAIL_BRIDGES" && "$*" == *"/bridges"* ]]; then
@@ -11,9 +29,30 @@ if [[ -n "$TEST_GLAB_FAIL_BRIDGES" && "$*" == *"/bridges"* ]]; then
 fi
 
 # Generic failure injection: fail any call whose arguments contain the value.
+# With TEST_GLAB_FAIL_NTH set, only the Nth such call fails: calls whose
+# arguments are identical (a request body arrives on stdin) cannot be told
+# apart otherwise. The count is kept next to the call log.
 if [[ -n "$TEST_GLAB_FAIL_MATCH" && "$*" == *"$TEST_GLAB_FAIL_MATCH"* ]]; then
-    echo "mock: 404 Not Found" >&2
+    seen=1
+    if [[ -n "$TEST_GLAB_FAIL_NTH" ]]; then
+        seen=$(( $(cat "$LOG_FILE.fail_count" 2>/dev/null || echo 0) + 1 ))
+        echo "$seen" > "$LOG_FILE.fail_count"
+    fi
+    if [[ -z "$TEST_GLAB_FAIL_NTH" || "$seen" -eq "$TEST_GLAB_FAIL_NTH" ]]; then
+        echo "mock: 404 Not Found" >&2
+        exit 1
+    fi
+fi
+
+# A second pattern, for two calls that must both fail in one run.
+if [[ -n "$TEST_GLAB_FAIL_MATCH_2" && "$*" == *"$TEST_GLAB_FAIL_MATCH_2"* ]]; then
+    echo "mock: 500 Internal Server Error" >&2
     exit 1
+fi
+
+# Hang injection: never answer a call whose arguments contain the value.
+if [[ -n "$TEST_GLAB_HANG_MATCH" && "$*" == *"$TEST_GLAB_HANG_MATCH"* ]]; then
+    exec sleep 300
 fi
 
 # Request bodies piped with `--input -`, one per line, for payload assertions.
@@ -23,44 +62,128 @@ fi
 
 # Match arguments to determine response
 if [[ "$*" == *"api"* ]]; then
-    if [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
+    if [[ "$2" == "graphql" && "$*" == *"runners(first"* ]]; then
+        cat "$FIXTURES_DIR/runner_details_graphql.json"
+        exit 0
+    fi
+    if [[ "$2" == "graphql" && "$*" == *"pipelines(ids:"* ]]; then
+        cat "$FIXTURES_DIR/pipeline_details_graphql.json"
+        exit 0
+    fi
+    if [[ "$2" == "graphql" && "$*" == *"mergeRequests(iids:"* ]]; then
+        # Approval and mergeability stay unknown.
+        echo '{"data": {"currentUser": {"username": "test-user"}, "project": {"mergeRequests": {"nodes": []}}}}'
+        exit 0
+    fi
+    if [[ "$2" == runners/* ]]; then
+        cat "$FIXTURES_DIR/runner_${2#runners/}.json"
+    elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
+    elif [[ "$*" == *"/members/all"* ]]; then
+        cat "$FIXTURES_DIR/members.json"
+    elif [[ "$*" == *"groups/"*"/labels"* ]]; then
+        echo "[]"
+    elif [[ "$*" == *"groups/test-group/issues"* ]]; then
+        # Pages are requested concurrently; only the first carries the fixture.
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_issues.json"
+        else
+            echo "[]"
+        fi
+    elif [[ "$*" == *"groups/test-group/merge_requests"* ]]; then
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_mrs.json"
+        else
+            echo "[]"
+        fi
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
-    elif [[ "$*" == *"/commits"* ]]; then
-        cat "$FIXTURES_DIR/commits.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
-    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
+    elif [[ "$*" == *"/environments"* ]]; then
+        cat "$FIXTURES_DIR/environments.json"
+    elif [[ "$*" == *"/deployments"* ]]; then
         cat "$FIXTURES_DIR/deployments.json"
     elif [[ "$*" == *"/bridges"* ]]; then
         # Must precede /pipelines: a bridges URL contains it.
         cat "$FIXTURES_DIR/bridges.json"
     elif [[ "$*" == *"/trace"* ]]; then
         # Must precede /jobs: a trace URL contains it.
-        echo "mock gitlab job trace output"
+        if [[ -n "$TEST_GLAB_TRACE_FILE" ]]; then
+            # A running job: serve the log, honouring byte_offset/byte_limit
+            # unless TEST_GLAB_TRACE_IGNORES_RANGES plays a GitLab that
+            # predates them, then write one more line so the next read has
+            # something new.
+            offset=$(sed -n 's/.*[?&]byte_offset=\([0-9]*\).*/\1/p' <<< "$*")
+            limit=$(sed -n 's/.*[?&]byte_limit=\([0-9]*\).*/\1/p' <<< "$*")
+            if [[ -n "$offset" && -z "$TEST_GLAB_TRACE_IGNORES_RANGES" ]]; then
+                tail -c "+$((offset + 1))" "$TEST_GLAB_TRACE_FILE" | head -c "$limit"
+            else
+                cat "$TEST_GLAB_TRACE_FILE"
+            fi
+            reads=$(grep -c "/trace" "$LOG_FILE")
+            echo "follow line $reads" >> "$TEST_GLAB_TRACE_FILE"
+        else
+            echo "mock gitlab job trace output"
+        fi
     elif [[ "$*" == *"/jobs"* ]]; then
         # Must precede /pipelines: /pipelines/:id/jobs contains it.
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
             echo '[]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS_PAGES" && "$*" == *"scope[]=failed"* ]]; then
+            # A full first page of 100 failed jobs, then one more on page 2.
+            if [[ "$*" =~ [?\&]page=1([^0-9]|$) ]]; then
+                printf '['
+                for id in $(seq 60001 60100); do
+                    [[ $id -gt 60001 ]] && printf ','
+                    printf '{"id": %s, "status": "failed"}' "$id"
+                done
+                printf ']\n'
+            elif [[ "$*" =~ [?\&]page=2([^0-9]|$) ]]; then
+                echo '[{"id": 60101, "status": "failed"}]'
+            else
+                echo '[]'
+            fi
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS" && "$*" == *"scope[]=failed"* ]]; then
+            echo '[{"id": 54322, "status": "failed", "stage": "test", "name": "rubocop"},
+                   {"id": 54323, "status": "failed", "stage": "test", "name": "eslint"}]'
+        elif [[ -n "$TEST_GLAB_FAILED_JOBS" ]]; then
+            # Jobs carry the pipeline's commit and, when failed, why.
+            commit='"commit": {"title": "Bump parser to 2.1", "author_name": "Grace Hopper"}'
+            echo "[{\"id\": 54321, \"status\": \"success\", \"stage\": \"test\", \"name\": \"rspec\", $commit},
+                   {\"id\": 54322, \"status\": \"failed\", \"stage\": \"test\", \"name\": \"rubocop\",
+                    \"failure_reason\": \"script_failure\", $commit}]"
         else
-            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
+            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", "duration": 95.4, "queued_duration": 3.2, "runner": {"id": 7, "description": "shared-runner-7"}, "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321", "artifacts": [{"file_type": "archive"}, {"file_type": "trace"}, {"file_type": "junit"}]}]'
         fi
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
         cat "$FIXTURES_DIR/runners.json"
+    elif [[ "$*" == *"todos?state=done"* ]]; then
+        cat "$FIXTURES_DIR/todos_done.json"
     elif [[ "$*" == *"/todos"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
+    elif [[ "$*" == *"groups/test-group/milestones"* ]]; then
+        cat "$FIXTURES_DIR/group_milestones.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
     else
-        echo "{}"
+        unhandled "$@"
     fi
+elif [[ "$*" == *"ci list"* && "$*" == *"--ref refs/merge-requests/"* ]]; then
+    # Newer than every pipelines.json id, so the Jobs tab must pick it.
+    echo '[{"id": 99999, "status": "success", "ref": "refs/merge-requests/2/head"}]'
+elif [[ "$*" == *"ci list"* ]]; then
+    cat "$FIXTURES_DIR/pipelines.json"
+elif [[ "$*" == "todo list"* ]]; then
+    cat "$FIXTURES_DIR/todos.json"
+elif [[ "$*" == *"mr list"* && "$*" == *"--source-branch"* ]]; then
+    cat "$FIXTURES_DIR/mrs.json"
 elif [[ "$*" == *"mr list"* ]]; then
     # Pages are requested concurrently; only the first carries the fixture so
     # the MR is not duplicated once per page.
@@ -70,8 +193,9 @@ elif [[ "$*" == *"mr list"* ]]; then
         echo "[]"
     fi
 elif [[ "$*" == *"issue list"* ]]; then
+    # TEST_GLAB_ISSUES names another fixture, for tests that need other issues.
     if [[ " $* " == *" --page 1 "* ]]; then
-        cat "$FIXTURES_DIR/custom_command_issues.json"
+        cat "$FIXTURES_DIR/${TEST_GLAB_ISSUES:-custom_command_issues.json}"
     else
         echo "[]"
     fi
@@ -81,6 +205,27 @@ elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then
     cat "$FIXTURES_DIR/mr_notes.json"
-else
+elif [[ "$*" == *"runner list"* ]]; then
+    cat "$FIXTURES_DIR/runners.json"
+elif [[ "$*" == *"release list"* ]]; then
+    cat "$FIXTURES_DIR/releases.json"
+elif [[ "$*" == *"todo list"* ]]; then
+    cat "$FIXTURES_DIR/todos.json"
+elif [[ "$*" == *"milestone list"* ]]; then
+    cat "$FIXTURES_DIR/milestones.json"
+elif [[ "$*" == "label list"* ]]; then
     echo "[]"
+elif [[ "$*" == "auth status"* ]]; then
+    echo "Logged in to gitlab.com as test-user" >&2
+elif [[ "$*" == "ci retry "* || "$*" == "mr approve "* || "$*" == "todo done "* \
+        || "$*" == "issue unsubscribe "* || "$*" == "mr unsubscribe "* \
+        || "$*" == "issue close "* || "$*" == "mr close "* \
+        || "$*" == "ci cancel pipeline "* || "$*" == "release delete "* \
+        || "$*" == "runner update "* || "$*" == "mr merge "* \
+        || "$*" == "issue update "* || "$*" == "mr update "* \
+        || "$*" == "milestone edit "* || "$*" == "milestone delete "* ]]; then
+    # Mutations whose output glab-tui does not read.
+    :
+else
+    unhandled "$@"
 fi

@@ -163,12 +163,8 @@ fn too_large_pr_diff_is_built_from_the_local_clone() {
     press_keys(&mut session, b"r");
     session
         .wait_for_screen_contains("Submit Pull Request Review", 5000)
-        .expect("r should offer the review outcomes");
-    press_keys(&mut session, b"jj\r");
-    session
-        .wait_for_screen_contains("Submit Review (Comment)", 5000)
-        .expect("choosing Comment should ask for the review summary");
-    press_keys(&mut session, b"Done\r");
+        .expect("r should open the submit-review overlay");
+    press_keys(&mut session, b"\tDone\r");
 
     let payload = wait_for_review_payload(&mut session);
     assert_eq!(

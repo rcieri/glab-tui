@@ -1,3 +1,4 @@
+use super::private_fs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -6,7 +7,14 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct ProjectCache {
     pub issues: Vec<crate::domain::issues::Issue>,
+    /// The states `issues` were listed for. Caches written before this field
+    /// existed always listed every state.
+    #[serde(default)]
+    pub issues_state_query: crate::domain::state_query::StateQuery,
     pub mrs: Vec<crate::domain::mr::MergeRequest>,
+    /// The states `mrs` were listed for.
+    #[serde(default)]
+    pub mrs_state_query: crate::domain::state_query::StateQuery,
     pub pipelines: Vec<crate::domain::pipelines::Pipeline>,
     pub runners: Vec<crate::domain::runners::Runner>,
     pub releases: Vec<crate::domain::releases::Release>,
@@ -29,6 +37,11 @@ pub struct ProjectCache {
     /// dropped on the next save: which version those marks covered is unknown.
     #[serde(default)]
     pub review_marks: HashMap<u64, HashMap<String, String>>,
+    /// Draft review comments not yet submitted, by project path, then MR/PR
+    /// iid. A group-scope cache is shared by every project in the group, and
+    /// the same iid recurs across them.
+    #[serde(default)]
+    pub draft_comments: HashMap<String, HashMap<u64, Vec<crate::domain::review::DraftComment>>>,
     #[serde(default)]
     pub enabled_columns: HashMap<crate::app::Tab, std::collections::HashSet<String>>,
     #[serde(default)]
@@ -40,9 +53,14 @@ pub struct ProjectCache {
         HashMap<crate::app::Tab, HashMap<String, std::collections::HashSet<String>>>,
 }
 
+fn prepare_cache_dir() -> PathBuf {
+    let dir = get_cache_dir();
+    let _ = private_fs::create_owned_dir(&dir);
+    dir
+}
+
 fn get_cache_file_path(project_context: &str) -> PathBuf {
-    let mut path = get_cache_dir();
-    let _ = fs::create_dir_all(&path);
+    let mut path = prepare_cache_dir();
     path.push(cache_file_name(project_context));
     path
 }
@@ -60,13 +78,12 @@ pub fn load_cache(project_context: &str) -> ProjectCache {
 pub fn save_cache(project_context: &str, cache: &ProjectCache) {
     let path = get_cache_file_path(project_context);
     if let Ok(content) = serde_json::to_string(cache) {
-        let _ = fs::write(path, content);
+        let _ = private_fs::write(&path, content);
     }
 }
 
 fn get_recent_repos_file_path() -> PathBuf {
-    let mut path = get_cache_dir();
-    let _ = fs::create_dir_all(&path);
+    let mut path = prepare_cache_dir();
     path.push("recent_repos.json");
     path
 }
@@ -103,13 +120,12 @@ pub fn add_recent_repo(repo_path: &str) {
 
     let path = get_recent_repos_file_path();
     if let Ok(content) = serde_json::to_string(&repos) {
-        let _ = fs::write(path, content);
+        let _ = private_fs::write(&path, content);
     }
 }
 
 fn get_recent_groups_file_path() -> PathBuf {
-    let mut path = get_cache_dir();
-    let _ = fs::create_dir_all(&path);
+    let mut path = prepare_cache_dir();
     path.push("recent_groups.json");
     path
 }
@@ -173,13 +189,13 @@ pub fn add_recent_group(group: &str) {
 
     let path = get_recent_groups_file_path();
     if let Ok(content) = serde_json::to_string(&groups) {
-        let _ = fs::write(path, content);
+        let _ = private_fs::write(&path, content);
     }
 }
 
 /// Batched counterpart of `add_recent_group`. Mirrors its semantics:
 /// groups are processed in slice order, each moves to position 0, the
-/// list is truncated to 20 entries, and a single `fs::write` happens
+/// list is truncated to 20 entries, and a single write happens
 /// at the end (or none at all when the slice is empty/whitespace).
 /// Callers building a "new groups to persist" list inside a loop should
 /// prefer this over N individual `add_recent_group` calls — the per-call
@@ -208,7 +224,7 @@ pub fn add_recent_groups(groups: &[String]) {
 
     let path = get_recent_groups_file_path();
     if let Ok(content) = serde_json::to_string(&existing) {
-        let _ = fs::write(path, content);
+        let _ = private_fs::write(&path, content);
     }
 }
 
@@ -218,8 +234,8 @@ pub fn get_cache_dir() -> PathBuf {
 }
 
 pub fn cache_file_name(project_context: &str) -> String {
-    let safe_name = project_context.replace('/', "_").replace('\\', "_");
-    format!("{}.json", safe_name)
+    let safe_name = project_context.replace(['/', '\\'], "_");
+    format!("{safe_name}.json")
 }
 
 pub fn get_cache_dir_size() -> u64 {
@@ -270,7 +286,7 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
 
     if !dry_run && !dead_repos.is_empty() {
         if let Ok(content) = serde_json::to_string(&live_repos) {
-            let _ = fs::write(&recent_path, content);
+            let _ = private_fs::write(&recent_path, content);
         }
     }
 
@@ -447,8 +463,8 @@ mod tests {
         let repo2 = parent.path().join("repo2");
         let non_repo = parent.path().join("non_repo");
 
-        fs::create_dir_all(&repo1.join(".git")).unwrap();
-        fs::create_dir_all(&repo2.join(".git")).unwrap();
+        fs::create_dir_all(repo1.join(".git")).unwrap();
+        fs::create_dir_all(repo2.join(".git")).unwrap();
         fs::create_dir_all(&non_repo).unwrap();
 
         let repo1_str = repo1.to_str().unwrap();
@@ -463,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_repos_dir_env_var() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let temp_dir = tempdir().unwrap();
         let path_str = temp_dir.path().to_str().unwrap().to_string();
 
@@ -479,9 +495,11 @@ mod tests {
 
     #[test]
     fn test_project_cache_roundtrip() {
-        let mut cache = ProjectCache::default();
-        cache.labels = vec!["bug".to_string(), "enhancement".to_string()];
-        cache.members = vec!["@user1".to_string(), "@user2".to_string()];
+        let cache = ProjectCache {
+            labels: vec!["bug".to_string(), "enhancement".to_string()],
+            members: vec!["@user1".to_string(), "@user2".to_string()],
+            ..ProjectCache::default()
+        };
 
         let serialized = serde_json::to_string(&cache).unwrap();
         let deserialized: ProjectCache = serde_json::from_str(&serialized).unwrap();
@@ -508,8 +526,30 @@ mod tests {
     }
 
     #[test]
+    fn listed_state_queries_survive_a_save_and_old_caches_read_as_every_state() {
+        use crate::domain::state_query::StateQuery;
+
+        let cache = ProjectCache {
+            issues_state_query: StateQuery::Closed,
+            mrs_state_query: StateQuery::Merged,
+            ..ProjectCache::default()
+        };
+        let reloaded: ProjectCache =
+            serde_json::from_str(&serde_json::to_string(&cache).unwrap()).unwrap();
+        assert_eq!(reloaded.issues_state_query, StateQuery::Closed);
+        assert_eq!(reloaded.mrs_state_query, StateQuery::Merged);
+
+        let before_state_queries = r#"{"issues":[],"mrs":[],"pipelines":[],"runners":[],
+            "releases":[],"todos":[],"milestones":[],"pipeline_jobs":{},"branches":[],
+            "environments":[]}"#;
+        let old: ProjectCache = serde_json::from_str(before_state_queries).unwrap();
+        assert_eq!(old.issues_state_query, StateQuery::All);
+        assert_eq!(old.mrs_state_query, StateQuery::All);
+    }
+
+    #[test]
     fn test_get_switchable_repos_uses_recent_cache_only() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
 
@@ -544,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_get_switchable_repos_skips_non_git_entries() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         let home = tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
 
@@ -559,7 +599,7 @@ mod tests {
         // Inject the entry directly via the cache file.
         let cache_path = get_recent_repos_file_path();
         let _ = std::fs::create_dir_all(cache_path.parent().unwrap());
-        std::fs::write(&cache_path, format!("[\"{}\"]", fake_str)).unwrap();
+        std::fs::write(&cache_path, format!("[\"{fake_str}\"]")).unwrap();
 
         let entries = get_switchable_repos();
         assert!(
@@ -570,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_get_available_groups_derives_from_cache_repos() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::lock_test_env();
         // Isolate the cache dir so recent_repos.json / recent_groups.json
         // land under HOME/USERPROFILE.
         let home = tempdir().unwrap();
@@ -630,5 +670,43 @@ mod tests {
             groups.iter().any(|g| g == "octo"),
             "GitHub org derived from cached repo must be available: {groups:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_dir_and_files_are_owner_only() {
+        use crate::utils::private_fs::mode_of;
+        let _guard = crate::config::lock_test_env();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let repo = home.path().join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+
+        save_cache("group/project", &ProjectCache::default());
+        add_recent_repo(&repo.to_string_lossy());
+        add_recent_group("group");
+
+        let cache_dir = get_cache_dir();
+        assert_eq!(mode_of(&cache_dir), 0o700);
+        assert_eq!(mode_of(&cache_dir.join("group_project.json")), 0o600);
+        assert_eq!(mode_of(&cache_dir.join("recent_repos.json")), 0o600);
+        assert_eq!(mode_of(&cache_dir.join("recent_groups.json")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_dir_left_world_readable_is_tightened_on_load() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = crate::config::lock_test_env();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let cache_dir = get_cache_dir();
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::set_permissions(&cache_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        load_cache("group/project");
+
+        assert_eq!(mode_of(&cache_dir), 0o700);
     }
 }

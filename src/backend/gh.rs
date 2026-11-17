@@ -1,15 +1,24 @@
 use super::Backend;
+use super::bounded_output::{CapturedStdout, output_bounded};
+use super::browser::open_url;
+use super::logged_command::{ChildOutput, LoggedCommand};
+use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
+use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
-use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
-use crate::domain::notifications::Notification;
-use crate::domain::pipelines::{Job, Pipeline};
+use crate::domain::mr::{
+    DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NoteKind, NotePosition, ReviewState,
+    ensure_complete_diff,
+};
+use crate::domain::notifications::{Notification, NotificationDetail};
+use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -183,7 +192,7 @@ fn qualify_head_ref(local_project: &str, target_project: &str, branch: &str) -> 
         return branch.to_string();
     }
     match local_project.split_once('/') {
-        Some((owner, _)) if !owner.is_empty() => format!("{}:{}", owner, branch),
+        Some((owner, _)) if !owner.is_empty() => format!("{owner}:{branch}"),
         _ => branch.to_string(),
     }
 }
@@ -197,6 +206,138 @@ fn parse_gh_login(raw: &str) -> Option<String> {
     } else {
         Some(login.to_string())
     }
+}
+
+/// The `repos/…` path of a GitHub API URL. GitHub Enterprise serves the API
+/// under `/api/v3`, so the host part is dropped rather than parsed.
+fn github_api_path(url: &str) -> Option<String> {
+    url.find("/repos/")
+        .map(|start| url[start + 1..].to_string())
+}
+
+/// The `gh issue view` / `gh pr view` arguments that read the issue or PR an
+/// API path names. Comments, releases, discussions and commits have no
+/// native command.
+fn native_detail_args(detail_api_path: &str) -> Option<[&str; 7]> {
+    let path = detail_api_path.strip_prefix("repos/")?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let name = parts.next()?;
+    let command = match parts.next()? {
+        "issues" => "issue",
+        "pulls" => "pr",
+        _ => return None,
+    };
+    let number = parts.next()?;
+    if parts.next().is_some() || number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let repo = &path[..owner.len() + 1 + name.len()];
+    Some([command, "view", number, "-R", repo, "--json", "body,author"])
+}
+
+fn parse_github_notifications(raw: &str) -> Result<Vec<Notification>> {
+    #[derive(Deserialize)]
+    struct GhNotif {
+        id: String,
+        repository: GhNotifRepo,
+        subject: GhNotifSubject,
+        unread: bool,
+        updated_at: String,
+        #[serde(default)]
+        reason: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GhNotifRepo {
+        full_name: String,
+        #[serde(default)]
+        html_url: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct GhNotifSubject {
+        title: String,
+        r#type: String,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        latest_comment_url: Option<String>,
+    }
+    let gh_notifs: Vec<GhNotif> = serde_json::from_str(raw)?;
+    Ok(gh_notifs
+        .into_iter()
+        .map(|item| {
+            let subject_url = item.subject.url.unwrap_or_default();
+            let target_iid = subject_url
+                .split('/')
+                .next_back()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let repo_url = item
+                .repository
+                .html_url
+                .unwrap_or_else(|| format!("https://github.com/{}", item.repository.full_name));
+            let (target_type, web_url) = match item.subject.r#type.as_str() {
+                "PullRequest" => (
+                    "MergeRequest".to_string(),
+                    format!("{repo_url}/pull/{target_iid}"),
+                ),
+                "Issue" => (
+                    "Issue".to_string(),
+                    format!("{repo_url}/issues/{target_iid}"),
+                ),
+                _ => (item.subject.r#type, repo_url),
+            };
+            let detail_api_path = item
+                .subject
+                .latest_comment_url
+                .as_deref()
+                .and_then(github_api_path)
+                .or_else(|| github_api_path(&subject_url));
+            let state = if item.unread { "unread" } else { "read" };
+            Notification {
+                id: item.id,
+                project_path: item.repository.full_name,
+                title: item.subject.title,
+                target_type,
+                target_iid,
+                state: state.to_string(),
+                updated_at: item.updated_at,
+                author: String::new(),
+                reason: item.reason.unwrap_or_default(),
+                web_url,
+                body: None,
+                detail_api_path,
+            }
+        })
+        .collect())
+}
+
+/// Reads the comment, issue, PR or release a notification's
+/// `detail_api_path` points at. The API names a comment's author `user`,
+/// a release's `author`, and `gh issue view` / `gh pr view` use `author`.
+fn parse_github_notification_detail(raw: &str) -> Result<NotificationDetail> {
+    #[derive(Deserialize)]
+    struct GhUser {
+        login: String,
+    }
+    #[derive(Deserialize)]
+    struct GhDetail {
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        user: Option<GhUser>,
+        #[serde(default)]
+        author: Option<GhUser>,
+    }
+    let detail: GhDetail = serde_json::from_str(raw).context("parsing notification detail")?;
+    Ok(NotificationDetail {
+        author: detail
+            .user
+            .or(detail.author)
+            .map(|user| user.login)
+            .unwrap_or_default(),
+        body: detail.body.unwrap_or_default(),
+    })
 }
 
 fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -214,27 +355,65 @@ where
     }
 }
 
-/// Splits `latestReviews` into (every review's author, approving authors only).
+/// Review summary for a GitHub pull request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LatestReviews {
+    /// Authors of every review (approvals, rejections, and comments).
+    pub authors: Vec<String>,
+    /// Authors whose latest opinionated review is `APPROVED`.
+    pub approvers: Vec<String>,
+    /// True when any reviewer's latest opinionated review is `CHANGES_REQUESTED`.
+    pub has_changes_requested: bool,
+}
+
+/// Summarizes PR reviews into unique reviewers, current approvers, and
+/// whether any reviewer currently requests changes.
 ///
-/// Two lists because they answer different questions: `you_reviewed` must be
-/// true for any review including a rejection, while `approved_by` must not
-/// credit someone who only commented.
-fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, Vec<String>) {
-    let all_authors: Vec<String> = latest_reviews
-        .iter()
-        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
-        .collect();
-    let approved_authors: Vec<String> = latest_reviews
-        .iter()
-        .filter(|r| {
-            r.get("state")
-                .and_then(|s| s.as_str())
-                .map(|s| s.eq_ignore_ascii_case("APPROVED"))
-                .unwrap_or(false)
-        })
-        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
-        .collect();
-    (all_authors, approved_authors)
+/// Keeps each author's newest opinionated review (`APPROVED`, `CHANGES_REQUESTED`,
+/// or `DISMISSED`). A later `COMMENTED` review does not clear an earlier
+/// approval or change request.
+pub fn split_review_authors(reviews: &[serde_json::Value]) -> LatestReviews {
+    let mut all_authors = Vec::new();
+    let mut latest_opinion: std::collections::BTreeMap<String, &str> =
+        std::collections::BTreeMap::new();
+
+    for r in reviews {
+        let Some(author) = r
+            .get("author")
+            .and_then(|a| a.get("login"))
+            .and_then(|l| l.as_str())
+        else {
+            continue;
+        };
+        if !all_authors.iter().any(|a: &String| a == author) {
+            all_authors.push(author.to_string());
+        }
+        if let Some(state) = r.get("state").and_then(|s| s.as_str()) {
+            if state.eq_ignore_ascii_case("APPROVED") {
+                latest_opinion.insert(author.to_string(), "APPROVED");
+            } else if state.eq_ignore_ascii_case("CHANGES_REQUESTED") {
+                latest_opinion.insert(author.to_string(), "CHANGES_REQUESTED");
+            } else if state.eq_ignore_ascii_case("DISMISSED") {
+                latest_opinion.insert(author.to_string(), "DISMISSED");
+            }
+        }
+    }
+
+    let mut approvers = Vec::new();
+    let mut has_changes_requested = false;
+    for (author, state) in latest_opinion {
+        if state == "APPROVED" {
+            approvers.push(author);
+        } else if state == "CHANGES_REQUESTED" {
+            has_changes_requested = true;
+        }
+    }
+
+    LatestReviews {
+        authors: all_authors,
+        approvers,
+        has_changes_requested,
+    }
 }
 
 /// Map GitHub's PR `state` JSON field onto the host-neutral state string.
@@ -253,6 +432,28 @@ pub(crate) fn map_gh_pr_state(raw: &str) -> &'static str {
     }
 }
 
+/// `gh issue list --state` value. Issues are never merged, so a merged query
+/// lists every state and leaves the State column filter to the client.
+fn gh_issue_state_flag(state: StateQuery) -> &'static str {
+    match state {
+        StateQuery::Open => "open",
+        StateQuery::Closed => "closed",
+        StateQuery::Merged | StateQuery::All => "all",
+    }
+}
+
+/// `gh pr list --state` value. GitHub's `closed` also returns merged PRs
+/// (only `merged` returns a single state), so a CLOSED listing still relies
+/// on the State column filter to hide them.
+fn gh_pr_state_flag(state: StateQuery) -> &'static str {
+    match state {
+        StateQuery::Open => "open",
+        StateQuery::Closed => "closed",
+        StateQuery::Merged => "merged",
+        StateQuery::All => "all",
+    }
+}
+
 /// Map GitHub's list fields onto the host-neutral state structs.
 ///
 /// `mergeStateStatus == "BLOCKED"` means blocked by branch protection, NOT a
@@ -261,30 +462,41 @@ pub fn gh_state_from_fields(
     review_decision: Option<&str>,
     mergeable: Option<&str>,
     merge_state_status: Option<&str>,
-    latest_review_authors: Vec<String>,
+    reviews: &LatestReviews,
     current_user: Option<&str>,
-    approved_authors: &[String],
 ) -> (
     Option<crate::domain::mr_state::ApprovalState>,
     Option<crate::domain::mr_state::MergeabilityState>,
 ) {
     use crate::domain::mr_state::{ApprovalState, MergeabilityState};
 
-    let decision = review_decision.unwrap_or_default();
-    let approved = decision.eq_ignore_ascii_case("APPROVED");
+    // `reviewDecision` is null when the branch requires no reviews. The latest
+    // reviews then decide the way GitHub would: one reviewer requesting
+    // changes outweighs every approval.
+    let decision = review_decision.filter(|d| !d.is_empty());
+    let (approved, changes_requested) = match decision {
+        Some(d) => (
+            d.eq_ignore_ascii_case("APPROVED"),
+            d.eq_ignore_ascii_case("CHANGES_REQUESTED"),
+        ),
+        None => (
+            !reviews.approvers.is_empty() && !reviews.has_changes_requested,
+            reviews.has_changes_requested,
+        ),
+    };
 
     let you_reviewed = current_user
-        .map(|me| latest_review_authors.iter().any(|a| a == me))
+        .map(|me| reviews.authors.iter().any(|a| a == me))
         .unwrap_or(false);
 
-    // `approved_authors` (unlike `latest_review_authors`, which includes
+    // `reviews.approvers` (unlike `reviews.authors`, which includes
     // rejections and comments) is the approvals-only list, so this is the
     // one place the workflow cascade's `you_approved` input can be derived
     // correctly. Without it, this stayed hard-coded `false` and the cascade
     // could never reach `ApprovedByYou` on GitHub — see the regression this
     // guards in the tests below.
     let you_approved = current_user
-        .map(|me| approved_authors.iter().any(|a| a == me))
+        .map(|me| reviews.approvers.iter().any(|a| a == me))
         .unwrap_or(false);
 
     let approval = ApprovalState {
@@ -293,11 +505,11 @@ pub fn gh_state_from_fields(
         approvals_left: None,
         approvals_required: None,
         approved_by: if approved {
-            latest_review_authors
+            reviews.approvers.clone()
         } else {
             Vec::new()
         },
-        changes_requested: decision.eq_ignore_ascii_case("CHANGES_REQUESTED"),
+        changes_requested,
         you_approved,
         // Needs canApprove, which gh pr list does not provide.
         awaiting_you: false,
@@ -322,12 +534,10 @@ pub fn gh_state_from_fields(
 /// rebuilds the backend from scratch (`create_backend`, see
 /// `domain::client`'s `Clone` impl), and every refresh clones the client
 /// (`spawn_refresh_active_tab`), so a per-instance cell would start empty on
-/// every single refresh and never serve a hit. Matches the `ICONS`/`THEME`
-/// precedent of process-global state for values that do not change within a
-/// run. Holds `Option` rather than `String` so a *failed* lookup is cached
-/// too — `get_or_try_init` leaves the cell uninitialised on error and would
-/// retry on every refresh, which is the per-refresh request the design
-/// forbids.
+/// every single refresh and never serve a hit. Holds `Option` rather than
+/// `String` so a *failed* lookup is cached too — `get_or_try_init` leaves the
+/// cell uninitialised on error and would retry on every refresh, which is the
+/// per-refresh request the design forbids.
 static GH_CURRENT_USER: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
 
 pub struct GhBackend {
@@ -401,7 +611,77 @@ impl GhBackend {
             .as_deref()
     }
 
+    /// The REST deployment list, which carries no status.
+    async fn list_rest_deployments(
+        &self,
+        project: &str,
+        page_size: usize,
+        environment: Option<&str>,
+    ) -> Result<Vec<Deployment>> {
+        let mut endpoint = format!("/repos/{project}/deployments?per_page={page_size}");
+        if let Some(env) = environment {
+            endpoint.push_str(&format!("&environment={env}"));
+        }
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+            .await?;
+        #[derive(Deserialize)]
+        struct GhDeploy {
+            id: u64,
+            sha: String,
+            #[serde(rename = "ref")]
+            ref_name: String,
+            #[serde(default)]
+            description: Option<String>,
+            environment: Option<String>,
+            created_at: String,
+            updated_at: String,
+            #[serde(default)]
+            creator: Option<GhCreator>,
+        }
+        #[derive(Deserialize)]
+        struct GhCreator {
+            login: String,
+        }
+        let deploys: Vec<GhDeploy> = serde_json::from_str(&raw)?;
+        Ok(deploys
+            .into_iter()
+            .map(|d| Deployment {
+                id: d.id,
+                iid: d.id,
+                ref_name: d.ref_name,
+                tag: false,
+                sha: d.sha,
+                status: String::new(),
+                created_at: d.created_at,
+                updated_at: d.updated_at,
+                environment: d
+                    .environment
+                    .map(|e| crate::domain::deployments::EnvironmentInfo {
+                        name: e,
+                        external_url: None,
+                    }),
+                deployable: None,
+                description: d.description.unwrap_or_default(),
+                user: d
+                    .creator
+                    .map(|c| crate::domain::deployments::DeploymentUser { username: c.login }),
+            })
+            .collect())
+    }
+
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
+        let stdout = self.run_gh_bounded(args, desc, None).await?;
+        Ok(String::from_utf8(stdout.bytes)?)
+    }
+
+    /// `run_gh` keeping at most `max_stdout_bytes` of its output.
+    async fn run_gh_bounded(
+        &self,
+        args: &[&str],
+        desc: &str,
+        max_stdout_bytes: Option<usize>,
+    ) -> Result<CapturedStdout> {
         let tx = self.tx.clone();
         let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let desc = desc.to_string();
@@ -411,7 +691,7 @@ impl GhBackend {
             let desc = desc.clone();
             async move {
                 let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-                run_gh_command(tx, &args_refs, &desc).await
+                run_gh_command(tx, &args_refs, &desc, max_stdout_bytes).await
             }
         })
         .await
@@ -456,38 +736,30 @@ async fn run_gh_command(
     tx: Option<UnboundedSender<Event>>,
     args: &[&str],
     desc: &str,
-) -> Result<String> {
-    let cmd_str = format!("gh {}", args.join(" "));
+    max_stdout_bytes: Option<usize>,
+) -> Result<CapturedStdout> {
+    let logged = LoggedCommand::start(desc, Invocation::new(Program::Gh, args));
 
-    let output = Command::new("gh")
-        .args(args)
-        .output()
-        .await
-        .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
+    let output = match output_bounded(Command::new("gh").args(args), max_stdout_bytes).await {
+        Ok(output) => output,
+        Err(e) => {
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
+            return Err(e.into());
+        }
+    };
 
-    if output.status.success() {
-        let s = String::from_utf8(output.stdout)?;
-        log_terminal_command(tx.as_ref(), desc, &cmd_str, "Success".to_string());
-        Ok(s)
+    if output.succeeded() {
+        logged.finish(tx.as_ref(), "Success".to_string(), output.child_output());
+        Ok(output.stdout)
     } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {}", err_msg));
-        anyhow::bail!("gh command failed: {}", err_msg)
-    }
-}
-
-fn log_terminal_command(
-    tx: Option<&UnboundedSender<Event>>,
-    desc: &str,
-    cmd_str: &str,
-    status: String,
-) {
-    if let Some(tx) = tx {
-        let _ = tx.send(Event::TerminalCommandLogged {
-            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-            command: format!("{}: {}", desc.to_uppercase(), cmd_str),
-            status,
-        });
+        let child_output = output.child_output();
+        let reason = logged.failure_reason(&child_output);
+        logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+        anyhow::bail!("gh command failed: {reason}")
     }
 }
 
@@ -537,21 +809,24 @@ async fn run_git_command(
     checkout: &str,
     args: &[&str],
     desc: &str,
-) -> Result<String> {
-    let cmd_str = format!("git -C {checkout} {}", args.join(" "));
-    let output = git_in(checkout)
-        .args(args)
-        .output()
+    max_stdout_bytes: Option<usize>,
+) -> Result<CapturedStdout> {
+    let git_args: Vec<&str> = ["-C", checkout]
+        .into_iter()
+        .chain(args.iter().copied())
+        .collect();
+    let logged = LoggedCommand::start(desc, Invocation::new(Program::Git, &git_args));
+    let output = output_bounded(git_in(checkout).args(args), max_stdout_bytes)
         .await
-        .with_context(|| format!("Failed to execute: {cmd_str}"))?;
-    if output.status.success() {
-        log_terminal_command(tx, desc, &cmd_str, "Success".to_string());
-        // Local files can be in any encoding; the diff view only needs text.
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        .with_context(|| format!("Failed to execute: {}", logged.command_line()))?;
+    if output.succeeded() {
+        logged.finish(tx, "Success".to_string(), output.child_output());
+        Ok(output.stdout)
     } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log_terminal_command(tx, desc, &cmd_str, format!("Failed: {}", err_msg));
-        anyhow::bail!("git command failed: {}", err_msg)
+        let child_output = output.child_output();
+        let reason = logged.failure_reason(&child_output);
+        logged.finish(tx, format!("Failed: {reason}"), child_output);
+        anyhow::bail!("git command failed: {reason}")
     }
 }
 
@@ -577,13 +852,14 @@ async fn diff_pr_in_checkout(
             checkout,
             &["fetch", "--no-tags", "origin", &commits.base, &pr_head],
             "Fetching PR Commits",
+            None,
         )
         .await?;
     }
     // Pinned flags keep user diff config (colour, external drivers, textconv,
     // prefixes, octal-quoted paths) out of the text the diff view parses.
     let range = format!("{}...{}", commits.base, commits.head);
-    run_git_command(
+    let diff = run_git_command(
         tx,
         checkout,
         &[
@@ -598,8 +874,12 @@ async fn diff_pr_in_checkout(
             &range,
         ],
         "Diffing PR Locally",
+        Some(MR_DIFF_MAX_BYTES),
     )
-    .await
+    .await?;
+    ensure_complete_diff(diff.is_truncated, &format!("PR #{pr_number}"))?;
+    // Local files can be in any encoding; the diff view only needs text.
+    Ok(String::from_utf8_lossy(&diff.bytes).into_owned())
 }
 
 /// Build the GraphQL query that finds the PRs which close (or closed) an issue.
@@ -610,13 +890,9 @@ fn related_prs_graphql_query(owner: &str, repo: &str, issue_number: u64, first: 
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ issue(number:{n}) {{ \
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ issue(number:{issue_number}) {{ \
          closedByPullRequestsReferences(first:{first}) {{ \
          nodes {{ number title state }} }} }} }} }}",
-        owner = owner,
-        repo = repo,
-        n = issue_number,
-        first = first,
     )
 }
 
@@ -914,18 +1190,121 @@ fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
     }
 }
 
+/// How many of an environment's newest deployments a stop searches for the
+/// one GitHub still serves.
+const STOP_DEPLOYMENT_LOOKBACK: usize = 30;
+
+/// State of a deployment's newest status (GitHub lists them newest first),
+/// `None` while it has no status yet.
+fn parse_latest_deployment_state(raw: &str) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct GhDeploymentStatus {
+        state: String,
+    }
+    let statuses: Vec<GhDeploymentStatus> =
+        serde_json::from_str(raw).context("parsing GitHub deployment statuses")?;
+    Ok(statuses.into_iter().next().map(|status| status.state))
+}
+
+/// Most nodes a GraphQL connection returns per page.
+const GRAPHQL_MAX_PAGE: usize = 100;
+
+/// GraphQL query for the latest status of the newest deployments, which the
+/// REST deployment list does not carry. Ordered newest first like the REST
+/// list, so both cover the same deployments up to `GRAPHQL_MAX_PAGE`.
+fn deployment_states_graphql_query(
+    owner: &str,
+    repo: &str,
+    environment: Option<&str>,
+    first: usize,
+) -> String {
+    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let owner = escape(owner);
+    let repo = escape(repo);
+    let environments = environment
+        .map(|env| format!("environments:[\"{}\"],", escape(env)))
+        .unwrap_or_default();
+    let first = first.min(GRAPHQL_MAX_PAGE);
+    format!(
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
+         deployments({environments}first:{first},orderBy:{{field:CREATED_AT,direction:DESC}}) {{ \
+         nodes {{ databaseId latestStatus {{ state }} }} }} }} }}"
+    )
+}
+
+/// Latest status per deployment id (`databaseId`, the REST id) in
+/// glab-tui's status words. A deployment without a status is left out, and
+/// a reply that does not parse gives no statuses at all.
+fn parse_deployment_states(raw: &str) -> HashMap<u64, String> {
+    #[derive(Deserialize)]
+    struct Response {
+        data: Option<Data>,
+    }
+    #[derive(Deserialize)]
+    struct Data {
+        repository: Option<Repository>,
+    }
+    #[derive(Deserialize)]
+    struct Repository {
+        deployments: Connection,
+    }
+    #[derive(Deserialize)]
+    struct Connection {
+        nodes: Vec<Option<Node>>,
+    }
+    #[derive(Deserialize)]
+    struct Node {
+        #[serde(rename = "databaseId")]
+        database_id: Option<u64>,
+        #[serde(rename = "latestStatus")]
+        latest_status: Option<Status>,
+    }
+    #[derive(Deserialize)]
+    struct Status {
+        state: String,
+    }
+    let Ok(Response {
+        data: Some(Data {
+            repository: Some(repository),
+        }),
+    }) = serde_json::from_str::<Response>(raw)
+    else {
+        return HashMap::new();
+    };
+    repository
+        .deployments
+        .nodes
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            Some((
+                node.database_id?,
+                github_deployment_status(&node.latest_status?.state),
+            ))
+        })
+        .collect()
+}
+
+/// A GitHub `DeploymentStatusState` in the words GitLab's deployment statuses
+/// use where one means the same, as GitHub run statuses are mapped.
+fn github_deployment_status(state: &str) -> String {
+    match state.to_ascii_uppercase().as_str() {
+        "SUCCESS" => "success".to_string(),
+        "FAILURE" => "failed".to_string(),
+        "IN_PROGRESS" => "running".to_string(),
+        "QUEUED" | "PENDING" | "WAITING" => "pending".to_string(),
+        _ => state.to_ascii_lowercase(),
+    }
+}
+
 /// Build the GraphQL query that finds the issues which a PR closes.
 fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{n}) {{ \
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{pr_number}) {{ \
          closingIssuesReferences(first:{first}) {{ \
          nodes {{ number title state }} }} }} }} }}",
-        owner = owner,
-        repo = repo,
-        n = pr_number,
-        first = first,
     )
 }
 
@@ -965,40 +1344,250 @@ mod related_issues_types {
 
 /// The REST review-comments endpoint carries no resolution state; only the
 /// GraphQL `reviewThreads` connection exposes `isResolved`. A comment's REST
-/// `id` is its GraphQL `databaseId`.
+/// `id` is its GraphQL `databaseId`, and every REST reply names its thread's
+/// first comment in `in_reply_to_id`, so that first comment is enough to
+/// resolve the whole thread. `gh api graphql --paginate` feeds `$endCursor`
+/// back in until `pageInfo.hasNextPage` is false.
 fn review_thread_resolution_graphql_query(owner: &str, repo: &str, pr_number: u64) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{pr_number}) {{ \
-         reviewThreads(first:100) {{ nodes {{ isResolved \
-         comments(first:100) {{ nodes {{ databaseId }} }} }} }} }} }} }}"
+        "query($endCursor: String) {{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
+         pullRequest(number:{pr_number}) {{ reviewThreads(first:100, after:$endCursor) {{ \
+         pageInfo {{ hasNextPage endCursor }} \
+         nodes {{ isResolved comments(first:1) {{ nodes {{ databaseId }} }} }} }} }} }} }}"
     )
 }
 
-/// Maps every review comment id to the resolution state of its thread.
+/// Maps the first comment of every review thread to the thread's resolution
+/// state, across every page `gh api graphql --paginate` printed (one JSON
+/// object per page, back to back).
 fn parse_review_thread_resolution(raw: &str) -> Result<HashMap<u64, bool>> {
     use review_threads_types::*;
-    let resp: GhResponse = serde_json::from_str(raw)?;
-    if let Some(error) = resp.errors.first() {
-        anyhow::bail!("GraphQL error: {}", error.message);
+    let mut resolution = HashMap::new();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
+        let page = page.context("parsing review threads")?;
+        if let Some(error) = page.errors.first() {
+            anyhow::bail!("GraphQL error: {}", error.message);
+        }
+        let threads = page
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .map(|pr| pr.review_threads.nodes)
+            .unwrap_or_default();
+        resolution.extend(threads.into_iter().filter_map(|thread| {
+            let first = thread.comments.nodes.first()?;
+            Some((first.database_id, thread.is_resolved))
+        }));
     }
-    let threads = resp
-        .data
-        .and_then(|d| d.repository)
-        .and_then(|r| r.pull_request)
-        .map(|pr| pr.review_threads.nodes)
-        .unwrap_or_default();
-    Ok(threads
-        .into_iter()
-        .flat_map(|thread| {
-            thread
-                .comments
-                .nodes
-                .into_iter()
-                .map(move |c| (c.database_id, thread.is_resolved))
+    Ok(resolution)
+}
+
+#[derive(Deserialize)]
+struct GhReviewComment {
+    id: u64,
+    body: String,
+    user: Option<GhReviewCommentUser>,
+    created_at: String,
+    path: Option<String>,
+    line: Option<u64>,
+    #[serde(default = "default_review_comment_side")]
+    side: String,
+    start_line: Option<u64>,
+    in_reply_to_id: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct GhReviewCommentUser {
+    login: String,
+}
+
+fn default_review_comment_side() -> String {
+    "RIGHT".to_string()
+}
+
+/// Builds the notes of a PR from its REST review comments, reading every
+/// array `gh api --paginate` printed: it may print one array per page instead
+/// of a single merged one. A comment takes the resolution state of its
+/// thread, which `resolution` keys by the thread's first comment.
+fn parse_pr_review_comments(
+    raw: &str,
+    resolution: &HashMap<u64, bool>,
+) -> Result<Vec<DiscussionNote>> {
+    let mut notes = Vec::new();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<Vec<GhReviewComment>>() {
+        let page = page.context("parsing PR review comments")?;
+        notes.extend(
+            page.into_iter()
+                .map(|comment| review_comment_note(comment, resolution)),
+        );
+    }
+    Ok(notes)
+}
+
+fn review_comment_note(
+    comment: GhReviewComment,
+    resolution: &HashMap<u64, bool>,
+) -> DiscussionNote {
+    let position = comment.path.map(|path| {
+        let (new_line, old_line) = if comment.side == "LEFT" {
+            (None, comment.line)
+        } else {
+            (comment.line, None)
+        };
+        NotePosition {
+            new_path: Some(path.clone()),
+            old_path: Some(path),
+            new_line,
+            old_line,
+            start_line: comment.start_line,
+            line_range: None,
+        }
+    });
+    let thread_id = comment.in_reply_to_id.unwrap_or(comment.id);
+    let resolved = resolution.get(&thread_id).copied();
+    DiscussionNote {
+        id: Some(comment.id),
+        body: comment.body,
+        author: crate::domain::mr::Author {
+            username: comment.user.map(|u| u.login).unwrap_or_default(),
+        },
+        created_at: comment.created_at,
+        system: false,
+        position,
+        discussion_id: Some(thread_id.to_string()),
+        resolved,
+        // A comment GraphQL does not list under any thread has no known
+        // state; it is shown as a plain note rather than as open.
+        resolvable: Some(resolved.is_some()),
+        kind: NoteKind::Discussion,
+    }
+}
+
+/// `gh pr view --json comments,reviews`. Both lists carry GraphQL node ids.
+#[derive(Deserialize)]
+struct GhPrConversation {
+    #[serde(default)]
+    comments: Vec<GhConversationComment>,
+    #[serde(default)]
+    reviews: Vec<GhPrReview>,
+}
+
+#[derive(Deserialize)]
+struct GhConversationComment {
+    id: String,
+    author: Option<GhIssueLogin>,
+    body: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(default)]
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct GhPrReview {
+    id: String,
+    author: Option<GhIssueLogin>,
+    body: String,
+    #[serde(rename = "submittedAt")]
+    submitted_at: Option<String>,
+    state: GhReviewState,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GhReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+}
+
+impl GhReviewState {
+    /// `None` for a pending review: a draft only its author can see.
+    fn submitted(self) -> Option<ReviewState> {
+        match self {
+            Self::Approved => Some(ReviewState::Approved),
+            Self::ChangesRequested => Some(ReviewState::ChangesRequested),
+            Self::Commented => Some(ReviewState::Commented),
+            Self::Dismissed => Some(ReviewState::Dismissed),
+            Self::Pending => None,
+        }
+    }
+}
+
+/// The REST id of a conversation comment, which `gh pr view` only gives as
+/// the `#issuecomment-<id>` fragment of the comment's URL.
+fn issue_comment_id(url: &str) -> Option<u64> {
+    url.rsplit_once("#issuecomment-")?.1.parse().ok()
+}
+
+impl GhConversationComment {
+    fn into_note(self) -> DiscussionNote {
+        DiscussionNote {
+            id: issue_comment_id(&self.url),
+            body: self.body,
+            author: crate::domain::mr::Author {
+                username: self.author.map(|a| a.login).unwrap_or_default(),
+            },
+            created_at: self.created_at,
+            system: false,
+            position: None,
+            discussion_id: Some(self.id),
+            resolved: None,
+            resolvable: Some(false),
+            kind: NoteKind::Conversation,
+        }
+    }
+}
+
+impl GhPrReview {
+    /// `None` for a pending review and for a review submitted without a
+    /// body, which is only a verdict.
+    fn into_summary_note(self) -> Option<DiscussionNote> {
+        let state = self.state.submitted()?;
+        if self.body.trim().is_empty() {
+            return None;
+        }
+        Some(DiscussionNote {
+            id: None,
+            body: self.body,
+            author: crate::domain::mr::Author {
+                username: self.author.map(|a| a.login).unwrap_or_default(),
+            },
+            created_at: self.submitted_at?,
+            system: false,
+            position: None,
+            discussion_id: Some(self.id),
+            resolved: None,
+            resolvable: Some(false),
+            kind: NoteKind::ReviewSummary(state),
         })
-        .collect())
+    }
+}
+
+/// Builds a PR's conversation comments and review summaries as notes with no
+/// position, so they group as general threads keyed by their node id.
+fn parse_pr_conversation(raw: &str) -> Result<Vec<DiscussionNote>> {
+    let conversation: GhPrConversation =
+        serde_json::from_str(raw).context("parsing PR conversation")?;
+    let comments = conversation
+        .comments
+        .into_iter()
+        .map(GhConversationComment::into_note);
+    let summaries = conversation
+        .reviews
+        .into_iter()
+        .filter_map(GhPrReview::into_summary_note);
+    Ok(comments.chain(summaries).collect())
+}
+
+/// Review comment threads are keyed by the numeric id of their first comment,
+/// conversation comments and review summaries by a GraphQL node id.
+fn review_comment_thread_root(thread_id: &str) -> Option<u64> {
+    thread_id.parse().ok()
 }
 
 mod review_threads_types {
@@ -1228,6 +1817,16 @@ impl Backend for GhBackend {
         self.tx = Some(tx);
     }
 
+    /// `gh issue list` and `gh pr list` narrow a repository listing by state.
+    /// Organization listings go through the search API and keep listing every
+    /// state.
+    fn server_state_query(&self, scope: &Scope, filtered: StateQuery) -> StateQuery {
+        match scope {
+            Scope::Repository(_) => filtered,
+            Scope::Group(_) => StateQuery::All,
+        }
+    }
+
     // ── Issues ──
 
     /// `_per_request` is unused in the GitHub backend (as with all `Backend`
@@ -1236,13 +1835,13 @@ impl Backend for GhBackend {
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<Issue>> {
         match scope {
             Scope::Repository(project) => {
-                let state = if show_closed { "all" } else { "open" };
+                let state = gh_issue_state_flag(state);
                 let total = page_size * 10;
                 let raw = self
                     .run_gh(
@@ -1272,7 +1871,7 @@ impl Backend for GhBackend {
             }
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
-                let q = if show_closed {
+                let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:issue")
                 } else {
                     format!("owner:{org}+is:issue+state:open")
@@ -1438,7 +2037,7 @@ impl Backend for GhBackend {
         // the CLI surfaces the raw GraphQL nodes. Pull the same relationship
         // via a single GraphQL call so we get `title` and `state` in one round
         // trip, capped to the requested page size.
-        let first = page_size.min(100).max(1);
+        let first = page_size.clamp(1, 100);
         let query = related_prs_graphql_query(owner, repo, issue_iid, first);
         let raw = self
             .run_gh(
@@ -1465,17 +2064,16 @@ impl Backend for GhBackend {
             .collect())
     }
 
-    async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()> {
+    async fn create_issue(&self, project: &str, issue: &super::NewIssue<'_>) -> Result<()> {
+        let super::NewIssue {
+            title,
+            description,
+            labels,
+            assignees,
+            milestone,
+            due_date,
+            weight,
+        } = *issue;
         let mut args: Vec<String> = vec![
             "issue".into(),
             "create".into(),
@@ -1490,11 +2088,11 @@ impl Backend for GhBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1577,13 +2175,13 @@ impl Backend for GhBackend {
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
         match scope {
             Scope::Repository(project) => {
-                let state = if show_closed { "all" } else { "open" };
+                let state = gh_pr_state_flag(state);
                 let total = page_size * 10;
                 let raw = self
                     .run_gh(
@@ -1591,7 +2189,7 @@ impl Backend for GhBackend {
                             "pr",
                             "list",
                             "--json",
-                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests,url,closingIssuesReferences",
+                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,reviews,latestReviews,mergeable,mergeStateStatus,reviewRequests,url,closingIssuesReferences",
                             "-R",
                             project,
                             "--state",
@@ -1628,6 +2226,8 @@ impl Backend for GhBackend {
                     milestone: Option<GhMs>,
                     #[serde(rename = "reviewDecision", default)]
                     review_decision: Option<String>,
+                    #[serde(default)]
+                    reviews: Vec<serde_json::Value>,
                     #[serde(rename = "latestReviews", default)]
                     latest_reviews: Vec<serde_json::Value>,
                     #[serde(default)]
@@ -1682,20 +2282,19 @@ impl Backend for GhBackend {
                             .into_iter()
                             .map(|a| crate::domain::mr::Assignee { username: a.login })
                             .collect();
-                        let (latest_review_authors, approved_authors) =
-                            split_review_authors(&gp.latest_reviews);
+                        let raw_reviews = if !gp.reviews.is_empty() {
+                            &gp.reviews
+                        } else {
+                            &gp.latest_reviews
+                        };
+                        let reviews_summary = split_review_authors(raw_reviews);
                         let (approval, mergeability) = gh_state_from_fields(
                             gp.review_decision.as_deref(),
                             gp.mergeable.as_deref(),
                             gp.merge_state_status.as_deref(),
-                            latest_review_authors,
+                            &reviews_summary,
                             me,
-                            &approved_authors,
                         );
-                        let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
-                            approved_by: approved_authors,
-                            ..a
-                        });
                         let reviewers: Vec<crate::domain::mr::Reviewer> = gp
                             .review_requests
                             .iter()
@@ -1762,7 +2361,7 @@ impl Backend for GhBackend {
             }
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
-                let q = if show_closed {
+                let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:pr")
                 } else {
                     format!("owner:{org}+is:pr+state:open")
@@ -2084,14 +2683,19 @@ impl Backend for GhBackend {
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
         match self
-            .run_gh(
+            .run_gh_bounded(
                 &["pr", "diff", &iid.to_string(), "-R", project],
                 "Fetching PR Diff",
+                Some(MR_DIFF_MAX_BYTES),
             )
             .await
         {
             Err(err) if is_pr_diff_too_large(&err) => self.diff_pr_locally(project, iid).await,
-            result => result,
+            Err(err) => Err(err),
+            Ok(diff) => {
+                ensure_complete_diff(diff.is_truncated, &format!("PR #{iid}"))?;
+                Ok(String::from_utf8(diff.bytes)?)
+            }
         }
     }
 
@@ -2147,92 +2751,35 @@ impl Backend for GhBackend {
         check_graphql_errors(&raw)
     }
 
-    async fn list_mr_notes(
-        &self,
-        project: &str,
-        mr_iid: u64,
-        page_size: usize,
-    ) -> Result<Vec<DiscussionNote>> {
-        let endpoint = format!(
-            "/repos/{}/pulls/{}/comments?per_page={}",
-            project, mr_iid, page_size
-        );
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
+        let endpoint = format!("/repos/{project}/pulls/{mr_iid}/comments?per_page=100");
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
         let query_arg = format!(
             "query={}",
             review_thread_resolution_graphql_query(owner, repo, mr_iid)
         );
-        let graphql_args = ["api", "graphql", "-f", query_arg.as_str()];
-        let (raw, raw_threads) = tokio::try_join!(
-            self.raw_api(&endpoint, "GET", None, "Fetching MR Notes"),
+        let comments_args = ["api", "--paginate", endpoint.as_str()];
+        let graphql_args = ["api", "graphql", "--paginate", "-f", query_arg.as_str()];
+        let iid = mr_iid.to_string();
+        let conversation_args = [
+            "pr",
+            "view",
+            iid.as_str(),
+            "-R",
+            project,
+            "--json",
+            "comments,reviews",
+        ];
+        let (raw_comments, raw_threads, raw_conversation) = tokio::try_join!(
+            self.run_gh(&comments_args, "Fetching MR Notes"),
             self.run_gh(&graphql_args, "Fetching Review Threads"),
+            self.run_gh(&conversation_args, "Fetching PR Conversation"),
         )?;
         let resolution = parse_review_thread_resolution(&raw_threads)?;
-
-        #[derive(Deserialize)]
-        struct GhComment {
-            id: u64,
-            body: String,
-            user: Option<GhLogin>,
-            created_at: String,
-            path: Option<String>,
-            line: Option<u64>,
-            #[serde(default = "default_side")]
-            side: String,
-            start_line: Option<u64>,
-            in_reply_to_id: Option<u64>,
-        }
-        fn default_side() -> String {
-            "RIGHT".to_string()
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-
-        let gh_comments: Vec<GhComment> = serde_json::from_str(&raw)?;
-        Ok(gh_comments
-            .into_iter()
-            .map(|gc| {
-                let username = gc.user.map(|u| u.login).unwrap_or_default();
-                let position = if let Some(p) = gc.path {
-                    let (new_line, old_line) = if gc.side == "LEFT" {
-                        (None, gc.line)
-                    } else {
-                        (gc.line, None)
-                    };
-                    Some(NotePosition {
-                        new_path: Some(p.clone()),
-                        old_path: Some(p),
-                        new_line,
-                        old_line,
-                        start_line: gc.start_line,
-                        line_range: None,
-                    })
-                } else {
-                    None
-                };
-                let disc_id = gc
-                    .in_reply_to_id
-                    .map(|rid| rid.to_string())
-                    .unwrap_or_else(|| gc.id.to_string());
-                let resolved = resolution.get(&gc.id).copied();
-                DiscussionNote {
-                    id: gc.id,
-                    body: gc.body,
-                    author: crate::domain::mr::Author { username },
-                    created_at: gc.created_at,
-                    system: false,
-                    position,
-                    discussion_id: Some(disc_id),
-                    resolved,
-                    // Past the first 100 threads the state is unknown; such a
-                    // comment is shown as a plain note rather than as open.
-                    resolvable: Some(resolved.is_some()),
-                }
-            })
-            .collect())
+        let mut notes = parse_pr_review_comments(&raw_comments, &resolution)?;
+        notes.extend(parse_pr_conversation(&raw_conversation)?);
+        Ok(notes)
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -2281,7 +2828,7 @@ impl Backend for GhBackend {
     ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
-        let first = page_size.min(100).max(1);
+        let first = page_size.clamp(1, 100);
         let query = related_issues_graphql_query(owner, repo, mr_iid, first);
         let raw = self
             .run_gh(
@@ -2346,14 +2893,17 @@ impl Backend for GhBackend {
         &self,
         project: &str,
         iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
+        options: &super::MergeOptions<'_>,
+    ) -> Result<()> {
         // GitHub's `gh pr merge` has no `--sha` equivalent — the CLI works
         // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
-        _sha: Option<&str>,
-    ) -> Result<()> {
+        let super::MergeOptions {
+            squash,
+            delete_branch,
+            strategy,
+            auto_merge,
+            sha: _,
+        } = *options;
         let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "MERGING PR").await?;
@@ -2377,19 +2927,19 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()> {
+    async fn create_mr(&self, project: &str, mr: &super::NewMr<'_>) -> Result<()> {
+        let super::NewMr {
+            title,
+            description,
+            source_branch,
+            target_branch,
+            labels,
+            assignees,
+            reviewers,
+            milestone,
+            issue_iid,
+            source_on_forge,
+        } = *mr;
         let mut args: Vec<String> = vec![
             "pr".into(),
             "create".into(),
@@ -2399,10 +2949,14 @@ impl Backend for GhBackend {
             title.into(),
         ];
         if !source_branch.is_empty() {
-            let local_project =
-                crate::git_helpers::remote_project_path("origin").unwrap_or_default();
             args.push("--head".into());
-            args.push(qualify_head_ref(&local_project, project, source_branch));
+            if source_on_forge {
+                args.push(source_branch.into());
+            } else {
+                let local_project =
+                    crate::git_helpers::remote_project_path("origin").unwrap_or_default();
+                args.push(qualify_head_ref(&local_project, project, source_branch));
+            }
         }
         if !target_branch.is_empty() {
             args.push("--base".into());
@@ -2410,9 +2964,9 @@ impl Backend for GhBackend {
         }
         let body = if let Some(iid) = issue_iid {
             if description.is_empty() {
-                format!("Closes #{}", iid)
+                format!("Closes #{iid}")
             } else if !description.contains("Closes #") {
-                format!("{}\n\nCloses #{}", description, iid)
+                format!("{description}\n\nCloses #{iid}")
             } else {
                 description.to_string()
             }
@@ -2421,19 +2975,19 @@ impl Backend for GhBackend {
         };
         if !body.is_empty() {
             args.push("--body".into());
-            args.push(body.into());
+            args.push(body);
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !reviewers.is_empty() {
             args.push("--reviewer".into());
-            args.push(strip_ats(reviewers).into());
+            args.push(strip_ats(reviewers));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -2454,7 +3008,7 @@ impl Backend for GhBackend {
     ) -> Result<()> {
         let payload = github_review_payload(event, body, comments).to_string();
         self.raw_api(
-            &format!("/repos/{}/pulls/{}/reviews", project, iid),
+            &format!("/repos/{project}/pulls/{iid}/reviews"),
             "POST",
             Some(&payload),
             "SUBMITTING REVIEW",
@@ -2470,15 +3024,14 @@ impl Backend for GhBackend {
         thread_id: &str,
         body: &str,
     ) -> Result<()> {
-        let root_comment_id: u64 = thread_id.parse().with_context(|| {
-            format!(
-                "GitHub thread ids are the numeric id of the thread's first comment, got '{}'",
-                thread_id
-            )
-        })?;
+        let Some(root_comment_id) = review_comment_thread_root(thread_id) else {
+            anyhow::bail!(
+                "cannot reply to thread '{thread_id}': GitHub takes replies only in review comment threads, not to a conversation comment or a review summary"
+            );
+        };
         let payload = serde_json::json!({ "body": body, "in_reply_to": root_comment_id });
         self.raw_api(
-            &format!("/repos/{}/pulls/{}/comments", project, iid),
+            &format!("/repos/{project}/pulls/{iid}/comments"),
             "POST",
             Some(&payload.to_string()),
             "REPLYING TO THREAD",
@@ -2491,9 +3044,14 @@ impl Backend for GhBackend {
         &self,
         _project: &str,
         _iid: u64,
-        _thread_id: &str,
+        thread_id: &str,
         _resolved: bool,
     ) -> Result<()> {
+        if review_comment_thread_root(thread_id).is_none() {
+            anyhow::bail!(
+                "cannot resolve thread '{thread_id}': a conversation comment or review summary has no resolved state on GitHub"
+            );
+        }
         // Only the GraphQL `resolveReviewThread` mutation resolves a thread,
         // and it takes the thread's node id, which the REST comment listing
         // this backend reads does not carry.
@@ -2650,6 +3208,36 @@ impl Backend for GhBackend {
         }
     }
 
+    /// `gh run list` lists newest first. Pull-request runs carry the head
+    /// branch too, so one query covers them.
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>> {
+        #[derive(Deserialize)]
+        struct ListedRun {
+            #[serde(rename = "databaseId")]
+            id: u64,
+        }
+        let raw = self
+            .run_gh(
+                &[
+                    "run",
+                    "list",
+                    "-R",
+                    project,
+                    "--branch",
+                    branch,
+                    "--limit",
+                    "1",
+                    "--json",
+                    "databaseId",
+                ],
+                "Finding Branch Run",
+            )
+            .await?;
+        let runs: Vec<ListedRun> =
+            serde_json::from_str(raw.trim()).context("parsing `gh run list` output")?;
+        Ok(runs.first().map(|run| run.id))
+    }
+
     async fn list_pipeline_jobs(
         &self,
         project: &str,
@@ -2688,6 +3276,16 @@ impl Backend for GhBackend {
             completed_at: Option<String>,
             #[serde(default, deserialize_with = "deserialize_needs")]
             needs: Vec<String>,
+            #[serde(default)]
+            steps: Vec<GhStep>,
+            #[serde(default)]
+            url: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct GhStep {
+            name: String,
+            conclusion: Option<String>,
         }
 
         let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
@@ -2712,6 +3310,16 @@ impl Backend for GhBackend {
                     (Some(start), Some(end)) => chrono_duration(start, end),
                     _ => None,
                 };
+                let failure_reason = (status == "failed")
+                    .then(|| {
+                        github_job_failure_reason(
+                            j.conclusion.as_deref(),
+                            j.steps
+                                .iter()
+                                .map(|step| (step.name.as_str(), step.conclusion.as_deref())),
+                        )
+                    })
+                    .flatten();
                 Job {
                     id: j.id,
                     status,
@@ -2720,36 +3328,72 @@ impl Backend for GhBackend {
                     // cannot imply semantics that do not exist.
                     stage: String::new(),
                     name: j.name,
+                    api_name: String::new(),
                     matrix: None,
                     duration_seconds: duration,
                     runner: j.runner_name,
                     needs: j.needs,
+                    web_url: j.url,
+                    queued_seconds: None,
+                    failure_reason,
+                    artifact_file_types: Vec::new(),
+                    commit: None,
                 }
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
     }
 
-    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
-        self.run_gh(
-            &[
-                "run",
-                "view",
-                "--job",
-                &job_id.to_string(),
-                "--log",
-                "-R",
-                project,
-            ],
-            "Fetching Job Log",
-        )
-        .await
+    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<JobTrace> {
+        let log = self
+            .run_gh_bounded(
+                &[
+                    "run",
+                    "view",
+                    "--job",
+                    &job_id.to_string(),
+                    "--log",
+                    "-R",
+                    project,
+                ],
+                "Fetching Job Log",
+                Some(JOB_TRACE_MAX_BYTES),
+            )
+            .await?;
+        Ok(JobTrace::from_read(&log.bytes, log.is_truncated))
+    }
+
+    /// `gh run view --log` only serves the log of a completed job, and a
+    /// re-run gets a new job id, so a log read once never gains anything.
+    async fn get_job_trace_since(
+        &self,
+        _project: &str,
+        _job_id: u64,
+        cursor: &TraceCursor,
+    ) -> Result<TraceUpdate> {
+        Ok(cursor.append_update(Vec::new(), false))
     }
 
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         self.run_gh(
             &["run", "rerun", &pipeline_id.to_string(), "-R", project],
             "Retrying Action",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn retry_failed_jobs(&self, project: &str, pipeline_id: u64) -> Result<()> {
+        self.run_gh(
+            &[
+                "run",
+                "rerun",
+                &pipeline_id.to_string(),
+                "--failed",
+                "-R",
+                project,
+            ],
+            "Retrying Failed Jobs",
         )
         .await?;
         Ok(())
@@ -2775,7 +3419,7 @@ impl Backend for GhBackend {
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
         // GitHub cancels at the run level, but for individual jobs we use raw API
-        let endpoint = format!("/repos/{}/actions/jobs/{}/cancel", project, job_id);
+        let endpoint = format!("/repos/{project}/actions/jobs/{job_id}/cancel");
         self.raw_api(&endpoint, "POST", Some(""), "Cancelling Job")
             .await?;
         Ok(())
@@ -2808,11 +3452,11 @@ impl Backend for GhBackend {
         }
         for (k, v) in variables {
             args.push("-f".into());
-            args.push(format!("{}={}", k, v));
+            args.push(format!("{k}={v}"));
         }
         for (k, v) in inputs {
             args.push("-f".into());
-            args.push(format!("{}={}", k, v));
+            args.push(format!("{k}={v}"));
         }
         let mut cmd: Vec<String> = vec!["workflow".into(), "run".into()];
         cmd.extend(args);
@@ -2844,7 +3488,7 @@ impl Backend for GhBackend {
                 return Err(anyhow::anyhow!("Org-level runners not supported on GitHub"));
             }
         };
-        let endpoint = format!("/repos/{}/actions/runners?per_page={}", project, page_size);
+        let endpoint = format!("/repos/{project}/actions/runners?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Runners")
             .await?;
@@ -2857,6 +3501,12 @@ impl Backend for GhBackend {
             id: u64,
             name: String,
             status: String,
+            #[serde(default)]
+            labels: Vec<GhRunnerLabel>,
+        }
+        #[derive(Deserialize)]
+        struct GhRunnerLabel {
+            name: String,
         }
         let res: GhRunners = serde_json::from_str(&raw)?;
         Ok(res
@@ -2867,6 +3517,9 @@ impl Backend for GhBackend {
                 description: Some(r.name),
                 status: r.status,
                 active: true,
+                tags: r.labels.into_iter().map(|label| label.name).collect(),
+                web_url: Some(github_runner_url(project, r.id)),
+                ..Runner::default()
             })
             .collect())
     }
@@ -2903,7 +3556,7 @@ impl Backend for GhBackend {
             .run_gh(
                 &[
                     "api",
-                    &format!("repos/{}/releases?per_page={}", project, page_size),
+                    &format!("repos/{project}/releases?per_page={page_size}"),
                 ],
                 "Fetching Releases",
             )
@@ -2944,6 +3597,7 @@ impl Backend for GhBackend {
                 commit_id: None,
                 commit_title: None,
                 assets_link: None,
+                project_path: project.clone(),
             })
             .collect())
     }
@@ -3018,10 +3672,7 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let endpoint = format!(
-            "/repos/{}/milestones?state=all&per_page={}",
-            project, page_size
-        );
+        let endpoint = format!("/repos/{project}/milestones?state=all&per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Milestones")
             .await?;
@@ -3064,6 +3715,7 @@ impl Backend for GhBackend {
                     due_date,
                     created_at: m.created_at,
                     project_path: project.to_string(),
+                    web_url: None,
                 }
             })
             .collect())
@@ -3115,17 +3767,17 @@ impl Backend for GhBackend {
         ];
         if !description.is_empty() {
             args.push("-f".into());
-            args.push(format!("description={}", description));
+            args.push(format!("description={description}"));
         }
         if let Some(due) = due_date {
             if !due.is_empty() {
                 let iso_due = if due.contains('T') {
                     due.to_string()
                 } else {
-                    format!("{}T00:00:00Z", due)
+                    format!("{due}T00:00:00Z")
                 };
                 args.push("-f".into());
-                args.push(format!("due_on={}", iso_due));
+                args.push(format!("due_on={iso_due}"));
             }
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -3136,7 +3788,7 @@ impl Backend for GhBackend {
     async fn update_milestone_state(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         close: bool,
     ) -> Result<()> {
         let state = if close { "closed" } else { "open" };
@@ -3150,9 +3802,9 @@ impl Backend for GhBackend {
                 "api",
                 "-X",
                 "PATCH",
-                &format!("repos/{}/milestones/{}", project, milestone_iid),
+                &format!("repos/{project}/milestones/{}", milestone.iid),
                 "-f",
-                &format!("state={}", state),
+                &format!("state={state}"),
             ],
             desc,
         )
@@ -3163,7 +3815,7 @@ impl Backend for GhBackend {
     async fn update_milestone(
         &self,
         project: &str,
-        milestone_iid: u64,
+        milestone: &Milestone,
         title: &str,
         description: &str,
         _start_date: Option<&str>,
@@ -3173,23 +3825,23 @@ impl Backend for GhBackend {
             "api".into(),
             "-X".into(),
             "PATCH".into(),
-            format!("repos/{}/milestones/{}", project, milestone_iid),
+            format!("repos/{}/milestones/{}", project, milestone.iid),
             "-f".into(),
             format!("title={}", title),
         ];
         if !description.is_empty() {
             args.push("-f".into());
-            args.push(format!("description={}", description));
+            args.push(format!("description={description}"));
         }
         if let Some(due) = due_date {
             if !due.is_empty() {
                 let iso_due = if due.contains('T') {
                     due.to_string()
                 } else {
-                    format!("{}T00:00:00Z", due)
+                    format!("{due}T00:00:00Z")
                 };
                 args.push("-f".into());
-                args.push(format!("due_on={}", iso_due));
+                args.push(format!("due_on={iso_due}"));
             }
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -3197,13 +3849,13 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()> {
+    async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()> {
         self.run_gh(
             &[
                 "api",
                 "-X",
                 "DELETE",
-                &format!("repos/{}/milestones/{}", project, milestone_iid),
+                &format!("repos/{project}/milestones/{}", milestone.iid),
             ],
             "Deleting Milestone",
         )
@@ -3222,61 +3874,48 @@ impl Backend for GhBackend {
         let raw = self
             .raw_api(endpoint, "GET", None, "Fetching Todos")
             .await?;
-        #[derive(Deserialize)]
-        struct GhNotif {
-            id: String,
-            repository: GhNotifRepo,
-            subject: GhNotifSubject,
-            unread: bool,
-            updated_at: String,
-        }
-        #[derive(Deserialize)]
-        struct GhNotifRepo {
-            full_name: String,
-        }
-        #[derive(Deserialize)]
-        struct GhNotifSubject {
-            title: String,
-            r#type: String,
-            url: String,
-        }
-        let gh_notifs: Vec<GhNotif> = serde_json::from_str(&raw)?;
-        Ok(gh_notifs
-            .into_iter()
-            .map(|item| {
-                let target_type = if item.subject.r#type == "PullRequest" {
-                    "MergeRequest".to_string()
-                } else {
-                    item.subject.r#type
-                };
-                let target_iid = item
-                    .subject
-                    .url
-                    .split('/')
-                    .last()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(0);
-                let state = if item.unread {
-                    "unread".to_string()
-                } else {
-                    "read".to_string()
-                };
-                Notification {
-                    id: item.id,
-                    project_path: item.repository.full_name,
-                    title: item.subject.title,
-                    target_type,
-                    target_iid,
-                    state,
-                    updated_at: item.updated_at,
-                }
-            })
-            .collect())
+        parse_github_notifications(&raw)
+    }
+
+    async fn get_notification_detail(&self, detail_api_path: &str) -> Result<NotificationDetail> {
+        let raw = match native_detail_args(detail_api_path) {
+            Some(args) => self.run_gh(&args, "Fetching Notification").await?,
+            None => {
+                self.raw_api(detail_api_path, "GET", None, "Fetching Notification")
+                    .await?
+            }
+        };
+        parse_github_notification_detail(&raw)
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
-        let endpoint = format!("notifications/threads/{}", id);
-        self.raw_api(&endpoint, "PATCH", None, "Marking Todo Done")
+        let endpoint = format!("notifications/threads/{id}");
+        self.raw_api(&endpoint, "PATCH", None, "Marking Notification Read")
+            .await?;
+        Ok(())
+    }
+
+    async fn mark_notification_as_done(&self, id: &str) -> Result<()> {
+        let endpoint = format!("notifications/threads/{id}");
+        self.raw_api(&endpoint, "DELETE", None, "Marking Notification Done")
+            .await?;
+        Ok(())
+    }
+
+    async fn mark_all_notifications_as_read(&self) -> Result<()> {
+        self.raw_api(
+            "notifications",
+            "PUT",
+            None,
+            "Marking All Notifications Read",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn unsubscribe_from_notification(&self, notification: &Notification) -> Result<()> {
+        let endpoint = format!("notifications/threads/{}/subscription", notification.id);
+        self.raw_api(&endpoint, "DELETE", None, "Unsubscribing")
             .await?;
         Ok(())
     }
@@ -3292,7 +3931,7 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let endpoint = format!("/repos/{}/branches?per_page={}", project, page_size);
+        let endpoint = format!("/repos/{project}/branches?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
             .await?;
@@ -3313,7 +3952,7 @@ impl Backend for GhBackend {
         }
         let repo_raw = self
             .raw_api(
-                &format!("/repos/{}", project),
+                &format!("/repos/{project}"),
                 "GET",
                 None,
                 "Fetching Repo Info",
@@ -3322,7 +3961,7 @@ impl Backend for GhBackend {
         let repo: GhRepo = serde_json::from_str(&repo_raw)?;
         let default_branch = repo.default_branch;
 
-        let branches: Vec<Branch> = serde_json::from_str::<Vec<GhBr>>(&raw)?
+        let mut branches: Vec<Branch> = serde_json::from_str::<Vec<GhBr>>(&raw)?
             .into_iter()
             .map(|b| Branch {
                 default: b.name == default_branch,
@@ -3331,8 +3970,47 @@ impl Backend for GhBackend {
                 name: b.name,
                 can_push: false,
                 commit_sha: b.commit.as_ref().map(|c| c.sha.clone()).unwrap_or_default(),
+                commit_message: None,
+                author_name: None,
+                author_email: None,
+                commit_date: None,
+                ahead_behind: None,
             })
             .collect();
+
+        // Ensure the default branch is included so ahead/behind calculation has a base SHA.
+        if !branches.iter().any(|b| b.default) {
+            let encoded = Self::encode_branch(&default_branch);
+            if let Ok(br_raw) = self
+                .raw_api(
+                    &format!("/repos/{project}/branches/{encoded}"),
+                    "GET",
+                    None,
+                    "Fetching Default Branch",
+                )
+                .await
+            {
+                if let Ok(br) = serde_json::from_str::<GhBr>(&br_raw) {
+                    branches.push(Branch {
+                        default: true,
+                        protected: br.protected,
+                        web_url: format!("https://github.com/{project}/tree/{}", br.name),
+                        name: br.name,
+                        can_push: false,
+                        commit_sha: br
+                            .commit
+                            .as_ref()
+                            .map(|c| c.sha.clone())
+                            .unwrap_or_default(),
+                        commit_message: None,
+                        author_name: None,
+                        author_email: None,
+                        commit_date: None,
+                        ahead_behind: None,
+                    });
+                }
+            }
+        }
         Ok(branches)
     }
 
@@ -3349,7 +4027,7 @@ impl Backend for GhBackend {
         } else {
             // Try to resolve branch name to SHA via GitHub API
             let encoded = Self::encode_branch(ref_branch);
-            let endpoint = format!("/repos/{}/git/refs/heads/{}", project, encoded);
+            let endpoint = format!("/repos/{project}/git/refs/heads/{encoded}");
             let resp = self
                 .raw_api(&endpoint, "GET", None, "Resolving Branch SHA")
                 .await?;
@@ -3362,12 +4040,10 @@ impl Backend for GhBackend {
                 .and_then(|s| s.as_str())
                 .or_else(|| parsed.get("sha").and_then(|s| s.as_str()))
                 .map(|s| s.to_string())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Could not resolve branch '{}' to SHA", ref_branch)
-                })?
+                .ok_or_else(|| anyhow::anyhow!("Could not resolve branch '{ref_branch}' to SHA"))?
         };
 
-        let endpoint = format!("/repos/{}/git/refs", project);
+        let endpoint = format!("/repos/{project}/git/refs");
         let payload = serde_json::json!({
             "ref": format!("refs/heads/{}", branch_name),
             "sha": sha,
@@ -3380,7 +4056,7 @@ impl Backend for GhBackend {
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_branch(branch_name);
-        let endpoint = format!("/repos/{}/git/refs/heads/{}", project, encoded);
+        let endpoint = format!("/repos/{project}/git/refs/heads/{encoded}");
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
@@ -3397,7 +4073,7 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let endpoint = format!("/repos/{}/environments?per_page={}", project, page_size);
+        let endpoint = format!("/repos/{project}/environments?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Environments")
             .await?;
@@ -3440,50 +4116,89 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let mut endpoint = format!("/repos/{}/deployments?per_page={}", project, page_size);
-        if let Some(env) = environment {
-            endpoint.push_str(&format!("&environment={}", env));
-        }
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+        let mut deployments = self
+            .list_rest_deployments(project, page_size, environment)
             .await?;
-        #[derive(Deserialize)]
-        struct GhDeploy {
-            id: u64,
-            sha: String,
-            #[serde(rename = "ref")]
-            ref_name: String,
-            #[serde(default)]
-            description: String,
-            environment: Option<String>,
-            created_at: String,
-            updated_at: String,
-            #[serde(default)]
-            status: Option<String>,
+        let (owner, repo) = project.split_once('/').unwrap_or((project, project));
+        let query = deployment_states_graphql_query(owner, repo, environment, page_size);
+        // Without the statuses the deployments still list, with an empty status.
+        if let Ok(raw) = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching Deployment Statuses",
+            )
+            .await
+        {
+            let mut states = parse_deployment_states(&raw);
+            for deployment in &mut deployments {
+                if let Some(state) = states.remove(&deployment.id) {
+                    deployment.status = state;
+                }
+            }
         }
-        let deploys: Vec<GhDeploy> = serde_json::from_str(&raw)?;
-        Ok(deploys
-            .into_iter()
-            .map(|d| Deployment {
-                id: d.id,
-                iid: d.id,
-                ref_name: d.ref_name,
-                tag: false,
-                sha: d.sha,
-                status: d.status.unwrap_or_default(),
-                created_at: d.created_at,
-                updated_at: d.updated_at,
-                environment: d
-                    .environment
-                    .map(|e| crate::domain::deployments::EnvironmentInfo {
-                        name: e,
-                        external_url: None,
-                    }),
-                deployable: None,
-                description: d.description,
-                user: None,
-            })
-            .collect())
+        Ok(deployments)
+    }
+
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
+        let name = &environment.name;
+        let deployments = self
+            .list_rest_deployments(project, STOP_DEPLOYMENT_LOOKBACK, Some(name))
+            .await?;
+        // GitHub serves an environment from its newest deployment whose
+        // latest status is `success`: a newer failed, pending or status-less
+        // one (such as a rollback no workflow picked up) is not live.
+        for deployment in &deployments {
+            let statuses = self
+                .raw_api(
+                    &format!(
+                        "/repos/{project}/deployments/{}/statuses?per_page=1",
+                        deployment.id
+                    ),
+                    "GET",
+                    None,
+                    "Fetching Deployment Status",
+                )
+                .await?;
+            if parse_latest_deployment_state(&statuses)?.as_deref() != Some("success") {
+                continue;
+            }
+            let endpoint = format!("/repos/{project}/deployments/{}/statuses", deployment.id);
+            let body = serde_json::json!({ "state": "inactive" }).to_string();
+            return self
+                .raw_api(&endpoint, "POST", Some(&body), "Stopping Environment")
+                .await
+                .map(|_| ());
+        }
+        Err(anyhow::anyhow!(
+            "environment {name} has no active deployment to mark inactive"
+        ))
+    }
+
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()> {
+        // By default GitHub verifies every status context on the commit and
+        // refuses the deployment when one is not green. This SHA was already
+        // deployed once, so the check is skipped.
+        let body = serde_json::json!({
+            "ref": deployment.sha,
+            "environment": environment,
+            "auto_merge": false,
+            "required_contexts": [],
+            "description": format!("Rollback to deployment #{}", deployment.id),
+        })
+        .to_string();
+        self.raw_api(
+            &format!("/repos/{project}/deployments"),
+            "POST",
+            Some(&body),
+            "Rolling Back Deployment",
+        )
+        .await
+        .map(|_| ())
     }
 
     // ── Labels / Members / Misc ──
@@ -3530,8 +4245,8 @@ impl Backend for GhBackend {
 
     async fn fetch_members(&self, scope: &Scope) -> Result<Vec<String>> {
         let endpoint = match scope {
-            Scope::Repository(project) => format!("/repos/{}/assignees?per_page=100", project),
-            Scope::Group(org) => format!("/orgs/{}/members?per_page=100", org),
+            Scope::Repository(project) => format!("/repos/{project}/assignees?per_page=100"),
+            Scope::Group(org) => format!("/orgs/{org}/members?per_page=100"),
         };
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Members")
@@ -3633,32 +4348,14 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_gh(
-                &["run", "view", id, "-R", project, "--web"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        let url = format!("https://github.com/{}/milestone/{}", project, id);
-        open_github_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
+    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()> {
+        let url = format!("https://github.com/{project}/milestone/{}", milestone.iid);
+        open_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
     }
 
     async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let path = scope.as_str().replace('/', "%2F");
-        let url = format!(
-            "https://github.com/{}/settings/actions/runners/{}",
-            path, runner_id
-        );
-        open_github_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
+        let url = github_runner_url(scope.as_str(), runner_id);
+        open_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
     async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
@@ -3670,15 +4367,15 @@ impl Backend for GhBackend {
             project,
             branch.replace('/', "%2F"),
         );
-        open_github_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
+        open_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
     }
 
     async fn open_environment_in_browser(&self, project: &str, _name: &str) -> Result<()> {
         if project.is_empty() {
             anyhow::bail!("project path required to open environment in browser");
         }
-        let url = format!("https://github.com/{}/settings/environments", project,);
-        open_github_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
+        let url = format!("https://github.com/{project}/settings/environments");
+        open_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
     }
     // ── Raw API ──
 
@@ -3713,115 +4410,41 @@ async fn run_gh_raw_api(
     body: Option<&str>,
     desc: &str,
 ) -> Result<String> {
-    let mut cmd_args: Vec<String> = vec!["api".into()];
+    let input = body.filter(|b| !b.is_empty());
+    let mut args = vec!["api"];
     if method != "GET" {
-        cmd_args.push("-X".into());
-        cmd_args.push(method.into());
+        args.extend(["-X", method]);
     }
-    cmd_args.push(endpoint.into());
-    let cmd_str = format!("gh {}", cmd_args.join(" "));
-    let label = desc.to_uppercase();
-
-    let mut cmd = Command::new("gh");
-    cmd.arg("api");
-    if method != "GET" {
-        cmd.arg("-X");
-        cmd.arg(method);
+    if input.is_some() {
+        args.extend(["--input", "-"]);
     }
-    if let Some(b) = body {
-        if !b.is_empty() {
-            cmd.arg("--input");
-            cmd.arg("-");
-            // Pipe all three streams: inherited stdout/stderr is a TTY under the
-            // ratatui alternate screen, which lets `gh` page JSON through $PAGER
-            // (e.g. less) and corrupt the TUI after POSTs like create_branch.
-            cmd.stdin(std::process::Stdio::piped());
-            cmd.stdout(std::process::Stdio::piped());
-            cmd.stderr(std::process::Stdio::piped());
-        }
-    }
-    cmd.arg(endpoint);
+    args.push(endpoint);
+    let logged = LoggedCommand::start(desc, Invocation::new(Program::Gh, &args).with_stdin(input));
 
-    let output = if let Some(b) = body {
-        if !b.is_empty() {
-            let mut child = cmd.spawn().context("Failed to spawn gh api command")?;
-            use tokio::io::AsyncWriteExt;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(b.as_bytes()).await?;
-                stdin.flush().await?;
-            }
-            child.wait_with_output().await
-        } else {
-            cmd.output().await
-        }
-    } else {
-        cmd.output().await
-    };
+    let output =
+        super::subprocess::output(Command::new("gh").args(&args), input.map(str::as_bytes)).await;
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     match output {
         Ok(out) => {
             if out.status.success() {
-                let s = String::from_utf8(out.stdout)?;
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: "Success".to_string(),
-                    });
-                }
-                Ok(s)
+                logged.finish(tx.as_ref(), "Success".to_string(), (&out).into());
+                Ok(String::from_utf8(out.stdout)?)
             } else {
-                let mut err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                // `gh api` prints only the HTTP status on stderr; GitHub's reason
-                // (e.g. "Can not approve your own pull request") is in the body on stdout.
-                if let Some(details) = github_error_details(&out.stdout) {
-                    err_msg = format!("{err_msg}: {details}");
-                }
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: format!("Failed: {}", err_msg),
-                    });
-                }
-                anyhow::bail!("gh api failed: {}", err_msg)
+                let child_output = ChildOutput::from(&out);
+                let reason = logged.failure_reason(&child_output);
+                logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+                anyhow::bail!("gh api failed: {reason}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{}", e);
-            if let Some(ref tx) = tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
-                });
-            }
-            Err(e.into())
+            logged.finish(
+                tx.as_ref(),
+                format!("Failed: {e}"),
+                ChildOutput::NOT_STARTED,
+            );
+            Err(e)
         }
     }
-}
-
-fn github_error_details(body: &[u8]) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let details: Vec<String> = value
-        .get("errors")?
-        .as_array()?
-        .iter()
-        .filter_map(|e| {
-            let text = |key| e.get(key).and_then(serde_json::Value::as_str);
-            match (
-                e.as_str().or_else(|| text("message")),
-                text("field"),
-                text("code"),
-            ) {
-                (Some(message), _, _) => Some(message.to_string()),
-                (None, Some(field), Some(code)) => Some(format!("{field} {code}")),
-                _ => None,
-            }
-        })
-        .collect();
-    (!details.is_empty()).then(|| details.join("; "))
 }
 
 /// Compute duration in seconds between two ISO 8601 timestamps.
@@ -3835,33 +4458,23 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
     Some(diff.num_seconds() as u64)
 }
 
-/// Open `url` in the user's default browser via `git web--browse`. Logs the
-/// command to the Terminal tab so it shows up next to the `gh` commands.
-/// Always returns Ok so a failed browser launch does not break the UI flow;
-/// the underlying `git web--browse` exit code is captured into the terminal
-/// log instead.
-async fn open_github_url(
-    url: &str,
-    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
-    label: &str,
-) -> anyhow::Result<()> {
-    let output = tokio::process::Command::new("git")
-        .args(["web--browse", url])
-        .output()
-        .await;
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    let status = match &output {
-        Ok(out) if out.status.success() => "Success".to_string(),
-        _ => "Success".to_string(),
-    };
-    if let Some(ref tx) = tx {
-        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-            timestamp,
-            command: format!("{}: git web--browse {}", label, url),
-            status,
-        });
+/// The self-hosted runner's settings page in `repository` (`owner/repo`).
+fn github_runner_url(repository: &str, runner_id: u64) -> String {
+    format!("https://github.com/{repository}/settings/actions/runners/{runner_id}")
+}
+
+/// Why a failed GitHub job failed: its timeout, else the first failed step.
+/// A job that fails before any step runs (a bad runner label) has neither.
+fn github_job_failure_reason<'a>(
+    conclusion: Option<&str>,
+    mut steps: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Option<String> {
+    if conclusion.is_some_and(|c| c.eq_ignore_ascii_case("timed_out")) {
+        return Some("timed out".to_string());
     }
-    Ok(())
+    steps
+        .find(|(_, conclusion)| conclusion.is_some_and(|c| c.eq_ignore_ascii_case("failure")))
+        .map(|(name, _)| format!("step \"{name}\" failed"))
 }
 
 /// Parse the JSON response from `gh api repos/{owner}/{repo}/actions/runs`.
@@ -3901,6 +4514,22 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
         html_url: Option<String>,
         #[serde(default)]
         repository: Option<GhRepo>,
+        #[serde(default)]
+        head_commit: Option<GhHeadCommit>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhHeadCommit {
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        author: Option<GhCommitAuthor>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhCommitAuthor {
+        #[serde(default)]
+        name: String,
     }
 
     #[derive(Deserialize)]
@@ -3946,6 +4575,15 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     .or_else(|| r.actor.and_then(|a| a.login))
                     .unwrap_or_default();
                 let project_path = r.repository.map(|repo| repo.full_name).unwrap_or_default();
+                let commit = r.head_commit.map(|commit| CommitSummary {
+                    title: commit
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_name: commit.author.map(|author| author.name).unwrap_or_default(),
+                });
                 Pipeline {
                     id: r.id,
                     status,
@@ -3961,6 +4599,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     source: r.event,
                     project_path,
                     web_url: r.html_url,
+                    commit,
                 }
             })
             .collect();
@@ -4016,16 +4655,117 @@ mod tests {
     }
 
     #[test]
-    fn github_error_details_reads_string_and_object_errors() {
-        let body = br#"{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request",{"resource":"PullRequestReviewComment","code":"custom","message":"line must be part of the diff"},{"resource":"PullRequestReviewComment","field":"in_reply_to","code":"invalid"}],"status":"422"}"#;
+    fn a_github_notification_links_its_page_and_its_latest_comment() {
+        let raw = r#"[
+            {"id": "1", "unread": true, "reason": "mention", "updated_at": "2026-07-06T12:00:00Z",
+             "repository": {"full_name": "acme/api", "html_url": "https://ghe.example/acme/api"},
+             "subject": {"title": "Add retries", "type": "PullRequest",
+                         "url": "https://ghe.example/api/v3/repos/acme/api/pulls/4",
+                         "latest_comment_url": "https://ghe.example/api/v3/repos/acme/api/issues/comments/99"}},
+            {"id": "2", "unread": false, "updated_at": "2026-07-05T12:00:00Z",
+             "repository": {"full_name": "acme/api"},
+             "subject": {"title": "Crash", "type": "Issue",
+                         "url": "https://api.github.com/repos/acme/api/issues/9",
+                         "latest_comment_url": null}},
+            {"id": "3", "unread": true, "updated_at": "2026-07-04T12:00:00Z",
+             "repository": {"full_name": "acme/api"},
+             "subject": {"title": "CI", "type": "CheckSuite", "url": null, "latest_comment_url": null}}
+        ]"#;
+
+        let notifications = parse_github_notifications(raw).unwrap();
+
+        let summary: Vec<_> = notifications
+            .iter()
+            .map(|n| {
+                (
+                    n.target_type.as_str(),
+                    n.state.as_str(),
+                    n.target_iid,
+                    n.web_url.as_str(),
+                    n.detail_api_path.as_deref(),
+                    n.body.as_deref(),
+                )
+            })
+            .collect();
         assert_eq!(
-            github_error_details(body).as_deref(),
-            Some(
-                "Review Can not approve your own pull request; line must be part of the diff; in_reply_to invalid"
-            )
+            summary,
+            vec![
+                (
+                    "MergeRequest",
+                    "unread",
+                    4,
+                    "https://ghe.example/acme/api/pull/4",
+                    Some("repos/acme/api/issues/comments/99"),
+                    None,
+                ),
+                (
+                    "Issue",
+                    "read",
+                    9,
+                    "https://github.com/acme/api/issues/9",
+                    Some("repos/acme/api/issues/9"),
+                    None,
+                ),
+                (
+                    "CheckSuite",
+                    "unread",
+                    0,
+                    "https://github.com/acme/api",
+                    None,
+                    None
+                ),
+            ]
         );
-        assert_eq!(github_error_details(br#"{"message":"Not Found"}"#), None);
-        assert_eq!(github_error_details(b"not json"), None);
+        assert_eq!(notifications[0].reason, "mention");
+    }
+
+    #[test]
+    fn a_notification_detail_reads_the_comment_or_release_author() {
+        let comment = r#"{"body": "Looks **good**", "user": {"login": "alice"}}"#;
+        let release = r#"{"body": null, "author": {"login": "bob"}}"#;
+        assert_eq!(
+            parse_github_notification_detail(comment).unwrap(),
+            NotificationDetail {
+                author: "alice".to_string(),
+                body: "Looks **good**".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_github_notification_detail(release).unwrap(),
+            NotificationDetail {
+                author: "bob".to_string(),
+                body: String::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn only_an_issue_or_pr_subject_is_read_with_a_native_command() {
+        assert_eq!(
+            native_detail_args("repos/acme/api/issues/9"),
+            Some([
+                "issue",
+                "view",
+                "9",
+                "-R",
+                "acme/api",
+                "--json",
+                "body,author"
+            ])
+        );
+        assert_eq!(
+            native_detail_args("repos/acme/api/pulls/4"),
+            Some(["pr", "view", "4", "-R", "acme/api", "--json", "body,author"])
+        );
+        for raw_only in [
+            "repos/acme/api/issues/comments/99",
+            "repos/acme/api/pulls/comments/7",
+            "repos/acme/api/releases/123",
+            "repos/acme/api/commits/abc123",
+            "repos/acme/api/issues/",
+        ] {
+            assert_eq!(native_detail_args(raw_only), None, "{raw_only}");
+        }
     }
 
     #[test]
@@ -4422,17 +5162,46 @@ mod tests {
             serde_json::json!({"author": {"login": "commenter"}, "state": "COMMENTED"}),
         ];
 
-        let (all_authors, approved_authors) = split_review_authors(&reviews);
+        let summary = split_review_authors(&reviews);
 
         assert_eq!(
-            all_authors,
+            summary.authors,
             vec![
                 "approver".to_string(),
                 "rejecter".to_string(),
                 "commenter".to_string(),
             ]
         );
-        assert_eq!(approved_authors, vec!["approver".to_string()]);
+        assert_eq!(summary.approvers, vec!["approver".to_string()]);
+        assert!(summary.has_changes_requested);
+    }
+
+    #[test]
+    fn split_review_authors_tracks_latest_opinion_per_author() {
+        let reviews = vec![
+            // user1 requested changes, then later approved
+            serde_json::json!({"author": {"login": "user1"}, "state": "CHANGES_REQUESTED"}),
+            serde_json::json!({"author": {"login": "user1"}, "state": "APPROVED"}),
+            // user2 approved, then requested changes, then commented
+            serde_json::json!({"author": {"login": "user2"}, "state": "APPROVED"}),
+            serde_json::json!({"author": {"login": "user2"}, "state": "CHANGES_REQUESTED"}),
+            serde_json::json!({"author": {"login": "user2"}, "state": "COMMENTED"}),
+            // user3 approved, then dismissed
+            serde_json::json!({"author": {"login": "user3"}, "state": "APPROVED"}),
+            serde_json::json!({"author": {"login": "user3"}, "state": "DISMISSED"}),
+        ];
+
+        let summary = split_review_authors(&reviews);
+        assert_eq!(summary.approvers, vec!["user1".to_string()]);
+        assert!(summary.has_changes_requested);
+        assert_eq!(
+            summary.authors,
+            vec![
+                "user1".to_string(),
+                "user2".to_string(),
+                "user3".to_string()
+            ]
+        );
     }
 
     #[tokio::test]
@@ -4509,9 +5278,8 @@ mod tests {
             Some("REVIEW_REQUIRED"),
             Some("MERGEABLE"),
             Some("BLOCKED"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
         );
         let m = merge.unwrap();
         assert!(!m.conflicts);
@@ -4521,23 +5289,38 @@ mod tests {
 
     #[test]
     fn conflicting_maps_to_conflicts() {
-        let (_, merge) =
-            gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(
+            None,
+            Some("CONFLICTING"),
+            Some("DIRTY"),
+            &LatestReviews::default(),
+            None,
+        );
         assert!(merge.unwrap().conflicts);
     }
 
     #[test]
     fn behind_maps_to_needs_rebase() {
-        let (_, merge) =
-            gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("BEHIND"),
+            &LatestReviews::default(),
+            None,
+        );
         assert!(merge.unwrap().needs_rebase);
     }
 
     #[test]
     fn unknown_mergeable_is_computing_not_failure() {
         // GitHub computes mergeability asynchronously.
-        let (_, merge) =
-            gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(
+            None,
+            Some("UNKNOWN"),
+            Some("UNKNOWN"),
+            &LatestReviews::default(),
+            None,
+        );
         let m = merge.unwrap();
         assert!(m.computing);
         assert!(!m.conflicts);
@@ -4545,7 +5328,7 @@ mod tests {
 
     #[test]
     fn absent_mergeable_is_computing() {
-        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None, &[]);
+        let (_, merge) = gh_state_from_fields(None, None, None, &LatestReviews::default(), None);
         assert!(merge.unwrap().computing);
     }
 
@@ -4555,9 +5338,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: false,
+            },
             None,
-            &[],
         );
         let a = approval.unwrap();
         assert!(a.approved);
@@ -4571,9 +5357,8 @@ mod tests {
             Some("CHANGES_REQUESTED"),
             Some("MERGEABLE"),
             Some("BLOCKED"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
         );
         assert!(approval.unwrap().changes_requested);
     }
@@ -4585,9 +5370,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             None,
-            &[],
         );
         let a = approval.unwrap();
         assert_eq!(a.approvals_required, None);
@@ -4599,8 +5387,13 @@ mod tests {
     fn null_review_decision_is_pending_not_unknown() {
         // A PR with no review yet returns null; that is "pending", and the
         // axis is still known.
-        let (approval, _) =
-            gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![], None, &[]);
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            &LatestReviews::default(),
+            None,
+        );
         let a = approval.unwrap();
         assert!(!a.approved);
         assert!(!a.changes_requested);
@@ -4612,9 +5405,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &[],
         );
         let a = approval.unwrap();
         assert_eq!(a.current_user.as_deref(), Some("octocat"));
@@ -4626,9 +5422,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &[],
         );
         assert!(approval.unwrap().you_reviewed);
     }
@@ -4639,9 +5438,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["someone.else".to_string()],
+            &LatestReviews {
+                authors: vec!["someone.else".to_string()],
+                approvers: vec![],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &[],
         );
         assert!(!approval.unwrap().you_reviewed);
     }
@@ -4652,9 +5454,8 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec![],
+            &LatestReviews::default(),
             None,
-            &[],
         );
         assert_eq!(approval.unwrap().current_user, None);
     }
@@ -4670,9 +5471,12 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["octocat".to_string()],
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &["octocat".to_string()],
         );
         assert!(approval.unwrap().you_approved);
     }
@@ -4683,11 +5487,69 @@ mod tests {
             Some("APPROVED"),
             Some("MERGEABLE"),
             Some("CLEAN"),
-            vec!["someone.else".to_string()],
+            &LatestReviews {
+                authors: vec!["someone.else".to_string()],
+                approvers: vec!["someone.else".to_string()],
+                has_changes_requested: false,
+            },
             Some("octocat"),
-            &["someone.else".to_string()],
         );
         assert!(!approval.unwrap().you_approved);
+    }
+
+    #[test]
+    fn null_review_decision_falls_back_to_an_approval_in_latest_reviews() {
+        // `reviewDecision` is null when the branch requires no reviews, so
+        // the review list is the only approval signal left.
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: false,
+            },
+            None,
+        );
+        let a = approval.unwrap();
+        assert!(a.approved);
+        assert!(!a.changes_requested);
+    }
+
+    #[test]
+    fn null_review_decision_falls_back_to_a_changes_requested_review() {
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            &LatestReviews {
+                authors: vec!["octocat".to_string()],
+                approvers: vec![],
+                has_changes_requested: true,
+            },
+            None,
+        );
+        let a = approval.unwrap();
+        assert!(!a.approved);
+        assert!(a.changes_requested);
+    }
+
+    #[test]
+    fn null_review_decision_with_both_signals_is_not_approved() {
+        // One reviewer requesting changes outweighs another reviewer's approval.
+        let (approval, _) = gh_state_from_fields(
+            None,
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            &LatestReviews {
+                authors: vec!["octocat".to_string(), "critic".to_string()],
+                approvers: vec!["octocat".to_string()],
+                has_changes_requested: true,
+            },
+            None,
+        );
+        assert!(!approval.unwrap().approved);
     }
 
     #[test]
@@ -4728,6 +5590,47 @@ mod tests {
     }
 
     #[test]
+    fn run_head_commit_becomes_the_pipeline_commit_headline_and_author() {
+        let json = r#"{"workflow_runs": [{
+            "id": 7, "status": "completed", "conclusion": "failure", "updated_at": "",
+            "head_commit": {
+                "message": "Fix flaky login test\n\nThe retry hid a race.",
+                "author": { "name": "Ada Lovelace", "email": "ada@example.com" }
+            }
+        }]}"#;
+
+        let pipelines = parse_github_actions_runs(json).unwrap();
+
+        assert_eq!(
+            pipelines[0].commit,
+            Some(CommitSummary {
+                title: "Fix flaky login test".to_string(),
+                author_name: "Ada Lovelace".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn failed_job_reason_names_its_timeout_or_its_first_failed_step() {
+        let steps = [
+            ("Checkout", Some("success")),
+            ("Run tests", Some("failure")),
+            ("Upload", Some("failure")),
+        ];
+        let reason = |conclusion| github_job_failure_reason(conclusion, steps.iter().copied());
+
+        assert_eq!(
+            reason(Some("failure")).as_deref(),
+            Some("step \"Run tests\" failed")
+        );
+        assert_eq!(reason(Some("timed_out")).as_deref(), Some("timed out"));
+        assert_eq!(
+            github_job_failure_reason(Some("failure"), std::iter::empty()),
+            None
+        );
+    }
+
+    #[test]
     fn test_parse_org_repos() {
         let json = r#"[
             {"full_name": "myorg/repo1"},
@@ -4742,6 +5645,58 @@ mod tests {
 
         // Malformed / missing field
         assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
+    }
+
+    #[test]
+    fn deployment_states_query_filters_by_environment_and_caps_the_page() {
+        let q = deployment_states_graphql_query("acme", "api", Some("prod\"x"), 500);
+        assert!(q.contains("repository(owner:\"acme\",name:\"api\")"));
+        assert!(q.contains("deployments(environments:[\"prod\\\"x\"],first:100,"));
+        assert!(q.contains("orderBy:{field:CREATED_AT,direction:DESC}"));
+        assert!(q.contains("nodes { databaseId latestStatus { state } }"));
+
+        let q = deployment_states_graphql_query("acme", "api", None, 30);
+        assert!(q.contains("deployments(first:30,"));
+    }
+
+    #[test]
+    fn deployment_states_are_keyed_by_rest_id_in_glab_tui_words() {
+        let raw = r#"{"data":{"repository":{"deployments":{"nodes":[
+            {"databaseId":7785087816,"latestStatus":{"state":"SUCCESS"}},
+            {"databaseId":2,"latestStatus":{"state":"FAILURE"}},
+            {"databaseId":3,"latestStatus":{"state":"ERROR"}},
+            {"databaseId":4,"latestStatus":{"state":"INACTIVE"}},
+            {"databaseId":5,"latestStatus":{"state":"IN_PROGRESS"}},
+            {"databaseId":6,"latestStatus":{"state":"QUEUED"}},
+            {"databaseId":7,"latestStatus":{"state":"PENDING"}},
+            {"databaseId":8,"latestStatus":{"state":"WAITING"}},
+            {"databaseId":9,"latestStatus":null},
+            null
+        ]}}}}"#;
+
+        let states = parse_deployment_states(raw);
+
+        let expected = [
+            (7785087816, "success"),
+            (2, "failed"),
+            (3, "error"),
+            (4, "inactive"),
+            (5, "running"),
+            (6, "pending"),
+            (7, "pending"),
+            (8, "pending"),
+        ];
+        assert_eq!(states.len(), expected.len(), "{states:?}");
+        for (id, status) in expected {
+            assert_eq!(states.get(&id).map(String::as_str), Some(status), "{id}");
+        }
+    }
+
+    #[test]
+    fn deployment_states_of_a_failed_query_are_empty() {
+        let raw = r#"{"data":null,"errors":[{"message":"Something went wrong"}]}"#;
+        assert!(parse_deployment_states(raw).is_empty());
+        assert!(parse_deployment_states("not json").is_empty());
     }
 
     #[test]
@@ -4788,20 +5743,137 @@ mod tests {
         assert_eq!(s102.size, 3);
         assert_eq!(s102.position, 2);
 
-        assert!(stacks.get(&103).is_none());
+        assert!(!stacks.contains_key(&103));
     }
 
     #[test]
-    fn review_thread_resolution_maps_every_comment_to_its_thread_state() {
-        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
-            {"isResolved":true,"comments":{"nodes":[{"databaseId":11},{"databaseId":12}]}},
+    fn review_thread_resolution_reads_every_page_gh_paginate_prints() {
+        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[
+            {"isResolved":true,"comments":{"nodes":[{"databaseId":11}]}},
             {"isResolved":false,"comments":{"nodes":[{"databaseId":21}]}}
+        ]}}}}}
+        {"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
+            {"isResolved":false,"comments":{"nodes":[{"databaseId":31}]}},
+            {"isResolved":true,"comments":{"nodes":[]}}
         ]}}}}}"#;
         let map = parse_review_thread_resolution(raw).unwrap();
-        assert_eq!(map.get(&11), Some(&true));
-        assert_eq!(map.get(&12), Some(&true));
-        assert_eq!(map.get(&21), Some(&false));
-        assert_eq!(map.get(&99), None);
+        assert_eq!(map, HashMap::from([(11, true), (21, false), (31, false)]));
+    }
+
+    #[test]
+    fn review_thread_resolution_graphql_error_on_a_later_page_is_an_error() {
+        let raw = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+            {"data":null,"errors":[{"message":"API rate limit exceeded"}]}"#;
+        let err = parse_review_thread_resolution(raw).unwrap_err();
+        assert_eq!(err.to_string(), "GraphQL error: API rate limit exceeded");
+    }
+
+    fn review_comment_json(id: u64, in_reply_to_id: Option<u64>) -> String {
+        let in_reply_to_id = in_reply_to_id.map_or("null".to_string(), |id| id.to_string());
+        format!(
+            r#"{{"id":{id},"body":"comment {id}","user":{{"login":"octo"}},
+            "created_at":"2026-07-06T09:00:00Z","path":"src/lib.rs","line":3,
+            "side":"RIGHT","start_line":null,"in_reply_to_id":{in_reply_to_id}}}"#
+        )
+    }
+
+    #[test]
+    fn review_comments_on_every_page_take_their_threads_resolution() {
+        let raw = format!(
+            "[{},{}]\n[{},{},{}]",
+            review_comment_json(11, None),
+            review_comment_json(21, None),
+            review_comment_json(12, Some(11)),
+            review_comment_json(31, None),
+            review_comment_json(41, None),
+        );
+        let resolution = HashMap::from([(11, true), (21, false), (31, false)]);
+        let notes = parse_pr_review_comments(&raw, &resolution).unwrap();
+        let states: Vec<_> = notes
+            .iter()
+            .map(|n| (n.id, n.discussion_id.as_deref(), n.resolvable, n.resolved))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                (Some(11), Some("11"), Some(true), Some(true)),
+                (Some(21), Some("21"), Some(true), Some(false)),
+                (Some(12), Some("11"), Some(true), Some(true)),
+                (Some(31), Some("31"), Some(true), Some(false)),
+                (Some(41), Some("41"), Some(false), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn pr_conversation_lists_comments_and_review_summaries_as_general_notes() {
+        let raw = r#"{
+            "comments": [
+                {"id": "IC_kwDOA", "author": {"login": "alice"}, "body": "Can this land today?",
+                 "createdAt": "2026-11-03T02:55:00Z",
+                 "url": "https://github.com/acme/api/pull/7#issuecomment-6594253981"}
+            ],
+            "reviews": [
+                {"id": "PRR_kwDOB", "author": {"login": "bob"}, "body": "Rename the flag first.",
+                 "submittedAt": "2026-11-02T08:31:26Z", "state": "CHANGES_REQUESTED"},
+                {"id": "PRR_kwDOC", "author": {"login": "bob"}, "body": "",
+                 "submittedAt": "2026-11-02T08:45:19Z", "state": "APPROVED"},
+                {"id": "PRR_kwDOD", "author": {"login": "carol"}, "body": "Draft thoughts",
+                 "submittedAt": null, "state": "PENDING"}
+            ]
+        }"#;
+        let notes = parse_pr_conversation(raw).unwrap();
+        let summary: Vec<_> = notes
+            .iter()
+            .map(|n| {
+                (
+                    n.id,
+                    n.discussion_id.as_deref(),
+                    n.author.username.as_str(),
+                    n.body.as_str(),
+                    n.created_at.as_str(),
+                    n.position.is_none(),
+                    n.resolvable,
+                    n.kind,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    Some(6594253981),
+                    Some("IC_kwDOA"),
+                    "alice",
+                    "Can this land today?",
+                    "2026-11-03T02:55:00Z",
+                    true,
+                    Some(false),
+                    NoteKind::Conversation,
+                ),
+                (
+                    None,
+                    Some("PRR_kwDOB"),
+                    "bob",
+                    "Rename the flag first.",
+                    "2026-11-02T08:31:26Z",
+                    true,
+                    Some(false),
+                    NoteKind::ReviewSummary(ReviewState::ChangesRequested),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn conversation_comment_without_an_issue_comment_url_has_no_rest_id() {
+        let raw = r#"{"comments": [{"id": "IC_kwDOA", "author": null, "body": "Hi",
+            "createdAt": "2026-11-03T02:55:00Z", "url": ""}], "reviews": []}"#;
+        let notes = parse_pr_conversation(raw).unwrap();
+        assert_eq!(notes[0].id, None);
+        assert_eq!(notes[0].author.username, "");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::TestSession;
+use crate::{Sandbox, TestSession};
 
 /// Enter on a parent pipeline asks GitLab for its bridges and lists the
 /// downstream pipelines they spawned, named after the trigger job that made
@@ -82,12 +82,9 @@ fn test_escape_ascends_out_of_the_child_pipeline_list() {
         .expect("descended into the child list");
 
     session.send_input(b"\x1b");
-    session.settle(1500);
-
-    assert!(
-        !session.emulator.get_text().contains("2001"),
-        "Esc leaves the child level, so the child pipeline is no longer listed"
-    );
+    session
+        .wait_for_screen_without("2001", 5000)
+        .expect("Esc leaves the child level, so the child pipeline is no longer listed");
 }
 
 /// Refresh means fresh data for the level you are looking at. It must not
@@ -110,7 +107,19 @@ fn test_refresh_keeps_the_current_descent_level() {
         .wait_for_screen_contains("2001", 5000)
         .expect("descended into the child list");
 
+    let calls = session.get_cli_calls();
+    let bridges_before = calls.matches("/bridges").count();
+    let top_level_before = calls.matches("/pipelines?per_page").count();
     session.send_input(b"\x12"); // Ctrl+r
+    session
+        .wait_for_cli_call_count("/bridges", bridges_before + 1, 5000)
+        .expect("the refresh fetches the current level");
+    session
+        .wait_for_cli_call_count("/pipelines?per_page", top_level_before + 1, 5000)
+        .expect("the refresh fetches the top-level list");
+    // Inside a descent the top-level reply goes to the root level and
+    // changes nothing on screen, so a fixed window is what lets a reply that
+    // replaced the child list show up.
     session.settle(2500);
 
     assert!(
@@ -141,13 +150,9 @@ fn test_refresh_refetches_the_current_level() {
     let before = session.get_cli_calls().matches("/bridges").count();
 
     session.send_input(b"\x12"); // Ctrl+r
-    session.settle(2500);
-
-    let after = session.get_cli_calls().matches("/bridges").count();
-    assert!(
-        after > before,
-        "refresh asks for the current level's bridges again (before {before}, after {after})"
-    );
+    session
+        .wait_for_cli_call_count("/bridges", before + 1, 5000)
+        .expect("refresh asks for the current level's bridges again");
 }
 
 /// A failed bridge fetch must surface as an error, never as a quiet fall back
@@ -188,19 +193,491 @@ fn test_own_jobs_key_on_a_pipeline_without_jobs_stays_put_and_reports() {
         .expect("the parent pipeline is listed");
 
     session.send_input(b"\x1bj"); // Alt+j
-    session.settle(2500);
+    session
+        .wait_for_screen_contains("no jobs", 5000)
+        .expect("the pipeline having no jobs of its own is reported");
 
     let text = session.emulator.get_text();
-    assert!(
-        text.contains("no jobs"),
-        "the pipeline having no jobs of its own is reported"
-    );
     assert!(
         !text.contains("No jobs loaded"),
         "the empty Jobs tab is never entered — that hint is the original symptom"
     );
 }
 
+/// A refresh that fails while cached rows are on screen must say so: the
+/// stale list alone looks exactly like a successful refresh.
+#[test]
+fn test_failed_refresh_over_cached_issues_shows_offline_banner() {
+    let mut first = TestSession::new(false, 24, 120);
+    first
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("first run fetches and caches the issues");
+    first.settle(1000);
+    let TestSession { sandbox, pty, .. } = first;
+    drop(pty);
+
+    let mut session =
+        TestSession::launch(sandbox, 24, 120, &[("TEST_GLAB_FAIL_MATCH", "issue list")]);
+    session
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("cached issues are shown");
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 15000)
+        .expect("the failed refresh is reported in the header");
+}
+
+/// The offline badge belongs to the tab whose refresh failed: another tab's
+/// successful refresh must not clear it, and must not show it either.
+#[test]
+fn test_offline_banner_stays_with_the_tab_whose_refresh_failed() {
+    let mut first = TestSession::new(false, 24, 120);
+    first
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("first run fetches and caches the issues");
+    first.settle(1000);
+    let TestSession { sandbox, pty, .. } = first;
+    drop(pty);
+
+    let mut session =
+        TestSession::launch(sandbox, 24, 120, &[("TEST_GLAB_FAIL_MATCH", "issue list")]);
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 15000)
+        .expect("the failed refresh is reported in the header");
+
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("Feature: Add pag", 15000)
+        .expect("the MRs tab is shown");
+    session.settle(2000);
+    let mrs_screen = session.emulator.get_text();
+    assert!(
+        !mrs_screen.contains("Offline:") && !mrs_screen.contains("Loaded from offline cache"),
+        "the freshly refreshed MRs tab carries no offline badge:\n{mrs_screen}"
+    );
+
+    session.send_input(b"h");
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 5000)
+        .expect("back on Issues the stale list is still flagged");
+}
+
+/// A notice shown over a stale list sits next to the offline badge and
+/// expires on its own, leaving the badge in place.
+#[test]
+fn test_notice_over_stale_list_keeps_the_offline_banner() {
+    let mut first = TestSession::new(false, 24, 140);
+    first
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("first run fetches and caches the issues");
+    first.settle(1000);
+    let TestSession { sandbox, pty, .. } = first;
+    drop(pty);
+
+    let mut session =
+        TestSession::launch(sandbox, 24, 140, &[("TEST_GLAB_FAIL_MATCH", "issue list")]);
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 15000)
+        .expect("the failed refresh is reported in the header");
+
+    session.send_input(b"\x01"); // Ctrl+a: select all
+    session
+        .wait_for_screen_contains("Selected all", 5000)
+        .expect("the select-all notice is shown");
+    let both = session.emulator.get_text();
+    assert!(
+        both.contains("Offline: refresh failed, showing cached data"),
+        "the notice is drawn next to the badge, not over it:\n{both}"
+    );
+
+    session
+        .wait_for_screen_without("Selected all", 7000)
+        .expect("the notice expires");
+    let after = session.emulator.get_text();
+    assert!(
+        after.contains("Offline: refresh failed, showing cached data"),
+        "the badge outlives the notice:\n{after}"
+    );
+}
+
+#[test]
+fn github_org_scope_run_cancel_confirms_and_targets_its_own_repository() {
+    let sandbox = crate::Sandbox::new(true).unwrap();
+    let mut session =
+        TestSession::launch_with_args(sandbox, 24, 100, &["-g", "acme", "--tab", "pipelines"], &[]);
+    session
+        .wait_for_screen_contains("12345", 8000)
+        .expect("the org's run is listed");
+
+    session.send_input(b"d");
+    session
+        .wait_for_screen_contains("Cancel Action #12345", 5000)
+        .expect("cancel asks for confirmation");
+    session.settle(300);
+    assert!(
+        !session.get_cli_calls().contains("run cancel"),
+        "nothing is cancelled before confirming"
+    );
+
+    session.send_input(b"h\r");
+    session
+        .wait_for_cli_call("run cancel 12345", 5000)
+        .expect("cancel is sent once confirmed");
+
+    let calls = session.get_cli_calls();
+    let cancel = calls
+        .lines()
+        .find(|l| l.contains("run cancel 12345"))
+        .unwrap_or_else(|| panic!("cancel was sent; calls:\n{calls}"));
+    assert!(
+        cancel.contains("-R acme/project-b"),
+        "cancel targets the run's repository: {cancel}"
+    );
+}
+
+/// The trace editor key hands the real log to an `EDITOR` that carries its
+/// own arguments, fetching the trace first when it was never shown, and
+/// leaves the file behind for an editor that returns before reading it
+/// (`code` without `--wait`). A placeholder file, `EDITOR` run as one program
+/// name, or a file deleted as soon as the editor returns are the bugs.
+#[test]
+fn trace_editor_key_hands_the_fetched_trace_to_a_multi_word_non_blocking_editor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new(false).unwrap();
+    let tmp_dir = sandbox.temp_dir.path().join("tmp");
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let received = sandbox.temp_dir.path().join("editor_received.txt");
+    let editor = sandbox.bin_dir.join("path-editor");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\n[ \"$1\" = \"--into\" ] || exit 2\nprintf '%s' \"$3\" > \"$2\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let editor_env = format!("path-editor --into {}", received.display());
+
+    let mut session = TestSession::launch(
+        sandbox,
+        24,
+        100,
+        &[
+            ("EDITOR", &editor_env),
+            ("TMPDIR", tmp_dir.to_str().unwrap()),
+        ],
+    );
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 5000)
+        .expect("the pipeline is listed");
+    session.send_input(b"\x1bj"); // Alt+j
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the pipeline's job is listed");
+
+    session.send_input(b"e");
+    // The terminal handoff probes keyboard-enhancement support on the way out
+    // and back, and this emulator never answers: each probe waits out
+    // crossterm's 2 s timeout.
+    session
+        .wait_for_screen_contains("mock gitlab job trace output", 15_000)
+        .expect("the TUI is back and shows the fetched trace");
+
+    let trace_path = std::fs::read_to_string(&received).expect("the editor ran");
+    assert_eq!(
+        std::fs::read_to_string(&trace_path).expect("the trace file outlives the editor"),
+        "mock gitlab job trace output\n"
+    );
+}
+
+fn checked_out_branch(session: &TestSession) -> String {
+    let output = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .current_dir(&session.sandbox.repo_dir)
+        .output()
+        .expect("git runs in the sandbox repository");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Opens the Jobs tab and waits for it to list its jobs. Returns the CLI log
+/// length after the highlighted pipeline's preview prefetch, so the calls
+/// after it are only the Jobs tab's.
+fn open_jobs_tab(session: &mut TestSession, github: bool) -> usize {
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 5000)
+        .expect("the pipeline list is loaded");
+    let prefetch = if github {
+        "run view 12345 --json jobs"
+    } else {
+        "/pipelines/12345/jobs"
+    };
+    session
+        .wait_for_cli_call(prefetch, 5000)
+        .expect("the highlighted pipeline's jobs are prefetched");
+    let calls_before = session.get_cli_calls().len();
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the Jobs tab lists the pipeline's job");
+    calls_before
+}
+
+/// The Jobs tab finds the checked-out branch's pipeline with queries scoped
+/// to that branch. Listing every MR and every pipeline of the project to pick
+/// one out was the cost the Jobs tab paid on every open.
+#[test]
+fn test_jobs_tab_queries_only_the_branch_pipeline() {
+    let mut session = TestSession::new(false, 24, 100);
+    let calls_before = open_jobs_tab(&mut session, false);
+
+    let branch = checked_out_branch(&session);
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(&format!(
+            "glab ci list --output json -R test-owner/test-repo --ref {branch} --per-page 1"
+        )),
+        "the branch pipeline is looked up by ref:\n{calls}"
+    );
+    assert!(
+        calls.contains(&format!(
+            "glab mr list --output json -R test-owner/test-repo --source-branch {branch} --per-page 1"
+        )),
+        "the branch MR is looked up by source branch:\n{calls}"
+    );
+    assert!(
+        !calls.contains("/pipelines?per_page") && !calls.contains("--page "),
+        "no project-wide pipeline or MR listing:\n{calls}"
+    );
+}
+
+/// A branch with an open MR whose CI only runs merge-request pipelines has
+/// its newest pipeline on `refs/merge-requests/<iid>/head`. The Jobs tab
+/// loads that one when it is newer than the branch pipeline.
+#[test]
+fn test_jobs_tab_loads_the_newer_merge_request_pipeline() {
+    let mut session = TestSession::new(false, 24, 100);
+    let calls_before = open_jobs_tab(&mut session, false);
+
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(
+            "glab ci list --output json -R test-owner/test-repo --ref refs/merge-requests/2/head --per-page 1"
+        ),
+        "the open MR's head pipeline is looked up:\n{calls}"
+    );
+    assert!(
+        calls.contains("/pipelines/99999/jobs"),
+        "the newer MR pipeline's jobs are fetched:\n{calls}"
+    );
+    assert!(
+        !calls.contains("/pipelines/12345/jobs"),
+        "the older branch pipeline is not loaded:\n{calls}"
+    );
+}
+
+/// Selecting a stage confirms on screen how many jobs it took. The message
+/// used to be written to a field nothing rendered. Clearing the selection
+/// clears it too, so the header never claims a selection the table lacks.
+#[test]
+fn test_select_stage_shows_confirmation_until_the_selection_is_cleared() {
+    let mut session = TestSession::new(false, 24, 100);
+    open_jobs_tab(&mut session, false);
+
+    session.send_input(b"s");
+    session
+        .wait_for_screen_contains("Selected all jobs in stage 'test'", 3000)
+        .expect("select-stage feedback is visible");
+
+    session.send_input(b"\x1b");
+    session
+        .wait_for_screen_without("Selected all jobs in stage", 5000)
+        .expect("Esc clears the selection and its message");
+}
+
+/// GitHub has no way to start a manual job, so the help does not offer the
+/// key there. GitHub finds the branch run with one `gh run list --branch`.
+#[test]
+fn test_github_jobs_tab_does_not_offer_start_job() {
+    let mut session = TestSession::new(true, 60, 100);
+    let calls_before = open_jobs_tab(&mut session, true);
+
+    let branch = checked_out_branch(&session);
+    let calls = session.get_cli_calls()[calls_before..].to_string();
+    assert!(
+        calls.contains(&format!(
+            "gh run list -R test-owner/test-repo --branch {branch} --limit 1 --json databaseId"
+        )),
+        "the branch run is looked up by branch:\n{calls}"
+    );
+
+    session.send_input(b"?");
+    session
+        .wait_for_screen_contains("Select all jobs in stage", 3000)
+        .expect("the Jobs help is shown");
+    assert!(
+        !session.emulator.get_text().contains("Start manual job"),
+        "start job is not offered on GitHub"
+    );
+}
+
+/// Opens the highlighted job's page, the URL the job list reported.
+fn open_job_in_browser(github: bool, url: &str) {
+    let mut session = TestSession::new(github, 24, 100);
+    open_jobs_tab(&mut session, github);
+
+    session.send_input(b"o");
+    session
+        .wait_for_cli_call(&format!("browser {url}"), 5000)
+        .expect("the job's page is opened");
+}
+
+#[test]
+fn test_github_jobs_tab_opens_the_job_page() {
+    open_job_in_browser(
+        true,
+        "https://github.com/test-owner/test-repo/actions/runs/12345/job/54321",
+    );
+}
+
+#[test]
+fn test_gitlab_jobs_tab_opens_the_job_page() {
+    open_job_in_browser(
+        false,
+        "https://gitlab.com/test-owner/test-repo/-/jobs/54321",
+    );
+}
+
+#[test]
+fn test_gitlab_jobs_help_offers_start_job() {
+    let mut session = TestSession::new(false, 60, 100);
+    open_jobs_tab(&mut session, false);
+
+    session.send_input(b"?");
+    session
+        .wait_for_screen_contains("Start manual job", 3000)
+        .expect("start job is offered on GitLab");
+}
+
+/// The Terminal tab's log is narrowed by the standard search bar and emptied
+/// by the clear key. The log otherwise grows for the whole session with no
+/// way to find one command in it or start over.
+#[test]
+fn test_terminal_log_filters_with_search_and_clears() {
+    let mut session = TestSession::new(false, 30, 160);
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+
+    // Visiting Merge Requests logs a second command next to the issues fetch.
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("glab mr list", 5000)
+        .expect("the MR fetch is logged");
+
+    // Merge Requests -> Issues -> wraps back to the last tab, Terminal.
+    session.send_input(b"hh");
+    session
+        .wait_for_screen_contains("┌ Terminal ─", 5000)
+        .expect("the Terminal tab opens");
+    session
+        .wait_for_screen_contains("glab issue list", 5000)
+        .expect("the issues fetch is in the log");
+
+    session.send_input(b"/mr list\r");
+    session
+        .wait_for_screen_contains("┌ Terminal [", 5000)
+        .expect("the title counts the entries the search keeps");
+    session
+        .wait_for_screen_without("glab issue list", 5000)
+        .expect("the search drops entries that do not match");
+    let text = session.emulator.get_text();
+    assert!(text.contains("glab mr list"), "{text}");
+
+    session.send_input(b"\x1b");
+    session
+        .wait_for_screen_contains("glab issue list", 5000)
+        .expect("Esc clears the search and brings the full log back");
+
+    session.send_input(b"C");
+    session
+        .wait_for_screen_without("glab issue list", 5000)
+        .expect("the clear key empties the log");
+    let text = session.emulator.get_text();
+    assert!(
+        !text.contains("glab issue list") && !text.contains("glab mr list"),
+        "the clear key empties the log: {text}"
+    );
+}
+
+/// A failed command can be found with the status filter, inspected in full
+/// (command line and the CLI's stderr), and run again from the inspector.
+#[test]
+fn test_terminal_inspects_filters_and_reruns_a_failed_command() {
+    let mut session =
+        TestSession::with_envs(false, 30, 160, &[("TEST_GLAB_FAIL_MATCH", "mr list")]);
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"l");
+    session
+        .wait_for_cli_call("mr list", 5000)
+        .expect("the MR fetch runs and fails");
+    session.send_input(b"hh");
+    session
+        .wait_for_screen_contains("┌ Terminal ─", 5000)
+        .expect("the Terminal tab opens");
+
+    session.press_keys(b"s");
+    session
+        .wait_for_screen_contains("┌ Terminal · Errors [", 5000)
+        .expect("the title names the status filter");
+    session
+        .wait_for_screen_contains("FAILED", 5000)
+        .expect("the failed MR fetch is listed under Errors");
+    let text = session.emulator.get_text();
+    assert!(
+        !text.contains("SUCCESS"),
+        "the Errors filter hides successful commands: {text}"
+    );
+
+    session.press_keys(b"\r");
+    session
+        .wait_for_screen_contains("Command Details", 5000)
+        .expect("Enter opens the inspector");
+    session
+        .wait_for_screen_contains("mock: 404 Not Found", 5000)
+        .expect("the inspector shows the command's stderr");
+    let text = session.emulator.get_text();
+    assert!(text.contains("Command    glab mr list"), "{text}");
+    assert!(text.contains("Exit code  1"), "{text}");
+
+    let runs_before = session.get_cli_calls().matches("mr list").count();
+    session.press_keys(b"r");
+    session
+        .wait_for_screen_contains("Re-run Command", 5000)
+        .expect("re-running asks for confirmation");
+    session.press_keys(b"\r");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while session.get_cli_calls().matches("mr list").count() <= runs_before {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the confirmed re-run never called glab:\n{}",
+            session.get_cli_calls()
+        );
+        session.settle(50);
+    }
+
+    session.press_keys(b"\x1b");
+    session
+        .wait_for_screen_contains("RERUN", 5000)
+        .expect("the re-run is logged as its own entry");
+}
 // --- Tier 1: Feature Coverage (5 cases) ---
 
 #[test]

@@ -1,27 +1,20 @@
 use crate::backend::BackendKind;
 
-/// Safe to run on the UI thread: `git symbolic-ref --short HEAD` and
-/// `git branch --show-current` are pure local object-DB reads and finish
-/// in microseconds. No network roundtrip, no prompt for credentials.
+/// A local read, safe on the UI thread: `git symbolic-ref --short HEAD`
+/// and `git branch --show-current` read the local `.git` only. No network
+/// roundtrip, no prompt for credentials.
 pub fn get_current_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() {
-            return Some(branch);
-        }
-    }
-    let output = std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() {
-            return Some(branch);
+    let probes: [&[&str]; 2] = [
+        &["symbolic-ref", "--short", "HEAD"],
+        &["branch", "--show-current"],
+    ];
+    for args in probes {
+        let output = std::process::Command::new("git").args(args).output().ok()?;
+        if output.status.success() {
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !branch.is_empty() {
+                return Some(branch);
+            }
         }
     }
     None
@@ -238,6 +231,18 @@ pub fn remote_project_path(remote: &str) -> Option<String> {
     parse_project_path(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Extracts the host from the URL of the named remote.
+pub fn remote_host(remote: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", remote])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_remote_host(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// The project the user pointed `gh` at, or `None` when they never did.
 pub fn gh_resolved_project() -> Option<String> {
     match gh_resolved()? {
@@ -248,15 +253,13 @@ pub fn gh_resolved_project() -> Option<String> {
 
 fn strip_remote_prefix(head: &str, remote: &str) -> Option<String> {
     let branch = head.trim();
-    let branch = branch
-        .strip_prefix(&format!("{}/", remote))
-        .unwrap_or(branch);
+    let branch = branch.strip_prefix(&format!("{remote}/")).unwrap_or(branch);
     (!branch.is_empty() && branch != "HEAD").then(|| branch.to_string())
 }
 
 fn default_branch_of(remote: &str) -> Option<String> {
     let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])
+        .args(["rev-parse", "--abbrev-ref", &format!("{remote}/HEAD")])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -292,29 +295,6 @@ pub fn ensure_source_branch_pushed(branch: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let exists = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", "--quiet", branch])
-        .output()
-        .ok()
-        .is_some_and(|o| o.status.success());
-    if !exists {
-        let output = std::process::Command::new("git")
-            .args(["branch", branch, "HEAD"])
-            .output()
-            .map_err(|e| anyhow::anyhow!("Failed to create local branch '{branch}': {e}"))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            anyhow::bail!(
-                "Failed to create branch '{branch}': {}",
-                if err.is_empty() {
-                    "unknown error"
-                } else {
-                    &err
-                }
-            );
-        }
-    }
-
     let remote_ref = format!("refs/heads/{branch}");
     let probe = std::process::Command::new("git")
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -331,6 +311,29 @@ pub fn ensure_source_branch_pushed(branch: &str) -> anyhow::Result<()> {
                 "Could not check remote branch '{branch}': {}. Configure git credentials (e.g. `gh auth setup-git`) or use SSH.",
                 if err.is_empty() {
                     "authentication or network error"
+                } else {
+                    &err
+                }
+            );
+        }
+    }
+
+    let exists = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", branch])
+        .output()
+        .ok()
+        .is_some_and(|o| o.status.success());
+    if !exists {
+        let output = std::process::Command::new("git")
+            .args(["branch", branch, "HEAD"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to create local branch '{branch}': {e}"))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            anyhow::bail!(
+                "Failed to create branch '{branch}': {}",
+                if err.is_empty() {
+                    "unknown error"
                 } else {
                     &err
                 }
@@ -409,6 +412,95 @@ pub fn repo_root() -> Option<String> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|root| !root.is_empty())
+}
+
+/// Switches to `branch_name` in the local repository.
+pub fn checkout_branch(branch_name: &str) -> anyhow::Result<String> {
+    if branch_name.is_empty() {
+        anyhow::bail!("Branch name cannot be empty");
+    }
+    let output = std::process::Command::new("git")
+        .args(["switch", branch_name])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git switch: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!(
+            "Failed to checkout '{branch_name}': {}",
+            if err.is_empty() {
+                "unknown error"
+            } else {
+                &err
+            }
+        );
+    }
+    let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if msg.is_empty() {
+        Ok(format!("Checked out branch '{branch_name}'"))
+    } else {
+        Ok(msg)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalCommitInfo {
+    pub author_name: String,
+    pub author_email: String,
+    pub date: String,
+    pub message: String,
+}
+
+/// Read the latest commit's author, email, date, and message for `rev`.
+pub fn get_commit_info(rev: &str) -> Option<LocalCommitInfo> {
+    if rev.is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%an%x00%ae%x00%aI%x00%B", rev])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.split('\0').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    Some(LocalCommitInfo {
+        author_name: parts[0].trim().to_string(),
+        author_email: parts[1].trim().to_string(),
+        date: parts[2].trim().to_string(),
+        message: parts[3].trim().to_string(),
+    })
+}
+
+/// Computes (ahead, behind) commit counts between `base` and `target`.
+pub fn get_ahead_behind(base: &str, target: &str) -> Option<(usize, usize)> {
+    if base.is_empty() || target.is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("git")
+        .args([
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{base}...{target}"),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = text.split_whitespace().collect();
+    if parts.len() >= 2 {
+        let behind = parts[0].parse::<usize>().ok()?;
+        let ahead = parts[1].parse::<usize>().ok()?;
+        Some((ahead, behind))
+    } else {
+        None
+    }
 }
 
 /// Returns a list of workflow/CI files available in the repo.

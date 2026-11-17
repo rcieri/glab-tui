@@ -1,0 +1,7 @@
+2024-05-14T11:19:20.000000Z 00O [0;32mRunning with gitlab-runner 17.0.0[0;m
+2024-05-14T11:19:21.000000Z 00O+[1;38;5;208mwarning:[0m unused import
+section_start:1715685560:build_script[0K[36;1m$ cargo build[0m
+build	Run tests	2024-05-14T11:19:22.1234567Z ##[group]Run cargo test
+build	Run tests	2024-05-14T11:19:23.1234567Z [38;2;255;0;0merror[E0308][39m: mismatched types
+##[error]Process completed with exit code 101.
+]8;;https://example.com\link]8;;\

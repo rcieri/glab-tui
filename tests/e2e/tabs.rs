@@ -82,12 +82,9 @@ fn test_escape_ascends_out_of_the_child_pipeline_list() {
         .expect("descended into the child list");
 
     session.send_input(b"\x1b");
-    session.settle(1500);
-
-    assert!(
-        !session.emulator.get_text().contains("2001"),
-        "Esc leaves the child level, so the child pipeline is no longer listed"
-    );
+    session
+        .wait_for_screen_without("2001", 5000)
+        .expect("Esc leaves the child level, so the child pipeline is no longer listed");
 }
 
 /// Refresh means fresh data for the level you are looking at. It must not
@@ -110,7 +107,19 @@ fn test_refresh_keeps_the_current_descent_level() {
         .wait_for_screen_contains("2001", 5000)
         .expect("descended into the child list");
 
+    let calls = session.get_cli_calls();
+    let bridges_before = calls.matches("/bridges").count();
+    let top_level_before = calls.matches("/pipelines?per_page").count();
     session.send_input(b"\x12"); // Ctrl+r
+    session
+        .wait_for_cli_call_count("/bridges", bridges_before + 1, 5000)
+        .expect("the refresh fetches the current level");
+    session
+        .wait_for_cli_call_count("/pipelines?per_page", top_level_before + 1, 5000)
+        .expect("the refresh fetches the top-level list");
+    // Inside a descent the top-level reply goes to the root level and
+    // changes nothing on screen, so a fixed window is what lets a reply that
+    // replaced the child list show up.
     session.settle(2500);
 
     assert!(
@@ -141,13 +150,9 @@ fn test_refresh_refetches_the_current_level() {
     let before = session.get_cli_calls().matches("/bridges").count();
 
     session.send_input(b"\x12"); // Ctrl+r
-    session.settle(2500);
-
-    let after = session.get_cli_calls().matches("/bridges").count();
-    assert!(
-        after > before,
-        "refresh asks for the current level's bridges again (before {before}, after {after})"
-    );
+    session
+        .wait_for_cli_call_count("/bridges", before + 1, 5000)
+        .expect("refresh asks for the current level's bridges again");
 }
 
 /// A failed bridge fetch must surface as an error, never as a quiet fall back
@@ -188,13 +193,11 @@ fn test_own_jobs_key_on_a_pipeline_without_jobs_stays_put_and_reports() {
         .expect("the parent pipeline is listed");
 
     session.send_input(b"\x1bj"); // Alt+j
-    session.settle(2500);
+    session
+        .wait_for_screen_contains("no jobs", 5000)
+        .expect("the pipeline having no jobs of its own is reported");
 
     let text = session.emulator.get_text();
-    assert!(
-        text.contains("no jobs"),
-        "the pipeline having no jobs of its own is reported"
-    );
     assert!(
         !text.contains("No jobs loaded"),
         "the empty Jobs tab is never entered — that hint is the original symptom"
@@ -286,12 +289,10 @@ fn test_notice_over_stale_list_keeps_the_offline_banner() {
         "the notice is drawn next to the badge, not over it:\n{both}"
     );
 
-    session.settle(5500);
+    session
+        .wait_for_screen_without("Selected all", 7000)
+        .expect("the notice expires");
     let after = session.emulator.get_text();
-    assert!(
-        !after.contains("Selected all"),
-        "the notice expires:\n{after}"
-    );
     assert!(
         after.contains("Offline: refresh failed, showing cached data"),
         "the badge outlives the notice:\n{after}"
@@ -318,7 +319,9 @@ fn github_org_scope_run_cancel_confirms_and_targets_its_own_repository() {
     );
 
     session.send_input(b"h\r");
-    session.settle(2000);
+    session
+        .wait_for_cli_call("run cancel 12345", 5000)
+        .expect("cancel is sent once confirmed");
 
     let calls = session.get_cli_calls();
     let cancel = calls
@@ -398,9 +401,10 @@ fn checked_out_branch(session: &TestSession) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-/// Opens the Jobs tab once the Pipelines tab has settled and returns the CLI
-/// log length before the switch, so a test can read only the Jobs fetch.
-fn open_jobs_tab(session: &mut TestSession) -> usize {
+/// Opens the Jobs tab and waits for it to list its jobs. Returns the CLI log
+/// length after the highlighted pipeline's preview prefetch, so the calls
+/// after it are only the Jobs tab's.
+fn open_jobs_tab(session: &mut TestSession, github: bool) -> usize {
     session
         .wait_for_screen_contains("Issues", 5000)
         .expect("app starts");
@@ -408,10 +412,19 @@ fn open_jobs_tab(session: &mut TestSession) -> usize {
     session
         .wait_for_screen_contains("12345", 5000)
         .expect("the pipeline list is loaded");
-    session.settle(500);
+    let prefetch = if github {
+        "run view 12345 --json jobs"
+    } else {
+        "/pipelines/12345/jobs"
+    };
+    session
+        .wait_for_cli_call(prefetch, 5000)
+        .expect("the highlighted pipeline's jobs are prefetched");
     let calls_before = session.get_cli_calls().len();
     session.send_input(b"l");
-    session.settle(1500);
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the Jobs tab lists the pipeline's job");
     calls_before
 }
 
@@ -421,10 +434,7 @@ fn open_jobs_tab(session: &mut TestSession) -> usize {
 #[test]
 fn test_jobs_tab_queries_only_the_branch_pipeline() {
     let mut session = TestSession::new(false, 24, 100);
-    let calls_before = open_jobs_tab(&mut session);
-    session
-        .wait_for_screen_contains("rspec", 5000)
-        .expect("the branch pipeline's jobs are listed");
+    let calls_before = open_jobs_tab(&mut session, false);
 
     let branch = checked_out_branch(&session);
     let calls = session.get_cli_calls()[calls_before..].to_string();
@@ -452,10 +462,7 @@ fn test_jobs_tab_queries_only_the_branch_pipeline() {
 #[test]
 fn test_jobs_tab_loads_the_newer_merge_request_pipeline() {
     let mut session = TestSession::new(false, 24, 100);
-    let calls_before = open_jobs_tab(&mut session);
-    session
-        .wait_for_screen_contains("rspec", 5000)
-        .expect("the MR pipeline's jobs are listed");
+    let calls_before = open_jobs_tab(&mut session, false);
 
     let calls = session.get_cli_calls()[calls_before..].to_string();
     assert!(
@@ -480,10 +487,7 @@ fn test_jobs_tab_loads_the_newer_merge_request_pipeline() {
 #[test]
 fn test_select_stage_shows_confirmation_until_the_selection_is_cleared() {
     let mut session = TestSession::new(false, 24, 100);
-    open_jobs_tab(&mut session);
-    session
-        .wait_for_screen_contains("rspec", 5000)
-        .expect("the branch pipeline's jobs are listed");
+    open_jobs_tab(&mut session, false);
 
     session.send_input(b"s");
     session
@@ -491,15 +495,9 @@ fn test_select_stage_shows_confirmation_until_the_selection_is_cleared() {
         .expect("select-stage feedback is visible");
 
     session.send_input(b"\x1b");
-    session.settle(1000);
-    assert!(
-        !session
-            .emulator
-            .get_text()
-            .contains("Selected all jobs in stage"),
-        "Esc clears the selection and its message:\n{}",
-        session.emulator.get_text()
-    );
+    session
+        .wait_for_screen_without("Selected all jobs in stage", 5000)
+        .expect("Esc clears the selection and its message");
 }
 
 /// GitHub has no way to start a manual job, so the help does not offer the
@@ -507,7 +505,7 @@ fn test_select_stage_shows_confirmation_until_the_selection_is_cleared() {
 #[test]
 fn test_github_jobs_tab_does_not_offer_start_job() {
     let mut session = TestSession::new(true, 60, 100);
-    let calls_before = open_jobs_tab(&mut session);
+    let calls_before = open_jobs_tab(&mut session, true);
 
     let branch = checked_out_branch(&session);
     let calls = session.get_cli_calls()[calls_before..].to_string();
@@ -531,10 +529,7 @@ fn test_github_jobs_tab_does_not_offer_start_job() {
 /// Opens the highlighted job's page, the URL the job list reported.
 fn open_job_in_browser(github: bool, url: &str) {
     let mut session = TestSession::new(github, 24, 100);
-    open_jobs_tab(&mut session);
-    session
-        .wait_for_screen_contains("rspec", 5000)
-        .expect("the branch pipeline's jobs are listed");
+    open_jobs_tab(&mut session, github);
 
     session.send_input(b"o");
     session
@@ -561,7 +556,7 @@ fn test_gitlab_jobs_tab_opens_the_job_page() {
 #[test]
 fn test_gitlab_jobs_help_offers_start_job() {
     let mut session = TestSession::new(false, 60, 100);
-    open_jobs_tab(&mut session);
+    open_jobs_tab(&mut session, false);
 
     session.send_input(b"?");
     session
@@ -598,13 +593,11 @@ fn test_terminal_log_filters_with_search_and_clears() {
     session
         .wait_for_screen_contains("┌ Terminal [", 5000)
         .expect("the title counts the entries the search keeps");
-    session.settle(300);
+    session
+        .wait_for_screen_without("glab issue list", 5000)
+        .expect("the search drops entries that do not match");
     let text = session.emulator.get_text();
     assert!(text.contains("glab mr list"), "{text}");
-    assert!(
-        !text.contains("glab issue list"),
-        "the search drops entries that do not match: {text}"
-    );
 
     session.send_input(b"\x1b");
     session
@@ -612,7 +605,9 @@ fn test_terminal_log_filters_with_search_and_clears() {
         .expect("Esc clears the search and brings the full log back");
 
     session.send_input(b"C");
-    session.settle(500);
+    session
+        .wait_for_screen_without("glab issue list", 5000)
+        .expect("the clear key empties the log");
     let text = session.emulator.get_text();
     assert!(
         !text.contains("glab issue list") && !text.contains("glab mr list"),

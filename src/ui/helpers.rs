@@ -746,6 +746,18 @@ pub(crate) fn badge_style_for(
                 true,
                 Some(format!(" {} FAILED ", icons.status_failed)),
             ),
+            "error" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} ERROR ", icons.status_failed)),
+            ),
+            "inactive" => (
+                theme.text_muted,
+                active_bg(theme.inactive_bg),
+                true,
+                Some(format!(" {} INACTIVE ", icons.status_canceled)),
+            ),
             "online" => (
                 theme.green,
                 active_bg(theme.green_bg),
@@ -1047,6 +1059,20 @@ mod tests {
             "Title"
         );
         assert_eq!(sort_header_label("Title", None, &icons), "Title");
+    }
+
+    #[test]
+    fn github_deployment_errors_and_inactive_deployments_get_badges() {
+        let theme = Theme::default();
+        let icons = Icons::ascii();
+        let badge = |val| badge_style_for("Deploy Status", val, false, theme.bg, &theme, &icons);
+
+        let (fg, _, _, text) = badge("error");
+        assert_eq!(fg, theme.red);
+        assert!(text.is_some_and(|t| t.contains("ERROR")));
+        let (fg, _, _, text) = badge("inactive");
+        assert_eq!(fg, theme.text_muted);
+        assert!(text.is_some_and(|t| t.contains("INACTIVE")));
     }
 
     fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {

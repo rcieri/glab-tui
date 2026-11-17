@@ -268,7 +268,9 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
     session
         .wait_for_screen_contains("Review submitted on MR #2", 5000)
         .expect("a posted review shows a notice");
-    session.settle(300);
+    session
+        .wait_for_screen_without("Submit Merge Request Review", 5000)
+        .expect("a posted review closes the overlay");
     let screen = session.emulator.get_text();
     assert!(
         !screen.contains("Submit Merge Request Review") && !screen.contains("1 pending"),
@@ -319,7 +321,9 @@ fn test_failed_review_submission_shows_the_error_in_the_overlay_and_keeps_the_dr
     );
 
     session.press_keys(b"\x1b");
-    session.settle(300);
+    session
+        .wait_for_screen_without("Submit Merge Request Review", 5000)
+        .expect("Esc closes the overlay");
     let screen = session.emulator.get_text();
     assert!(
         !screen.contains("Submit Merge Request Review") && screen.contains("1 pending"),
@@ -470,9 +474,10 @@ fn test_leaving_the_diff_keeps_drafts_on_esc_and_restores_kept_drafts_on_reopen(
         .expect("leaving with drafts should open the submit-review dialog");
 
     press_keys(&session, b"\x1b");
-    session.settle(300);
+    session
+        .wait_for_screen_without("Keep drafts", 5000)
+        .expect("Esc closes the dialog");
     let screen = session.emulator.get_text();
-    assert!(!screen.contains("Keep drafts"), "Esc closes the dialog");
     assert!(
         screen.contains("Merge Request Diff #2") && screen.contains("1 pending"),
         "Esc returns to the diff with the draft:\n{screen}"
@@ -483,14 +488,9 @@ fn test_leaving_the_diff_keeps_drafts_on_esc_and_restores_kept_drafts_on_reopen(
         .wait_for_screen_contains("Keep drafts", 5000)
         .expect("the dialog opens again");
     press_keys(&session, b"l\r");
-    session.settle(500);
-    assert!(
-        !session
-            .emulator
-            .get_text()
-            .contains("Merge Request Diff #2"),
-        "Keep drafts closes the diff"
-    );
+    session
+        .wait_for_screen_without("Merge Request Diff #2", 5000)
+        .expect("Keep drafts closes the diff");
 
     session.send_input(b"D");
     session

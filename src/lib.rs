@@ -23,6 +23,7 @@ pub mod review_submit;
 pub mod scope;
 pub mod syntax;
 pub mod templates;
+pub mod terminal_appearance;
 pub mod ui;
 pub mod update;
 pub mod utils;

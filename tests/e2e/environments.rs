@@ -6,17 +6,23 @@
 //! The mock `glab` serves `tests/fixtures/environments.json` (`production`,
 //! then `staging`) for the environments list and
 //! `tests/fixtures/deployments.json` for every deployments request: the
-//! newest deployment has SHA `f00dcafe`, which nothing else on the
-//! Environments tab shows, and the older one, run by job 500, carries the
-//! note `Hotfix rollout for the login outage`.
+//! newest deployment has SHA `f00dcafe`, which production's environment
+//! details show as its last deployment, and the older one has SHA
+//! `0ldc0de1`, which only the deployments table shows, and deployed tag
+//! `v1.0.1` with job 500, `deploy-hotfix`. Like GitLab's API, the fixture names the tag on the
+//! deploy job (`deployable.tag`), not on the deployment.
 //!
 //! On GitHub the mock `gh` serves `tests/fixtures/gh_environments.json` and
-//! `tests/fixtures/gh_deployments.json` (deployment 100, then 99), and the
-//! newest status of deployment 100 is `failure` while 99's is `success`.
+//! `tests/fixtures/gh_deployments.json` (deployment 100 with SHA `f00dcafe`,
+//! whose description is `null` as on most GitHub deployments, then 99 with SHA
+//! `0ldc0de1`), and the newest status of deployment 100 is `failure` while
+//! 99's is `success`, both in the REST statuses and in the GraphQL
+//! `latestStatus` the deployments table shows.
 
 use crate::TestSession;
 
-const DEPLOYMENT_SHA: &str = "f00dcafe";
+/// The older deployment's SHA: shown only while the deployments are listed.
+const DEPLOYMENT_SHA: &str = "0ldc0de1";
 /// Long enough for several redraws, so a stale deployments table would have
 /// been painted by the time the screen is checked for its absence.
 const REDRAW_WINDOW_MS: u64 = 500;
@@ -62,7 +68,62 @@ fn selecting_another_environment_clears_the_shown_deployments() {
     assert_deployments_hidden(&mut session);
 }
 
-const OLDER_DEPLOYMENT_NOTE: &str = "Hotfix rollout for the login outage";
+/// GitLab's environment list carries no `last_deployment`, so the fixture
+/// has none either, while `deployments.json` holds production's deployments.
+#[test]
+fn environment_list_shows_the_status_of_the_last_deployment() {
+    let mut session =
+        TestSession::with_config(false, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+    session.settle(REDRAW_WINDOW_MS);
+    let screen = session.emulator.get_text();
+    let production_row = screen
+        .lines()
+        .find(|line| line.contains("production"))
+        .expect("the production environment is listed");
+    assert!(
+        production_row.to_lowercase().contains("success"),
+        "production's row does not show its last deployment's status:\n{screen}"
+    );
+    let calls = session.get_cli_calls();
+    assert!(
+        calls.lines().any(|call| call
+            .contains("/projects/test-owner%2Ftest-repo/deployments?per_page=")
+            && call.ends_with("&order_by=id&sort=desc")),
+        "the last deployments come from one call over every environment:\n{calls}"
+    );
+}
+
+/// GitHub lists environments without their deployments, so the column that
+/// shows the last deployment's status is neither drawn nor offered there.
+#[test]
+fn github_environments_have_no_deployment_status_column() {
+    let mut session =
+        TestSession::with_config(true, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+    session.settle(REDRAW_WINDOW_MS);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Deployment Status"),
+        "the Deployment Status column is drawn on GitHub:\n{screen}"
+    );
+
+    session.press_keys(b",");
+    session
+        .wait_for_screen_contains("COLUMNS", 5000)
+        .expect("the Configure View opens");
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("Deployment Status"),
+        "the Configure View offers the Deployment Status column on GitHub:\n{screen}"
+    );
+}
+
+const OLDER_DEPLOYMENT_JOB: &str = "deploy-hotfix (#500)";
 
 fn confirm_dialog(session: &mut TestSession, title: &str) {
     session
@@ -77,12 +138,55 @@ fn focused_deployments_select_an_older_deployment_and_show_its_details() {
 
     session.press_keys(b"j");
     session
-        .wait_for_screen_contains(OLDER_DEPLOYMENT_NOTE, 5000)
-        .expect("j moves to the older deployment and the pane shows its notes");
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_JOB, 5000)
+        .expect("j moves to the older deployment and the pane shows its job");
     let screen = session.emulator.get_text();
     assert!(
         screen.contains(DEPLOYMENT_SHA),
         "the deployments of production stay listed:\n{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Tag") && line.contains("v1.0.1")),
+        "a deployment of a tag names its ref a tag:\n{screen}"
+    );
+}
+
+#[test]
+fn github_lists_deployments_without_a_description() {
+    let mut session =
+        TestSession::with_config(true, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .expect("Enter lists the deployments, the one with a null description first");
+}
+
+#[test]
+fn github_deployments_show_their_latest_status() {
+    let mut session =
+        TestSession::with_config(true, 40, 160, Some("active_tab = \"environments\"\n"));
+    session
+        .wait_for_screen_contains("staging", 30000)
+        .expect("the Environments tab lists the fixture environments");
+    session.send_input(b"\r");
+    session
+        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .expect("Enter lists the deployments of production");
+    session.settle(REDRAW_WINDOW_MS);
+    let screen = session.emulator.get_text();
+    let row_of = |sha: &str| screen.lines().find(|line| line.contains(sha)).unwrap_or("");
+    assert!(
+        row_of("f00dcafe").contains("FAILED"),
+        "the newest deployment shows its failed latest status:\n{screen}"
+    );
+    assert!(
+        row_of("0ldc0de1").contains("SUCCESS"),
+        "the older deployment shows its successful latest status:\n{screen}"
     );
 }
 
@@ -92,7 +196,7 @@ fn rollback_reruns_the_job_of_the_selected_deployment() {
 
     session.press_keys(b"j");
     session
-        .wait_for_screen_contains(OLDER_DEPLOYMENT_NOTE, 5000)
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_JOB, 5000)
         .expect("j selects the older deployment");
     session.press_keys(b"R");
     confirm_dialog(&mut session, "Roll Back 'production' to 0ldc0de1");

@@ -45,10 +45,10 @@ fi
 # The branch list: the fixture, plus the branch a `git/refs` POST created.
 branches_json() {
     if [[ -f "$LOG_FILE.created_branch" ]]; then
-        sed '$d' "$FIXTURES_DIR/branches.json" | sed '$s/}$/},/'
-        printf '  {"name": "%s", "merged": false, "protected": false, "default": false, "commit": {"id": "a1b2c3d4e5f67890123456789012345678901234", "sha": "a1b2c3d4e5f67890123456789012345678901234"}}\n]\n' "$(cat "$LOG_FILE.created_branch")"
+        sed '$d' "$FIXTURES_DIR/gh_branches.json" | sed '$s/}$/},/'
+        printf '  {"name": "%s", "protected": false, "commit": {"sha": "a1b2c3d4e5f67890123456789012345678901234"}}\n]\n' "$(cat "$LOG_FILE.created_branch")"
     else
-        cat "$FIXTURES_DIR/branches.json"
+        cat "$FIXTURES_DIR/gh_branches.json"
     fi
 }
 
@@ -234,6 +234,9 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/gh_workflow_runs.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
         cat "$FIXTURES_DIR/gh_runners.json"
+    elif [[ "$*" == *"notifications"* && " $* " == *" -X "* ]]; then
+        # Marking read or done and unsubscribing answer with no body.
+        :
     elif [[ "$*" == *"notifications"* ]]; then
         cat "$FIXTURES_DIR/gh_notifications.json"
     elif [[ "$*" == *"/milestones"* ]]; then

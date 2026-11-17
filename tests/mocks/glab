@@ -69,7 +69,7 @@ fi
 branches_json() {
     if [[ -f "$LOG_FILE.created_branch" ]]; then
         sed '$d' "$FIXTURES_DIR/branches.json" | sed '$s/}$/},/'
-        printf '  {"name": "%s", "merged": false, "protected": false, "default": false, "commit": {"id": "a1b2c3d4e5f67890123456789012345678901234", "sha": "a1b2c3d4e5f67890123456789012345678901234"}}\n]\n' "$(cat "$LOG_FILE.created_branch")"
+        printf '  {"name": "%s", "merged": false, "protected": false, "default": false, "commit": {"id": "a1b2c3d4e5f67890123456789012345678901234"}}\n]\n' "$(cat "$LOG_FILE.created_branch")"
     else
         cat "$FIXTURES_DIR/branches.json"
     fi
@@ -113,6 +113,10 @@ if [[ "$*" == *"api"* ]]; then
         else
             echo "[]"
         fi
+    elif [[ "$*" == *"/closed_by"* ]]; then
+        cat "$FIXTURES_DIR/closed_by_mrs.json"
+    elif [[ "$*" == *"/closes_issues"* ]]; then
+        cat "$FIXTURES_DIR/closes_issues.json"
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then

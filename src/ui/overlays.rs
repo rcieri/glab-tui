@@ -308,7 +308,12 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
     }
 
-    if let Some(text_input) = app.text_input().cloned() {
+    let area = centered_rect_min(60, 60, 36, 6, size);
+    if app.text_input().is_some() {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::TextInput, area));
+    }
+    if let Some(text_input) = app.text_input() {
         let block = Block::default()
             .title(format!(" {} ", text_input.title))
             .title_style(
@@ -320,9 +325,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             .border_style(Style::default().fg(ctx.theme.border_focused))
             .style(Style::default().bg(ctx.theme.bg));
 
-        let area = centered_rect_min(60, 60, 36, 6, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::TextInput, area));
         clear_area(f, ctx, area);
         f.render_widget(block, area);
 
@@ -344,7 +346,13 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_widget(value_p, chunks[0]);
     }
 
-    if let Some(date_picker) = app.date_picker().cloned() {
+    // 36 columns wide, 11 rows high
+    let area = centered_rect_fixed(36, 11, size);
+    if app.date_picker().is_some() {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::DatePicker, area));
+    }
+    if let Some(date_picker) = app.date_picker() {
         let block = Block::default()
             .title(format!(" {} ", date_picker.title))
             .title_style(
@@ -356,10 +364,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             .border_style(Style::default().fg(ctx.theme.border_focused))
             .style(Style::default().bg(ctx.theme.bg));
 
-        // 36 columns wide, 11 rows high
-        let area = centered_rect_fixed(36, 11, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::DatePicker, area));
         let inner_area = block.inner(area);
 
         let chunks = Layout::default()

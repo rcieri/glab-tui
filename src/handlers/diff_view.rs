@@ -107,7 +107,6 @@ pub fn handle_key(
                 }
                 KeyCode::Enter => {
                     diff_view.search_active = false;
-                    diff_view.focus_on_files = false;
                 }
                 KeyCode::Backspace => {
                     diff_view.search_query.pop();
@@ -115,13 +114,11 @@ pub fn handle_key(
                         diff_view.clear_search();
                     } else {
                         diff_view.search(&diff_view.search_query.clone());
-                        diff_view.update_selected_file_from_cursor();
                     }
                 }
                 KeyCode::Char(c) if !is_shortcut(key_event.code, key_event.modifiers) => {
                     diff_view.search_query.push(c);
                     diff_view.search(&diff_view.search_query.clone());
-                    diff_view.update_selected_file_from_cursor();
                 }
                 _ => {}
             }
@@ -575,13 +572,6 @@ pub fn handle_key(
             app.push_modal(crate::app::Modal::Diff(diff_view));
         }
         Some(Action::DiffSubmitReview) => {
-            if key_event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL)
-            {
-                app.push_modal(crate::app::Modal::Diff(diff_view));
-                return;
-            }
             let mr_iid = diff_view.mr_iid;
             let project_path = diff_view.project_path.clone();
             app.push_modal(crate::app::Modal::Diff(diff_view));

@@ -1,0 +1,23 @@
+{
+  "total_count": 1,
+  "incomplete_results": false,
+  "items": [
+    {
+      "number": 5,
+      "title": "Org issue in project-b",
+      "state": "open",
+      "labels": [],
+      "user": {
+        "login": "test-user"
+      },
+      "body": null,
+      "created_at": "2026-10-01T00:00:00Z",
+      "updated_at": "2026-10-02T00:00:00Z",
+      "closed_at": null,
+      "milestone": null,
+      "assignees": [],
+      "html_url": "https://github.com/acme/project-b/issues/5",
+      "repository_url": "https://api.github.com/repos/acme/project-b"
+    }
+  ]
+}

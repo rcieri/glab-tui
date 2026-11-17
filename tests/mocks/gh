@@ -207,6 +207,10 @@ if [[ "$*" == *"api"* ]]; then
         fi
     elif [[ "$*" == *"/issues/comments/"* ]]; then
         echo '{"body": "Comment from **octocat** on item one", "user": {"login": "octocat"}}'
+    elif [[ "$*" == *"search/issues?q="*"+is:pr"* ]]; then
+        cat "$FIXTURES_DIR/gh_search_prs.json"
+    elif [[ "$*" == *"search/issues?q="* ]]; then
+        cat "$FIXTURES_DIR/gh_search_issues.json"
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then

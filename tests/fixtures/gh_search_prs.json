@@ -1,0 +1,27 @@
+{
+  "total_count": 1,
+  "incomplete_results": false,
+  "items": [
+    {
+      "number": 6,
+      "title": "Org PR in project-b",
+      "state": "open",
+      "labels": [],
+      "user": {
+        "login": "test-user"
+      },
+      "body": null,
+      "created_at": "2026-10-01T00:00:00Z",
+      "updated_at": "2026-10-02T00:00:00Z",
+      "closed_at": null,
+      "milestone": null,
+      "assignees": [],
+      "html_url": "https://github.com/acme/project-b/pull/6",
+      "repository_url": "https://api.github.com/repos/acme/project-b",
+      "draft": false,
+      "pull_request": {
+        "url": "https://api.github.com/repos/acme/project-b/pulls/6"
+      }
+    }
+  ]
+}

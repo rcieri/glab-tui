@@ -4,14 +4,21 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "gh $*" >> "$LOG_FILE"
 # One file per call with the exact argument boundaries, checked against the
-# generated CLI reference by the e2e harness. A shared file would interleave
-# concurrent calls. The record is written under a dot name and renamed once
-# complete, so the harness can wait for it.
+# generated CLI reference by the e2e harness, and beside it, under the same
+# name plus `.stdin`, the request body piped with `--input -`. A shared file
+# would interleave concurrent calls. Both are written under a dot name and
+# renamed once complete, the body first, so the harness can wait for the
+# record.
 if [[ -n "$TEST_LOG_PATH" ]]; then
     mkdir -p "$TEST_LOG_PATH.argv.d"
     argv_record=$(mktemp "$TEST_LOG_PATH.argv.d/.XXXXXXXX")
+    record="${argv_record%/.*}/${argv_record##*/.}"
+    if [[ " $* " == *" --input - "* ]]; then
+        cat > "$argv_record.stdin"
+        mv "$argv_record.stdin" "$record.stdin"
+    fi
     printf '%s\x1f' gh "$@" > "$argv_record"
-    mv "$argv_record" "${argv_record%/.*}/${argv_record##*/.}"
+    mv "$argv_record" "$record"
 fi
 
 # A call this mock has no case for. The test harness fails the test when
@@ -31,11 +38,6 @@ fi
 # Hang injection: never answer a call whose arguments contain the value.
 if [[ -n "$TEST_GH_HANG_MATCH" && "$*" == *"$TEST_GH_HANG_MATCH"* ]]; then
     exec sleep 300
-fi
-
-# Request bodies piped with `--input -`, one per line, for payload assertions.
-if [[ " $* " == *" --input - "* ]]; then
-    { cat; echo; } >> "$LOG_FILE.stdin"
 fi
 
 # The branch list: the fixture, plus the branch a `git/refs` POST created.
@@ -176,7 +178,7 @@ if [[ "$*" == *"api"* ]]; then
         # Resolving the branch a new one is created from.
         echo '{"ref": "refs/heads/main", "object": {"sha": "a1b2c3d4e5f67890123456789012345678901234"}}'
     elif [[ "$*" == *"/git/refs"* && " $* " == *" -X POST "* ]]; then
-        sed -n 's/.*"ref":"refs\/heads\/\([^"]*\)".*/\1/p' "$LOG_FILE.stdin" | tail -1 > "$LOG_FILE.created_branch"
+        sed -n 's/.*"ref":"refs\/heads\/\([^"]*\)".*/\1/p' "$record.stdin" > "$LOG_FILE.created_branch"
         echo '{}'
     elif [[ "$*" == *"closingIssuesReferences"* ]]; then
         echo '{"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}'

@@ -5,8 +5,8 @@ For GitHub and GitLab it writes two files from the pinned REST description
 and the pinned GraphQL schema:
 
   <host>.openapi.json  the operations glab-tui calls, each with its query
-                       parameters and the 2xx responses cut to the fields
-                       glab-tui reads (OpenAPI 3.1)
+                       parameters, its JSON request body and the 2xx
+                       responses cut to the fields glab-tui reads (OpenAPI 3.1)
   <host>.graphql.json  the GraphQL fields glab-tui selects, with their types,
                        argument names and the deprecation of fields and
                        arguments
@@ -38,6 +38,10 @@ Rules for the response schemas:
     required is the description's required list cut to the fields read.
   * Host rule all_nullable (GitLab, whose description marks no nullability)
     makes every property nullable.
+A request body is kept whole, inline and cut to types, properties, items,
+branches and nullability: the e2e check reads it against the bodies the
+calls send, so no list of sent fields is kept. Each oneOf or anyOf branch
+carries the properties the schema lists beside the branches.
 Problems are collected and reported together: a field read but absent from
 the description (unless listed in absent_ok), an absent_ok or spec_absent_ok
 entry the description has caught up with, a correction the description
@@ -399,6 +403,67 @@ def parameters(spec: dict[str, Any], path_item: dict[str, Any], spec_op: dict[st
     return [found[k] for k in sorted(found)]
 
 
+def request_schema(spec: dict[str, Any], node: dict[str, Any], refs: tuple[str, ...] = ()) -> dict[str, Any]:
+    """A request body schema whole and inline, cut to what the e2e check
+    reads: types, properties, items, branches and nullability. A schema that
+    refers to itself stops at the loop with an empty schema."""
+    if "$ref" in node:
+        name = ref_name(node["$ref"])
+        if name in refs:
+            return {}
+        return request_schema(spec, spec["components"]["schemas"][name], refs + (name,))
+    if "allOf" in node:
+        merged = {k: v for k, v in node.items() if k != "allOf"}
+        for sub in node["allOf"]:
+            while "$ref" in sub:
+                sub = spec["components"]["schemas"][ref_name(sub["$ref"])]
+            for key, value in sub.items():
+                if key == "properties":
+                    merged["properties"] = {**merged.get("properties", {}), **value}
+                elif key != "required":
+                    merged.setdefault(key, value)
+        return request_schema(spec, merged, refs)
+    out: dict[str, Any] = {}
+    if "type" in node:
+        out["type"] = node["type"]
+    if "properties" in node:
+        out["properties"] = {k: request_schema(spec, v, refs) for k, v in node["properties"].items()}
+    if "items" in node:
+        out["items"] = request_schema(spec, node["items"], refs)
+    extra = node.get("additionalProperties")
+    if extra is True or isinstance(extra, dict):
+        out["additionalProperties"] = extra if extra is True else request_schema(spec, extra, refs)
+    for key in ("oneOf", "anyOf"):
+        if key in node:
+            own = {k: v for k, v in node.items() if k not in ("oneOf", "anyOf")}
+            branches: list[dict[str, Any]] = []
+            for branch in node[key]:
+                branch_refs = refs
+                if "$ref" in branch:
+                    name = ref_name(branch["$ref"])
+                    if name in refs:
+                        branches.append({})
+                        continue
+                    branch = spec["components"]["schemas"][name]
+                    branch_refs = refs + (name,)
+                branches.append(request_schema(spec, {"allOf": [own, branch]}, branch_refs))
+            out[key] = branches
+    return Pruner.nullable(out, bool(node.get("nullable")))
+
+
+def request_body(spec: dict[str, Any], spec_op: dict[str, Any]) -> dict[str, Any] | None:
+    """The operation's JSON request body, or None when it takes none."""
+    body = spec_op.get("requestBody")
+    if body is None:
+        return None
+    if "$ref" in body:
+        body = spec["components"]["requestBodies"][body["$ref"].rsplit("/", 1)[-1]]
+    schema = body.get("content", {}).get("application/json", {}).get("schema")
+    if schema is None:
+        return None
+    return {"content": {"application/json": {"schema": request_schema(spec, schema)}}}
+
+
 def name_components(
         walked: dict[tuple[str, str], dict[str, tuple[str, Any]]], problems: list[str], host: str,
 ) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, Any]]:
@@ -501,12 +566,16 @@ def build_openapi(
         if op_id in op_ids:
             problems.append(f"{host}: {label} and {op_ids[op_id]} both name the operation {op_id}")
         op_ids[op_id] = label
-        paths.setdefault(op["path"], {})[op["method"]] = {
+        entry = {
             "operationId": op_id,
             "x-read-at": op["code"],
             "parameters": parameters(spec, item, spec_op),
             "responses": responses[key],
         }
+        body = request_body(spec, spec_op)
+        if body is not None:
+            entry["requestBody"] = body
+        paths.setdefault(op["path"], {})[op["method"]] = entry
     if problems:
         raise Problems(sorted(set(problems)))
     description, pin = header(host, "REST", source_pin, license_)

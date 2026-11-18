@@ -238,8 +238,11 @@ pub fn handle_mouse_event(
                 if rect_contains(sidebar_rect, row, col) {
                     let tab_idx = (row - sidebar_rect.y - 1) as usize;
                     let tabs = app.available_tabs();
-                    if tab_idx < tabs.len() {
-                        app.active_tab = tabs[tab_idx];
+                    if let Some(&tab) = tabs.get(tab_idx)
+                        && tab != app.active_tab
+                    {
+                        app.activate_tab(tab);
+                        crate::handlers::tabs::fetch_for_entered_tab(app, tx, fx);
                     }
                     return;
                 }
@@ -492,5 +495,87 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16) 
         app.editing_page_size = true;
     } else if row == save_y {
         app.save_menu_open = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Tab;
+    use crate::dashboard::DashboardFocus;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    fn click_sidebar_tab(app: &mut App, tab: Tab) -> Vec<crate::effect::Effect> {
+        let sidebar = Rect::new(0, 0, 20, 30);
+        app.sidebar_rect = Some(sidebar);
+        let index = app
+            .available_tabs()
+            .iter()
+            .position(|t| *t == tab)
+            .expect("tab listed in the sidebar");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: sidebar.y + 1 + index as u16,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut fx = Effects::default();
+        handle_mouse_event(app, &click, &tx, &mut fx);
+        fx.into_vec()
+    }
+
+    #[test]
+    fn clicking_another_tab_leaves_the_dashboard_like_the_tab_keys() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.active_tab = Tab::Dashboard;
+        app.dashboard.focus = DashboardFocus::List;
+
+        click_sidebar_tab(&mut app, Tab::Issues);
+
+        assert_eq!(app.active_tab, Tab::Issues);
+        assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
+    }
+
+    #[test]
+    fn clicking_the_dashboard_fetches_what_it_has_not_read_like_the_tab_keys() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.active_tab = Tab::Issues;
+
+        let effects = click_sidebar_tab(&mut app, Tab::Dashboard);
+
+        assert_eq!(app.active_tab, Tab::Dashboard);
+        assert_eq!(
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, crate::effect::Effect::Spawn(_)))
+                .count(),
+            1
+        );
+        assert!(app.loading_tabs.contains(&Tab::MergeRequests));
+    }
+
+    #[test]
+    fn clicking_the_active_tab_keeps_its_preview_open() {
+        let mut app = App::default();
+        app.active_tab = Tab::Issues;
+        app.detail_visible = true;
+
+        click_sidebar_tab(&mut app, Tab::Issues);
+
+        assert!(app.detail_visible);
     }
 }

@@ -3,7 +3,6 @@ use crate::domain::review::DraftComment;
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::{CommandOutcome, Event};
-use crate::fetch::spawn_refresh_active_tab;
 use crate::keybinding::KeyPress;
 use crate::{app, domain, handlers};
 use crossterm::event::KeyCode;
@@ -69,13 +68,13 @@ pub fn handle_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 app.start_loading_tab(app.active_tab);
-                                spawn_refresh_active_tab(
+                                let tx = app.scoped_sender(tx.clone());
+                                crate::fetch::spawn_refresh_shown_tab(
                                     fx,
                                     &client,
-                                    &app.scope,
-                                    app.requested_state_queries(),
-                                    app.active_tab,
-                                    app.scoped_sender(tx.clone()),
+                                    app,
+                                    crate::dashboard::DashboardRefresh::Full,
+                                    tx,
                                 );
                             }
                         }

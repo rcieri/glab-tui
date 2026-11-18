@@ -71,13 +71,13 @@ pub fn handle_key(
                         }
                         if let Some(client) = app.gitlab_client.clone() {
                             app.start_loading_tab(app.active_tab);
-                            spawn_refresh_active_tab(
+                            let tx = app.scoped_sender(tx.clone());
+                            crate::fetch::spawn_refresh_shown_tab(
                                 fx,
                                 &client,
-                                &app.scope,
-                                app.requested_state_queries(),
-                                app.active_tab,
-                                app.scoped_sender(tx.clone()),
+                                app,
+                                crate::dashboard::DashboardRefresh::Full,
+                                tx,
                             );
                         }
                     }
@@ -280,5 +280,52 @@ pub fn handle_key(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Tab;
+    use crate::effect::Effect;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+
+    #[test]
+    fn a_new_page_size_on_the_dashboard_refetches_every_list_it_shows() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.active_tab = Tab::Dashboard;
+        app.editing_page_size = true;
+        app.page_size_input = "200".to_string();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+
+        handle_key(
+            &mut app,
+            &KeyPress::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &tx,
+            &mut fx,
+        );
+
+        assert_eq!(app.gitlab_client.map(|client| client.page_size), Some(200));
+        assert_eq!(
+            fx.into_vec()
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Spawn(_)))
+                .count(),
+            1
+        );
+        assert!(app.loading_tabs.contains(&Tab::MergeRequests));
+        assert!(app.loading_tabs.contains(&Tab::Issues));
     }
 }

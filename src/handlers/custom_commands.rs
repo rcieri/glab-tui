@@ -604,7 +604,7 @@ fn unloaded_rows<'a>(
 
 /// GitHub numbers pull requests like issues (`#12`); GitLab uses `!12`.
 fn mr_row_prefix(app: &App) -> &'static str {
-    if app.is_github() { "#" } else { "!" }
+    app.kind().mr_reference_prefix()
 }
 
 fn issue_target(

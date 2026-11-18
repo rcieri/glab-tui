@@ -1,0 +1,16 @@
+[
+  {
+    "tag_name": "v1.1.0",
+    "name": "Second release",
+    "published_at": "2026-07-20T10:00:00Z",
+    "body": "Adds pagination.",
+    "author": { "login": "octocat" }
+  },
+  {
+    "tag_name": "v1.0.0",
+    "name": "First release",
+    "published_at": "2026-07-06T10:00:00Z",
+    "body": "Initial release.",
+    "author": { "login": "octocat" }
+  }
+]

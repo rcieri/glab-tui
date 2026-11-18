@@ -4,6 +4,7 @@ use super::browser::open_url;
 use super::logged_command::{ChildOutput, LoggedCommand};
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
+use crate::domain::contributions::FeedPage;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
@@ -429,6 +430,16 @@ pub(crate) fn map_gh_pr_state(raw: &str) -> &'static str {
         "OPEN" => "opened",
         "MERGED" => "merged",
         _ => "closed",
+    }
+}
+
+/// The rows one issue or PR listing returns at most: `gh issue list` and
+/// `gh pr list` take a total `--limit`, while an organization listing is one
+/// search page, which GitHub caps at 100 rows.
+fn gh_max_listed_rows(scope: &Scope, page_size: usize) -> usize {
+    match scope {
+        Scope::Repository(_) => page_size * 10,
+        Scope::Group(_) => (page_size * 10).clamp(1, 100),
     }
 }
 
@@ -1702,6 +1713,10 @@ impl Backend for GhBackend {
         }
     }
 
+    fn max_listed_rows(&self, scope: &Scope, page_size: usize, _per_request: usize) -> usize {
+        gh_max_listed_rows(scope, page_size)
+    }
+
     // ── Issues ──
 
     /// `_per_request` is unused in the GitHub backend (as with all `Backend`
@@ -1717,7 +1732,7 @@ impl Backend for GhBackend {
         match scope {
             Scope::Repository(project) => {
                 let state = gh_issue_state_flag(state);
-                let total = page_size * 10;
+                let total = gh_max_listed_rows(scope, page_size);
                 let raw = self
                     .run_gh(
                         &[
@@ -1745,7 +1760,7 @@ impl Backend for GhBackend {
                 Ok(issues)
             }
             Scope::Group(org) => {
-                let per_page = (page_size * 10).clamp(1, 100);
+                let per_page = gh_max_listed_rows(scope, page_size);
                 let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:issue")
                 } else {
@@ -2057,7 +2072,7 @@ impl Backend for GhBackend {
         match scope {
             Scope::Repository(project) => {
                 let state = gh_pr_state_flag(state);
-                let total = page_size * 10;
+                let total = gh_max_listed_rows(scope, page_size);
                 let raw = self
                     .run_gh(
                         &[
@@ -2235,7 +2250,7 @@ impl Backend for GhBackend {
                     .collect())
             }
             Scope::Group(org) => {
-                let per_page = (page_size * 10).clamp(1, 100);
+                let per_page = gh_max_listed_rows(scope, page_size);
                 let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:pr")
                 } else {
@@ -3883,6 +3898,29 @@ impl Backend for GhBackend {
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
+    }
+
+    // ── Contributions ──
+
+    async fn list_contribution_page(
+        &self,
+        scope: &Scope,
+        _since: chrono::NaiveDate,
+        page: usize,
+    ) -> Result<FeedPage> {
+        let Scope::Repository(project) = scope else {
+            return Err(anyhow::anyhow!(
+                "Org-level activity not supported on GitHub"
+            ));
+        };
+        let endpoint = format!(
+            "/repos/{project}/events?per_page={}&page={page}",
+            crate::domain::contributions::EVENTS_PER_PAGE
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Activity")
+            .await?;
+        crate::domain::contributions::parse_github_events(&raw)
     }
 
     // ── Environments / Deployments ──

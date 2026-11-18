@@ -1039,6 +1039,7 @@ fn help_category(context: KeyContext, is_github: bool) -> &'static str {
             Tab::Branches => "Branches",
             Tab::Environments => "Environments",
             Tab::Terminal => "Terminal",
+            Tab::Dashboard => "Dashboard",
         },
     }
 }
@@ -1083,6 +1084,42 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         .collect();
 
     shortcuts.extend([
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter"),
+            action: "Go one level down: tab → cards → queues/people → items → open the item"
+                .to_string(),
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Esc"),
+            action: "Go one level up".to_string(),
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("h / j / k / l / ← / ↓ / ↑ / →"),
+            action: "Move between cards (on the tab level, h / l still switch tabs)".to_string(),
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("j / k / ↓ / ↑ / Home / End"),
+            action: "Pick a queue or person inside a card, or an item inside the list".to_string(),
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: s("Enter (in the list)"),
+            action: "Open the issue, MR/PR, pipeline, milestone or release in its tab".to_string(),
+        },
+        Shortcut {
+            category: "Dashboard",
+            key: d(format!(
+                "{} / {} / {}",
+                app.config.keybindings.display(Action::GlobalSortNext),
+                app.config.keybindings.display(Action::GlobalSortPrev),
+                app.config.keybindings.display(Action::GlobalSortReverse)
+            )),
+            action: "Sort contributors by a column (highest first) / reverse".to_string(),
+        },
         Shortcut {
             category: "Inspector / Editor",
             key: s("j / k / ↓ / ↑ / Tab / Shift+Tab"),
@@ -1201,6 +1238,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
             Tab::Branches => &["Global & Nav", "Branches", CUSTOM_COMMANDS_CATEGORY],
             Tab::Environments => &["Global & Nav", "Environments", CUSTOM_COMMANDS_CATEGORY],
             Tab::Terminal => &["Global & Nav", "Terminal", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Dashboard => &["Global & Nav", "Dashboard", CUSTOM_COMMANDS_CATEGORY],
         }
     };
 

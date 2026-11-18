@@ -4,6 +4,7 @@ use super::browser::open_url;
 use super::logged_command::{ChildOutput, LoggedCommand};
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
+use crate::domain::contributions::FeedPage;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
@@ -1327,6 +1328,10 @@ impl Backend for GlabBackend {
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>) {
         self.tx = Some(tx);
+    }
+
+    fn max_listed_rows(&self, _scope: &Scope, page_size: usize, per_request: usize) -> usize {
+        page_count(page_size, per_request) * per_request.max(1)
     }
 
     // ── Issues ──
@@ -3308,6 +3313,34 @@ impl Backend for GlabBackend {
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
+    }
+
+    // ── Contributions ──
+
+    async fn list_contribution_page(
+        &self,
+        scope: &Scope,
+        since: chrono::NaiveDate,
+        page: usize,
+    ) -> Result<FeedPage> {
+        let Scope::Repository(project) = scope else {
+            return Err(anyhow::anyhow!("Group-level activity not supported"));
+        };
+        let encoded = Self::encode_path(project);
+        // GitLab keeps events after the end of the `after` day, which it may
+        // read in the instance's time zone. Two days back covers any UTC
+        // offset, and `add_page` drops what predates `since`.
+        let after = since
+            .checked_sub_days(chrono::Days::new(2))
+            .unwrap_or(since);
+        let endpoint = format!(
+            "/projects/{encoded}/events?after={after}&per_page={}&page={page}",
+            crate::domain::contributions::EVENTS_PER_PAGE
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Activity")
+            .await?;
+        crate::domain::contributions::parse_gitlab_events(&raw)
     }
 
     // ── Environments / Deployments ──

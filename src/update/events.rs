@@ -530,6 +530,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.project_cache.environments = app.environments.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
+        Event::DashboardRefreshed => {
+            app.complete_loading_tab(app::Tab::Dashboard, "Success");
+        }
+        Event::ContributionsFetched(result) => app.apply_contributions(result),
         Event::SelectorItemsFetched { request, items } => {
             if app.apply_selector_items(request, items) {
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -714,6 +718,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if app.has_rows(tab) {
                 app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
             } else {
+                app.fetch_failures.insert(tab, err_msg.clone());
                 app.show_cli_error(err_msg);
             }
         }

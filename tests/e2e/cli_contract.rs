@@ -22,6 +22,10 @@ const ARG_END: char = '\u{1f}';
 /// with this suffix.
 const BODY_SUFFIX: &str = ".stdin";
 
+/// What a call printed sits next to its record, under the record's name with
+/// this suffix.
+const OUTPUT_SUFFIX: &str = ".stdout";
+
 /// Placeholders a usage line writes for the subcommand itself, not for an
 /// argument of the command.
 const SUBCOMMAND_PLACEHOLDERS: [&str; 4] =
@@ -289,6 +293,8 @@ pub struct RecordedCall {
     pub argv: Vec<String>,
     /// The request body the call read with `--input -`.
     pub stdin: Option<String>,
+    /// What the mock printed, once it has exited.
+    pub stdout: Option<String>,
 }
 
 /// Every call recorded in `<log_path>.argv.d/`, in the order the mocks wrote
@@ -297,7 +303,9 @@ pub fn recorded_calls(log_path: &Path) -> Vec<RecordedCall> {
     let dir = argv_dir(log_path);
     let mut records: Vec<(SystemTime, String)> = record_names(log_path)
         .into_iter()
-        .filter(|name| !name.starts_with('.') && !name.ends_with(BODY_SUFFIX))
+        .filter(|name| {
+            !name.starts_with('.') && !name.ends_with(BODY_SUFFIX) && !name.ends_with(OUTPUT_SUFFIX)
+        })
         .filter_map(|name| {
             let written = std::fs::metadata(dir.join(&name)).ok()?.modified().ok()?;
             Some((written, name))
@@ -315,10 +323,16 @@ pub fn recorded_calls(log_path: &Path) -> Vec<RecordedCall> {
                 .split(ARG_END)
                 .map(str::to_string)
                 .collect();
-            let stdin = std::fs::read(dir.join(format!("{name}{BODY_SUFFIX}")))
-                .ok()
-                .map(|body| String::from_utf8_lossy(&body).into_owned());
-            Some(RecordedCall { argv, stdin })
+            let beside = |suffix: &str| {
+                std::fs::read(dir.join(format!("{name}{suffix}")))
+                    .ok()
+                    .map(|text| String::from_utf8_lossy(&text).into_owned())
+            };
+            Some(RecordedCall {
+                argv,
+                stdin: beside(BODY_SUFFIX),
+                stdout: beside(OUTPUT_SUFFIX),
+            })
         })
         .collect()
 }
@@ -550,6 +564,50 @@ fn recorded_calls_come_in_call_order_with_their_bodies() {
     let bodies: Vec<Option<&str>> = calls.iter().map(|call| call.stdin.as_deref()).collect();
     assert_eq!(bodies, [Some(r#"{"n":1}"#), Some(r#"{"n":2}"#), None]);
     assert_eq!(calls[2].argv, ["gh", "pr", "list"]);
+}
+
+#[test]
+fn a_recorded_call_carries_the_output_its_mock_printed() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cli_calls.log");
+    let records = argv_dir(&log_path);
+    std::fs::create_dir(&records).unwrap();
+    std::fs::write(records.join("a"), "gh\u{1f}api\u{1f}user\u{1f}").unwrap();
+    std::fs::write(records.join("a.stdout"), "test-user\n").unwrap();
+    // A mock still running, or killed before it finished printing.
+    std::fs::write(records.join("b"), "gh\u{1f}pr\u{1f}list\u{1f}").unwrap();
+    std::fs::write(records.join(".b.stdout"), "[").unwrap();
+
+    let calls = recorded_calls(&log_path);
+
+    let outputs: Vec<Option<&str>> = calls.iter().map(|call| call.stdout.as_deref()).collect();
+    assert_eq!(outputs, [Some("test-user\n"), None]);
+}
+
+#[test]
+fn the_mocks_record_what_they_print() {
+    for (is_github, argv) in [
+        (true, ["gh", "api", "user", "--jq", ".login"].as_slice()),
+        (false, ["glab", "todo", "list", "--output=json"].as_slice()),
+    ] {
+        let sandbox = crate::Sandbox::new(is_github).unwrap();
+        let printed = std::process::Command::new(sandbox.bin_dir.join(argv[0]))
+            .args(&argv[1..])
+            .envs(sandbox.envs())
+            .output()
+            .unwrap()
+            .stdout;
+
+        let calls = recorded_calls(&sandbox.log_path);
+
+        assert!(!printed.is_empty(), "{argv:?} printed nothing");
+        assert_eq!(calls.len(), 1, "{argv:?}");
+        assert_eq!(
+            calls[0].stdout.as_deref(),
+            Some(String::from_utf8_lossy(&printed).as_ref()),
+            "{argv:?}"
+        );
+    }
 }
 
 #[test]

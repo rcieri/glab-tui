@@ -4,9 +4,10 @@
 //! query parameter must be one the operation takes, and the request body must
 //! fit the operation's: no field the description lacks where it lists the
 //! fields, and every value of a type it allows. The body is what the call read
-//! with `--input -`, else its `-f` / `-F` fields when it is not a GET.
-//! `ApiRequest::read` reads each call once and hands a GraphQL call to
-//! `api_graphql`.
+//! with `--input -`, else its `-f` / `-F` fields when it is not a GET. What
+//! the mock printed must fit the operation's 2xx response the same way, and
+//! hold every field the description requires of it. `ApiRequest::read` reads
+//! each call once and hands a GraphQL call to `api_graphql`.
 //!
 //! What the description cannot confirm is excused through the shared
 //! `Ledger`, by the keys `<host> <METHOD> <template>` (an operation the
@@ -14,8 +15,10 @@
 //! `<host> <METHOD> <template> query <name>` (a query parameter it does not
 //! list) and `<host> <METHOD> <template> body <field>` (a body field it
 //! lacks or types otherwise, `comments[].path` for a field of an array's
-//! items; `body` alone for a body the operation does not take). All are
-//! looked up as finding first, then as exception.
+//! items; `body` alone for a body the operation does not take) and
+//! `<host> <METHOD> <template> response <field>` (`[].iid` for a field of a
+//! listed item; `response` alone for output of a bodyless response). All
+//! are looked up as finding first, then as exception.
 
 use crate::api_graphql;
 use crate::api_lists::{Kind, Ledger};
@@ -103,15 +106,28 @@ enum Operation {
         query: BTreeSet<String>,
         /// The schema of the JSON request body, when the operation takes one.
         body: Option<Value>,
+        /// Its 2xx responses.
+        responses: Vec<Response>,
     },
     /// The generator inputs mark it `spec_absent_ok`: it exists, the
     /// description lacks it.
     Missing,
 }
 
+/// One 2xx response of an operation.
+enum Response {
+    Json(Value),
+    /// 204 and 205: nothing is printed.
+    Bodyless,
+    /// A body that is not JSON, such as a job log.
+    Other,
+}
+
 struct Description {
     /// Path template, then upper-case method.
     paths: BTreeMap<String, BTreeMap<String, Operation>>,
+    /// The component schemas the responses refer to with `$ref`.
+    components: Value,
 }
 
 impl Description {
@@ -131,10 +147,31 @@ impl Description {
                 let body = operation
                     .pointer("/requestBody/content/application~1json/schema")
                     .cloned();
-                paths
-                    .entry(template.clone())
-                    .or_default()
-                    .insert(method.to_uppercase(), Operation::Described { query, body });
+                let responses = operation["responses"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .filter(|(status, _)| status.starts_with('2'))
+                    .map(|(_, response)| {
+                        if response["x-bodyless"] == true {
+                            Response::Bodyless
+                        } else if let Some(schema) =
+                            response.pointer("/content/application~1json/schema")
+                        {
+                            Response::Json(schema.clone())
+                        } else {
+                            Response::Other
+                        }
+                    })
+                    .collect();
+                paths.entry(template.clone()).or_default().insert(
+                    method.to_uppercase(),
+                    Operation::Described {
+                        query,
+                        body,
+                        responses,
+                    },
+                );
             }
         }
         let input: Value = serde_json::from_str(generator_input).expect("input is JSON");
@@ -150,7 +187,10 @@ impl Description {
                 .entry(method.to_uppercase())
                 .or_insert(Operation::Missing);
         }
-        Description { paths }
+        Description {
+            paths,
+            components: openapi["components"]["schemas"].clone(),
+        }
     }
 
     /// The templates `path` fits, the one with the most literal segments
@@ -243,6 +283,8 @@ pub struct ApiCall {
     /// The `-f` / `-F` fields of a call that is not a GET, as JSON values.
     fields: Vec<(String, Value)>,
     reads_body_from_input: bool,
+    /// Whether `--jq` or `--template` turns the response into text.
+    filtered: bool,
 }
 
 impl<'a> ApiRequest<'a> {
@@ -257,6 +299,7 @@ impl<'a> ApiRequest<'a> {
         let mut fields = Vec::new();
         let mut graphql_query = None;
         let mut reads_body_from_input = false;
+        let mut filtered = false;
         let mut endpoint = None;
         let mut words = argv[2..].iter().copied();
         while let Some(word) = words.next() {
@@ -299,6 +342,7 @@ impl<'a> ApiRequest<'a> {
                     fields.push((name.to_string(), typed_field(value)));
                 }
                 "--input" => reads_body_from_input = true,
+                "-q" | "--jq" | "-t" | "--template" => filtered = true,
                 _ => {}
             }
         }
@@ -332,6 +376,7 @@ impl<'a> ApiRequest<'a> {
             query,
             fields,
             reads_body_from_input,
+            filtered,
         }))
     }
 }
@@ -364,8 +409,10 @@ fn typed_field(value: &str) -> Value {
     }
 }
 
-/// Where a body value does not fit its schema.
+/// Where a body or response value does not fit its schema.
 enum Mismatch {
+    /// A field the schema requires and the value lacks.
+    Missing { path: String },
     /// A field the schema does not list, on a level that lists its fields.
     Unknown { path: String },
     /// A value of a type the schema does not allow.
@@ -378,7 +425,20 @@ enum Mismatch {
 
 /// The mismatches of `value` against `schema`, the value found at `path`.
 /// Of several branches, the one with the fewest mismatches is reported.
-fn mismatches(schema: &Value, value: &Value, path: &str, out: &mut Vec<Mismatch>) {
+/// A `$ref` names one of `components`.
+fn mismatches(
+    schema: &Value,
+    value: &Value,
+    path: &str,
+    components: &Value,
+    out: &mut Vec<Mismatch>,
+) {
+    if let Some(name) = schema["$ref"]
+        .as_str()
+        .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
+    {
+        return mismatches(&components[name], value, path, components, out);
+    }
     for key in ["oneOf", "anyOf"] {
         let Some(branches) = schema[key].as_array() else {
             continue;
@@ -386,7 +446,7 @@ fn mismatches(schema: &Value, value: &Value, path: &str, out: &mut Vec<Mismatch>
         let mut closest: Option<Vec<Mismatch>> = None;
         for branch in branches {
             let mut found = Vec::new();
-            mismatches(branch, value, path, &mut found);
+            mismatches(branch, value, path, components, &mut found);
             if found.is_empty() {
                 return;
             }
@@ -414,15 +474,29 @@ fn mismatches(schema: &Value, value: &Value, path: &str, out: &mut Vec<Mismatch>
         Value::Object(fields) => {
             let listed = schema["properties"].as_object();
             let extra = &schema["additionalProperties"];
-            for (name, field) in fields {
-                let field_path = if path.is_empty() {
-                    name.clone()
+            let field_path = |name: &str| {
+                if path.is_empty() {
+                    name.to_string()
                 } else {
                     format!("{path}.{name}")
-                };
+                }
+            };
+            for name in schema["required"].as_array().into_iter().flatten() {
+                if let Some(name) = name.as_str().filter(|name| !fields.contains_key(*name)) {
+                    out.push(Mismatch::Missing {
+                        path: field_path(name),
+                    });
+                }
+            }
+            for (name, field) in fields {
+                let field_path = field_path(name);
                 match listed.and_then(|listed| listed.get(name)) {
-                    Some(field_schema) => mismatches(field_schema, field, &field_path, out),
-                    None if extra.is_object() => mismatches(extra, field, &field_path, out),
+                    Some(field_schema) => {
+                        mismatches(field_schema, field, &field_path, components, out)
+                    }
+                    None if extra.is_object() => {
+                        mismatches(extra, field, &field_path, components, out)
+                    }
                     None if listed.is_some() && extra != &Value::Bool(true) => {
                         out.push(Mismatch::Unknown { path: field_path })
                     }
@@ -432,7 +506,13 @@ fn mismatches(schema: &Value, value: &Value, path: &str, out: &mut Vec<Mismatch>
         }
         Value::Array(items) if schema["items"].is_object() => {
             for item in items {
-                mismatches(&schema["items"], item, &format!("{path}[]"), out);
+                mismatches(
+                    &schema["items"],
+                    item,
+                    &format!("{path}[]"),
+                    components,
+                    out,
+                );
             }
         }
         _ => {}
@@ -471,6 +551,7 @@ fn body_problems(
     operation_key: &str,
     schema: Option<&Value>,
     body: Option<Result<Value, String>>,
+    components: &Value,
     ledger: &Ledger,
 ) -> Vec<String> {
     let Some(body) = body else {
@@ -495,30 +576,125 @@ fn body_problems(
         }
     };
     let mut found = Vec::new();
-    mismatches(schema, &body, "", &mut found);
+    mismatches(schema, &body, "", components, &mut found);
+    described(operation_key, "body", found, ledger)
+}
+
+/// One message for each of `found`, the mismatches of the `part` (`body` or
+/// `response`) of a call to `operation_key`, that the lists do not excuse.
+fn described(
+    operation_key: &str,
+    part: &str,
+    found: Vec<Mismatch>,
+    ledger: &Ledger,
+) -> Vec<String> {
+    let (host, operation) = operation_key.split_once(' ').unwrap_or_default();
     found
         .into_iter()
         .filter_map(|mismatch| {
-            let (path, problem) = match mismatch {
-                Mismatch::Unknown { path } => (path, "is not in the description".to_string()),
+            let key = |path: &str| {
+                if path.is_empty() {
+                    format!("{operation_key} {part}")
+                } else {
+                    format!("{operation_key} {part} {path}")
+                }
+            };
+            let subject = |path: &str| {
+                if path.is_empty() {
+                    format!("the {part}")
+                } else {
+                    format!("the {part} field `{path}`")
+                }
+            };
+            let (key, message) = match mismatch {
+                Mismatch::Missing { path } => (
+                    key(&path),
+                    format!("the {part} lacks the field `{path}`, which the description requires"),
+                ),
+                Mismatch::Unknown { path } => (
+                    key(&path),
+                    format!("{} is not in the description", subject(&path)),
+                ),
                 Mismatch::Type {
                     path,
                     sent,
                     allowed,
-                } => (path, format!("is {sent}, the description says {allowed}")),
-            };
-            let (subject, key) = if path.is_empty() {
-                ("the body".to_string(), format!("{operation_key} body"))
-            } else {
-                (
-                    format!("the body field `{path}`"),
-                    format!("{operation_key} body {path}"),
-                )
+                } => (
+                    key(&path),
+                    format!(
+                        "{} is {sent}, the description says {allowed}",
+                        subject(&path)
+                    ),
+                ),
             };
             (!excused(ledger, &key))
-                .then(|| format!("{host}: {operation}: {subject} {problem} (list it as `{key}`)"))
+                .then(|| format!("{host}: {operation}: {message} (list it as `{key}`)"))
         })
         .collect()
+}
+
+/// What is wrong with what a mock printed for a call to `operation_key`,
+/// whose 2xx responses are `responses`. A call filtered through `--jq` or
+/// `--template` prints text, and an empty output is no response to read.
+fn response_problems(
+    operation_key: &str,
+    responses: &[Response],
+    call: &ApiCall,
+    stdout: Option<&str>,
+    components: &Value,
+    ledger: &Ledger,
+) -> Vec<String> {
+    let Some(stdout) = stdout.filter(|out| !out.trim().is_empty() && !call.filtered) else {
+        return Vec::new();
+    };
+    let (host, operation) = operation_key.split_once(' ').unwrap_or_default();
+    let schemas: Vec<&Value> = responses
+        .iter()
+        .filter_map(|response| match response {
+            Response::Json(schema) => Some(schema),
+            _ => None,
+        })
+        .collect();
+    if schemas.is_empty() {
+        if responses
+            .iter()
+            .any(|response| matches!(response, Response::Other))
+        {
+            return Vec::new();
+        }
+        let key = format!("{operation_key} response");
+        if excused(ledger, &key) {
+            return Vec::new();
+        }
+        return vec![format!(
+            "{host}: {operation} returns no response body (list it as `{key}`)"
+        )];
+    }
+    // `--paginate` prints one JSON document per page.
+    let mut found = Vec::new();
+    for document in serde_json::Deserializer::from_str(stdout).into_iter::<Value>() {
+        let document = match document {
+            Ok(document) => document,
+            Err(error) => {
+                return vec![format!(
+                    "{host}: {operation}: the response is not JSON: {error}"
+                )];
+            }
+        };
+        let closest = schemas
+            .iter()
+            .map(|schema| {
+                let mut mismatched = Vec::new();
+                mismatches(schema, &document, "", components, &mut mismatched);
+                mismatched
+            })
+            .min_by_key(Vec::len)
+            .unwrap_or_default();
+        found.extend(closest);
+    }
+    let mut problems = described(operation_key, "response", found, ledger);
+    problems.dedup();
+    problems
 }
 
 pub fn excused(ledger: &Ledger, key: &str) -> bool {
@@ -527,19 +703,24 @@ pub fn excused(ledger: &Ledger, key: &str) -> bool {
         .any(|kind| ledger.excuse(kind, key).is_some())
 }
 
-/// What is wrong with the call `argv`, which read `stdin` as its body, one
-/// message each.
-fn check(argv: &[&str], stdin: Option<&str>, ledger: &Ledger) -> Vec<String> {
+/// What is wrong with the call `argv`, which read `stdin` as its body and
+/// printed `stdout`, one message each.
+fn check(argv: &[&str], stdin: Option<&str>, stdout: Option<&str>, ledger: &Ledger) -> Vec<String> {
     match ApiRequest::read(argv) {
-        Some(ApiRequest::Rest(call)) => rest_problems(&call, stdin, ledger),
+        Some(ApiRequest::Rest(call)) => rest_problems(&call, stdin, stdout, ledger),
         Some(ApiRequest::Graphql { host, query }) => api_graphql::problems(host, query, ledger),
         None => Vec::new(),
     }
 }
 
-/// What is wrong with the REST call `call`, which read `stdin` as its body,
-/// one message each.
-fn rest_problems(call: &ApiCall, stdin: Option<&str>, ledger: &Ledger) -> Vec<String> {
+/// What is wrong with the REST call `call`, which read `stdin` as its body
+/// and printed `stdout`, one message each.
+fn rest_problems(
+    call: &ApiCall,
+    stdin: Option<&str>,
+    stdout: Option<&str>,
+    ledger: &Ledger,
+) -> Vec<String> {
     let description = match call.host {
         Host::GitHub => &*GITHUB,
         Host::GitLab => &*GITLAB,
@@ -589,7 +770,11 @@ fn rest_problems(call: &ApiCall, stdin: Option<&str>, ledger: &Ledger) -> Vec<St
         Operation::Missing => vec![format!(
             "{host}: {method} {template} is not in the description (list it as `{operation_key}`)"
         )],
-        Operation::Described { query, body } => call
+        Operation::Described {
+            query,
+            body,
+            responses,
+        } => call
             .query
             .iter()
             .map(|name| {
@@ -611,6 +796,15 @@ fn rest_problems(call: &ApiCall, stdin: Option<&str>, ledger: &Ledger) -> Vec<St
                 &operation_key,
                 body.as_ref(),
                 call.body(stdin),
+                &description.components,
+                ledger,
+            ))
+            .chain(response_problems(
+                &operation_key,
+                responses,
+                call,
+                stdout,
+                &description.components,
                 ledger,
             ))
             .collect(),
@@ -625,7 +819,12 @@ pub fn problems_in_log(log_path: &Path) -> Vec<String> {
         .iter()
         .flat_map(|call| {
             let argv: Vec<&str> = call.argv.iter().map(String::as_str).collect();
-            check(&argv, call.stdin.as_deref(), &ledger)
+            check(
+                &argv,
+                call.stdin.as_deref(),
+                call.stdout.as_deref(),
+                &ledger,
+            )
         })
         .collect();
     problems.sort();
@@ -646,7 +845,7 @@ mod tests {
     }
 
     fn problems_with(argv: &[&str], ledger: &Ledger) -> Vec<String> {
-        check(argv, None, ledger)
+        check(argv, None, None, ledger)
     }
 
     #[test]
@@ -910,6 +1109,7 @@ mod tests {
         check(
             argv,
             Some(body),
+            None,
             &Ledger::with_lists(r#"{"exceptions": [], "findings": []}"#),
         )
     }
@@ -970,6 +1170,7 @@ mod tests {
                     field,
                     value,
                 ],
+                None,
                 None,
                 &Ledger::with_lists(r#"{"exceptions": [], "findings": []}"#),
             )
@@ -1036,6 +1237,147 @@ mod tests {
             check(
                 &CREATE_REF,
                 Some(r#"{"ref": "x", "sha": "a", "frob": 1}"#),
+                None,
+                &listed
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    fn response_problems(argv: &[&str], stdout: &str) -> Vec<String> {
+        check(
+            argv,
+            None,
+            Some(stdout),
+            &Ledger::with_lists(r#"{"exceptions": [], "findings": []}"#),
+        )
+    }
+
+    const REPOSITORY: [&str; 3] = ["gh", "api", "repos/o/r"];
+
+    #[test]
+    fn a_response_field_the_description_lacks_is_refused() {
+        assert_eq!(
+            response_problems(&REPOSITORY, r#"{"default_branch": "main", "frob": 1}"#),
+            [
+                "github: GET /repos/{owner}/{repo}: the response field `frob` is not in the \
+                 description (list it as `github GET /repos/{owner}/{repo} response frob`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_response_field_of_the_wrong_type_is_refused() {
+        assert_eq!(
+            response_problems(&REPOSITORY, r#"{"default_branch": 7}"#),
+            [
+                "github: GET /repos/{owner}/{repo}: the response field `default_branch` is an \
+                 integer, the description says string (list it as \
+                 `github GET /repos/{owner}/{repo} response default_branch`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_response_without_a_required_field_is_refused() {
+        assert_eq!(
+            response_problems(&REPOSITORY, "{}"),
+            [
+                "github: GET /repos/{owner}/{repo}: the response lacks the field \
+                 `default_branch`, which the description requires (list it as \
+                 `github GET /repos/{owner}/{repo} response default_branch`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_response_is_read_through_the_components_it_refers_to() {
+        let milestone = r#"{"id": 1, "number": 1, "title": "t", "description": null,
+            "due_on": null, "created_at": "2026-01-01T00:00:00Z", "state": "open"}"#;
+        let with_iid = milestone.replace(r#""id": 1,"#, r#""id": 1, "iid": 1,"#);
+        let milestones = ["gh", "api", "repos/o/r/milestones"];
+        assert_eq!(
+            response_problems(&milestones, &format!("[{milestone}]")),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            response_problems(&milestones, &format!("[{with_iid}]")),
+            [
+                "github: GET /repos/{owner}/{repo}/milestones: the response field `[].iid` is not \
+                 in the description (list it as \
+                 `github GET /repos/{owner}/{repo}/milestones response [].iid`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn every_page_of_a_paginated_response_is_read() {
+        let pages = r#"{"default_branch": "main"}
+{"default_branch": "main", "frob": 1}"#;
+        assert_eq!(
+            response_problems(&["gh", "api", "--paginate", "repos/o/r"], pages),
+            [
+                "github: GET /repos/{owner}/{repo}: the response field `frob` is not in the \
+                 description (list it as `github GET /repos/{owner}/{repo} response frob`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_response_that_is_not_json_is_refused() {
+        assert_eq!(
+            response_problems(&REPOSITORY, "main"),
+            [
+                "github: GET /repos/{owner}/{repo}: the response is not JSON: \
+              expected value at line 1 column 1"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_response_to_an_operation_without_one_is_refused() {
+        assert_eq!(
+            response_problems(
+                &["gh", "api", "-X", "DELETE", "repos/o/r/milestones/1"],
+                "{}"
+            ),
+            [
+                "github: DELETE /repos/{owner}/{repo}/milestones/{milestone_number} returns no \
+                 response body (list it as \
+                 `github DELETE /repos/{owner}/{repo}/milestones/{milestone_number} response`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn responses_the_check_cannot_read_pass() {
+        // Filtered by `--jq`, a text log, or nothing printed.
+        assert_eq!(
+            response_problems(
+                &["gh", "api", "repos/o/r", "--jq", ".default_branch"],
+                "main"
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            response_problems(&["glab", "api", "projects/o%2Fr/jobs/1/trace"], "job log"),
+            Vec::<String>::new()
+        );
+        assert_eq!(response_problems(&REPOSITORY, ""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_listed_response_field_passes() {
+        let listed = Ledger::with_lists(
+            r#"{"exceptions": [
+                {"key": "github GET /repos/{owner}/{repo} response frob", "reason": "r"}],
+                "findings": []}"#,
+        );
+        assert_eq!(
+            check(
+                &REPOSITORY,
+                None,
+                Some(r#"{"default_branch": "main", "frob": 1}"#),
                 &listed
             ),
             Vec::<String>::new()

@@ -34,3 +34,15 @@ updates:
       - "ci/cd"
     commit-message:
       prefix: "ci(deps)"
+
+  # Rust toolchain (rust-toolchain.toml)
+  - package-ecosystem: "rust-toolchain"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    labels:
+      - "ci/cd"
+    commit-message:
+      prefix: "ci(deps)"

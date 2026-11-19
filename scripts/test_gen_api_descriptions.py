@@ -394,9 +394,9 @@ type Query {
 }
 
 type Repository implements Node {
-  deployments(first: Int, environments: [String!], orderBy: Order = {field: A, direction: DESC}): DeploymentConnection!
+  deployments(first: Int, environments: [String!] @deprecated(reason: "Use envs."), orderBy: Order = {field: A, direction: DESC} @deprecated): DeploymentConnection!
   number: Int @deprecated(reason: "Use fullNumber.")
-  state: State
+  state: State @deprecated(reason: "")
 }
 
 interface Node { id: ID! }
@@ -407,7 +407,7 @@ input Order { field: String direction: String }
 enum State { OPEN CLOSED }
 union Thing = Repository | User
 scalar URI
-directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION
+directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ARGUMENT_DEFINITION
 '''
 
 GRAPHQL_CFG = {"graphql": {"repository": {"deployments": {"nodes": {"databaseId": {}}}, "number": {}, "state": {}}}}
@@ -426,6 +426,10 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(f["deployments"]["args"], ["first", "environments", "orderBy"])
         self.assertEqual(f["deployments"]["type"], "DeploymentConnection")
         self.assertEqual(f["number"]["deprecated"], "Use fullNumber.")
+        self.assertEqual(f["deployments"]["deprecated_args"],
+                         {"environments": "Use envs.", "orderBy": "No longer supported"})
+        self.assertEqual(f["state"]["deprecated"], "No longer supported")
+        self.assertNotIn("deprecated_args", t["types"]["Query"]["fields"]["repository"])
         self.assertEqual(t["types"]["Query"]["fields"]["repository"]["args"], ["owner", "name"])
 
     def test_introspection_gives_the_same_table_as_sdl(self) -> None:
@@ -437,8 +441,12 @@ class GraphqlTests(unittest.TestCase):
                 inner = {"kind": k, "name": None, "ofType": inner}
             return inner
 
-        def field(name: str, ty: dict[str, Any], args: tuple[str, ...] | list[str] = (), dep: str | None = None) -> dict[str, Any]:
-            return {"name": name, "args": [{"name": a, "type": named("String", "SCALAR")} for a in args],
+        def field(name: str, ty: dict[str, Any], args: tuple[str, ...] | list[str] = (), dep: str | None = None,
+                  dep_args: dict[str, str] | None = None) -> dict[str, Any]:
+            dep_args = dep_args or {}
+            return {"name": name, "args": [{"name": a, "type": named("String", "SCALAR"),
+                                            "isDeprecated": a in dep_args, "deprecationReason": dep_args.get(a)}
+                                           for a in args],
                     "type": ty, "isDeprecated": dep is not None, "deprecationReason": dep}
 
         intro = {"data": {"__schema": {
@@ -447,7 +455,7 @@ class GraphqlTests(unittest.TestCase):
                 {"kind": "OBJECT", "name": "Query", "fields": [
                     field("repository", named("Repository"), ["owner"])]},
                 {"kind": "OBJECT", "name": "Repository", "fields": [
-                    field("tags", wrapped(named("String", "SCALAR"), "NON_NULL", "LIST", "NON_NULL"), ["first"], "old")]},
+                    field("tags", wrapped(named("String", "SCALAR"), "NON_NULL", "LIST", "NON_NULL"), ["first", "active"], "old", {"active": None})]},
                 {"kind": "ENUM", "name": "State", "fields": None, "enumValues": [{"name": "OPEN"}]},
                 {"kind": "INPUT_OBJECT", "name": "Order", "fields": None, "inputFields": []},
                 {"kind": "SCALAR", "name": "String", "fields": None},
@@ -457,7 +465,8 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(t["types"]["State"], {"kind": "enum"})
         self.assertEqual(t["types"]["Order"], {"kind": "input"})
         tags = t["types"]["Repository"]["fields"]["tags"]
-        self.assertEqual(tags, {"type": "String", "deprecated": "old", "args": ["first"]})
+        self.assertEqual(tags, {"type": "String", "deprecated": "old", "args": ["first", "active"],
+                                "deprecated_args": {"active": "No longer supported"}})
 
     def test_pruned_table_keeps_only_listed_fields_and_the_types_they_name(self) -> None:
         doc = gen.build_graphql("acme", GRAPHQL_CFG, gen.table_from_sdl(SDL), SOURCE)

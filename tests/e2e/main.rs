@@ -3,6 +3,7 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod api_graphql;
 mod api_lists;
 mod api_requests;
 mod cli_contract;

@@ -27,6 +27,11 @@
       "key": "gitlab DELETE /api/v4/projects/{id}/repository/branches/{branch} unencoded slash",
       "reason": "GlabBackend::delete_branch puts the branch name into the path without URL-encoding it, so a name such as feature/x does not fit {branch}",
       "issue": "https://github.com/rcieri/glab-tui/issues/782"
+    },
+    {
+      "key": "github graphql PullRequestReviewComment.databaseId deprecated",
+      "reason": "review_thread_resolution_graphql_query reads databaseId to match a thread's first comment to its REST comment id; the schema deprecates it in favour of fullDatabaseId, the same id as a string",
+      "issue": "https://github.com/rcieri/glab-tui/issues/786"
     }
   ]
 }

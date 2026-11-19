@@ -37,7 +37,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo +stable install cargo-audit --locked
 
       - name: Run security audit
         run: cargo audit
@@ -59,7 +59,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo +stable install cargo-deny --locked
 
       - name: Check advisories, licenses, bans and sources
         run: cargo deny check

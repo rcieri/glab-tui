@@ -153,20 +153,20 @@ pub fn handle_mouse_event(
 
             // Fallback: content area scrolling
             let content_rect = app.layout.map(|l| l.content_area);
-            if let Some(content_rect) = content_rect {
-                if rect_contains(content_rect, row, col) {
-                    app.scroll_active_table(scroll_down);
-                    return;
-                }
+            if let Some(content_rect) = content_rect
+                && rect_contains(content_rect, row, col)
+            {
+                app.scroll_active_table(scroll_down);
+                return;
             }
             let detail_rect = app.layout.and_then(|l| l.detail_rect_opt());
-            if let Some(detail_rect) = detail_rect {
-                if rect_contains(detail_rect, row, col) {
-                    if scroll_down {
-                        app.detail_scroll = app.detail_scroll.saturating_add(1);
-                    } else {
-                        app.detail_scroll = app.detail_scroll.saturating_sub(1);
-                    }
+            if let Some(detail_rect) = detail_rect
+                && rect_contains(detail_rect, row, col)
+            {
+                if scroll_down {
+                    app.detail_scroll = app.detail_scroll.saturating_add(1);
+                } else {
+                    app.detail_scroll = app.detail_scroll.saturating_sub(1);
                 }
             }
         }
@@ -224,13 +224,12 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::ReviewThreads => {
-                        if let Some(overview) = app.review_threads_mut() {
-                            if let Some(list) =
+                        if let Some(overview) = app.review_threads_mut()
+                            && let Some(list) =
                                 overview.list_rect.filter(|r| rect_contains(*r, row, col))
-                            {
-                                let clicked = overview.state.offset() + (row - list.y) as usize;
-                                overview.select(clicked);
-                            }
+                        {
+                            let clicked = overview.state.offset() + (row - list.y) as usize;
+                            overview.select(clicked);
                         }
                         return;
                     }
@@ -252,27 +251,28 @@ pub fn handle_mouse_event(
 
             // Fallback: sidebar / content clicks
             let sidebar_rect = app.layout.and_then(|l| l.sidebar_rect_opt());
-            if let Some(sidebar_rect) = sidebar_rect {
-                if rect_contains(sidebar_rect, row, col) {
-                    let tabs = app.available_tabs();
-                    let inner = border_inner(sidebar_rect);
-                    let clicked = rect_contains(inner, row, col)
-                        .then(|| tabs.get(usize::from(row - inner.y)).copied())
-                        .flatten();
-                    if let Some(tab) = clicked.filter(|tab| *tab != app.active_tab) {
-                        app.switch_to_tab(tab);
-                        crate::handlers::tabs::load_entered_tab(app, tx, fx);
-                    }
-                    return;
+            if let Some(sidebar_rect) = sidebar_rect
+                && rect_contains(sidebar_rect, row, col)
+            {
+                let tabs = app.available_tabs();
+                let inner = border_inner(sidebar_rect);
+                let clicked = rect_contains(inner, row, col)
+                    .then(|| tabs.get(usize::from(row - inner.y)).copied())
+                    .flatten();
+                if let Some(tab) = clicked.filter(|tab| *tab != app.active_tab) {
+                    app.switch_to_tab(tab);
+                    crate::handlers::tabs::load_entered_tab(app, tx, fx);
                 }
+                return;
             }
 
             let content_rect = app.layout.map(|l| l.content_area);
-            if let Some(content_rect) = content_rect {
-                if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
-                    let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
-                    app.click_active_table_row(row_idx);
-                }
+            if let Some(content_rect) = content_rect
+                && rect_contains(content_rect, row, col)
+                && row >= content_rect.y + 3
+            {
+                let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
+                app.click_active_table_row(row_idx);
             }
         }
         _ => {}

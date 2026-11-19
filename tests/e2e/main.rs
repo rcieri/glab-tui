@@ -844,16 +844,5 @@ impl TestSession {
 }
 
 fn find_glab_tui_binary() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        let mut path = exe.clone();
-        path.pop(); // to deps/
-        if path.file_name().and_then(|s| s.to_str()) == Some("deps") {
-            path.pop(); // to debug/ or release/
-        }
-        let bin = path.join("glab-tui");
-        if bin.exists() {
-            return bin;
-        }
-    }
-    PathBuf::from("target/debug/glab-tui")
+    PathBuf::from(env!("CARGO_BIN_EXE_glab-tui"))
 }

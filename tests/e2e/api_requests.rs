@@ -266,10 +266,12 @@ static GITLAB: LazyLock<Description> = LazyLock::new(|| {
 pub enum ApiRequest<'a> {
     Rest(ApiCall),
     /// `query` is the value of the call's `query=` field, `None` when it
-    /// sends none.
+    /// sends none. `filtered`: `--jq` or `--template` turns the reply into
+    /// text.
     Graphql {
         host: Host,
         query: Option<&'a str>,
+        filtered: bool,
     },
 }
 
@@ -351,6 +353,7 @@ impl<'a> ApiRequest<'a> {
             return Some(ApiRequest::Graphql {
                 host,
                 query: graphql_query,
+                filtered,
             });
         }
         let has_body = reads_body_from_input || !fields.is_empty();
@@ -533,7 +536,7 @@ fn is_of_type(value: &Value, kind: &str) -> bool {
 }
 
 /// The type of `value`, worded for a message.
-fn type_of(value: &Value) -> &'static str {
+pub fn type_of(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "a boolean",
@@ -708,7 +711,11 @@ pub fn excused(ledger: &Ledger, key: &str) -> bool {
 fn check(argv: &[&str], stdin: Option<&str>, stdout: Option<&str>, ledger: &Ledger) -> Vec<String> {
     match ApiRequest::read(argv) {
         Some(ApiRequest::Rest(call)) => rest_problems(&call, stdin, stdout, ledger),
-        Some(ApiRequest::Graphql { host, query }) => api_graphql::problems(host, query, ledger),
+        Some(ApiRequest::Graphql {
+            host,
+            query,
+            filtered,
+        }) => api_graphql::problems(host, query, stdout.filter(|_| !filtered), ledger),
         None => Vec::new(),
     }
 }
@@ -1484,5 +1491,63 @@ mod tests {
               (the generator fails when the schema lacks a listed field) (at currentUser.nope)"
             ]
         );
+    }
+
+    #[test]
+    fn a_graphql_reply_is_checked_unless_filtered() {
+        let query = "query={ currentUser { username } }";
+        let reply = r#"{"data": {"currentUser": {"username": "u", "id": 1}}}"#;
+        let empty = Ledger::with_lists(r#"{"exceptions": [], "findings": []}"#);
+        assert_eq!(
+            check(
+                &["glab", "api", "graphql", "-f", query],
+                None,
+                Some(reply),
+                &empty
+            ),
+            ["gitlab: graphql reply field `data.currentUser.id` is not in the query's selection"]
+        );
+        assert_eq!(
+            check(
+                &[
+                    "gh",
+                    "api",
+                    "graphql",
+                    "-f",
+                    "query={ repository(owner: \"o\", name: \"r\") { issue(number: 1) { title } } }",
+                    "--jq",
+                    ".data.repository.issue.title",
+                ],
+                None,
+                Some("t"),
+                &empty
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            check(
+                &["glab", "api", "graphql", "-f", query],
+                None,
+                Some(""),
+                &empty
+            ),
+            Vec::<String>::new()
+        );
+        let issue = r#"query={ repository(owner: "o", name: "r") { issue(number: 1) { title } } }"#;
+        for filter in [
+            &["-q", ".x"][..],
+            &["-q.x"],
+            &["--jq=.x"],
+            &["-t", "{{.x}}"],
+            &["--template", "{{.x}}"],
+        ] {
+            let mut argv = vec!["gh", "api", "graphql", "-f", issue];
+            argv.extend_from_slice(filter);
+            assert_eq!(
+                check(&argv, None, Some("t"), &empty),
+                Vec::<String>::new(),
+                "{filter:?}"
+            );
+        }
     }
 }

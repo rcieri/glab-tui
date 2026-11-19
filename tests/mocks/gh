@@ -134,7 +134,8 @@ if [[ "$*" == "api graphql"*"latestStatus"* ]]; then
     exit 0
 fi
 
-# One entry per `pr_<n>:` alias the batch query asks for.
+# The reply check refuses keys the query does not select, so answer exactly
+# the `pr_<n>` aliases sent.
 if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
     entries=()
     for alias in $(grep -oE 'pr_[0-9]+:' <<<"$*"); do

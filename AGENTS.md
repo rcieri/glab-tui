@@ -561,7 +561,10 @@ The `glab` and `gh` subcommands and flags (`glab v1.122.0` / `gh v2.102.0`) are 
 * **Bug fixes start with a test:** a bug fix starts with a test that fails without the fix, in the same PR.
 * **MSRV:** The Minimum Supported Rust Version is `1.88`. Edition 2024
   requires Rust 1.85+, but current transitive dependencies raise the floor
-  to 1.88 (see `.github/workflows/msrv.yml`). Ensure code is compatible.
+  to 1.88. `rust-version` in `Cargo.toml` is the only place it is written:
+  `rust-toolchain.toml` pins a newer stable for development and CI, and
+  `.github/workflows/msrv.yml` checks the MSRV with `cargo hack check
+  --rust-version`. Clippy's `incompatible_msrv` flags newer std APIs.
 
 ## 8. Release Process (Local-First)
 

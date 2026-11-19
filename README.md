@@ -1100,7 +1100,7 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 
 ### Development & Tasks (`just`)
 
-The repository includes `rust-toolchain.toml` to automatically pin the Rust version (`1.88.0`) and required components (`clippy`, `rustfmt`, `llvm-tools-preview`) via standard `rustup`.
+The repository includes `rust-toolchain.toml` to automatically pin the Rust version for development and CI and the required components (`clippy`, `rustfmt`, `llvm-tools-preview`) via standard `rustup`. The minimum supported Rust version is `rust-version` in `Cargo.toml`, which the MSRV workflow checks.
 
 A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 

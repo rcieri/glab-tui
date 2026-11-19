@@ -2,6 +2,7 @@
 name = "glab-tui-crate"
 version = "0.9.5"
 edition = "2024"
+# Edition 2024 needs 1.85, the dependencies need 1.88.
 rust-version = "1.88"
 description = "A terminal user interface for GitLab and GitHub"
 license = "MIT"

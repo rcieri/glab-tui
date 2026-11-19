@@ -173,14 +173,14 @@ pub fn sync_linked_references(
             &mut issue.related_mrs
         {
             for r in existing.iter_mut() {
-                if r.state.is_empty() || r.title.is_empty() {
-                    if let Some(mr) = mrs.iter().find(|m| m.iid == r.iid) {
-                        if r.state.is_empty() {
-                            r.state = mr.state.clone();
-                        }
-                        if r.title.is_empty() {
-                            r.title = mr.title.clone();
-                        }
+                if (r.state.is_empty() || r.title.is_empty())
+                    && let Some(mr) = mrs.iter().find(|m| m.iid == r.iid)
+                {
+                    if r.state.is_empty() {
+                        r.state = mr.state.clone();
+                    }
+                    if r.title.is_empty() {
+                        r.title = mr.title.clone();
                     }
                 }
             }
@@ -192,14 +192,14 @@ pub fn sync_linked_references(
         if let Some(crate::domain::mr::RelatedIssuesState::Items(existing)) = &mut mr.related_issues
         {
             for r in existing.iter_mut() {
-                if r.state.is_empty() || r.title.is_empty() {
-                    if let Some(issue) = issues.iter().find(|i| i.iid == r.iid) {
-                        if r.state.is_empty() {
-                            r.state = issue.state.clone();
-                        }
-                        if r.title.is_empty() {
-                            r.title = issue.title.clone();
-                        }
+                if (r.state.is_empty() || r.title.is_empty())
+                    && let Some(issue) = issues.iter().find(|i| i.iid == r.iid)
+                {
+                    if r.state.is_empty() {
+                        r.state = issue.state.clone();
+                    }
+                    if r.title.is_empty() {
+                        r.title = issue.title.clone();
                     }
                 }
             }
@@ -524,11 +524,11 @@ pub async fn refresh_tab(
                                             )
                                             .unwrap_or_default()
                                     };
-                                    if mr_proj == proj || scope.is_repository() {
-                                        if let Some((approval, mergeability)) = state.get(&mr.iid) {
-                                            mr.approval = approval.clone();
-                                            mr.mergeability = mergeability.clone();
-                                        }
+                                    if (mr_proj == proj || scope.is_repository())
+                                        && let Some((approval, mergeability)) = state.get(&mr.iid)
+                                    {
+                                        mr.approval = approval.clone();
+                                        mr.mergeability = mergeability.clone();
                                     }
                                 }
                             }
@@ -692,13 +692,12 @@ pub fn spawn_fetch_mr(
             Ok(mut mr) => {
                 // GitLab: merge the Approval/Mergeable state, then re-derive
                 // the workflow column (it reads from approval state).
-                if !client.is_github {
-                    if let Ok(state) = client.list_mr_state(&project_path, &[iid]).await {
-                        if let Some((approval, mergeability)) = state.get(&iid) {
-                            mr.approval = approval.clone();
-                            mr.mergeability = mergeability.clone();
-                        }
-                    }
+                if !client.is_github
+                    && let Ok(state) = client.list_mr_state(&project_path, &[iid]).await
+                    && let Some((approval, mergeability)) = state.get(&iid)
+                {
+                    mr.approval = approval.clone();
+                    mr.mergeability = mergeability.clone();
                 }
                 if mr.project_path.is_empty() {
                     mr.project_path = project_path.clone();
@@ -945,28 +944,27 @@ fn prefetch_pipeline_jobs(
         }
         if let Some(idx) = app.pipelines.state.selected() {
             let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
-            if let Some(pipe_id) = pipe_id {
-                if !app.pipeline_jobs.contains_key(&pipe_id)
-                    && !app.fetching_pipelines.contains(&pipe_id)
-                {
-                    app.fetching_pipelines.insert(pipe_id);
-                    let client_clone = client.clone();
-                    let project_context = app.project_path_for_pipeline(pipe_id);
-                    let tx = app.scoped_sender(tx.clone());
-                    fx.spawn(async move {
-                        if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
-                            &client_clone,
-                            &project_context,
-                            pipe_id,
-                        )
-                        .await
-                        {
-                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                        } else {
-                            let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
-                        }
-                    });
-                }
+            if let Some(pipe_id) = pipe_id
+                && !app.pipeline_jobs.contains_key(&pipe_id)
+                && !app.fetching_pipelines.contains(&pipe_id)
+            {
+                app.fetching_pipelines.insert(pipe_id);
+                let client_clone = client.clone();
+                let project_context = app.project_path_for_pipeline(pipe_id);
+                let tx = app.scoped_sender(tx.clone());
+                fx.spawn(async move {
+                    if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
+                        &client_clone,
+                        &project_context,
+                        pipe_id,
+                    )
+                    .await
+                    {
+                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
+                    } else {
+                        let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
+                    }
+                });
             }
         }
     }
@@ -979,55 +977,54 @@ fn prefetch_mr_head_jobs(
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    if let Some(client) = &app.gitlab_client {
-        if let Some(idx) = app.mrs.state.selected() {
-            let mr_info = app.filtered_mrs().get(idx).map(|m| {
-                (
-                    m.source_branch.clone(),
-                    m.head_pipeline.as_ref().map(|p| p.id()),
-                    m.project_path.clone(),
-                )
+    if let Some(client) = &app.gitlab_client
+        && let Some(idx) = app.mrs.state.selected()
+    {
+        let mr_info = app.filtered_mrs().get(idx).map(|m| {
+            (
+                m.source_branch.clone(),
+                m.head_pipeline.as_ref().map(|p| p.id()),
+                m.project_path.clone(),
+            )
+        });
+        if let Some((source_branch, head_pipeline_id, mr_project_path)) = mr_info {
+            let is_github = client.is_github;
+            let resolved_pipe = head_pipeline_id.or_else(|| {
+                if is_github {
+                    app.pipelines
+                        .items
+                        .iter()
+                        .find(|p| p.ref_branch() == source_branch)
+                        .map(|p| p.id())
+                } else {
+                    None
+                }
             });
-            if let Some((source_branch, head_pipeline_id, mr_project_path)) = mr_info {
-                let is_github = client.is_github;
-                let resolved_pipe = head_pipeline_id.or_else(|| {
-                    if is_github {
-                        app.pipelines
-                            .items
-                            .iter()
-                            .find(|p| p.ref_branch() == source_branch)
-                            .map(|p| p.id())
+            if let Some(pipe_id) = resolved_pipe
+                && !app.pipeline_jobs.contains_key(&pipe_id)
+                && !app.fetching_pipelines.contains(&pipe_id)
+            {
+                app.fetching_pipelines.insert(pipe_id);
+                let client_clone = client.clone();
+                let project_context = if !mr_project_path.is_empty() {
+                    mr_project_path
+                } else {
+                    app.project_path_for_pipeline(pipe_id)
+                };
+                let tx = app.scoped_sender(tx.clone());
+                fx.spawn(async move {
+                    if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
+                        &client_clone,
+                        &project_context,
+                        pipe_id,
+                    )
+                    .await
+                    {
+                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
                     } else {
-                        None
+                        let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
                     }
                 });
-                if let Some(pipe_id) = resolved_pipe {
-                    if !app.pipeline_jobs.contains_key(&pipe_id)
-                        && !app.fetching_pipelines.contains(&pipe_id)
-                    {
-                        app.fetching_pipelines.insert(pipe_id);
-                        let client_clone = client.clone();
-                        let project_context = if !mr_project_path.is_empty() {
-                            mr_project_path
-                        } else {
-                            app.project_path_for_pipeline(pipe_id)
-                        };
-                        let tx = app.scoped_sender(tx.clone());
-                        fx.spawn(async move {
-                            if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
-                                &client_clone,
-                                &project_context,
-                                pipe_id,
-                            )
-                            .await
-                            {
-                                let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                            } else {
-                                let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
-                            }
-                        });
-                    }
-                }
             }
         }
     }
@@ -1040,69 +1037,67 @@ fn select_milestone_issues(
     tx: &tokio::sync::mpsc::UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    if let Some(client) = &app.gitlab_client {
-        if let Some(idx) = app.milestones.state.selected() {
-            let milestone = app
-                .filtered_milestones()
-                .get(idx)
-                .map(|m| (m.iid, m.title.clone(), m.project_path.clone()));
-            if let Some((milestone_iid, milestone_title, m_proj)) = milestone {
-                if app.selected_milestone_iid != Some(milestone_iid) {
-                    app.selected_milestone_iid = Some(milestone_iid);
-                    if app.scope.is_group() {
-                        // In group scope milestones aggregate across projects; per-milestone
-                        // issue previews require repository scope. Skip the fetch and rely on
-                        // the progress cache + drill-in via the project selector.
-                        app.selected_milestone_issues = None;
+    if let Some(client) = &app.gitlab_client
+        && let Some(idx) = app.milestones.state.selected()
+    {
+        let milestone = app
+            .filtered_milestones()
+            .get(idx)
+            .map(|m| (m.iid, m.title.clone(), m.project_path.clone()));
+        if let Some((milestone_iid, milestone_title, m_proj)) = milestone
+            && app.selected_milestone_iid != Some(milestone_iid)
+        {
+            app.selected_milestone_iid = Some(milestone_iid);
+            if app.scope.is_group() {
+                // In group scope milestones aggregate across projects; per-milestone
+                // issue previews require repository scope. Skip the fetch and rely on
+                // the progress cache + drill-in via the project selector.
+                app.selected_milestone_issues = None;
+            } else {
+                // Use the issues cache when we already have it
+                // (set by an earlier selection). The progress cache
+                // alone only holds `(closed, total)` counts — not the
+                // actual issue list — so it does NOT suppress the
+                // fetch: the milestone preview renders the issues,
+                // not just their counts.
+                let cached = app.milestone_issues_cache.get(&milestone_iid);
+                if let Some(cached) = cached {
+                    app.selected_milestone_issues = Some(cached.clone());
+                } else {
+                    app.selected_milestone_issues = None;
+                    let client_clone = client.clone();
+                    let project_context = if !m_proj.is_empty() {
+                        m_proj
                     } else {
-                        // Use the issues cache when we already have it
-                        // (set by an earlier selection). The progress cache
-                        // alone only holds `(closed, total)` counts — not the
-                        // actual issue list — so it does NOT suppress the
-                        // fetch: the milestone preview renders the issues,
-                        // not just their counts.
-                        let cached = app.milestone_issues_cache.get(&milestone_iid);
-                        if let Some(cached) = cached {
-                            app.selected_milestone_issues = Some(cached.clone());
-                        } else {
-                            app.selected_milestone_issues = None;
-                            let client_clone = client.clone();
-                            let project_context = if !m_proj.is_empty() {
-                                m_proj
-                            } else {
-                                app.scope.as_str().to_string()
-                            };
-                            // `glab issue list --milestone` filters by milestone
-                            // title, not iid — passing the title here is required
-                            // for the glab backend to return any issues.
-                            let tx = app.scoped_sender(tx.clone());
-                            fx.spawn(async move {
-                                match domain::milestones::list_milestone_issues(
-                                    &client_clone,
-                                    &project_context,
-                                    milestone_iid,
-                                    &milestone_title,
-                                )
-                                .await
-                                {
-                                    Ok(issues) => {
-                                        let _ = tx.send(Event::MilestoneIssuesFetched(
-                                            milestone_iid,
-                                            issues,
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        // Don't silently substitute an empty list: that
-                                        // renders as 0% progress with no explanation.
-                                        let _ = tx.send(Event::CommandCompleted(
-                                            app::Tab::Milestones,
-                                            Err(format!("Failed to fetch milestone issues: {e}")),
-                                        ));
-                                    }
-                                }
-                            });
+                        app.scope.as_str().to_string()
+                    };
+                    // `glab issue list --milestone` filters by milestone
+                    // title, not iid — passing the title here is required
+                    // for the glab backend to return any issues.
+                    let tx = app.scoped_sender(tx.clone());
+                    fx.spawn(async move {
+                        match domain::milestones::list_milestone_issues(
+                            &client_clone,
+                            &project_context,
+                            milestone_iid,
+                            &milestone_title,
+                        )
+                        .await
+                        {
+                            Ok(issues) => {
+                                let _ =
+                                    tx.send(Event::MilestoneIssuesFetched(milestone_iid, issues));
+                            }
+                            Err(e) => {
+                                // Don't silently substitute an empty list: that
+                                // renders as 0% progress with no explanation.
+                                let _ = tx.send(Event::CommandCompleted(
+                                    app::Tab::Milestones,
+                                    Err(format!("Failed to fetch milestone issues: {e}")),
+                                ));
+                            }
                         }
-                    }
+                    });
                 }
             }
         }

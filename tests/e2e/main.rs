@@ -395,8 +395,8 @@ impl TerminalEmulator {
 
     pub fn get_text(&self) -> String {
         let mut res = String::new();
-        for r in 0..self.rows {
-            let row_str: String = self.grid[r].iter().collect();
+        for row in self.grid.iter().take(self.rows) {
+            let row_str: String = row.iter().collect();
             res.push_str(&row_str);
             res.push('\n');
         }

@@ -79,11 +79,11 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
-    if app.edit_menu.is_some() {
-        if let Some(rect) = app.detail_rect {
-            app.overlay_stack
-                .push((crate::app::OverlayKind::EditMenu, rect));
-        }
+    if app.edit_menu.is_some()
+        && let Some(rect) = app.detail_rect
+    {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::EditMenu, rect));
     }
 
     // Below every other overlay: its comment actions and reply prompts open on top.
@@ -92,82 +92,95 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     super::terminal_inspector::render_terminal_inspector(f, ctx, app, size);
 
     let selector_notice = app.modal_notice().cloned();
-    if app.column_filter_context.is_none() {
-        if let Some(selector) = &mut app.selector {
-            let selector_area = centered_rect_min(70, 70, 60, 8, size);
-            let body = modal_area(f, ctx, &selector.title, selector_area);
-            app.overlay_stack
-                .push((crate::app::OverlayKind::Selector, selector_area));
+    if app.column_filter_context.is_none()
+        && let Some(selector) = &mut app.selector
+    {
+        let selector_area = centered_rect_min(70, 70, 60, 8, size);
+        let body = modal_area(f, ctx, &selector.title, selector_area);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::Selector, selector_area));
 
-            let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "related_mrs";
+        let has_filter =
+            selector.field_type != "comment_action_select" && selector.field_type != "related_mrs";
 
-            let mut constraints = Vec::with_capacity(3);
-            if has_filter {
-                constraints.push(Constraint::Length(3)); // Search/Filter
-            }
-            constraints.push(Constraint::Min(0)); // List of items
-            if selector_notice.is_some() {
-                constraints.push(Constraint::Length(MODAL_NOTICE_ROWS));
-            }
+        let mut constraints = Vec::with_capacity(3);
+        if has_filter {
+            constraints.push(Constraint::Length(3)); // Search/Filter
+        }
+        constraints.push(Constraint::Min(0)); // List of items
+        if selector_notice.is_some() {
+            constraints.push(Constraint::Length(MODAL_NOTICE_ROWS));
+        }
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(body);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(body);
 
-            let (search_chunk, list_chunk) = if has_filter {
-                (Some(chunks[0]), chunks[1])
-            } else {
-                (None, chunks[0])
-            };
-            if let Some(notice) = &selector_notice {
-                let notice_chunk = chunks[chunks.len() - 1];
-                f.render_widget(
-                    Paragraph::new(modal_notice_line(ctx, notice))
-                        .style(Style::default().bg(ctx.theme.bg)),
-                    notice_chunk,
-                );
-            }
+        let (search_chunk, list_chunk) = if has_filter {
+            (Some(chunks[0]), chunks[1])
+        } else {
+            (None, chunks[0])
+        };
+        if let Some(notice) = &selector_notice {
+            let notice_chunk = chunks[chunks.len() - 1];
+            f.render_widget(
+                Paragraph::new(modal_notice_line(ctx, notice))
+                    .style(Style::default().bg(ctx.theme.bg)),
+                notice_chunk,
+            );
+        }
 
-            let border_color_search = if selector.is_filtering {
-                ctx.theme.border_focused
-            } else {
-                ctx.theme.border
-            };
-            let search_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
-                .title(" Filter ");
+        let border_color_search = if selector.is_filtering {
+            ctx.theme.border_focused
+        } else {
+            ctx.theme.border
+        };
+        let search_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
+            .title(" Filter ");
 
-            let search_text = if selector.is_filtering {
-                format!("{}▋", selector.search_query)
-            } else if selector.search_query.is_empty() {
-                "Type to filter...".to_string()
-            } else {
-                selector.search_query.clone()
-            };
+        let search_text = if selector.is_filtering {
+            format!("{}▋", selector.search_query)
+        } else if selector.search_query.is_empty() {
+            "Type to filter...".to_string()
+        } else {
+            selector.search_query.clone()
+        };
 
-            let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
-                Style::default()
-                    .fg(ctx.theme.text_muted)
-                    .bg(ctx.theme.bg)
-                    .add_modifier(Modifier::ITALIC)
-            } else {
-                Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg)
-            };
+        let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
+            Style::default()
+                .fg(ctx.theme.text_muted)
+                .bg(ctx.theme.bg)
+                .add_modifier(Modifier::ITALIC)
+        } else {
+            Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg)
+        };
 
-            let search_p = Paragraph::new(Span::styled(search_text, search_style))
-                .block(search_block)
-                .style(Style::default().bg(ctx.theme.bg))
+        let search_p = Paragraph::new(Span::styled(search_text, search_style))
+            .block(search_block)
+            .style(Style::default().bg(ctx.theme.bg))
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        if let Some(sc) = search_chunk {
+            f.render_widget(search_p, sc);
+        }
+
+        if selector.is_loading {
+            let p = Paragraph::new("\n  Loading options from GitLab...")
+                .style(
+                    Style::default()
+                        .fg(ctx.theme.text_muted)
+                        .bg(ctx.theme.bg)
+                        .add_modifier(Modifier::ITALIC),
+                )
                 .wrap(ratatui::widgets::Wrap { trim: true });
-
-            if let Some(sc) = search_chunk {
-                f.render_widget(search_p, sc);
-            }
-
-            if selector.is_loading {
-                let p = Paragraph::new("\n  Loading options from GitLab...")
+            f.render_widget(p, list_chunk);
+        } else {
+            let filtered_items = selector.get_filtered_items_with_indices();
+            if filtered_items.is_empty() {
+                let p = Paragraph::new("\n  No matching options found.")
                     .style(
                         Style::default()
                             .fg(ctx.theme.text_muted)
@@ -177,124 +190,112 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                     .wrap(ratatui::widgets::Wrap { trim: true });
                 f.render_widget(p, list_chunk);
             } else {
-                let filtered_items = selector.get_filtered_items_with_indices();
-                if filtered_items.is_empty() {
-                    let p = Paragraph::new("\n  No matching options found.")
-                        .style(
+                let items: Vec<ListItem> = filtered_items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (item, indices))| {
+                        let is_selected = if item.starts_with("+ Create \"") {
+                            let clean_val = selector.search_query.trim().to_string();
+                            selector.selected_items.contains(&clean_val)
+                        } else {
+                            selector.selected_items.contains(item)
+                        };
+
+                        let marker = if is_selected {
+                            format!(" {} ", icons.check_on)
+                        } else {
+                            format!(" {} ", icons.check_off)
+                        };
+                        let marker_color = if is_selected {
+                            ctx.theme.green
+                        } else {
+                            ctx.theme.text_muted
+                        };
+
+                        let item_bg = if i == selector.cursor_idx {
+                            ctx.theme.highlight_bg
+                        } else {
+                            ctx.theme.bg
+                        };
+
+                        let style = if i == selector.cursor_idx {
                             Style::default()
-                                .fg(ctx.theme.text_muted)
-                                .bg(ctx.theme.bg)
-                                .add_modifier(Modifier::ITALIC),
-                        )
-                        .wrap(ratatui::widgets::Wrap { trim: true });
-                    f.render_widget(p, list_chunk);
-                } else {
-                    let items: Vec<ListItem> = filtered_items
-                        .iter()
-                        .enumerate()
-                        .map(|(i, (item, indices))| {
-                            let is_selected = if item.starts_with("+ Create \"") {
-                                let clean_val = selector.search_query.trim().to_string();
-                                selector.selected_items.contains(&clean_val)
-                            } else {
-                                selector.selected_items.contains(item)
-                            };
+                                .bg(item_bg)
+                                .fg(ctx.theme.text_normal)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(ctx.theme.text_normal).bg(item_bg)
+                        };
 
-                            let marker = if is_selected {
-                                format!(" {} ", icons.check_on)
-                            } else {
-                                format!(" {} ", icons.check_off)
-                            };
-                            let marker_color = if is_selected {
-                                ctx.theme.green
-                            } else {
-                                ctx.theme.text_muted
-                            };
+                        let highlight_style = if i == selector.cursor_idx {
+                            Style::default()
+                                .bg(item_bg)
+                                .fg(ctx.theme.yellow)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(ctx.theme.yellow)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD)
+                        };
 
-                            let item_bg = if i == selector.cursor_idx {
-                                ctx.theme.highlight_bg
-                            } else {
-                                ctx.theme.bg
-                            };
+                        let mut line_spans = vec![Span::styled(
+                            marker,
+                            Style::default()
+                                .fg(marker_color)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD),
+                        )];
 
-                            let style = if i == selector.cursor_idx {
-                                Style::default()
-                                    .bg(item_bg)
-                                    .fg(ctx.theme.text_normal)
-                                    .add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(ctx.theme.text_normal).bg(item_bg)
-                            };
+                        // Group rows in the Switch Repository overlay get
+                        // a group icon; repo rows keep their basename plus
+                        // a muted absolute path.
+                        let is_group = selector.field_type == "switch_repo"
+                            && app.switch_repo_groups.contains(item);
 
-                            let highlight_style = if i == selector.cursor_idx {
-                                Style::default()
-                                    .bg(item_bg)
-                                    .fg(ctx.theme.yellow)
-                                    .add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default()
-                                    .fg(ctx.theme.yellow)
-                                    .bg(item_bg)
-                                    .add_modifier(Modifier::BOLD)
-                            };
+                        if is_group {
+                            line_spans.push(Span::styled(
+                                format!("{} ", icons.label_group),
+                                Style::default().fg(ctx.theme.text_muted).bg(item_bg),
+                            ));
+                        }
 
-                            let mut line_spans = vec![Span::styled(
-                                marker,
-                                Style::default()
-                                    .fg(marker_color)
-                                    .bg(item_bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )];
+                        if let Some(indices) = indices {
+                            line_spans.extend(highlight_fuzzy_match(
+                                item,
+                                indices,
+                                style,
+                                highlight_style,
+                            ));
+                        } else {
+                            line_spans.push(Span::styled(item.clone(), style));
+                        }
 
-                            // Group rows in the Switch Repository overlay get
-                            // a group icon; repo rows keep their basename plus
-                            // a muted absolute path.
-                            let is_group = selector.field_type == "switch_repo"
-                                && app.switch_repo_groups.contains(item);
+                        // For the Switch Repository overlay, render the
+                        // absolute on-disk path alongside the basename
+                        // (display name) in muted text so users can
+                        // distinguish repos that share a basename.
+                        if selector.field_type == "switch_repo"
+                            && !is_group
+                            && let Some(abs_path) = app.switch_repo_paths.get(item)
+                            && !abs_path.is_empty()
+                            && abs_path != item
+                        {
+                            line_spans.push(Span::styled(
+                                format!(" {abs_path}"),
+                                Style::default().fg(ctx.theme.text_muted).bg(item_bg),
+                            ));
+                        }
 
-                            if is_group {
-                                line_spans.push(Span::styled(
-                                    format!("{} ", icons.label_group),
-                                    Style::default().fg(ctx.theme.text_muted).bg(item_bg),
-                                ));
-                            }
+                        ListItem::new(vec![Line::from(line_spans)])
+                            .style(Style::default().bg(item_bg))
+                    })
+                    .collect();
 
-                            if let Some(indices) = indices {
-                                line_spans.extend(highlight_fuzzy_match(
-                                    item,
-                                    indices,
-                                    style,
-                                    highlight_style,
-                                ));
-                            } else {
-                                line_spans.push(Span::styled(item.clone(), style));
-                            }
-
-                            // For the Switch Repository overlay, render the
-                            // absolute on-disk path alongside the basename
-                            // (display name) in muted text so users can
-                            // distinguish repos that share a basename.
-                            if selector.field_type == "switch_repo" && !is_group {
-                                if let Some(abs_path) = app.switch_repo_paths.get(item) {
-                                    if !abs_path.is_empty() && abs_path != item {
-                                        line_spans.push(Span::styled(
-                                            format!(" {abs_path}"),
-                                            Style::default().fg(ctx.theme.text_muted).bg(item_bg),
-                                        ));
-                                    }
-                                }
-                            }
-
-                            ListItem::new(vec![Line::from(line_spans)])
-                                .style(Style::default().bg(item_bg))
-                        })
-                        .collect();
-
-                    let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
-                    let mut state = selector.state;
-                    f.render_stateful_widget(list, list_chunk, &mut state);
-                    selector.state = state;
-                }
+                let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
+                let mut state = selector.state;
+                f.render_stateful_widget(list, list_chunk, &mut state);
+                selector.state = state;
             }
         }
     }
@@ -845,133 +846,133 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     }
 
     // Render value-based column filter selector as overlay on configure view
-    if app.focus_column_checklist && app.column_filter_context.is_some() {
-        if let Some(selector) = &mut app.selector {
-            let selector_area = centered_rect_min(70, 70, 60, 8, size);
-            let body = modal_area(f, ctx, &selector.title, selector_area);
-            app.overlay_stack
-                .push((crate::app::OverlayKind::ColumnFilter, selector_area));
+    if app.focus_column_checklist
+        && app.column_filter_context.is_some()
+        && let Some(selector) = &mut app.selector
+    {
+        let selector_area = centered_rect_min(70, 70, 60, 8, size);
+        let body = modal_area(f, ctx, &selector.title, selector_area);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
-            let constraints = vec![
-                Constraint::Length(3), // Search/Filter
-                Constraint::Min(0),    // List of items
-            ];
+        let constraints = vec![
+            Constraint::Length(3), // Search/Filter
+            Constraint::Min(0),    // List of items
+        ];
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(body);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(body);
 
-            let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
+        let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
 
-            let border_color_search = if selector.is_filtering {
-                ctx.theme.border_focused
-            } else {
-                ctx.theme.border
-            };
-            let search_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
-                .title(" Filter ");
+        let border_color_search = if selector.is_filtering {
+            ctx.theme.border_focused
+        } else {
+            ctx.theme.border
+        };
+        let search_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color_search).bg(ctx.theme.bg))
+            .title(" Filter ");
 
-            let search_text = if selector.is_filtering {
-                format!("{}▋", selector.search_query)
-            } else if selector.search_query.is_empty() {
-                "Type to filter...".to_string()
-            } else {
-                selector.search_query.clone()
-            };
-            let search_p = Paragraph::new(search_text)
-                .block(search_block)
-                .style(Style::default().fg(ctx.theme.text_normal));
+        let search_text = if selector.is_filtering {
+            format!("{}▋", selector.search_query)
+        } else if selector.search_query.is_empty() {
+            "Type to filter...".to_string()
+        } else {
+            selector.search_query.clone()
+        };
+        let search_p = Paragraph::new(search_text)
+            .block(search_block)
+            .style(Style::default().fg(ctx.theme.text_normal));
 
-            f.render_widget(search_p, search_chunk);
+        f.render_widget(search_p, search_chunk);
 
-            let filtered_items = selector.get_filtered_items_with_indices();
-            if filtered_items.is_empty() {
-                let p = Paragraph::new("\n  No matching options found.")
-                    .style(
+        let filtered_items = selector.get_filtered_items_with_indices();
+        if filtered_items.is_empty() {
+            let p = Paragraph::new("\n  No matching options found.")
+                .style(
+                    Style::default()
+                        .fg(ctx.theme.text_muted)
+                        .bg(ctx.theme.bg)
+                        .add_modifier(Modifier::ITALIC),
+                )
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            f.render_widget(p, list_chunk);
+        } else {
+            let items: Vec<ListItem> = filtered_items
+                .iter()
+                .enumerate()
+                .map(|(i, (item, indices))| {
+                    let is_selected = selector.selected_items.contains(item);
+
+                    let marker = if is_selected {
+                        format!(" {} ", icons.check_on)
+                    } else {
+                        format!(" {} ", icons.check_off)
+                    };
+                    let marker_color = if is_selected {
+                        ctx.theme.green
+                    } else {
+                        ctx.theme.text_muted
+                    };
+
+                    let item_bg = if i == selector.cursor_idx {
+                        ctx.theme.highlight_bg
+                    } else {
+                        ctx.theme.bg
+                    };
+
+                    let style = if i == selector.cursor_idx {
                         Style::default()
-                            .fg(ctx.theme.text_muted)
-                            .bg(ctx.theme.bg)
-                            .add_modifier(Modifier::ITALIC),
-                    )
-                    .wrap(ratatui::widgets::Wrap { trim: true });
-                f.render_widget(p, list_chunk);
-            } else {
-                let items: Vec<ListItem> = filtered_items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (item, indices))| {
-                        let is_selected = selector.selected_items.contains(item);
+                            .bg(item_bg)
+                            .fg(ctx.theme.text_normal)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(ctx.theme.text_normal).bg(item_bg)
+                    };
 
-                        let marker = if is_selected {
-                            format!(" {} ", icons.check_on)
-                        } else {
-                            format!(" {} ", icons.check_off)
-                        };
-                        let marker_color = if is_selected {
-                            ctx.theme.green
-                        } else {
-                            ctx.theme.text_muted
-                        };
+                    let highlight_style = if i == selector.cursor_idx {
+                        Style::default()
+                            .bg(item_bg)
+                            .fg(ctx.theme.yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(ctx.theme.yellow)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::BOLD)
+                    };
 
-                        let item_bg = if i == selector.cursor_idx {
-                            ctx.theme.highlight_bg
-                        } else {
-                            ctx.theme.bg
-                        };
+                    let mut line_spans = vec![Span::styled(
+                        marker,
+                        Style::default()
+                            .fg(marker_color)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::BOLD),
+                    )];
 
-                        let style = if i == selector.cursor_idx {
-                            Style::default()
-                                .bg(item_bg)
-                                .fg(ctx.theme.text_normal)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(ctx.theme.text_normal).bg(item_bg)
-                        };
+                    if let Some(indices) = indices {
+                        line_spans.extend(highlight_fuzzy_match(
+                            item,
+                            indices,
+                            style,
+                            highlight_style,
+                        ));
+                    } else {
+                        line_spans.push(Span::styled(item.clone(), style));
+                    }
 
-                        let highlight_style = if i == selector.cursor_idx {
-                            Style::default()
-                                .bg(item_bg)
-                                .fg(ctx.theme.yellow)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .fg(ctx.theme.yellow)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::BOLD)
-                        };
+                    ListItem::new(vec![Line::from(line_spans)]).style(Style::default().bg(item_bg))
+                })
+                .collect();
 
-                        let mut line_spans = vec![Span::styled(
-                            marker,
-                            Style::default()
-                                .fg(marker_color)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::BOLD),
-                        )];
-
-                        if let Some(indices) = indices {
-                            line_spans.extend(highlight_fuzzy_match(
-                                item,
-                                indices,
-                                style,
-                                highlight_style,
-                            ));
-                        } else {
-                            line_spans.push(Span::styled(item.clone(), style));
-                        }
-
-                        ListItem::new(vec![Line::from(line_spans)])
-                            .style(Style::default().bg(item_bg))
-                    })
-                    .collect();
-
-                let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
-                let mut state = selector.state;
-                f.render_stateful_widget(list, list_chunk, &mut state);
-                selector.state = state;
-            }
+            let list = List::new(items).style(Style::default().bg(ctx.theme.bg));
+            let mut state = selector.state;
+            f.render_stateful_widget(list, list_chunk, &mut state);
+            selector.state = state;
         }
     }
 

@@ -257,13 +257,12 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
                     job_item.matrix = Some(matrix_content);
                 }
             } else if let (Some(paren_start), Some(paren_end)) = (name.rfind('('), name.rfind(')'))
+                && paren_end == name.len() - 1
             {
-                if paren_end == name.len() - 1 {
-                    let matrix_content = name[paren_start + 1..paren_end].trim().to_string();
-                    let base_name = name[..paren_start].trim().to_string();
-                    job_item.name = base_name;
-                    job_item.matrix = Some(matrix_content);
-                }
+                let matrix_content = name[paren_start + 1..paren_end].trim().to_string();
+                let base_name = name[..paren_start].trim().to_string();
+                job_item.name = base_name;
+                job_item.matrix = Some(matrix_content);
             }
             job_item.api_name = name;
             job_item

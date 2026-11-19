@@ -498,7 +498,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" {} {} ", &ctx.icons.separator, app.scope_label()),
+            format!(" {} {} ", ctx.icons.separator, app.scope_label()),
             Style::default()
                 .fg(ctx.theme.text_normal)
                 .add_modifier(Modifier::BOLD),
@@ -818,877 +818,397 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(paragraph, area);
     }
 
-    if app.edit_menu.is_none() {
-        if let Some(mut diff_view) = app.diff_view.take() {
-            let area = centered_rect_min(95, 95, 30, 6, size);
+    if app.edit_menu.is_none()
+        && let Some(mut diff_view) = app.diff_view.take()
+    {
+        let area = centered_rect_min(95, 95, 30, 6, size);
 
-            let outer_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(ctx.theme.border))
-                .style(Style::default().bg(ctx.theme.bg));
+        let outer_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(ctx.theme.border))
+            .style(Style::default().bg(ctx.theme.bg));
 
-            let inner_area = outer_block.inner(area);
+        let inner_area = outer_block.inner(area);
 
-            let main_chunks = {
-                let file_tree_constraint = if diff_view.file_tree_visible {
-                    Constraint::Percentage(25)
-                } else {
-                    Constraint::Length(0)
-                };
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([file_tree_constraint, Constraint::Percentage(100)].as_ref())
-                    .split(inner_area)
+        let main_chunks = {
+            let file_tree_constraint = if diff_view.file_tree_visible {
+                Constraint::Percentage(25)
+            } else {
+                Constraint::Length(0)
             };
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([file_tree_constraint, Constraint::Percentage(100)].as_ref())
+                .split(inner_area)
+        };
 
-            // Auto picks the layout from the pane width, which only the draw
-            // knows, and before the title, whose search count depends on the
-            // layout's rows. A selection holds the layout: switching would drop
-            // it, and the layout catches up once it ends.
-            let diff_columns = main_chunks[1].width.saturating_sub(2);
-            if diff_view.selection_start.is_none() {
-                diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+        // Auto picks the layout from the pane width, which only the draw
+        // knows, and before the title, whose search count depends on the
+        // layout's rows. A selection holds the layout: switching would drop
+        // it, and the layout catches up once it ends.
+        let diff_columns = main_chunks[1].width.saturating_sub(2);
+        if diff_view.selection_start.is_none() {
+            diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+        }
+
+        let unresolved_count = app.unresolved_threads_count();
+        let unresolved_suffix = if unresolved_count > 0 {
+            format!(
+                " [{} Unresolved Threads: {}] ",
+                ctx.icons.thread_unresolved, unresolved_count
+            )
+        } else {
+            String::new()
+        };
+
+        let title_suffix = if app.in_review_mode {
+            format!(" [REVIEW MODE: ON ({} pending)] ", app.draft_comments.len())
+        } else {
+            String::new()
+        };
+
+        let pr_label = if ctx.kind.is_github() {
+            "Pull Request"
+        } else {
+            "Merge Request"
+        };
+
+        let mut title_spans = vec![
+            Span::styled(
+                format!(" {} Diff #{} ", pr_label, diff_view.mr_iid),
+                Style::default()
+                    .fg(ctx.theme.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(unresolved_suffix, Style::default().fg(ctx.theme.header_fg)),
+            Span::styled(title_suffix, Style::default().fg(ctx.theme.header_fg)),
+        ];
+        if diff_view.search_active {
+            title_spans.push(Span::styled(
+                format!(" {} SEARCHING ", ctx.icons.label_searching),
+                Style::default()
+                    .bg(ctx.theme.yellow)
+                    .fg(ctx.theme.highlight_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            title_spans.push(Span::styled(
+                format!(" {}_ ", diff_view.search_query),
+                Style::default().fg(ctx.theme.yellow),
+            ));
+        } else if !diff_view.search_query.is_empty() {
+            let match_info = format!(
+                " ({}/{})",
+                if diff_view.search_matches.is_empty() {
+                    0
+                } else {
+                    diff_view.search_cursor + 1
+                },
+                diff_view.search_matches.len()
+            );
+            title_spans.push(Span::styled(
+                format!(" {} FILTERED ", ctx.icons.label_filtered),
+                Style::default()
+                    .bg(ctx.theme.yellow)
+                    .fg(ctx.theme.highlight_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            title_spans.push(Span::styled(
+                format!(" {}{} ", diff_view.search_query, match_info),
+                Style::default().fg(ctx.theme.yellow),
+            ));
+        }
+
+        let outer_block = outer_block.title(Line::from(title_spans));
+
+        // 1. Render Files list on the left (only if visible)
+        let files_rect = main_chunks[0];
+        let files_list_height = (files_rect.height as usize).saturating_sub(2);
+        let file_tree_visible = diff_view.file_tree_visible;
+
+        // Adjust file tree scroll offset
+        if file_tree_visible {
+            if diff_view.selected_visible_idx < diff_view.file_tree_scroll_offset {
+                diff_view.file_tree_scroll_offset = diff_view.selected_visible_idx;
+            } else if diff_view.selected_visible_idx
+                >= diff_view.file_tree_scroll_offset + files_list_height
+            {
+                diff_view.file_tree_scroll_offset =
+                    (diff_view.selected_visible_idx + 1).saturating_sub(files_list_height);
             }
+        }
 
-            let unresolved_count = app.unresolved_threads_count();
-            let unresolved_suffix = if unresolved_count > 0 {
+        let panel_inner_width = if file_tree_visible {
+            (files_rect.width as usize).saturating_sub(2)
+        } else {
+            80
+        };
+
+        let files_list = if file_tree_visible {
+            let (reviewed_count, total_files) = diff_view.review_progress();
+            let files_title = if reviewed_count > 0 {
                 format!(
-                    " [{} Unresolved Threads: {}] ",
-                    &ctx.icons.thread_unresolved, unresolved_count
+                    " {} {} {}/{}{} ",
+                    icons.label_files,
+                    ctx.icons.file_reviewed,
+                    reviewed_count,
+                    total_files,
+                    if diff_view.hide_reviewed {
+                        " (hidden)"
+                    } else {
+                        ""
+                    }
                 )
             } else {
-                String::new()
+                format!(" {} ", icons.label_files)
             };
-
-            let title_suffix = if app.in_review_mode {
-                format!(" [REVIEW MODE: ON ({} pending)] ", app.draft_comments.len())
-            } else {
-                String::new()
-            };
-
-            let pr_label = if ctx.kind.is_github() {
-                "Pull Request"
-            } else {
-                "Merge Request"
-            };
-
-            let mut title_spans = vec![
-                Span::styled(
-                    format!(" {} Diff #{} ", pr_label, diff_view.mr_iid),
-                    Style::default()
-                        .fg(ctx.theme.header_fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(unresolved_suffix, Style::default().fg(ctx.theme.header_fg)),
-                Span::styled(title_suffix, Style::default().fg(ctx.theme.header_fg)),
-            ];
-            if diff_view.search_active {
-                title_spans.push(Span::styled(
-                    format!(" {} SEARCHING ", &ctx.icons.label_searching),
-                    Style::default()
-                        .bg(ctx.theme.yellow)
-                        .fg(ctx.theme.highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                title_spans.push(Span::styled(
-                    format!(" {}_ ", diff_view.search_query),
-                    Style::default().fg(ctx.theme.yellow),
-                ));
-            } else if !diff_view.search_query.is_empty() {
-                let match_info = format!(
-                    " ({}/{})",
-                    if diff_view.search_matches.is_empty() {
-                        0
-                    } else {
-                        diff_view.search_cursor + 1
-                    },
-                    diff_view.search_matches.len()
-                );
-                title_spans.push(Span::styled(
-                    format!(" {} FILTERED ", &ctx.icons.label_filtered),
-                    Style::default()
-                        .bg(ctx.theme.yellow)
-                        .fg(ctx.theme.highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                title_spans.push(Span::styled(
-                    format!(" {}{} ", diff_view.search_query, match_info),
-                    Style::default().fg(ctx.theme.yellow),
-                ));
-            }
-
-            let outer_block = outer_block.title(Line::from(title_spans));
-
-            // 1. Render Files list on the left (only if visible)
-            let files_rect = main_chunks[0];
-            let files_list_height = (files_rect.height as usize).saturating_sub(2);
-            let file_tree_visible = diff_view.file_tree_visible;
-
-            // Adjust file tree scroll offset
-            if file_tree_visible {
-                if diff_view.selected_visible_idx < diff_view.file_tree_scroll_offset {
-                    diff_view.file_tree_scroll_offset = diff_view.selected_visible_idx;
-                } else if diff_view.selected_visible_idx
-                    >= diff_view.file_tree_scroll_offset + files_list_height
-                {
-                    diff_view.file_tree_scroll_offset =
-                        (diff_view.selected_visible_idx + 1).saturating_sub(files_list_height);
-                }
-            }
-
-            let panel_inner_width = if file_tree_visible {
-                (files_rect.width as usize).saturating_sub(2)
-            } else {
-                80
-            };
-
-            let files_list = if file_tree_visible {
-                let (reviewed_count, total_files) = diff_view.review_progress();
-                let files_title = if reviewed_count > 0 {
-                    format!(
-                        " {} {} {}/{}{} ",
-                        icons.label_files,
-                        &ctx.icons.file_reviewed,
-                        reviewed_count,
-                        total_files,
-                        if diff_view.hide_reviewed {
-                            " (hidden)"
-                        } else {
-                            ""
-                        }
-                    )
-                } else {
-                    format!(" {} ", icons.label_files)
-                };
-                let files_block = Block::default()
-                    .title(files_title)
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(if diff_view.focus_on_files {
-                        ctx.theme.border_focused
-                    } else {
-                        ctx.theme.border
-                    }));
-
-                let mut file_items = Vec::new();
-                let scroll_start = diff_view.file_tree_scroll_offset;
-                let scroll_end =
-                    (scroll_start + files_list_height).min(diff_view.visible_nodes.len());
-                for i in scroll_start..scroll_end {
-                    let node = &diff_view.visible_nodes[i];
-                    let is_selected = i == diff_view.selected_visible_idx;
-
-                    let indent = "  ".repeat(node.depth);
-                    let indicator = if node.is_dir {
-                        if node.is_expanded {
-                            format!("{} ", &ctx.icons.folder_expanded)
-                        } else {
-                            format!("{} ", &ctx.icons.folder_collapsed)
-                        }
-                    } else if node.is_reviewed {
-                        format!("{} ", &ctx.icons.file_reviewed)
-                    } else {
-                        "  ".to_string()
-                    };
-
-                    let mut name_display = node.name.clone();
-                    if node.is_dir {
-                        name_display.push('/');
-                    }
-
-                    // Build stats (right-aligned, colored): only for files, not directories
-                    let stats_str = if !node.is_dir {
-                        let mut s = String::new();
-                        if node.additions > 0 {
-                            s.push_str(&format!(" +{}", node.additions));
-                        }
-                        if node.deletions > 0 {
-                            s.push_str(&format!(" -{}", node.deletions));
-                        }
-                        if !s.is_empty() { Some(s) } else { None }
-                    } else {
-                        None
-                    };
-
-                    let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
-                    let count_suffix = if unresolved_count > 0 {
-                        format!(" ({} {})", &ctx.icons.thread_unresolved, unresolved_count)
-                    } else {
-                        String::new()
-                    };
-
-                    let stats_total_len = stats_str.as_ref().map_or(0, |s| s.chars().count())
-                        + count_suffix.chars().count();
-
-                    let prefix = format!(" {indent}{indicator}");
-                    if let (Some(old_path), Some(new_path)) = (&node.old_file_path, &node.file_path)
-                    {
-                        name_display = crate::ui::helpers::rename_label(
-                            old_path,
-                            new_path,
-                            panel_inner_width
-                                .saturating_sub(prefix.chars().count() + stats_total_len),
-                        );
-                    }
-                    let (name_display_padded, padding) = crate::ui::helpers::diff_tree_row_layout(
-                        panel_inner_width,
-                        &prefix,
-                        &name_display,
-                        stats_total_len,
-                    );
-                    name_display = name_display_padded;
-
-                    // Determine base foreground color and style based on node type
-                    let fg_color = if node.is_reviewed {
-                        ctx.theme.text_muted
-                    } else if node.is_dir {
-                        ctx.theme.blue
-                    } else if node.is_new_file {
-                        ctx.theme.green
-                    } else if node.is_deleted_file {
-                        ctx.theme.red
-                    } else if node.old_file_path.is_some() {
-                        ctx.theme.yellow
-                    } else {
-                        ctx.theme.text_normal
-                    };
-
-                    let mut item_style = Style::default().fg(fg_color);
-                    let sel_bg = if is_selected {
-                        let bg = if diff_view.focus_on_files {
-                            ctx.theme.highlight_bg
-                        } else {
-                            ctx.theme.border
-                        };
-                        item_style = item_style.bg(bg).add_modifier(Modifier::BOLD);
-                        Some(bg)
-                    } else {
-                        if node.is_reviewed {
-                            item_style = item_style.add_modifier(Modifier::DIM);
-                        } else if node.is_dir || node.is_new_file || node.is_deleted_file {
-                            item_style = item_style.add_modifier(Modifier::BOLD);
-                        } else if node.old_file_path.is_some() {
-                            item_style = item_style.add_modifier(Modifier::ITALIC);
-                        }
-                        None
-                    };
-
-                    // Build colored line spans
-                    let mut line_spans: Vec<Span> = Vec::new();
-                    line_spans.push(Span::styled(prefix, item_style));
-                    line_spans.push(Span::styled(name_display, item_style));
-                    line_spans.push(Span::styled(padding, item_style));
-
-                    // Render stats with separate colors
-                    if let Some(ref s) = stats_str {
-                        // Parse the stats string into colored spans
-                        // Format: " +N -M" (additions first, then deletions, space-separated)
-                        let parts: Vec<&str> = s.split_whitespace().collect();
-                        let mut i = 0;
-                        while i < parts.len() {
-                            let part = parts[i];
-                            if part.starts_with('+') {
-                                let mut stat_style = Style::default()
-                                    .fg(ctx.theme.diff_addition_fg)
-                                    .add_modifier(Modifier::BOLD);
-                                if let Some(bg) = sel_bg {
-                                    stat_style = stat_style.bg(bg);
-                                }
-                                line_spans.push(Span::styled(format!(" {part}"), stat_style));
-                            } else if part.starts_with('-') {
-                                let mut stat_style = Style::default()
-                                    .fg(ctx.theme.diff_deletion_fg)
-                                    .add_modifier(Modifier::BOLD);
-                                if let Some(bg) = sel_bg {
-                                    stat_style = stat_style.bg(bg);
-                                }
-                                line_spans.push(Span::styled(format!(" {part}"), stat_style));
-                            }
-                            i += 1;
-                        }
-                    }
-
-                    if !count_suffix.is_empty() {
-                        let mut suffix_style = Style::default().fg(ctx.theme.text_muted);
-                        if let Some(bg) = sel_bg {
-                            suffix_style = suffix_style.bg(bg);
-                        }
-                        line_spans.push(Span::styled(count_suffix, suffix_style));
-                    }
-
-                    file_items.push(ListItem::new(Line::from(line_spans)));
-                }
-                List::new(file_items).block(files_block)
-            } else {
-                // Dummy empty list when tree is hidden
-                List::new(Vec::<ListItem>::new())
-            };
-
-            // 2. Render Diff content on the right
-            let layout_name = if diff_view.side_by_side {
-                "side-by-side"
-            } else {
-                "unified"
-            };
-            let layout_choice = if app.diff_layout == crate::app::DiffLayout::Auto {
-                "auto"
-            } else {
-                "pinned"
-            };
-            let diff_block = Block::default()
-                .title(format!(
-                    " {} ({layout_name}, {layout_choice}) ",
-                    icons.label_diff
-                ))
+            let files_block = Block::default()
+                .title(files_title)
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if !diff_view.focus_on_files {
+                .border_style(Style::default().fg(if diff_view.focus_on_files {
                     ctx.theme.border_focused
                 } else {
                     ctx.theme.border
                 }));
 
-            let list_height = (main_chunks[1].height as usize).saturating_sub(2);
+            let mut file_items = Vec::new();
+            let scroll_start = diff_view.file_tree_scroll_offset;
+            let scroll_end = (scroll_start + files_list_height).min(diff_view.visible_nodes.len());
+            for i in scroll_start..scroll_end {
+                let node = &diff_view.visible_nodes[i];
+                let is_selected = i == diff_view.selected_visible_idx;
 
-            let mut updated_diff_view = diff_view;
-            // When tree is hidden, force focus to diff content
-            if !file_tree_visible {
-                updated_diff_view.focus_on_files = false;
-            }
-            updated_diff_view.viewport_height = list_height;
-            let total_lines = if updated_diff_view.side_by_side {
-                updated_diff_view.side_by_side_lines.len()
-            } else {
-                updated_diff_view.lines.len()
-            };
-
-            if updated_diff_view.cursor_idx < updated_diff_view.scroll_offset {
-                updated_diff_view.scroll_offset = updated_diff_view.cursor_idx;
-            } else if updated_diff_view.cursor_idx >= updated_diff_view.scroll_offset + list_height
-            {
-                updated_diff_view.scroll_offset = updated_diff_view.cursor_idx - list_height + 1;
-            }
-
-            let start = updated_diff_view.scroll_offset;
-            let end = (start + list_height).min(total_lines);
-
-            let mut list_lines = Vec::new();
-            let mut left_list_lines = Vec::new();
-            let mut right_list_lines = Vec::new();
-
-            if updated_diff_view.side_by_side {
-                for idx in start..end {
-                    let sline = &updated_diff_view.side_by_side_lines[idx];
-                    let is_cursor = idx == updated_diff_view.cursor_idx;
-
-                    let in_selection = updated_diff_view
-                        .selection_start
-                        .zip(updated_diff_view.selection_end)
-                        .is_some_and(|(s, e)| idx >= s && idx <= e);
-
-                    let num_width = updated_diff_view.line_number_width;
-                    let gutter_bg = ctx.theme.diff_gutter_bg;
-                    let marker_style = Style::default()
-                        .fg(ctx.theme.yellow)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(gutter_bg);
-                    let num_style = Style::default().fg(ctx.theme.text_muted).bg(gutter_bg);
-                    let sep_style = Style::default().fg(ctx.theme.diff_sep).bg(gutter_bg);
-
-                    let highlight = if in_selection {
-                        RowHighlight::Selected
-                    } else if updated_diff_view.search_matches.contains(&idx) {
-                        RowHighlight::SearchMatch
+                let indent = "  ".repeat(node.depth);
+                let indicator = if node.is_dir {
+                    if node.is_expanded {
+                        format!("{} ", ctx.icons.folder_expanded)
                     } else {
-                        RowHighlight::Plain
+                        format!("{} ", ctx.icons.folder_collapsed)
+                    }
+                } else if node.is_reviewed {
+                    format!("{} ", ctx.icons.file_reviewed)
+                } else {
+                    "  ".to_string()
+                };
+
+                let mut name_display = node.name.clone();
+                if node.is_dir {
+                    name_display.push('/');
+                }
+
+                // Build stats (right-aligned, colored): only for files, not directories
+                let stats_str = if !node.is_dir {
+                    let mut s = String::new();
+                    if node.additions > 0 {
+                        s.push_str(&format!(" +{}", node.additions));
+                    }
+                    if node.deletions > 0 {
+                        s.push_str(&format!(" -{}", node.deletions));
+                    }
+                    if !s.is_empty() { Some(s) } else { None }
+                } else {
+                    None
+                };
+
+                let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
+                let count_suffix = if unresolved_count > 0 {
+                    format!(" ({} {})", ctx.icons.thread_unresolved, unresolved_count)
+                } else {
+                    String::new()
+                };
+
+                let stats_total_len = stats_str.as_ref().map_or(0, |s| s.chars().count())
+                    + count_suffix.chars().count();
+
+                let prefix = format!(" {indent}{indicator}");
+                if let (Some(old_path), Some(new_path)) = (&node.old_file_path, &node.file_path) {
+                    name_display = crate::ui::helpers::rename_label(
+                        old_path,
+                        new_path,
+                        panel_inner_width.saturating_sub(prefix.chars().count() + stats_total_len),
+                    );
+                }
+                let (name_display_padded, padding) = crate::ui::helpers::diff_tree_row_layout(
+                    panel_inner_width,
+                    &prefix,
+                    &name_display,
+                    stats_total_len,
+                );
+                name_display = name_display_padded;
+
+                // Determine base foreground color and style based on node type
+                let fg_color = if node.is_reviewed {
+                    ctx.theme.text_muted
+                } else if node.is_dir {
+                    ctx.theme.blue
+                } else if node.is_new_file {
+                    ctx.theme.green
+                } else if node.is_deleted_file {
+                    ctx.theme.red
+                } else if node.old_file_path.is_some() {
+                    ctx.theme.yellow
+                } else {
+                    ctx.theme.text_normal
+                };
+
+                let mut item_style = Style::default().fg(fg_color);
+                let sel_bg = if is_selected {
+                    let bg = if diff_view.focus_on_files {
+                        ctx.theme.highlight_bg
+                    } else {
+                        ctx.theme.border
                     };
-                    let sel_bg = highlight.row_bg(&ctx.theme);
-                    let search_fg = highlight.row_fg(&ctx.theme);
-
-                    // LEFT PANEL (OLD / DELETION)
-                    let mut left_spans = Vec::new();
-                    if let Some(ref line) = sline.left {
-                        let old_str = line
-                            .old_line_num
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| " ".to_string());
-
-                        left_spans.extend(vec![
-                            Span::styled(
-                                if is_cursor {
-                                    cursor_marker.as_str()
-                                } else if in_selection {
-                                    " ▐ "
-                                } else {
-                                    "   "
-                                },
-                                marker_style,
-                            ),
-                            Span::styled(format!("{old_str:>num_width$} "), num_style),
-                            Span::styled("│ ", sep_style),
-                        ]);
-
-                        match line.line_type {
-                            crate::app::DiffLineType::Deletion => {
-                                let theme = &ctx.theme;
-                                let code_fg = theme.diff_deletion_fg;
-                                let code_bg = theme.diff_deletion_bg;
-                                let prefix_fg = theme.diff_deletion_fg;
-                                let actual_bg = sel_bg.unwrap_or(code_bg);
-
-                                let prefix = line
-                                    .content
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| " ".to_string());
-                                left_spans.push(Span::styled(
-                                    prefix,
-                                    Style::default()
-                                        .fg(search_fg.unwrap_or(prefix_fg))
-                                        .add_modifier(Modifier::BOLD)
-                                        .bg(actual_bg),
-                                ));
-
-                                let content_base = Style::default()
-                                    .fg(search_fg.unwrap_or(code_fg))
-                                    .bg(actual_bg);
-                                let final_style = if is_cursor {
-                                    content_base
-                                        .add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    content_base
-                                };
-
-                                let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, highlight);
-                                left_spans.append(&mut content_spans);
-                            }
-                            crate::app::DiffLineType::Normal => {
-                                let actual_bg = sel_bg.unwrap_or(ctx.theme.bg);
-                                let prefix = line
-                                    .content
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| " ".to_string());
-                                left_spans.push(Span::styled(
-                                    prefix,
-                                    Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
-                                ));
-
-                                let content_base = Style::default()
-                                    .fg(search_fg.unwrap_or(ctx.theme.text_normal))
-                                    .bg(actual_bg);
-                                let final_style = if is_cursor {
-                                    content_base
-                                        .add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    content_base
-                                };
-
-                                let theme = &ctx.theme;
-                                let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, highlight);
-                                left_spans.append(&mut content_spans);
-                            }
-                            crate::app::DiffLineType::Meta => {
-                                let mut s = Style::default()
-                                    .fg(search_fg.unwrap_or(ctx.theme.blue))
-                                    .add_modifier(Modifier::BOLD);
-                                if let Some(bg) = sel_bg {
-                                    s = s.bg(bg);
-                                }
-                                let final_style = if is_cursor {
-                                    s.add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    s
-                                };
-                                left_spans.push(Span::styled(&line.content, final_style));
-                            }
-                            crate::app::DiffLineType::HunkHeader => {
-                                let mut s = Style::default()
-                                    .fg(search_fg.unwrap_or(ctx.theme.purple))
-                                    .add_modifier(Modifier::BOLD);
-                                if let Some(bg) = sel_bg {
-                                    s = s.bg(bg);
-                                }
-                                let final_style = if is_cursor {
-                                    s.add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    s
-                                };
-                                left_spans.push(Span::styled(&line.content, final_style));
-                            }
-                            _ => {}
-                        }
-                    } else {
-                        left_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
-                            if is_cursor {
-                                cursor_marker.as_str()
-                            } else if in_selection {
-                                " ▐ "
-                            } else {
-                                "   "
-                            },
-                            marker_style,
-                            num_style,
-                            sep_style,
-                            num_width,
-                            sel_bg,
-                        ));
+                    item_style = item_style.bg(bg).add_modifier(Modifier::BOLD);
+                    Some(bg)
+                } else {
+                    if node.is_reviewed {
+                        item_style = item_style.add_modifier(Modifier::DIM);
+                    } else if node.is_dir || node.is_new_file || node.is_deleted_file {
+                        item_style = item_style.add_modifier(Modifier::BOLD);
+                    } else if node.old_file_path.is_some() {
+                        item_style = item_style.add_modifier(Modifier::ITALIC);
                     }
-                    left_list_lines.push(Line::from(left_spans));
+                    None
+                };
 
-                    // RIGHT PANEL (NEW / ADDITION)
-                    let mut right_spans = Vec::new();
-                    if let Some(ref line) = sline.right {
-                        let new_str = line
-                            .new_line_num
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| " ".to_string());
+                // Build colored line spans
+                let mut line_spans: Vec<Span> = Vec::new();
+                line_spans.push(Span::styled(prefix, item_style));
+                line_spans.push(Span::styled(name_display, item_style));
+                line_spans.push(Span::styled(padding, item_style));
 
-                        right_spans.extend(vec![
-                            Span::styled(
-                                if is_cursor {
-                                    cursor_marker.as_str()
-                                } else if in_selection {
-                                    " ▐ "
-                                } else {
-                                    "   "
-                                },
-                                marker_style,
-                            ),
-                            Span::styled(format!("{new_str:>num_width$} "), num_style),
-                            Span::styled("│ ", sep_style),
-                        ]);
-
-                        match line.line_type {
-                            crate::app::DiffLineType::Addition => {
-                                let theme = &ctx.theme;
-                                let code_fg = theme.diff_addition_fg;
-                                let code_bg = theme.diff_addition_bg;
-                                let prefix_fg = theme.diff_addition_fg;
-                                let actual_bg = sel_bg.unwrap_or(code_bg);
-
-                                let prefix = line
-                                    .content
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| " ".to_string());
-                                right_spans.push(Span::styled(
-                                    prefix,
-                                    Style::default()
-                                        .fg(search_fg.unwrap_or(prefix_fg))
-                                        .add_modifier(Modifier::BOLD)
-                                        .bg(actual_bg),
-                                ));
-
-                                let content_base = Style::default()
-                                    .fg(search_fg.unwrap_or(code_fg))
-                                    .bg(actual_bg);
-                                let final_style = if is_cursor {
-                                    content_base
-                                        .add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    content_base
-                                };
-
-                                let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, highlight);
-                                right_spans.append(&mut content_spans);
+                // Render stats with separate colors
+                if let Some(ref s) = stats_str {
+                    // Parse the stats string into colored spans
+                    // Format: " +N -M" (additions first, then deletions, space-separated)
+                    let parts: Vec<&str> = s.split_whitespace().collect();
+                    let mut i = 0;
+                    while i < parts.len() {
+                        let part = parts[i];
+                        if part.starts_with('+') {
+                            let mut stat_style = Style::default()
+                                .fg(ctx.theme.diff_addition_fg)
+                                .add_modifier(Modifier::BOLD);
+                            if let Some(bg) = sel_bg {
+                                stat_style = stat_style.bg(bg);
                             }
-                            crate::app::DiffLineType::Normal => {
-                                let actual_bg = sel_bg.unwrap_or(ctx.theme.bg);
-                                let prefix = line
-                                    .content
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| " ".to_string());
-                                right_spans.push(Span::styled(
-                                    prefix,
-                                    Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
-                                ));
-
-                                let content_base = Style::default()
-                                    .fg(search_fg.unwrap_or(ctx.theme.text_normal))
-                                    .bg(actual_bg);
-                                let final_style = if is_cursor {
-                                    content_base
-                                        .add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    content_base
-                                };
-
-                                let theme = &ctx.theme;
-                                let mut content_spans =
-                                    render_diff_line_content(line, final_style, theme, highlight);
-                                right_spans.append(&mut content_spans);
+                            line_spans.push(Span::styled(format!(" {part}"), stat_style));
+                        } else if part.starts_with('-') {
+                            let mut stat_style = Style::default()
+                                .fg(ctx.theme.diff_deletion_fg)
+                                .add_modifier(Modifier::BOLD);
+                            if let Some(bg) = sel_bg {
+                                stat_style = stat_style.bg(bg);
                             }
-                            crate::app::DiffLineType::Meta => {
-                                let mut s = Style::default()
-                                    .fg(search_fg.unwrap_or(ctx.theme.blue))
-                                    .add_modifier(Modifier::BOLD);
-                                if let Some(bg) = sel_bg {
-                                    s = s.bg(bg);
-                                }
-                                let final_style = if is_cursor {
-                                    s.add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    s
-                                };
-                                right_spans.push(Span::styled(&line.content, final_style));
-                            }
-                            crate::app::DiffLineType::HunkHeader => {
-                                let mut s = Style::default()
-                                    .fg(search_fg.unwrap_or(ctx.theme.purple))
-                                    .add_modifier(Modifier::BOLD);
-                                if let Some(bg) = sel_bg {
-                                    s = s.bg(bg);
-                                }
-                                let final_style = if is_cursor {
-                                    s.add_modifier(Modifier::UNDERLINED)
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    s
-                                };
-                                right_spans.push(Span::styled(&line.content, final_style));
-                            }
-                            _ => {}
+                            line_spans.push(Span::styled(format!(" {part}"), stat_style));
                         }
-                    } else {
-                        right_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
-                            if is_cursor {
-                                cursor_marker.as_str()
-                            } else if in_selection {
-                                " ▐ "
-                            } else {
-                                "   "
-                            },
-                            marker_style,
-                            num_style,
-                            sep_style,
-                            num_width,
-                            sel_bg,
-                        ));
-                    }
-                    right_list_lines.push(Line::from(right_spans));
-
-                    // COMMENTS OVERLAY
-                    let matching_comments: Vec<_> = app
-                        .draft_comments
-                        .iter()
-                        .filter(|c| {
-                            let path_matches = sline
-                                .left
-                                .as_ref()
-                                .is_some_and(|l| l.file_path == c.file_path)
-                                || sline
-                                    .right
-                                    .as_ref()
-                                    .is_some_and(|r| r.file_path == c.file_path);
-
-                            path_matches
-                                && ((c.line_num.is_some()
-                                    && sline.right.as_ref().and_then(|r| r.new_line_num)
-                                        == c.line_num)
-                                    || (c.old_line_num.is_some()
-                                        && sline.left.as_ref().and_then(|l| l.old_line_num)
-                                            == c.old_line_num))
-                        })
-                        .collect();
-
-                    for comment in matching_comments {
-                        let comment_style = Style::default()
-                            .fg(ctx.theme.yellow)
-                            .bg(ctx.theme.comment_draft_bg);
-
-                        let range_info = match (comment.end_line_num, comment.end_old_line_num) {
-                            (Some(end_l), _) if end_l != comment.line_num.unwrap_or(0) => {
-                                format!(" (L{}-{})", comment.line_num.unwrap_or(0), end_l)
-                            }
-                            (_, Some(end_o)) if end_o != comment.old_line_num.unwrap_or(0) => {
-                                format!(" (OL{}-{})", comment.old_line_num.unwrap_or(0), end_o)
-                            }
-                            _ => String::new(),
-                        };
-
-                        let prefix_style = Style::default()
-                            .fg(ctx.theme.yellow)
-                            .add_modifier(Modifier::BOLD);
-
-                        let bubble = &ctx.icons.comment_bubble;
-                        let right_prefix_first = format!(" {bubble} Draft Note{range_info}: ");
-                        let left_prefix_first = format!(" {bubble} Draft ");
-                        let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
-
-                        let formatted_lines = format_comment_with_suggestions(
-                            ctx,
-                            &comment.body,
-                            &CommentAnchor {
-                                file_path: &comment.file_path,
-                                start_new: comment.line_num.map(|n| n as u64),
-                                end_new: comment.end_line_num.map(|n| n as u64),
-                                start_old: comment.old_line_num.map(|n| n as u64),
-                                end_old: comment.end_old_line_num.map(|n| n as u64),
-                            },
-                            &updated_diff_view.all_lines,
-                            &right_prefix_first,
-                            prefix_style,
-                        );
-
-                        for (i, (right_prefix, prefix_style, content_spans)) in
-                            formatted_lines.into_iter().enumerate()
-                        {
-                            let left_prefix = if i == 0 {
-                                &left_prefix_first
-                            } else {
-                                &left_prefix_rest
-                            };
-
-                            left_list_lines.push(
-                                Line::from(vec![
-                                    Span::styled("         ", Style::default()),
-                                    Span::styled(left_prefix.clone(), prefix_style),
-                                ])
-                                .style(comment_style),
-                            );
-
-                            let mut spans = vec![Span::styled(right_prefix, prefix_style)];
-                            for (style, text) in content_spans {
-                                spans.push(Span::styled(text, style));
-                            }
-                            right_list_lines.push(Line::from(spans).style(comment_style));
-                        }
-                    }
-
-                    let matching_current: Vec<_> = app
-                        .current_comments
-                        .iter()
-                        .filter(|c| {
-                            !c.system
-                                && c.position.as_ref().is_some_and(|pos| {
-                                    crate::app::note_position_anchors(
-                                        pos,
-                                        sline.left.as_ref(),
-                                        sline.right.as_ref(),
-                                    )
-                                })
-                        })
-                        .collect();
-
-                    for comment in matching_current {
-                        let comment_style =
-                            Style::default().fg(ctx.theme.blue).bg(ctx.theme.comment_bg);
-
-                        let prefix_style = Style::default()
-                            .fg(ctx.theme.blue)
-                            .add_modifier(Modifier::BOLD);
-
-                        let bubble = &ctx.icons.comment_bubble;
-                        let right_prefix_first =
-                            format!(" {bubble} @{}: ", comment.author.username);
-                        let left_prefix_first = format!(" {bubble} Comment ");
-                        let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
-
-                        let (start_new, end_new, start_old, end_old, file_path) =
-                            if let Some(ref pos) = comment.position {
-                                let (sn, en, so, eo) = pos.get_line_range();
-                                (
-                                    sn,
-                                    en,
-                                    so,
-                                    eo,
-                                    pos.new_path
-                                        .as_deref()
-                                        .or(pos.old_path.as_deref())
-                                        .unwrap_or("")
-                                        .to_string(),
-                                )
-                            } else {
-                                (None, None, None, None, String::new())
-                            };
-
-                        let formatted_lines = format_comment_with_suggestions(
-                            ctx,
-                            &comment.body,
-                            &CommentAnchor {
-                                file_path: &file_path,
-                                start_new,
-                                end_new,
-                                start_old,
-                                end_old,
-                            },
-                            &updated_diff_view.all_lines,
-                            &right_prefix_first,
-                            prefix_style,
-                        );
-
-                        for (i, (right_prefix, prefix_style, content_spans)) in
-                            formatted_lines.into_iter().enumerate()
-                        {
-                            let left_prefix = if i == 0 {
-                                &left_prefix_first
-                            } else {
-                                &left_prefix_rest
-                            };
-
-                            left_list_lines.push(
-                                Line::from(vec![
-                                    Span::styled("         ", Style::default()),
-                                    Span::styled(left_prefix.clone(), prefix_style),
-                                ])
-                                .style(comment_style),
-                            );
-
-                            let mut spans = vec![Span::styled(right_prefix, prefix_style)];
-                            for (style, text) in content_spans {
-                                spans.push(Span::styled(text, style));
-                            }
-                            right_list_lines.push(Line::from(spans).style(comment_style));
-                        }
+                        i += 1;
                     }
                 }
+
+                if !count_suffix.is_empty() {
+                    let mut suffix_style = Style::default().fg(ctx.theme.text_muted);
+                    if let Some(bg) = sel_bg {
+                        suffix_style = suffix_style.bg(bg);
+                    }
+                    line_spans.push(Span::styled(count_suffix, suffix_style));
+                }
+
+                file_items.push(ListItem::new(Line::from(line_spans)));
+            }
+            List::new(file_items).block(files_block)
+        } else {
+            // Dummy empty list when tree is hidden
+            List::new(Vec::<ListItem>::new())
+        };
+
+        // 2. Render Diff content on the right
+        let layout_name = if diff_view.side_by_side {
+            "side-by-side"
+        } else {
+            "unified"
+        };
+        let layout_choice = if app.diff_layout == crate::app::DiffLayout::Auto {
+            "auto"
+        } else {
+            "pinned"
+        };
+        let diff_block = Block::default()
+            .title(format!(
+                " {} ({layout_name}, {layout_choice}) ",
+                icons.label_diff
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if !diff_view.focus_on_files {
+                ctx.theme.border_focused
             } else {
-                // UNIFIED/INLINE DIFF RENDER
-                for idx in start..end {
-                    let line = &updated_diff_view.lines[idx];
-                    let is_cursor = idx == updated_diff_view.cursor_idx;
+                ctx.theme.border
+            }));
 
-                    let in_selection = updated_diff_view
-                        .selection_start
-                        .zip(updated_diff_view.selection_end)
-                        .is_some_and(|(s, e)| idx >= s && idx <= e);
+        let list_height = (main_chunks[1].height as usize).saturating_sub(2);
 
+        let mut updated_diff_view = diff_view;
+        // When tree is hidden, force focus to diff content
+        if !file_tree_visible {
+            updated_diff_view.focus_on_files = false;
+        }
+        updated_diff_view.viewport_height = list_height;
+        let total_lines = if updated_diff_view.side_by_side {
+            updated_diff_view.side_by_side_lines.len()
+        } else {
+            updated_diff_view.lines.len()
+        };
+
+        if updated_diff_view.cursor_idx < updated_diff_view.scroll_offset {
+            updated_diff_view.scroll_offset = updated_diff_view.cursor_idx;
+        } else if updated_diff_view.cursor_idx >= updated_diff_view.scroll_offset + list_height {
+            updated_diff_view.scroll_offset = updated_diff_view.cursor_idx - list_height + 1;
+        }
+
+        let start = updated_diff_view.scroll_offset;
+        let end = (start + list_height).min(total_lines);
+
+        let mut list_lines = Vec::new();
+        let mut left_list_lines = Vec::new();
+        let mut right_list_lines = Vec::new();
+
+        if updated_diff_view.side_by_side {
+            for idx in start..end {
+                let sline = &updated_diff_view.side_by_side_lines[idx];
+                let is_cursor = idx == updated_diff_view.cursor_idx;
+
+                let in_selection = updated_diff_view
+                    .selection_start
+                    .zip(updated_diff_view.selection_end)
+                    .is_some_and(|(s, e)| idx >= s && idx <= e);
+
+                let num_width = updated_diff_view.line_number_width;
+                let gutter_bg = ctx.theme.diff_gutter_bg;
+                let marker_style = Style::default()
+                    .fg(ctx.theme.yellow)
+                    .add_modifier(Modifier::BOLD)
+                    .bg(gutter_bg);
+                let num_style = Style::default().fg(ctx.theme.text_muted).bg(gutter_bg);
+                let sep_style = Style::default().fg(ctx.theme.diff_sep).bg(gutter_bg);
+
+                let highlight = if in_selection {
+                    RowHighlight::Selected
+                } else if updated_diff_view.search_matches.contains(&idx) {
+                    RowHighlight::SearchMatch
+                } else {
+                    RowHighlight::Plain
+                };
+                let sel_bg = highlight.row_bg(&ctx.theme);
+                let search_fg = highlight.row_fg(&ctx.theme);
+
+                // LEFT PANEL (OLD / DELETION)
+                let mut left_spans = Vec::new();
+                if let Some(ref line) = sline.left {
                     let old_str = line
                         .old_line_num
                         .map(|n| n.to_string())
                         .unwrap_or_else(|| " ".to_string());
-                    let new_str = line
-                        .new_line_num
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| " ".to_string());
 
-                    let num_width = updated_diff_view.line_number_width;
-                    let gutter_bg = ctx.theme.diff_gutter_bg;
-
-                    let marker_style = Style::default()
-                        .fg(ctx.theme.yellow)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(gutter_bg);
-
-                    let num_style = Style::default().fg(ctx.theme.text_muted).bg(gutter_bg);
-
-                    let sep_style = Style::default().fg(ctx.theme.diff_sep).bg(gutter_bg);
-
-                    let mut line_spans = vec![
+                    left_spans.extend(vec![
                         Span::styled(
                             if is_cursor {
                                 cursor_marker.as_str()
@@ -1700,48 +1220,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             marker_style,
                         ),
                         Span::styled(format!("{old_str:>num_width$} "), num_style),
-                        Span::styled(format!("{new_str:>num_width$} "), num_style),
                         Span::styled("│ ", sep_style),
-                    ];
-
-                    let highlight = if in_selection {
-                        RowHighlight::Selected
-                    } else if updated_diff_view.search_matches.contains(&idx) {
-                        RowHighlight::SearchMatch
-                    } else {
-                        RowHighlight::Plain
-                    };
-                    let sel_bg = highlight.row_bg(&ctx.theme);
-                    let search_fg = highlight.row_fg(&ctx.theme);
+                    ]);
 
                     match line.line_type {
-                        crate::app::DiffLineType::Addition | crate::app::DiffLineType::Deletion => {
+                        crate::app::DiffLineType::Deletion => {
                             let theme = &ctx.theme;
-                            let is_add = line.line_type == crate::app::DiffLineType::Addition;
-                            let code_fg = if is_add {
-                                theme.diff_addition_fg
-                            } else {
-                                theme.diff_deletion_fg
-                            };
-                            let code_bg = if is_add {
-                                theme.diff_addition_bg
-                            } else {
-                                theme.diff_deletion_bg
-                            };
-                            let prefix_fg = if is_add {
-                                theme.diff_addition_fg
-                            } else {
-                                theme.diff_deletion_fg
-                            };
-
+                            let code_fg = theme.diff_deletion_fg;
+                            let code_bg = theme.diff_deletion_bg;
+                            let prefix_fg = theme.diff_deletion_fg;
                             let actual_bg = sel_bg.unwrap_or(code_bg);
+
                             let prefix = line
                                 .content
                                 .chars()
                                 .next()
                                 .map(|c| c.to_string())
                                 .unwrap_or_else(|| " ".to_string());
-                            line_spans.push(Span::styled(
+                            left_spans.push(Span::styled(
                                 prefix,
                                 Style::default()
                                     .fg(search_fg.unwrap_or(prefix_fg))
@@ -1762,7 +1258,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                             let mut content_spans =
                                 render_diff_line_content(line, final_style, theme, highlight);
-                            line_spans.append(&mut content_spans);
+                            left_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
                             let actual_bg = sel_bg.unwrap_or(ctx.theme.bg);
@@ -1772,7 +1268,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 .next()
                                 .map(|c| c.to_string())
                                 .unwrap_or_else(|| " ".to_string());
-                            line_spans.push(Span::styled(
+                            left_spans.push(Span::styled(
                                 prefix,
                                 Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
                             ));
@@ -1791,7 +1287,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             let theme = &ctx.theme;
                             let mut content_spans =
                                 render_diff_line_content(line, final_style, theme, highlight);
-                            line_spans.append(&mut content_spans);
+                            left_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Meta => {
                             let mut s = Style::default()
@@ -1806,7 +1302,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             } else {
                                 s
                             };
-                            line_spans.push(Span::styled(&line.content, final_style));
+                            left_spans.push(Span::styled(&line.content, final_style));
                         }
                         crate::app::DiffLineType::HunkHeader => {
                             let mut s = Style::default()
@@ -1821,181 +1317,679 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             } else {
                                 s
                             };
-                            line_spans.push(Span::styled(&line.content, final_style));
+                            left_spans.push(Span::styled(&line.content, final_style));
                         }
+                        _ => {}
                     }
-                    list_lines.push(Line::from(line_spans));
+                } else {
+                    left_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
+                        if is_cursor {
+                            cursor_marker.as_str()
+                        } else if in_selection {
+                            " ▐ "
+                        } else {
+                            "   "
+                        },
+                        marker_style,
+                        num_style,
+                        sep_style,
+                        num_width,
+                        sel_bg,
+                    ));
+                }
+                left_list_lines.push(Line::from(left_spans));
 
-                    // COMMENTS OVERLAY (unified)
-                    let matching_comments: Vec<_> = app
-                        .draft_comments
-                        .iter()
-                        .filter(|c| {
-                            c.file_path == line.file_path
-                                && ((c.line_num.is_some() && c.line_num == line.new_line_num)
-                                    || (c.old_line_num.is_some()
-                                        && c.old_line_num == line.old_line_num))
-                        })
-                        .collect();
+                // RIGHT PANEL (NEW / ADDITION)
+                let mut right_spans = Vec::new();
+                if let Some(ref line) = sline.right {
+                    let new_str = line
+                        .new_line_num
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| " ".to_string());
 
-                    for comment in matching_comments {
-                        let comment_style = Style::default()
-                            .fg(ctx.theme.yellow)
-                            .bg(ctx.theme.comment_draft_bg);
-
-                        let range_info = match (comment.end_line_num, comment.end_old_line_num) {
-                            (Some(end_l), _) if end_l != comment.line_num.unwrap_or(0) => {
-                                format!(" (L{}-{})", comment.line_num.unwrap_or(0), end_l)
-                            }
-                            (_, Some(end_o)) if end_o != comment.old_line_num.unwrap_or(0) => {
-                                format!(" (OL{}-{})", comment.old_line_num.unwrap_or(0), end_o)
-                            }
-                            _ => String::new(),
-                        };
-
-                        let prefix_style = Style::default()
-                            .fg(ctx.theme.yellow)
-                            .add_modifier(Modifier::BOLD);
-
-                        let right_prefix_first =
-                            format!(" {} Draft Note{}: ", ctx.icons.comment_bubble, range_info);
-
-                        let formatted_lines = format_comment_with_suggestions(
-                            ctx,
-                            &comment.body,
-                            &CommentAnchor {
-                                file_path: &comment.file_path,
-                                start_new: comment.line_num.map(|n| n as u64),
-                                end_new: comment.end_line_num.map(|n| n as u64),
-                                start_old: comment.old_line_num.map(|n| n as u64),
-                                end_old: comment.end_old_line_num.map(|n| n as u64),
-                            },
-                            &updated_diff_view.all_lines,
-                            &right_prefix_first,
-                            prefix_style,
-                        );
-
-                        for (right_prefix, prefix_style, content_spans) in formatted_lines {
-                            let mut spans = vec![
-                                Span::styled("         ", Style::default()),
-                                Span::styled(right_prefix, prefix_style),
-                            ];
-                            for (style, text) in content_spans {
-                                spans.push(Span::styled(text, style));
-                            }
-                            list_lines.push(Line::from(spans).style(comment_style));
-                        }
-                    }
-
-                    let matching_current: Vec<_> = app
-                        .current_comments
-                        .iter()
-                        .filter(|c| {
-                            !c.system
-                                && c.position.as_ref().is_some_and(|pos| {
-                                    crate::app::note_position_anchors(pos, Some(line), Some(line))
-                                })
-                        })
-                        .collect();
-
-                    for comment in matching_current {
-                        let comment_style =
-                            Style::default().fg(ctx.theme.blue).bg(ctx.theme.comment_bg);
-
-                        let prefix_style = Style::default()
-                            .fg(ctx.theme.blue)
-                            .add_modifier(Modifier::BOLD);
-
-                        let right_prefix_first = format!(
-                            " {} @{}: ",
-                            ctx.icons.comment_bubble, comment.author.username
-                        );
-
-                        let (start_new, end_new, start_old, end_old, file_path) =
-                            if let Some(ref pos) = comment.position {
-                                let (sn, en, so, eo) = pos.get_line_range();
-                                (
-                                    sn,
-                                    en,
-                                    so,
-                                    eo,
-                                    pos.new_path
-                                        .as_deref()
-                                        .or(pos.old_path.as_deref())
-                                        .unwrap_or("")
-                                        .to_string(),
-                                )
+                    right_spans.extend(vec![
+                        Span::styled(
+                            if is_cursor {
+                                cursor_marker.as_str()
+                            } else if in_selection {
+                                " ▐ "
                             } else {
-                                (None, None, None, None, String::new())
+                                "   "
+                            },
+                            marker_style,
+                        ),
+                        Span::styled(format!("{new_str:>num_width$} "), num_style),
+                        Span::styled("│ ", sep_style),
+                    ]);
+
+                    match line.line_type {
+                        crate::app::DiffLineType::Addition => {
+                            let theme = &ctx.theme;
+                            let code_fg = theme.diff_addition_fg;
+                            let code_bg = theme.diff_addition_bg;
+                            let prefix_fg = theme.diff_addition_fg;
+                            let actual_bg = sel_bg.unwrap_or(code_bg);
+
+                            let prefix = line
+                                .content
+                                .chars()
+                                .next()
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| " ".to_string());
+                            right_spans.push(Span::styled(
+                                prefix,
+                                Style::default()
+                                    .fg(search_fg.unwrap_or(prefix_fg))
+                                    .add_modifier(Modifier::BOLD)
+                                    .bg(actual_bg),
+                            ));
+
+                            let content_base = Style::default()
+                                .fg(search_fg.unwrap_or(code_fg))
+                                .bg(actual_bg);
+                            let final_style = if is_cursor {
+                                content_base
+                                    .add_modifier(Modifier::UNDERLINED)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                content_base
                             };
 
-                        let formatted_lines = format_comment_with_suggestions(
-                            ctx,
-                            &comment.body,
-                            &CommentAnchor {
-                                file_path: &file_path,
-                                start_new,
-                                end_new,
-                                start_old,
-                                end_old,
-                            },
-                            &updated_diff_view.all_lines,
-                            &right_prefix_first,
-                            prefix_style,
+                            let mut content_spans =
+                                render_diff_line_content(line, final_style, theme, highlight);
+                            right_spans.append(&mut content_spans);
+                        }
+                        crate::app::DiffLineType::Normal => {
+                            let actual_bg = sel_bg.unwrap_or(ctx.theme.bg);
+                            let prefix = line
+                                .content
+                                .chars()
+                                .next()
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| " ".to_string());
+                            right_spans.push(Span::styled(
+                                prefix,
+                                Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
+                            ));
+
+                            let content_base = Style::default()
+                                .fg(search_fg.unwrap_or(ctx.theme.text_normal))
+                                .bg(actual_bg);
+                            let final_style = if is_cursor {
+                                content_base
+                                    .add_modifier(Modifier::UNDERLINED)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                content_base
+                            };
+
+                            let theme = &ctx.theme;
+                            let mut content_spans =
+                                render_diff_line_content(line, final_style, theme, highlight);
+                            right_spans.append(&mut content_spans);
+                        }
+                        crate::app::DiffLineType::Meta => {
+                            let mut s = Style::default()
+                                .fg(search_fg.unwrap_or(ctx.theme.blue))
+                                .add_modifier(Modifier::BOLD);
+                            if let Some(bg) = sel_bg {
+                                s = s.bg(bg);
+                            }
+                            let final_style = if is_cursor {
+                                s.add_modifier(Modifier::UNDERLINED)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                s
+                            };
+                            right_spans.push(Span::styled(&line.content, final_style));
+                        }
+                        crate::app::DiffLineType::HunkHeader => {
+                            let mut s = Style::default()
+                                .fg(search_fg.unwrap_or(ctx.theme.purple))
+                                .add_modifier(Modifier::BOLD);
+                            if let Some(bg) = sel_bg {
+                                s = s.bg(bg);
+                            }
+                            let final_style = if is_cursor {
+                                s.add_modifier(Modifier::UNDERLINED)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                s
+                            };
+                            right_spans.push(Span::styled(&line.content, final_style));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    right_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
+                        if is_cursor {
+                            cursor_marker.as_str()
+                        } else if in_selection {
+                            " ▐ "
+                        } else {
+                            "   "
+                        },
+                        marker_style,
+                        num_style,
+                        sep_style,
+                        num_width,
+                        sel_bg,
+                    ));
+                }
+                right_list_lines.push(Line::from(right_spans));
+
+                // COMMENTS OVERLAY
+                let matching_comments: Vec<_> = app
+                    .draft_comments
+                    .iter()
+                    .filter(|c| {
+                        let path_matches = sline
+                            .left
+                            .as_ref()
+                            .is_some_and(|l| l.file_path == c.file_path)
+                            || sline
+                                .right
+                                .as_ref()
+                                .is_some_and(|r| r.file_path == c.file_path);
+
+                        path_matches
+                            && ((c.line_num.is_some()
+                                && sline.right.as_ref().and_then(|r| r.new_line_num) == c.line_num)
+                                || (c.old_line_num.is_some()
+                                    && sline.left.as_ref().and_then(|l| l.old_line_num)
+                                        == c.old_line_num))
+                    })
+                    .collect();
+
+                for comment in matching_comments {
+                    let comment_style = Style::default()
+                        .fg(ctx.theme.yellow)
+                        .bg(ctx.theme.comment_draft_bg);
+
+                    let range_info = match (comment.end_line_num, comment.end_old_line_num) {
+                        (Some(end_l), _) if end_l != comment.line_num.unwrap_or(0) => {
+                            format!(" (L{}-{})", comment.line_num.unwrap_or(0), end_l)
+                        }
+                        (_, Some(end_o)) if end_o != comment.old_line_num.unwrap_or(0) => {
+                            format!(" (OL{}-{})", comment.old_line_num.unwrap_or(0), end_o)
+                        }
+                        _ => String::new(),
+                    };
+
+                    let prefix_style = Style::default()
+                        .fg(ctx.theme.yellow)
+                        .add_modifier(Modifier::BOLD);
+
+                    let bubble = &ctx.icons.comment_bubble;
+                    let right_prefix_first = format!(" {bubble} Draft Note{range_info}: ");
+                    let left_prefix_first = format!(" {bubble} Draft ");
+                    let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
+
+                    let formatted_lines = format_comment_with_suggestions(
+                        ctx,
+                        &comment.body,
+                        &CommentAnchor {
+                            file_path: &comment.file_path,
+                            start_new: comment.line_num.map(|n| n as u64),
+                            end_new: comment.end_line_num.map(|n| n as u64),
+                            start_old: comment.old_line_num.map(|n| n as u64),
+                            end_old: comment.end_old_line_num.map(|n| n as u64),
+                        },
+                        &updated_diff_view.all_lines,
+                        &right_prefix_first,
+                        prefix_style,
+                    );
+
+                    for (i, (right_prefix, prefix_style, content_spans)) in
+                        formatted_lines.into_iter().enumerate()
+                    {
+                        let left_prefix = if i == 0 {
+                            &left_prefix_first
+                        } else {
+                            &left_prefix_rest
+                        };
+
+                        left_list_lines.push(
+                            Line::from(vec![
+                                Span::styled("         ", Style::default()),
+                                Span::styled(left_prefix.clone(), prefix_style),
+                            ])
+                            .style(comment_style),
                         );
 
-                        for (right_prefix, prefix_style, content_spans) in formatted_lines {
-                            let mut spans = vec![
-                                Span::styled("         ", Style::default()),
-                                Span::styled(right_prefix, prefix_style),
-                            ];
-                            for (style, text) in content_spans {
-                                spans.push(Span::styled(text, style));
-                            }
-                            list_lines.push(Line::from(spans).style(comment_style));
+                        let mut spans = vec![Span::styled(right_prefix, prefix_style)];
+                        for (style, text) in content_spans {
+                            spans.push(Span::styled(text, style));
                         }
+                        right_list_lines.push(Line::from(spans).style(comment_style));
+                    }
+                }
+
+                let matching_current: Vec<_> = app
+                    .current_comments
+                    .iter()
+                    .filter(|c| {
+                        !c.system
+                            && c.position.as_ref().is_some_and(|pos| {
+                                crate::app::note_position_anchors(
+                                    pos,
+                                    sline.left.as_ref(),
+                                    sline.right.as_ref(),
+                                )
+                            })
+                    })
+                    .collect();
+
+                for comment in matching_current {
+                    let comment_style =
+                        Style::default().fg(ctx.theme.blue).bg(ctx.theme.comment_bg);
+
+                    let prefix_style = Style::default()
+                        .fg(ctx.theme.blue)
+                        .add_modifier(Modifier::BOLD);
+
+                    let bubble = &ctx.icons.comment_bubble;
+                    let right_prefix_first = format!(" {bubble} @{}: ", comment.author.username);
+                    let left_prefix_first = format!(" {bubble} Comment ");
+                    let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
+
+                    let (start_new, end_new, start_old, end_old, file_path) =
+                        if let Some(ref pos) = comment.position {
+                            let (sn, en, so, eo) = pos.get_line_range();
+                            (
+                                sn,
+                                en,
+                                so,
+                                eo,
+                                pos.new_path
+                                    .as_deref()
+                                    .or(pos.old_path.as_deref())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            )
+                        } else {
+                            (None, None, None, None, String::new())
+                        };
+
+                    let formatted_lines = format_comment_with_suggestions(
+                        ctx,
+                        &comment.body,
+                        &CommentAnchor {
+                            file_path: &file_path,
+                            start_new,
+                            end_new,
+                            start_old,
+                            end_old,
+                        },
+                        &updated_diff_view.all_lines,
+                        &right_prefix_first,
+                        prefix_style,
+                    );
+
+                    for (i, (right_prefix, prefix_style, content_spans)) in
+                        formatted_lines.into_iter().enumerate()
+                    {
+                        let left_prefix = if i == 0 {
+                            &left_prefix_first
+                        } else {
+                            &left_prefix_rest
+                        };
+
+                        left_list_lines.push(
+                            Line::from(vec![
+                                Span::styled("         ", Style::default()),
+                                Span::styled(left_prefix.clone(), prefix_style),
+                            ])
+                            .style(comment_style),
+                        );
+
+                        let mut spans = vec![Span::styled(right_prefix, prefix_style)];
+                        for (style, text) in content_spans {
+                            spans.push(Span::styled(text, style));
+                        }
+                        right_list_lines.push(Line::from(spans).style(comment_style));
                     }
                 }
             }
+        } else {
+            // UNIFIED/INLINE DIFF RENDER
+            for idx in start..end {
+                let line = &updated_diff_view.lines[idx];
+                let is_cursor = idx == updated_diff_view.cursor_idx;
 
-            clear_area(f, ctx, area);
-            f.render_widget(outer_block, area);
-            if file_tree_visible {
-                f.render_widget(files_list, main_chunks[0]);
-            }
+                let in_selection = updated_diff_view
+                    .selection_start
+                    .zip(updated_diff_view.selection_end)
+                    .is_some_and(|(s, e)| idx >= s && idx <= e);
 
-            if updated_diff_view.side_by_side {
-                let diff_inner = diff_block.inner(main_chunks[1]);
-                let cols = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(
-                        [
-                            Constraint::Fill(1),
-                            Constraint::Length(1),
-                            Constraint::Fill(1),
-                        ]
-                        .as_ref(),
-                    )
-                    .split(diff_inner);
+                let old_str = line
+                    .old_line_num
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| " ".to_string());
+                let new_str = line
+                    .new_line_num
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| " ".to_string());
 
-                let left_para = Paragraph::new(left_list_lines);
-                let right_para = Paragraph::new(right_list_lines);
-                let divider_lines: Vec<Line> = (0..diff_inner.height)
-                    .map(|_| Line::from(Span::styled("│", Style::default().fg(ctx.theme.diff_sep))))
+                let num_width = updated_diff_view.line_number_width;
+                let gutter_bg = ctx.theme.diff_gutter_bg;
+
+                let marker_style = Style::default()
+                    .fg(ctx.theme.yellow)
+                    .add_modifier(Modifier::BOLD)
+                    .bg(gutter_bg);
+
+                let num_style = Style::default().fg(ctx.theme.text_muted).bg(gutter_bg);
+
+                let sep_style = Style::default().fg(ctx.theme.diff_sep).bg(gutter_bg);
+
+                let mut line_spans = vec![
+                    Span::styled(
+                        if is_cursor {
+                            cursor_marker.as_str()
+                        } else if in_selection {
+                            " ▐ "
+                        } else {
+                            "   "
+                        },
+                        marker_style,
+                    ),
+                    Span::styled(format!("{old_str:>num_width$} "), num_style),
+                    Span::styled(format!("{new_str:>num_width$} "), num_style),
+                    Span::styled("│ ", sep_style),
+                ];
+
+                let highlight = if in_selection {
+                    RowHighlight::Selected
+                } else if updated_diff_view.search_matches.contains(&idx) {
+                    RowHighlight::SearchMatch
+                } else {
+                    RowHighlight::Plain
+                };
+                let sel_bg = highlight.row_bg(&ctx.theme);
+                let search_fg = highlight.row_fg(&ctx.theme);
+
+                match line.line_type {
+                    crate::app::DiffLineType::Addition | crate::app::DiffLineType::Deletion => {
+                        let theme = &ctx.theme;
+                        let is_add = line.line_type == crate::app::DiffLineType::Addition;
+                        let code_fg = if is_add {
+                            theme.diff_addition_fg
+                        } else {
+                            theme.diff_deletion_fg
+                        };
+                        let code_bg = if is_add {
+                            theme.diff_addition_bg
+                        } else {
+                            theme.diff_deletion_bg
+                        };
+                        let prefix_fg = if is_add {
+                            theme.diff_addition_fg
+                        } else {
+                            theme.diff_deletion_fg
+                        };
+
+                        let actual_bg = sel_bg.unwrap_or(code_bg);
+                        let prefix = line
+                            .content
+                            .chars()
+                            .next()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
+                        line_spans.push(Span::styled(
+                            prefix,
+                            Style::default()
+                                .fg(search_fg.unwrap_or(prefix_fg))
+                                .add_modifier(Modifier::BOLD)
+                                .bg(actual_bg),
+                        ));
+
+                        let content_base = Style::default()
+                            .fg(search_fg.unwrap_or(code_fg))
+                            .bg(actual_bg);
+                        let final_style = if is_cursor {
+                            content_base
+                                .add_modifier(Modifier::UNDERLINED)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            content_base
+                        };
+
+                        let mut content_spans =
+                            render_diff_line_content(line, final_style, theme, highlight);
+                        line_spans.append(&mut content_spans);
+                    }
+                    crate::app::DiffLineType::Normal => {
+                        let actual_bg = sel_bg.unwrap_or(ctx.theme.bg);
+                        let prefix = line
+                            .content
+                            .chars()
+                            .next()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
+                        line_spans.push(Span::styled(
+                            prefix,
+                            Style::default().fg(ctx.theme.text_muted).bg(actual_bg),
+                        ));
+
+                        let content_base = Style::default()
+                            .fg(search_fg.unwrap_or(ctx.theme.text_normal))
+                            .bg(actual_bg);
+                        let final_style = if is_cursor {
+                            content_base
+                                .add_modifier(Modifier::UNDERLINED)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            content_base
+                        };
+
+                        let theme = &ctx.theme;
+                        let mut content_spans =
+                            render_diff_line_content(line, final_style, theme, highlight);
+                        line_spans.append(&mut content_spans);
+                    }
+                    crate::app::DiffLineType::Meta => {
+                        let mut s = Style::default()
+                            .fg(search_fg.unwrap_or(ctx.theme.blue))
+                            .add_modifier(Modifier::BOLD);
+                        if let Some(bg) = sel_bg {
+                            s = s.bg(bg);
+                        }
+                        let final_style = if is_cursor {
+                            s.add_modifier(Modifier::UNDERLINED)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            s
+                        };
+                        line_spans.push(Span::styled(&line.content, final_style));
+                    }
+                    crate::app::DiffLineType::HunkHeader => {
+                        let mut s = Style::default()
+                            .fg(search_fg.unwrap_or(ctx.theme.purple))
+                            .add_modifier(Modifier::BOLD);
+                        if let Some(bg) = sel_bg {
+                            s = s.bg(bg);
+                        }
+                        let final_style = if is_cursor {
+                            s.add_modifier(Modifier::UNDERLINED)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            s
+                        };
+                        line_spans.push(Span::styled(&line.content, final_style));
+                    }
+                }
+                list_lines.push(Line::from(line_spans));
+
+                // COMMENTS OVERLAY (unified)
+                let matching_comments: Vec<_> = app
+                    .draft_comments
+                    .iter()
+                    .filter(|c| {
+                        c.file_path == line.file_path
+                            && ((c.line_num.is_some() && c.line_num == line.new_line_num)
+                                || (c.old_line_num.is_some()
+                                    && c.old_line_num == line.old_line_num))
+                    })
                     .collect();
-                let divider_para = Paragraph::new(divider_lines);
 
-                f.render_widget(diff_block, main_chunks[1]);
-                f.render_widget(left_para, cols[0]);
-                f.render_widget(divider_para, cols[1]);
-                f.render_widget(right_para, cols[2]);
-            } else {
-                let diff_para = Paragraph::new(list_lines).block(diff_block);
-                f.render_widget(diff_para, main_chunks[1]);
+                for comment in matching_comments {
+                    let comment_style = Style::default()
+                        .fg(ctx.theme.yellow)
+                        .bg(ctx.theme.comment_draft_bg);
+
+                    let range_info = match (comment.end_line_num, comment.end_old_line_num) {
+                        (Some(end_l), _) if end_l != comment.line_num.unwrap_or(0) => {
+                            format!(" (L{}-{})", comment.line_num.unwrap_or(0), end_l)
+                        }
+                        (_, Some(end_o)) if end_o != comment.old_line_num.unwrap_or(0) => {
+                            format!(" (OL{}-{})", comment.old_line_num.unwrap_or(0), end_o)
+                        }
+                        _ => String::new(),
+                    };
+
+                    let prefix_style = Style::default()
+                        .fg(ctx.theme.yellow)
+                        .add_modifier(Modifier::BOLD);
+
+                    let right_prefix_first =
+                        format!(" {} Draft Note{}: ", ctx.icons.comment_bubble, range_info);
+
+                    let formatted_lines = format_comment_with_suggestions(
+                        ctx,
+                        &comment.body,
+                        &CommentAnchor {
+                            file_path: &comment.file_path,
+                            start_new: comment.line_num.map(|n| n as u64),
+                            end_new: comment.end_line_num.map(|n| n as u64),
+                            start_old: comment.old_line_num.map(|n| n as u64),
+                            end_old: comment.end_old_line_num.map(|n| n as u64),
+                        },
+                        &updated_diff_view.all_lines,
+                        &right_prefix_first,
+                        prefix_style,
+                    );
+
+                    for (right_prefix, prefix_style, content_spans) in formatted_lines {
+                        let mut spans = vec![
+                            Span::styled("         ", Style::default()),
+                            Span::styled(right_prefix, prefix_style),
+                        ];
+                        for (style, text) in content_spans {
+                            spans.push(Span::styled(text, style));
+                        }
+                        list_lines.push(Line::from(spans).style(comment_style));
+                    }
+                }
+
+                let matching_current: Vec<_> = app
+                    .current_comments
+                    .iter()
+                    .filter(|c| {
+                        !c.system
+                            && c.position.as_ref().is_some_and(|pos| {
+                                crate::app::note_position_anchors(pos, Some(line), Some(line))
+                            })
+                    })
+                    .collect();
+
+                for comment in matching_current {
+                    let comment_style =
+                        Style::default().fg(ctx.theme.blue).bg(ctx.theme.comment_bg);
+
+                    let prefix_style = Style::default()
+                        .fg(ctx.theme.blue)
+                        .add_modifier(Modifier::BOLD);
+
+                    let right_prefix_first = format!(
+                        " {} @{}: ",
+                        ctx.icons.comment_bubble, comment.author.username
+                    );
+
+                    let (start_new, end_new, start_old, end_old, file_path) =
+                        if let Some(ref pos) = comment.position {
+                            let (sn, en, so, eo) = pos.get_line_range();
+                            (
+                                sn,
+                                en,
+                                so,
+                                eo,
+                                pos.new_path
+                                    .as_deref()
+                                    .or(pos.old_path.as_deref())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            )
+                        } else {
+                            (None, None, None, None, String::new())
+                        };
+
+                    let formatted_lines = format_comment_with_suggestions(
+                        ctx,
+                        &comment.body,
+                        &CommentAnchor {
+                            file_path: &file_path,
+                            start_new,
+                            end_new,
+                            start_old,
+                            end_old,
+                        },
+                        &updated_diff_view.all_lines,
+                        &right_prefix_first,
+                        prefix_style,
+                    );
+
+                    for (right_prefix, prefix_style, content_spans) in formatted_lines {
+                        let mut spans = vec![
+                            Span::styled("         ", Style::default()),
+                            Span::styled(right_prefix, prefix_style),
+                        ];
+                        for (style, text) in content_spans {
+                            spans.push(Span::styled(text, style));
+                        }
+                        list_lines.push(Line::from(spans).style(comment_style));
+                    }
+                }
             }
-
-            app.diff_view = Some(updated_diff_view);
         }
+
+        clear_area(f, ctx, area);
+        f.render_widget(outer_block, area);
+        if file_tree_visible {
+            f.render_widget(files_list, main_chunks[0]);
+        }
+
+        if updated_diff_view.side_by_side {
+            let diff_inner = diff_block.inner(main_chunks[1]);
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(
+                    [
+                        Constraint::Fill(1),
+                        Constraint::Length(1),
+                        Constraint::Fill(1),
+                    ]
+                    .as_ref(),
+                )
+                .split(diff_inner);
+
+            let left_para = Paragraph::new(left_list_lines);
+            let right_para = Paragraph::new(right_list_lines);
+            let divider_lines: Vec<Line> = (0..diff_inner.height)
+                .map(|_| Line::from(Span::styled("│", Style::default().fg(ctx.theme.diff_sep))))
+                .collect();
+            let divider_para = Paragraph::new(divider_lines);
+
+            f.render_widget(diff_block, main_chunks[1]);
+            f.render_widget(left_para, cols[0]);
+            f.render_widget(divider_para, cols[1]);
+            f.render_widget(right_para, cols[2]);
+        } else {
+            let diff_para = Paragraph::new(list_lines).block(diff_block);
+            f.render_widget(diff_para, main_chunks[1]);
+        }
+
+        app.diff_view = Some(updated_diff_view);
     }
 
     render_overlays(f, ctx, app, size);

@@ -52,16 +52,14 @@ pub(crate) fn format_comment_with_suggestions(
         let min_o = oln.min(end_o);
         let max_o = oln.max(end_o);
         for dl in all_lines {
-            if dl.file_path == file_path {
-                if let Some(num) = dl.old_line_num {
-                    if num as u64 >= min_o
-                        && num as u64 <= max_o
-                        && dl.line_type != crate::app::DiffLineType::Addition
-                        && !original_lines.iter().any(|ol| ol.content == dl.content)
-                    {
-                        original_lines.push(dl.clone());
-                    }
-                }
+            if dl.file_path == file_path
+                && let Some(num) = dl.old_line_num
+                && num as u64 >= min_o
+                && num as u64 <= max_o
+                && dl.line_type != crate::app::DiffLineType::Addition
+                && !original_lines.iter().any(|ol| ol.content == dl.content)
+            {
+                original_lines.push(dl.clone());
             }
         }
     } else if let Some(nln) = start_new {
@@ -69,16 +67,14 @@ pub(crate) fn format_comment_with_suggestions(
         let min_n = nln.min(end_n);
         let max_n = nln.max(end_n);
         for dl in all_lines {
-            if dl.file_path == file_path {
-                if let Some(num) = dl.new_line_num {
-                    if num as u64 >= min_n
-                        && num as u64 <= max_n
-                        && dl.line_type != crate::app::DiffLineType::Deletion
-                        && !original_lines.iter().any(|ol| ol.content == dl.content)
-                    {
-                        original_lines.push(dl.clone());
-                    }
-                }
+            if dl.file_path == file_path
+                && let Some(num) = dl.new_line_num
+                && num as u64 >= min_n
+                && num as u64 <= max_n
+                && dl.line_type != crate::app::DiffLineType::Deletion
+                && !original_lines.iter().any(|ol| ol.content == dl.content)
+            {
+                original_lines.push(dl.clone());
             }
         }
     }

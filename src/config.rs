@@ -1067,12 +1067,11 @@ impl Theme {
     fn preset_from(user_themes: Option<&std::path::Path>, name: &str) -> Option<Self> {
         if let Some(dir) = user_themes {
             let theme_path = dir.join(format!("{name}.toml"));
-            if let Ok(contents) = std::fs::read_to_string(&theme_path) {
-                if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
-                    if let Some(theme) = tf.to_theme() {
-                        return Some(theme);
-                    }
-                }
+            if let Ok(contents) = std::fs::read_to_string(&theme_path)
+                && let Ok(tf) = toml::from_str::<ThemeToml>(&contents)
+                && let Some(theme) = tf.to_theme()
+            {
+                return Some(theme);
             }
         }
         // Fall back to bundled theme
@@ -1085,10 +1084,10 @@ impl Theme {
 }
 
 fn apply_color(field: &mut Color, override_val: &Option<String>) {
-    if let Some(s) = override_val {
-        if let Some(c) = parse_color(s) {
-            *field = c;
-        }
+    if let Some(s) = override_val
+        && let Some(c) = parse_color(s)
+    {
+        *field = c;
     }
 }
 
@@ -1587,11 +1586,11 @@ page_size = 100
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
 
         let path = Self::config_path();
-        if let Ok(global_contents) = std::fs::read_to_string(&path) {
-            if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_custom_keybindings(&mut global_val);
-                merge_toml_values(&mut merged_value, global_val);
-            }
+        if let Ok(global_contents) = std::fs::read_to_string(&path)
+            && let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents)
+        {
+            normalize_custom_keybindings(&mut global_val);
+            merge_toml_values(&mut merged_value, global_val);
         }
 
         fn find_git_root() -> Option<PathBuf> {
@@ -1614,15 +1613,13 @@ page_size = 100
                 root.join(".config").join("glab-tui").join("config.toml"),
             ];
             for p in &paths {
-                if p.exists() {
-                    if let Ok(workspace_contents) = std::fs::read_to_string(p) {
-                        if let Ok(mut workspace_val) =
-                            toml::from_str::<toml::Value>(&workspace_contents)
-                        {
-                            normalize_custom_keybindings(&mut workspace_val);
-                            merge_toml_values(&mut merged_value, workspace_val);
-                        }
-                    }
+                if p.exists()
+                    && let Ok(workspace_contents) = std::fs::read_to_string(p)
+                    && let Ok(mut workspace_val) =
+                        toml::from_str::<toml::Value>(&workspace_contents)
+                {
+                    normalize_custom_keybindings(&mut workspace_val);
+                    merge_toml_values(&mut merged_value, workspace_val);
                 }
             }
         }
@@ -1716,12 +1713,12 @@ pub fn all_theme_presets() -> Vec<String> {
     if let Some(entries) = user_themes_dir().and_then(|dir| std::fs::read_dir(dir).ok()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "toml") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    let name = stem.to_string();
-                    if !presets.contains(&name) {
-                        presets.push(name);
-                    }
+            if path.extension().is_some_and(|e| e == "toml")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                let name = stem.to_string();
+                if !presets.contains(&name) {
+                    presets.push(name);
                 }
             }
         }
@@ -1738,11 +1735,11 @@ impl Config {
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
 
         let path = Self::config_path();
-        if let Ok(global_contents) = std::fs::read_to_string(&path) {
-            if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_custom_keybindings(&mut global_val);
-                merge_toml_values(&mut merged_value, global_val);
-            }
+        if let Ok(global_contents) = std::fs::read_to_string(&path)
+            && let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents)
+        {
+            normalize_custom_keybindings(&mut global_val);
+            merge_toml_values(&mut merged_value, global_val);
         }
 
         Config::deserialize(merged_value).unwrap_or_default()

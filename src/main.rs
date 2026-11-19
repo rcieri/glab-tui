@@ -58,11 +58,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    if let Some(dir) = &cli.dir {
-        if let Err(e) = std::env::set_current_dir(dir) {
-            eprintln!("Error changing directory to '{dir}': {e}");
-            std::process::exit(1);
-        }
+    if let Some(dir) = &cli.dir
+        && let Err(e) = std::env::set_current_dir(dir)
+    {
+        eprintln!("Error changing directory to '{dir}': {e}");
+        std::process::exit(1);
     }
 
     if let Some(cmd) = cli.command {
@@ -151,10 +151,10 @@ async fn main() -> Result<()> {
     }
 
     // Add current directory to recent repositories list
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(cwd_str) = cwd.to_str() {
-            crate::utils::cache::add_recent_repo(cwd_str);
-        }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(cwd_str) = cwd.to_str()
+    {
+        crate::utils::cache::add_recent_repo(cwd_str);
     }
 
     // Load offline cache
@@ -228,10 +228,10 @@ async fn main() -> Result<()> {
         // Remember the group implied by the current repo scope so the
         // Switch view accumulates every group worked in, not just explicit
         // group switches. GitLab groups and GitHub orgs both qualify.
-        if let crate::scope::Scope::Repository(r) = &app.scope {
-            if let Some(group) = r.rsplit_once('/').map(|(g, _)| g.to_string()) {
-                crate::utils::cache::add_recent_group(&group);
-            }
+        if let crate::scope::Scope::Repository(r) = &app.scope
+            && let Some(group) = r.rsplit_once('/').map(|(g, _)| g.to_string())
+        {
+            crate::utils::cache::add_recent_group(&group);
         }
         let tx = app.scoped_sender(events.sender());
         if app.issues.items.is_empty() {

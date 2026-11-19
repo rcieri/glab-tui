@@ -532,7 +532,7 @@ Key handlers in [src/handlers/](src/handlers/) (`tabs.rs`, `overlays/`, `diff_vi
 | Create branch | `glab api POST ...repository/branches` / `gh api POST ...git/refs` |
 | Delete branch | `glab api DELETE ...repository/branches/{}` / `gh api DELETE ...git/refs/heads/{}` |
 | Run pipeline | `gh workflow run` / `glab ci run --mr` |
-| Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr\|ci view -w` |
+| Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr view -w`. GitLab pipelines open by URL through `git web--browse`, since `glab ci view` refuses to run without a terminal, even with `-w` |
 
 > `glab ci run` notes: variables/inputs are passed via the plural `--variables k:v` / `--input k:v` flags (not `--variable`), and `--mr` is only passed when no variables or `workflow_dispatch` inputs are set.
 

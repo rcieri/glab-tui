@@ -33,9 +33,8 @@ const MAX_DEPTH: usize = 32;
 
 #[derive(Deserialize)]
 struct FieldDef {
-    /// The named result type, list and non-null wrappers removed.
     #[serde(rename = "type")]
-    type_name: String,
+    result: TypeRef,
     #[serde(default)]
     args: Vec<String>,
     /// Argument name to deprecation reason.
@@ -43,6 +42,68 @@ struct FieldDef {
     deprecated_args: BTreeMap<String, String>,
     #[serde(default)]
     deprecated: Option<String>,
+}
+
+/// A field's result type, read from the table's notation: `[Deployment!]!`
+/// is a non-null list of nullable `Deployment` objects.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+enum TypeRef {
+    Named(String),
+    List(Box<TypeRef>),
+    NonNull(Box<TypeRef>),
+}
+
+impl TryFrom<String> for TypeRef {
+    type Error = String;
+
+    fn try_from(notation: String) -> Result<Self, String> {
+        TypeRef::parse(&notation)
+    }
+}
+
+impl TypeRef {
+    fn parse(notation: &str) -> Result<TypeRef, String> {
+        if let Some(inner) = notation.strip_suffix('!') {
+            return match TypeRef::parse(inner)? {
+                TypeRef::NonNull(_) => Err(format!("`{notation}` is non-null twice")),
+                of => Ok(TypeRef::NonNull(Box::new(of))),
+            };
+        }
+        if let Some(inner) = notation
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            return Ok(TypeRef::List(Box::new(TypeRef::parse(inner)?)));
+        }
+        if !notation.is_empty()
+            && notation
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            Ok(TypeRef::Named(notation.to_string()))
+        } else {
+            Err(format!("`{notation}` is not a GraphQL type"))
+        }
+    }
+
+    /// The named type inside the wrappers.
+    fn named(&self) -> &str {
+        match self {
+            TypeRef::Named(name) => name,
+            TypeRef::List(of) | TypeRef::NonNull(of) => of.named(),
+        }
+    }
+}
+
+impl fmt::Display for TypeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeRef::Named(name) => f.write_str(name),
+            TypeRef::List(of) => write!(f, "[{of}]"),
+            TypeRef::NonNull(of) => write!(f, "{of}!"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -236,7 +297,7 @@ impl<'q> Walk<'_, 'q> {
                 );
             }
         }
-        let result = &definition.type_name;
+        let result = definition.result.named();
         let Some(target) = self.table.types.get(result) else {
             let message = self.not_in_table(&format!("type `{result}` of `{on}.{name}`"));
             return self.problem(&path, message);
@@ -604,5 +665,17 @@ mod tests {
             gitlab(r#"{ project(path: "o/r") { runners { nodes { id } } } }"#),
             ["gitlab: graphql `Query.project` has no argument `path` (at project)"]
         );
+    }
+
+    #[test]
+    fn a_type_notation_reads_its_wrappers() {
+        for (notation, named) in [("[Deployment!]!", "Deployment"), ("[[String!]]", "String")] {
+            let read = TypeRef::try_from(notation.to_string()).unwrap();
+            assert_eq!(read.named(), named);
+            assert_eq!(read.to_string(), notation);
+        }
+        for wrong in ["Deployment!!", "[Deployment", "", "Deploy ment"] {
+            assert!(TypeRef::try_from(wrong.to_string()).is_err(), "{wrong}");
+        }
     }
 }

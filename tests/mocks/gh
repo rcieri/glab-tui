@@ -130,8 +130,20 @@ if [[ "$*" == "api graphql"*"latestStatus"* ]]; then
     exit 0
 fi
 
+# One entry per `pr_<n>:` alias the batch query asks for.
 if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
-    cat "$FIXTURES_DIR/gh_pr_stack_summaries_graphql.json"
+    entries=()
+    for alias in $(grep -oE 'pr_[0-9]+:' <<<"$*"); do
+        number=${alias#pr_}
+        number=${number%:}
+        case "$number" in
+            10) stack='{"number":7,"size":2}' entry='{"position":1}' ;;
+            11) stack='{"number":7,"size":2}' entry='{"position":2}' ;;
+            *) stack=null entry=null ;;
+        esac
+        entries+=("\"pr_$number\":{\"number\":$number,\"stack\":$stack,\"stackEntry\":$entry}")
+    done
+    (IFS=,; echo "{\"data\":{\"repository\":{${entries[*]}}}}")
     exit 0
 fi
 

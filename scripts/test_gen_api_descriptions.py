@@ -493,13 +493,19 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(t["types"]["URI"]["kind"], "scalar")
         f = t["types"]["Repository"]["fields"]
         self.assertEqual(f["deployments"]["args"], ["first", "environments", "orderBy"])
-        self.assertEqual(f["deployments"]["type"], "DeploymentConnection")
+        self.assertEqual(f["deployments"]["type"], "DeploymentConnection!")
+        self.assertEqual(t["types"]["DeploymentConnection"]["fields"]["nodes"]["type"], "[Deployment]")
+        self.assertEqual(t["types"]["Query"]["fields"]["repository"]["type"], "Repository")
         self.assertEqual(f["number"]["deprecated"], "Use fullNumber.")
         self.assertEqual(f["deployments"]["deprecated_args"],
                          {"environments": "Use envs.", "orderBy": "No longer supported"})
         self.assertEqual(f["state"]["deprecated"], "No longer supported")
         self.assertNotIn("deprecated_args", t["types"]["Query"]["fields"]["repository"])
         self.assertEqual(t["types"]["Query"]["fields"]["repository"]["args"], ["owner", "name"])
+
+    def test_sdl_keeps_nested_list_wrappers(self) -> None:
+        t = gen.table_from_sdl("type Query { grid: [[String!]]! }")
+        self.assertEqual(t["types"]["Query"]["fields"]["grid"]["type"], "[[String!]]!")
 
     def test_introspection_gives_the_same_table_as_sdl(self) -> None:
         def named(n: str, kind: str = "OBJECT") -> dict[str, Any]:
@@ -534,7 +540,7 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(t["types"]["State"], {"kind": "enum"})
         self.assertEqual(t["types"]["Order"], {"kind": "input"})
         tags = t["types"]["Repository"]["fields"]["tags"]
-        self.assertEqual(tags, {"type": "String", "deprecated": "old", "args": ["first", "active"],
+        self.assertEqual(tags, {"type": "[String!]!", "deprecated": "old", "args": ["first", "active"],
                                 "deprecated_args": {"active": "No longer supported"}})
 
     def test_pruned_table_keeps_only_listed_fields_and_the_types_they_name(self) -> None:
@@ -547,6 +553,7 @@ class GraphqlTests(unittest.TestCase):
                          ["first", "environments", "orderBy"])
         self.assertEqual(types["Repository"]["fields"]["number"]["deprecated"], "Use fullNumber.")
         self.assertEqual(types["State"], {"kind": "enum"})
+        self.assertEqual(types["DeploymentConnection"]["fields"]["nodes"]["type"], "[Deployment]")
         self.assertNotIn("viewer", types["Query"]["fields"])
         self.assertEqual(doc["query"], "Query")
 

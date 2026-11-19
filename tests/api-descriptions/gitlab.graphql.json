@@ -22,7 +22,7 @@
           "type": "Time"
         },
         "id": {
-          "type": "CiRunnerID"
+          "type": "CiRunnerID!"
         },
         "managers": {
           "args": [
@@ -36,7 +36,7 @@
           "type": "CiRunnerManagerConnection"
         },
         "tagList": {
-          "type": "String"
+          "type": "[String!]"
         }
       },
       "kind": "object"
@@ -44,7 +44,7 @@
     "CiRunnerConnection": {
       "fields": {
         "nodes": {
-          "type": "CiRunner"
+          "type": "[CiRunner]"
         }
       },
       "kind": "object"
@@ -69,7 +69,7 @@
     "CiRunnerManagerConnection": {
       "fields": {
         "nodes": {
-          "type": "CiRunnerManager"
+          "type": "[CiRunnerManager]"
         }
       },
       "kind": "object"
@@ -77,7 +77,7 @@
     "CurrentUser": {
       "fields": {
         "username": {
-          "type": "String"
+          "type": "String!"
         }
       },
       "kind": "object"
@@ -100,7 +100,7 @@
           "type": "Int"
         },
         "approved": {
-          "type": "Boolean"
+          "type": "Boolean!"
         },
         "approvedBy": {
           "args": [
@@ -112,13 +112,13 @@
           "type": "UserCoreConnection"
         },
         "conflicts": {
-          "type": "Boolean"
+          "type": "Boolean!"
         },
         "detailedMergeStatus": {
           "type": "DetailedMergeStatus"
         },
         "iid": {
-          "type": "String"
+          "type": "String!"
         },
         "reviewers": {
           "args": [
@@ -130,10 +130,10 @@
           "type": "MergeRequestReviewerConnection"
         },
         "shouldBeRebased": {
-          "type": "Boolean"
+          "type": "Boolean!"
         },
         "userPermissions": {
-          "type": "MergeRequestPermissions"
+          "type": "MergeRequestPermissions!"
         }
       },
       "kind": "object"
@@ -141,7 +141,7 @@
     "MergeRequestConnection": {
       "fields": {
         "nodes": {
-          "type": "MergeRequest"
+          "type": "[MergeRequest]"
         }
       },
       "kind": "object"
@@ -149,7 +149,7 @@
     "MergeRequestPermissions": {
       "fields": {
         "canApprove": {
-          "type": "Boolean"
+          "type": "Boolean!"
         }
       },
       "kind": "object"
@@ -163,7 +163,7 @@
           "type": "UserMergeRequestInteraction"
         },
         "username": {
-          "type": "String"
+          "type": "String!"
         }
       },
       "kind": "object"
@@ -171,7 +171,7 @@
     "MergeRequestReviewerConnection": {
       "fields": {
         "nodes": {
-          "type": "MergeRequestReviewer"
+          "type": "[MergeRequestReviewer]"
         }
       },
       "kind": "object"
@@ -182,7 +182,7 @@
           "type": "Int"
         },
         "id": {
-          "type": "ID"
+          "type": "ID!"
         },
         "user": {
           "type": "UserCore"
@@ -193,7 +193,7 @@
     "PipelineConnection": {
       "fields": {
         "nodes": {
-          "type": "Pipeline"
+          "type": "[Pipeline]"
         }
       },
       "kind": "object"
@@ -326,10 +326,10 @@
     "UserCore": {
       "fields": {
         "name": {
-          "type": "String"
+          "type": "String!"
         },
         "username": {
-          "type": "String"
+          "type": "String!"
         }
       },
       "kind": "object"
@@ -337,7 +337,7 @@
     "UserCoreConnection": {
       "fields": {
         "nodes": {
-          "type": "UserCore"
+          "type": "[UserCore]"
         }
       },
       "kind": "object"

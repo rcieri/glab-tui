@@ -664,15 +664,17 @@ class SdlParser:
             self.i += 1
 
     def type_ref(self) -> str:
+        """The type in GraphQL notation, list and non-null wrappers kept: `[Deployment!]!`."""
         if self.at("["):
             self.i += 1
-            named = self.type_ref()
+            notation = f"[{self.type_ref()}]"
             self.expect("]")
         else:
-            named = self.name()
+            notation = self.name()
         if self.at("!"):
             self.i += 1
-        return named
+            notation += "!"
+        return notation
 
     def value(self) -> str | None:
         kind, text = self.take()
@@ -843,10 +845,18 @@ INTROSPECTION_KINDS = {"OBJECT": "object", "INTERFACE": "interface", "UNION": "u
                        "SCALAR": "scalar", "ENUM": "enum", "INPUT_OBJECT": "input"}
 
 
-def named_type(ref: dict[str, Any]) -> str:
-    while ref.get("ofType"):
-        ref = ref["ofType"]
+def type_notation(ref: dict[str, Any]) -> str:
+    """An introspection type reference in GraphQL notation: `[Deployment!]!`."""
+    if ref["kind"] == "NON_NULL":
+        return type_notation(ref["ofType"]) + "!"
+    if ref["kind"] == "LIST":
+        return f"[{type_notation(ref['ofType'])}]"
     return ref["name"]
+
+
+def named_type(notation: str) -> str:
+    """The named type inside `notation`, wrappers removed."""
+    return notation.strip("[]!")
 
 
 def table_from_introspection(doc: dict[str, Any]) -> dict[str, Any]:
@@ -856,7 +866,7 @@ def table_from_introspection(doc: dict[str, Any]) -> dict[str, Any]:
         entry: dict[str, Any] = {"kind": INTROSPECTION_KINDS[t["kind"]]}
         fields: dict[str, dict[str, Any]] = {}
         for f in t.get("fields") or []:
-            field: dict[str, Any] = {"type": named_type(f["type"])}
+            field: dict[str, Any] = {"type": type_notation(f["type"])}
             if f["args"]:
                 field["args"] = [a["name"] for a in f["args"]]
             deprecated_args = {a["name"]: deprecation_reason(a.get("deprecationReason"))
@@ -893,7 +903,7 @@ def build_graphql(
                 problems.append(f"{host}: {type_name}.{field}: listed as selected ({here}), not in the schema")
                 continue
             used.setdefault(type_name, {})[field] = definition
-            target = definition["type"]
+            target = named_type(definition["type"])
             kinds[target] = types[target]["kind"]
             if read[field]:
                 if kinds[target] in ("object", "interface"):

@@ -92,10 +92,10 @@ pub(crate) fn apply_client_ready(
     app.gitlab_client = Some(client.clone());
     // Remember the group implied by a repository scope so the Switch view
     // accumulates every group worked in (see startup).
-    if let Scope::Repository(r) = &app.scope {
-        if let Some((group, _)) = r.rsplit_once('/') {
-            crate::utils::cache::add_recent_group(group);
-        }
+    if let Scope::Repository(r) = &app.scope
+        && let Some((group, _)) = r.rsplit_once('/')
+    {
+        crate::utils::cache::add_recent_group(group);
     }
 
     let tx = app.scoped_sender(tx.clone());

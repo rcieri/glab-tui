@@ -241,11 +241,10 @@ pub(super) fn handle_key(
         && app.selector.is_none()
         && app.submit_dialog.is_none()
         && app.prev_scope.is_some()
+        && let Some(prev) = app.prev_scope.take()
     {
-        if let Some(prev) = app.prev_scope.take() {
-            app.scope = prev;
-            app.reset_on_scope_change();
-        }
+        app.scope = prev;
+        app.reset_on_scope_change();
     }
 
     handlers::tabs::handle_active_tab_key(app, key_event, tx, fx);

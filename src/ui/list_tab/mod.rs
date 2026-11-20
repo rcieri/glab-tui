@@ -413,7 +413,7 @@ fn build_view<C: ColumnDef>(items: &[C::Row], spec: &ViewSpec) -> Vec<usize> {
         })
         .collect();
     if spec.sort.is_none() && !query.is_empty() {
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|a| std::cmp::Reverse(a.1));
     }
     let mut view: Vec<usize> = scored.into_iter().map(|(idx, _)| idx).collect();
     let sort = spec

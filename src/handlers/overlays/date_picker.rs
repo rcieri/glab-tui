@@ -58,10 +58,10 @@ pub fn handle_date_picker(
                         rebuild_edit_menu(app, &entity_type, entity_iid);
                     }
                     crate::app::DatePickerAction::EditNewField { field_idx } => {
-                        if let Some(ref mut menu) = app.edit_menu {
-                            if field_idx < menu.fields.len() {
-                                menu.fields[field_idx].value = selected_val;
-                            }
+                        if let Some(ref mut menu) = app.edit_menu
+                            && field_idx < menu.fields.len()
+                        {
+                            menu.fields[field_idx].value = selected_val;
                         }
                     }
                 }

@@ -29,11 +29,12 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
             crate::scope::Scope::Group(g) => Some(g.clone()),
             crate::scope::Scope::Repository(r) => r.rsplit_once('/').map(|(g, _)| g.to_string()),
         };
-        if let Some(g) = current_group {
-            if !g.trim().is_empty() && seen.insert(g.clone()) {
-                switch_repo_groups.insert(g.clone());
-                items.push(g);
-            }
+        if let Some(g) = current_group
+            && !g.trim().is_empty()
+            && seen.insert(g.clone())
+        {
+            switch_repo_groups.insert(g.clone());
+            items.push(g);
         }
 
         // Then every group the user can reach — recently switched groups
@@ -80,10 +81,10 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
                         s.insert(g.clone());
                     }
                     crate::scope::Scope::Repository(_) => {
-                        if let Ok(cwd) = std::env::current_dir() {
-                            if let Some(name) = cwd.file_name().and_then(|n| n.to_str()) {
-                                s.insert(name.to_string());
-                            }
+                        if let Ok(cwd) = std::env::current_dir()
+                            && let Some(name) = cwd.file_name().and_then(|n| n.to_str())
+                        {
+                            s.insert(name.to_string());
                         }
                     }
                 }

@@ -51,10 +51,10 @@ pub fn parse_project_path_from_web_url(web_url: &str) -> Option<String> {
     }
     if let Some((base, _)) = web_url.split_once("/-/") {
         let without_scheme = base.split_once("://").map(|(_, p)| p).unwrap_or(base);
-        if let Some((_, path)) = without_scheme.split_once('/') {
-            if !path.is_empty() {
-                return Some(path.to_string());
-            }
+        if let Some((_, path)) = without_scheme.split_once('/')
+            && !path.is_empty()
+        {
+            return Some(path.to_string());
         }
     }
     let without_scheme = web_url.split_once("://").map(|(_, p)| p).unwrap_or(web_url);
@@ -369,35 +369,35 @@ pub fn get_branches() -> Vec<String> {
         .args(["branch", "-a"])
         .output()
         .ok();
-    if let Some(output) = output {
-        if output.status.success() {
-            let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter_map(|line| {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        return None;
-                    }
-                    let name = line.strip_prefix('*').unwrap_or(line).trim();
-                    let name = if let Some(stripped) = name.strip_prefix("remotes/") {
-                        if let Some((_remote, branch_part)) = stripped.split_once('/') {
-                            branch_part.to_string()
-                        } else {
-                            stripped.to_string()
-                        }
+    if let Some(output) = output
+        && output.status.success()
+    {
+        let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return None;
+                }
+                let name = line.strip_prefix('*').unwrap_or(line).trim();
+                let name = if let Some(stripped) = name.strip_prefix("remotes/") {
+                    if let Some((_remote, branch_part)) = stripped.split_once('/') {
+                        branch_part.to_string()
                     } else {
-                        name.to_string()
-                    };
-                    if name.is_empty() || name.contains(" -> ") {
-                        return None;
+                        stripped.to_string()
                     }
-                    Some(name)
-                })
-                .collect();
-            branches.sort();
-            branches.dedup();
-            return branches;
-        }
+                } else {
+                    name.to_string()
+                };
+                if name.is_empty() || name.contains(" -> ") {
+                    return None;
+                }
+                Some(name)
+            })
+            .collect();
+        branches.sort();
+        branches.dedup();
+        return branches;
     }
     Vec::new()
 }

@@ -1975,10 +1975,10 @@ pub(crate) fn render_tab_jobs(
         let mut state = app.jobs.state;
         let filtered_count = filtered_jobs.len();
         if filtered_count > 0 {
-            if let Some(sel) = state.selected() {
-                if sel >= filtered_count {
-                    state.select(Some(filtered_count.saturating_sub(1)));
-                }
+            if let Some(sel) = state.selected()
+                && sel >= filtered_count
+            {
+                state.select(Some(filtered_count.saturating_sub(1)));
             }
         } else {
             state.select(None);

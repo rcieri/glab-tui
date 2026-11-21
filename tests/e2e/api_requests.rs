@@ -1,8 +1,9 @@
 //! Checks the raw `gh api` / `glab api` calls the CLI mocks record against
 //! the pinned API descriptions in `tests/api-descriptions/`: the endpoint
 //! must exist, the method must be one the description gives it, and every
-//! query parameter must be one the operation takes. GraphQL calls and request
-//! bodies are not read here.
+//! query parameter must be one the operation takes. `ApiRequest::read` reads
+//! each call once and hands a GraphQL call to `api_graphql`; request bodies
+//! are not read.
 //!
 //! What the description cannot confirm is excused through the shared
 //! `Ledger`, by the keys `<host> <METHOD> <template>` (an operation the
@@ -10,6 +11,7 @@
 //! `<host> <METHOD> <template> query <name>` (a query parameter it does not
 //! list). Both are looked up as finding first, then as exception.
 
+use crate::api_graphql;
 use crate::api_lists::{Kind, Ledger};
 use crate::cli_contract::recorded_argvs;
 use serde_json::Value;
@@ -27,13 +29,13 @@ const REST_OF_PATH_TEMPLATES: [&str; 1] = ["/repos/{owner}/{repo}/git/refs/{ref}
 const NAME_PARAMETERS: [&str; 2] = ["branch", "ref"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Host {
+pub enum Host {
     GitHub,
     GitLab,
 }
 
 impl Host {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Host::GitHub => "github",
             Host::GitLab => "gitlab",
@@ -208,8 +210,20 @@ static GITLAB: LazyLock<Description> = LazyLock::new(|| {
     )
 });
 
-/// A `gh api` / `glab api` call as the description sees it.
-struct ApiCall {
+/// A recorded `gh api` / `glab api` call, read once for the REST and the
+/// GraphQL check.
+pub enum ApiRequest<'a> {
+    Rest(ApiCall),
+    /// `query` is the value of the call's `query=` field, `None` when it
+    /// sends none.
+    Graphql {
+        host: Host,
+        query: Option<&'a str>,
+    },
+}
+
+/// A REST call of `api` as the description sees it.
+pub struct ApiCall {
     host: Host,
     method: String,
     /// The endpoint's path, with the host's prefix and without its query.
@@ -217,9 +231,9 @@ struct ApiCall {
     query: Vec<String>,
 }
 
-impl ApiCall {
-    /// `None` for anything but a REST call of `api`: GraphQL has its own check.
-    fn read(argv: &[&str]) -> Option<ApiCall> {
+impl<'a> ApiRequest<'a> {
+    /// `None` for anything but a `gh api` / `glab api` call.
+    pub fn read(argv: &[&'a str]) -> Option<ApiRequest<'a>> {
         let host = match argv {
             ["gh", "api", ..] => Host::GitHub,
             ["glab", "api", ..] => Host::GitLab,
@@ -227,6 +241,7 @@ impl ApiCall {
         };
         let mut method = None;
         let mut fields = Vec::new();
+        let mut graphql_query = None;
         let mut has_input = false;
         let mut endpoint = None;
         let mut words = argv[2..].iter().copied();
@@ -256,6 +271,9 @@ impl ApiCall {
             match flag {
                 "-X" | "--method" => method = Some(value.to_uppercase()),
                 "-f" | "--raw-field" | "-F" | "--field" | "--form" => {
+                    if let Some(query) = value.strip_prefix("query=") {
+                        graphql_query.get_or_insert(query);
+                    }
                     fields.push(value.split('=').next().unwrap_or_default().to_string())
                 }
                 "--input" => has_input = true,
@@ -264,7 +282,10 @@ impl ApiCall {
         }
         let endpoint = endpoint?;
         if endpoint == "graphql" {
-            return None;
+            return Some(ApiRequest::Graphql {
+                host,
+                query: graphql_query,
+            });
         }
         let has_body = has_input || !fields.is_empty();
         let method = method.unwrap_or_else(|| if has_body { "POST" } else { "GET" }.to_string());
@@ -282,16 +303,16 @@ impl ApiCall {
         if method == "GET" {
             query.extend(fields);
         }
-        Some(ApiCall {
+        Some(ApiRequest::Rest(ApiCall {
             host,
             method,
             path: format!("{}{}", host.path_prefix(), path.trim_start_matches('/')),
             query,
-        })
+        }))
     }
 }
 
-fn excused(ledger: &Ledger, key: &str) -> bool {
+pub fn excused(ledger: &Ledger, key: &str) -> bool {
     [Kind::Finding, Kind::Exception]
         .into_iter()
         .any(|kind| ledger.excuse(kind, key).is_some())
@@ -299,9 +320,15 @@ fn excused(ledger: &Ledger, key: &str) -> bool {
 
 /// What is wrong with the call `argv`, one message each.
 fn check(argv: &[&str], ledger: &Ledger) -> Vec<String> {
-    let Some(call) = ApiCall::read(argv) else {
-        return Vec::new();
-    };
+    match ApiRequest::read(argv) {
+        Some(ApiRequest::Rest(call)) => rest_problems(&call, ledger),
+        Some(ApiRequest::Graphql { host, query }) => api_graphql::problems(host, query, ledger),
+        None => Vec::new(),
+    }
+}
+
+/// What is wrong with the REST call `call`, one message each.
+fn rest_problems(call: &ApiCall, ledger: &Ledger) -> Vec<String> {
     let description = match call.host {
         Host::GitHub => &*GITHUB,
         Host::GitLab => &*GITLAB,
@@ -373,7 +400,8 @@ fn check(argv: &[&str], ledger: &Ledger) -> Vec<String> {
     }
 }
 
-/// Every problem of the raw API calls recorded in `<log_path>.argv.d/`.
+/// Every problem of the `gh api` / `glab api` calls recorded in
+/// `<log_path>.argv.d/`, REST and GraphQL.
 pub fn problems_in_log(log_path: &Path) -> Vec<String> {
     let ledger = Ledger::shipped();
     let mut problems: Vec<String> = recorded_argvs(log_path)
@@ -508,13 +536,6 @@ mod tests {
                 "DELETE",
                 "repos/o/r/git/refs/heads/feat%2Fx",
             ],
-            &[
-                "gh",
-                "api",
-                "graphql",
-                "-f",
-                "query=query { viewer { login } }",
-            ],
             &["gh", "pr", "list", "--json", "number"],
             &[
                 "glab",
@@ -529,7 +550,6 @@ mod tests {
             ],
             &["glab", "api", "-X", "POST", "projects/o%2Fr/jobs/3/play"],
             &["glab", "api", "todos?state=done"],
-            &["glab", "api", "graphql", "-f", "query=x"],
         ] {
             assert_eq!(problems(argv), Vec::<String>::new(), "{argv:?}");
         }
@@ -683,5 +703,91 @@ mod tests {
             .unwrap();
         }
         assert_eq!(problems_in_log(&log_path).len(), 1);
+    }
+
+    /// The query a GraphQL call sends; panics for any other call.
+    fn graphql_query<'a>(argv: &[&'a str]) -> Option<&'a str> {
+        match ApiRequest::read(argv) {
+            Some(ApiRequest::Graphql { query, .. }) => query,
+            _ => panic!("{argv:?} is not read as a GraphQL call"),
+        }
+    }
+
+    #[test]
+    fn the_query_is_read_from_every_spelling_of_the_field_flag() {
+        let q = "{ viewer { login } }";
+        let value = format!("query={q}");
+        for argv in [
+            vec!["gh", "api", "graphql", "-f", value.as_str()],
+            vec!["gh", "api", "graphql", "--raw-field", value.as_str()],
+            vec!["gh", "api", "graphql", "-F", value.as_str()],
+            vec!["gh", "api", "graphql", "--field", value.as_str()],
+            vec!["glab", "api", "graphql", "-f", value.as_str()],
+        ] {
+            assert_eq!(graphql_query(&argv), Some(q), "{argv:?}");
+        }
+        let inline = [
+            format!("--raw-field={value}"),
+            format!("--field={value}"),
+            format!("-f{value}"),
+            format!("-F{value}"),
+        ];
+        for word in &inline {
+            assert_eq!(
+                graphql_query(&["gh", "api", "graphql", word]),
+                Some(q),
+                "{word}"
+            );
+        }
+        assert_eq!(
+            graphql_query(&["gh", "api", "--paginate", "graphql", "-f", &value]),
+            Some(q)
+        );
+    }
+
+    #[test]
+    fn a_call_is_graphql_only_when_its_endpoint_is() {
+        for argv in [
+            &["gh", "api", "repos/o/r", "-f", "q=graphql"][..],
+            &["gh", "api", "-H", "graphql", "repos/o/r"],
+        ] {
+            assert!(
+                matches!(ApiRequest::read(argv), Some(ApiRequest::Rest(_))),
+                "{argv:?}"
+            );
+        }
+        assert!(ApiRequest::read(&["gh", "pr", "list"]).is_none());
+        assert!(ApiRequest::read(&["git", "api", "graphql"]).is_none());
+    }
+
+    #[test]
+    fn a_graphql_call_without_a_query_is_reported() {
+        assert_eq!(
+            problems(&["gh", "api", "graphql", "-f", "other=1"]),
+            ["github: graphql call sends no `query=` field"]
+        );
+    }
+
+    #[test]
+    fn a_recorded_graphql_call_is_reported_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("cli_calls.log");
+        let records = dir.path().join("cli_calls.log.argv.d");
+        std::fs::create_dir(&records).unwrap();
+        for name in ["a", "b"] {
+            std::fs::write(
+                records.join(name),
+                "glab\u{1f}api\u{1f}graphql\u{1f}-f\u{1f}query={ currentUser { nope } }\u{1f}",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            problems_in_log(&log_path),
+            [
+                "gitlab: graphql field `CurrentUser.nope` is not in gitlab.graphql.json: the \
+              schema lacks it, or scripts/api-descriptions/gitlab.json does not list it yet \
+              (the generator fails when the schema lacks a listed field) (at currentUser.nope)"
+            ]
+        );
     }
 }

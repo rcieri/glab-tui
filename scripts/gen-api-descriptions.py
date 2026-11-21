@@ -8,7 +8,8 @@ and the pinned GraphQL schema:
                        parameters and the 2xx responses cut to the fields
                        glab-tui reads (OpenAPI 3.1)
   <host>.graphql.json  the GraphQL fields glab-tui selects, with their types,
-                       argument names and deprecation
+                       argument names and the deprecation of fields and
+                       arguments
 
 What to keep comes from scripts/api-descriptions/<host>.json: the operations
 with the fields read from each response, the host rule, the corrections for
@@ -524,6 +525,13 @@ def build_openapi(
 
 
 BUILTIN_SCALARS = ("String", "Int", "Float", "Boolean", "ID")
+# What GraphQL's @deprecated directive gives as the reason when it names none.
+DEFAULT_DEPRECATION_REASON = "No longer supported"
+
+
+def deprecation_reason(reason: object) -> str:
+    """The reason a schema gives for a deprecation, the default without one."""
+    return reason if isinstance(reason, str) and reason else DEFAULT_DEPRECATION_REASON
 
 TOKEN = re.compile(r'''
     (?P<ws>[\s,﻿]+) | (?P<comment>\#[^\n]*)
@@ -630,21 +638,25 @@ class SdlParser:
             found[name] = args
         return found
 
-    def input_values(self, close: str) -> list[str]:
+    def input_values(self, close: str) -> tuple[list[str], dict[str, str]]:
         """Argument or input-field definitions up to the closing bracket;
-        returns their names."""
+        returns their names and the deprecation reason of each deprecated one."""
         names: list[str] = []
+        deprecated: dict[str, str] = {}
         while not self.at(close):
             self.description()
-            names.append(self.name())
+            name = self.name()
+            names.append(name)
             self.expect(":")
             self.type_ref()
             if self.at("="):
                 self.i += 1
                 self.value()
-            self.directives()
+            directives = self.directives()
+            if "deprecated" in directives:
+                deprecated[name] = deprecation_reason(directives["deprecated"].get("reason"))
         self.i += 1
-        return names
+        return names, deprecated
 
     def field_definitions(self) -> dict[str, dict[str, Any]]:
         fields: dict[str, dict[str, Any]] = {}
@@ -653,18 +665,20 @@ class SdlParser:
             self.description()
             name = self.name()
             args: list[str] = []
+            deprecated_args: dict[str, str] = {}
             if self.at("("):
                 self.i += 1
-                args = self.input_values(")")
+                args, deprecated_args = self.input_values(")")
             self.expect(":")
             ty = self.type_ref()
             directives = self.directives()
             entry: dict[str, Any] = {"type": ty}
             if args:
                 entry["args"] = args
+            if deprecated_args:
+                entry["deprecated_args"] = deprecated_args
             if "deprecated" in directives:
-                reason = directives["deprecated"].get("reason")
-                entry["deprecated"] = reason if isinstance(reason, str) else "No longer supported"
+                entry["deprecated"] = deprecation_reason(directives["deprecated"].get("reason"))
             fields[name] = entry
         self.i += 1
         return fields
@@ -773,8 +787,12 @@ def table_from_introspection(doc: dict[str, Any]) -> dict[str, Any]:
             field: dict[str, Any] = {"type": named_type(f["type"])}
             if f["args"]:
                 field["args"] = [a["name"] for a in f["args"]]
+            deprecated_args = {a["name"]: deprecation_reason(a.get("deprecationReason"))
+                               for a in f["args"] if a.get("isDeprecated")}
+            if deprecated_args:
+                field["deprecated_args"] = deprecated_args
             if f.get("isDeprecated"):
-                field["deprecated"] = f.get("deprecationReason") or "No longer supported"
+                field["deprecated"] = deprecation_reason(f.get("deprecationReason"))
             fields[f["name"]] = field
         if fields:
             entry["fields"] = fields

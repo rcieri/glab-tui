@@ -3,7 +3,7 @@ use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
 use crate::git_helpers::get_workflow_files;
 use crate::keybinding::KeyPress;
-use crate::templates::list_templates;
+use crate::templates::{BLANK_TEMPLATE_CHOICE, list_templates};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
@@ -1917,9 +1917,10 @@ pub fn handle_key(
                     is_loading = false;
                 } else if let crate::app::SelectorPurpose::DescriptionTemplate { kind } = &purpose {
                     let templates = list_templates(kind.as_str());
-                    let template_names: Vec<String> = std::iter::once("-- (blank)".to_string())
-                        .chain(templates.iter().map(|(n, _)| n.clone()))
-                        .collect();
+                    let template_names: Vec<String> =
+                        std::iter::once(BLANK_TEMPLATE_CHOICE.to_string())
+                            .chain(templates.iter().map(|(n, _)| n.clone()))
+                            .collect();
                     all_items = template_names;
                     is_loading = false;
                 } else if field == Some(crate::app::SelectorField::Project) {
@@ -2120,7 +2121,7 @@ pub fn handle_key(
                         let templates = list_templates(kind.as_str());
                         if !templates.is_empty() {
                             let template_names: Vec<String> =
-                                std::iter::once("-- (blank)".to_string())
+                                std::iter::once(BLANK_TEMPLATE_CHOICE.to_string())
                                     .chain(templates.iter().map(|(n, _)| n.clone()))
                                     .collect();
                             let sel = crate::app::Selector {

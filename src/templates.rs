@@ -1,3 +1,6 @@
+/// The template picker's entry that leaves the description empty.
+pub const BLANK_TEMPLATE_CHOICE: &str = "-- (blank)";
+
 pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
     let mut templates: Vec<(String, String)> = Vec::new();
 

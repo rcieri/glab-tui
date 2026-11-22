@@ -5,7 +5,7 @@ use crate::event::{CommandOutcome, Event};
 use crate::git_helpers::slugify;
 use crate::keybinding::KeyPress;
 use crate::keymap::{Action, KeyContext};
-use crate::templates::list_templates;
+use crate::templates::{BLANK_TEMPLATE_CHOICE, list_templates};
 use crate::{app, domain, handlers};
 use crossterm::event::KeyCode;
 use tokio::sync::mpsc::UnboundedSender;
@@ -441,32 +441,6 @@ pub fn handle_key(
                         }
                     }
 
-                    app::SelectorPurpose::BlankDescriptionTemplate { kind } => {
-                        let filtered_items = selector.get_filtered_items();
-                        let mut selected_val = selector.selected_items.iter().next().cloned();
-                        if selected_val.is_none() && !filtered_items.is_empty() {
-                            selected_val = Some(filtered_items[selector.cursor_idx].clone());
-                        }
-                        let choice = selected_val.unwrap_or_default();
-                        let mut desc_val = String::new();
-                        if choice != "-- (blank)" {
-                            let templates = list_templates(kind.as_str());
-                            if let Some(content) =
-                                templates.iter().find(|(n, _)| n == &choice).map(|(_, c)| c)
-                            {
-                                desc_val = content.clone();
-                            }
-                        }
-                        if let Some(menu) = app.edit_menu_mut()
-                            && let Some(f) = menu.fields.iter_mut().find(|f| {
-                                (f.label == "Description" || f.label == "Release Notes")
-                                    && f.kind == crate::app::FieldType::Text
-                            })
-                        {
-                            f.value = desc_val;
-                        }
-                    }
-
                     app::SelectorPurpose::Theme => {
                         let picked = selector.highlighted_theme();
                         app.close_selector();
@@ -896,7 +870,8 @@ pub fn handle_key(
                         }
                     }
 
-                    app::SelectorPurpose::DescriptionTemplate { kind } => {
+                    app::SelectorPurpose::BlankDescriptionTemplate { kind }
+                    | app::SelectorPurpose::DescriptionTemplate { kind } => {
                         let filtered_items = selector.get_filtered_items();
                         let mut selected_val = selector.selected_items.iter().next().cloned();
                         if selected_val.is_none() && !filtered_items.is_empty() {
@@ -904,7 +879,7 @@ pub fn handle_key(
                         }
                         let choice = selected_val.unwrap_or_default();
                         let mut desc_val = String::new();
-                        if choice != "-- (blank)" {
+                        if choice != BLANK_TEMPLATE_CHOICE {
                             if let Some(content) = list_templates(kind.as_str())
                                 .iter()
                                 .find(|(n, _)| n == &choice)
@@ -926,7 +901,7 @@ pub fn handle_key(
                                 .iter_mut()
                                 .find(|f| f.label == "Description Template")
                             {
-                                f.value = if choice == "-- (blank)" {
+                                f.value = if choice == BLANK_TEMPLATE_CHOICE {
                                     String::new()
                                 } else {
                                     choice
@@ -1319,7 +1294,7 @@ mod tests {
             app.open_edit_menu(new_mr_menu());
             app.open_selector(Selector {
                 title: "Template".to_string(),
-                all_items: vec!["-- (blank)".to_string(), "feature".to_string()],
+                all_items: vec![BLANK_TEMPLATE_CHOICE.to_string(), "feature".to_string()],
                 selected_items: std::collections::HashSet::new(),
                 cursor_idx: 1,
                 search_query: String::new(),
@@ -1352,5 +1327,49 @@ mod tests {
                 Some("PR template".to_string())
             ]
         );
+    }
+
+    /// The blank picker on an empty Description names its pick in the
+    /// Description Template row, as the row's own picker does.
+    #[test]
+    fn a_blank_pick_from_the_description_clears_the_template_row() {
+        let mut menu = new_mr_menu();
+        menu.fields[0].value = "feature".to_string();
+        let mut app = App::default();
+        app.open_edit_menu(menu);
+        app.open_selector(Selector {
+            title: "Template".to_string(),
+            all_items: vec![BLANK_TEMPLATE_CHOICE.to_string()],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 0,
+            entity_type: String::new(),
+            purpose: SelectorPurpose::BlankDescriptionTemplate {
+                kind: TemplateKind::of(&EditEntityKind::CreateMr),
+            },
+            multi_select: false,
+            state: ListState::default(),
+            request: None,
+        });
+        let tx = app.tx.clone();
+        let mut fx = Effects::default();
+        let enter = KeyPress::from(crossterm::event::KeyEvent::new(
+            KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        handle_key(&mut app, &enter, &tx, &mut fx);
+
+        let template_row = app
+            .edit_menu()
+            .and_then(|menu| {
+                menu.fields
+                    .iter()
+                    .find(|f| f.label == "Description Template")
+            })
+            .map(|f| f.value.clone());
+        assert_eq!(template_row, Some(String::new()));
     }
 }

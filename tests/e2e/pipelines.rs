@@ -223,3 +223,18 @@ fn gitlab_pipelines_show_the_duration_and_user_from_graphql() {
         .wait_for_screen_contains("@grace", 5000)
         .expect("the inspector names the user who ran the pipeline");
 }
+
+/// `glab ci view` refuses to run without a terminal, even with `-w`, so the
+/// pipeline page is opened by URL.
+#[test]
+fn gitlab_pipelines_tab_opens_the_pipeline_page() {
+    let mut session = session_on_pipelines(&[]);
+
+    session.press_keys(b"o");
+    session
+        .wait_for_cli_call(
+            "browser https://gitlab.com/test-owner/test-repo/-/pipelines/12345",
+            5000,
+        )
+        .expect("o opens the pipeline's page through the browser mock");
+}

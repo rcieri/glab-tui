@@ -3570,18 +3570,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    /// Opened by URL: `glab ci view` refuses to run without a terminal, even
+    /// with `-w`.
     async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_glab(
-                &["ci", "view", "-p", id, "-R", project, "-w"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_glab(&["ci", "view", "-p", id, "-w"], "OPENING IN BROWSER")
-                .await?;
+        if project.is_empty() {
+            anyhow::bail!("project path required to open pipeline in browser");
         }
-        Ok(())
+        let host = gitlab_host_or_default();
+        let url = format!("https://{host}/{project}/-/pipelines/{id}");
+        open_url(&url, self.tx.clone(), "OPENING PIPELINE IN BROWSER").await
     }
 
     async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()> {

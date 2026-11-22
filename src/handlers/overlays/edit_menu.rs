@@ -1905,7 +1905,7 @@ pub fn handle_key(
                     if !current_val.is_empty() {
                         current_set.insert(current_val);
                     }
-                } else if field_name == "Create from Issue" {
+                } else if matches!(purpose, crate::app::SelectorPurpose::CreateMrFromIssue) {
                     let issues: Vec<String> = app
                         .issues
                         .items
@@ -1915,9 +1915,8 @@ pub fn handle_key(
                         .collect();
                     all_items = issues;
                     is_loading = false;
-                } else if field_name == "Description Template" {
-                    let templates =
-                        list_templates(crate::app::TemplateKind::of(&menu.entity_kind).as_str());
+                } else if let crate::app::SelectorPurpose::DescriptionTemplate { kind } = &purpose {
+                    let templates = list_templates(kind.as_str());
                     let template_names: Vec<String> = std::iter::once("-- (blank)".to_string())
                         .chain(templates.iter().map(|(n, _)| n.clone()))
                         .collect();

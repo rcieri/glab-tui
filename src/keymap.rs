@@ -190,7 +190,7 @@ registry! {
     GlobalSearch => ActionSpec::new(Global, "search", &["/"], "Open fuzzy search / filter bar");
     GlobalRefresh => ActionSpec::new(Global, "refresh", &["Ctrl+r", "F5"], "Refresh active tab data");
     GlobalSwitchRepo => ActionSpec::new(Global, "switch_repo", &["Ctrl+s"], "Switch repository");
-    GlobalConfigure => ActionSpec::new(Global, "configure", &["Tab", ","], "Toggle columns config popup (filter / group / sort)");
+    GlobalConfigure => ActionSpec::new(Global, "configure", &["Tab", ","], "Configure View: columns (filter / group / sort / order), tabs and layout");
     GlobalJumpToId => ActionSpec::new(Global, "jump_to_id", &["g"], "Jump to issue/MR by ID; fetch if not cached");
     GlobalSortNext => ActionSpec::new(Global, "sort_next", &[">"], "Sort list by next column");
     GlobalSortPrev => ActionSpec::new(Global, "sort_prev", &["<"], "Sort list by previous column");
@@ -206,6 +206,8 @@ registry! {
     GlobalScrollToEnd => ActionSpec::new(Global, "scroll_to_end", &["End"], "Jump to the last line of the description pane");
     GlobalScrollTop => ActionSpec::new(Global, "scroll_top", &["Home"], "Jump to the top of the description pane");
     GlobalLeaveScope => ActionSpec::new(Global, "leave_scope", &["Esc"], "Return from a project narrowed with G to its group");
+    GlobalToggleNav => ActionSpec::new(Global, "toggle_nav", &["Alt+n"], "Show / hide the navigation sidebar");
+    GlobalToggleTerminalPane => ActionSpec::new(Global, "toggle_terminal_pane", &["Alt+t"], "Show / hide the terminal pane");
     EditMenuSubmit => ActionSpec::new(EditMenu, "submit_edit", &["Ctrl+x"], "Submit active edit form");
 
     ListNextRow => ActionSpec::new(ListView, "next_row", &["j", "Down"], "Select the next row (scroll a zoomed pane)");

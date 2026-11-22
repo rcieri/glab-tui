@@ -128,12 +128,17 @@ impl ContributorsView {
         }
     }
 
-    /// The start of the window whose contributions the item list shows.
-    pub fn activity_since(self, now: Now) -> DateTime<Utc> {
+    /// The window whose contributions the item list shows. Open work counts
+    /// none, so its list shows all of the feed that is read.
+    pub fn activity_window(self) -> ActivityWindow {
         match self {
-            ContributorsView::OpenWork => ActivityWindow::Month.starts_at(now),
-            ContributorsView::Activity(window) => window.starts_at(now),
+            ContributorsView::OpenWork => ActivityWindow::Month,
+            ContributorsView::Activity(window) => window,
         }
+    }
+
+    pub fn activity_since(self, now: Now) -> DateTime<Utc> {
+        self.activity_window().starts_at(now)
     }
 }
 

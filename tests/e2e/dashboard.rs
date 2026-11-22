@@ -102,8 +102,8 @@ fn choosing_a_contributor_scopes_the_cards_and_lists_their_activity() {
         .expect("the dashboard reads the project's activity feed");
     session.press_keys(b"\rll\rk\r");
     session
-        .wait_for_screen_contains("Activity of @test-user, last 30 days · 5 ", 5000)
-        .expect("Enter on a contributor lists their MRs, issues, commits and comments");
+        .wait_for_screen_contains("Activity of @test-user, feed of the last 30 days · 5 ", 5000)
+        .expect("Enter on a contributor lists their MRs and issues at any age, with the feed's push and comment");
     session
         .wait_for_screen_contains("Paginate the issue list (+1 more)", 5000)
         .expect("their push is listed with its newest commit");

@@ -20,7 +20,8 @@ use crate::dashboard::{
 };
 use crate::domain::contributions::{ContributionKind, TargetKind};
 use crate::domain::dashboard::{
-    self, Activity, IdleDays, IssueQueue, MilestoneProgress, MrQueue, Now, Person, PipelineOutcome,
+    self, Activity, ActivityWindow, IdleDays, IssueQueue, MilestoneProgress, MrQueue, Now, Person,
+    PipelineOutcome,
 };
 use crate::domain::issues::Issue;
 use crate::domain::mr::MergeRequest;
@@ -713,8 +714,14 @@ fn contributors_body(ctx: &Context, width: usize, height: usize) -> Vec<Line<'st
 fn contributors_view_label(view: ContributorsView) -> String {
     match view {
         ContributorsView::OpenWork => "open work".to_string(),
-        ContributorsView::Activity(window) if window.days() == 1 => "last 24h".to_string(),
-        ContributorsView::Activity(window) => format!("last {} days", window.days()),
+        ContributorsView::Activity(window) => activity_window_label(window),
+    }
+}
+
+fn activity_window_label(window: ActivityWindow) -> String {
+    match window.days() {
+        1 => "last 24h".to_string(),
+        days => format!("last {days} days"),
     }
 }
 
@@ -964,16 +971,15 @@ fn releases_body(ctx: &Context) -> Vec<Line<'static>> {
 
 /// The title of the item list: what the selected row lists.
 fn item_list_title(ctx: &Context) -> String {
-    let window = contributors_view_label(ctx.app.dashboard.contributors_view);
-    let window = match ctx.app.dashboard.contributors_view {
-        ContributorsView::OpenWork => "last 30 days".to_string(),
-        ContributorsView::Activity(_) => window,
-    };
+    let window = activity_window_label(ctx.app.dashboard.contributors_view.activity_window());
     let activity_of = |who: Who| match who {
-        Who::Everyone => format!("Everyone's activity, {window}"),
-        Who::You => format!("Your activity, {window}"),
+        Who::Everyone => format!("Everyone's activity, feed of the {window}"),
+        Who::You => format!("Your activity, feed of the {window}"),
         Who::Someone(login) => {
-            format!("Activity of @{}, {window}", sanitize_untrusted(login))
+            format!(
+                "Activity of @{}, feed of the {window}",
+                sanitize_untrusted(login)
+            )
         }
     };
     let mut label = match &ctx.selected {
@@ -1511,7 +1517,6 @@ fn issue_note(ctx: &Context, issue: &Issue) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use crate::domain::contributions::ContributionHistory;
-    use crate::domain::dashboard::ActivityWindow;
 
     fn dashboard_app(scope: Scope) -> App {
         let mut app = App::default();

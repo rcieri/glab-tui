@@ -126,7 +126,7 @@ fn gitlab_merge_dialog_sends_the_picked_method_and_options() {
 }
 
 /// A fast-forward project names its plain merge Fast-forward and offers
-/// Rebase, which is sent without `--sha`.
+/// Rebase.
 #[test]
 fn gitlab_merge_dialog_rebases_on_a_fast_forward_project() {
     let mut session = open_merge_dialog(

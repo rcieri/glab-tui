@@ -580,12 +580,9 @@ impl Form {
 
     /// Starts typing into the line input `id`.
     pub fn edit(&mut self, id: GroupId) {
-        if let Some(path) = self.path_of(id).filter(|&path| {
-            matches!(
-                self.group_at(path).map(|g| &g.kind),
-                Some(GroupKind::LineInput(_))
-            )
-        }) {
+        if self.line_input(id).is_some()
+            && let Some(path) = self.path_of(id)
+        {
             self.focus = Focus::Editing(path);
         }
     }

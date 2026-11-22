@@ -714,12 +714,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
         }
         Event::FetchFailed(tab, err_msg) => {
+            // Read before `complete_loading_tab` forgets the previous failure.
+            let is_on_a_card = app.dashboard_card_shows_failure(tab, &err_msg);
             app.complete_loading_tab(tab, &format!("Failed: {err_msg}"));
             if app.has_rows(tab) {
                 app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
             } else {
                 app.fetch_failures.insert(tab, err_msg.clone());
-                app.show_cli_error(err_msg);
+                if !is_on_a_card {
+                    app.show_cli_error(err_msg);
+                }
             }
         }
         Event::DiffFetched {

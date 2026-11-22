@@ -660,6 +660,20 @@ impl App {
         (listed >= limit).then_some(CountCut::FetchLimit(limit))
     }
 
+    /// Whether a Dashboard card on screen already draws `reason` as why
+    /// `tab`'s list failed, so a toast would only repeat it.
+    pub fn dashboard_card_shows_failure(&self, tab: Tab, reason: &str) -> bool {
+        self.active_tab == Tab::Dashboard
+            && self
+                .fetch_failures
+                .get(&tab)
+                .is_some_and(|shown| shown == reason)
+            && self
+                .dashboard_cards()
+                .into_iter()
+                .any(|card| card.tab() == Some(tab))
+    }
+
     /// The Contributors card's numbers for `person` in its current view.
     /// `None` for the signed-in user while their login is unknown.
     pub fn contributor_stats(

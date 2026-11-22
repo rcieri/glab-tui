@@ -510,7 +510,9 @@ pub fn spawn_refresh_shown_tab(
 /// Refresh the Dashboard: fetch the lists and the activity feed `refresh`
 /// calls for, each list reporting through its own tab's events, then report
 /// `Event::DashboardRefreshed`. The lists it fetches are marked loading so
-/// switching to their tab meanwhile does not fetch them a second time.
+/// switching to their tab meanwhile does not fetch them a second time. A
+/// `Full` refresh forgets their last failure, so one that fails again is
+/// reported again instead of being taken for the repeat a card shows.
 pub fn spawn_refresh_dashboard(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
@@ -522,6 +524,9 @@ pub fn spawn_refresh_dashboard(
     app.start_loading_tab(app::Tab::Dashboard);
     for tab in &plan.sources {
         app.start_loading_tab(*tab);
+        if refresh == crate::dashboard::DashboardRefresh::Full {
+            app.fetch_failures.remove(tab);
+        }
     }
     if plan.restarts_slow_refresh {
         app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());

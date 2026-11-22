@@ -846,7 +846,6 @@ pub fn spawn_viewed_files_sync(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
     pull_request_id: String,
-    mr_iid: u64,
     changes: Vec<(String, bool)>,
     tx: ScopedSender,
 ) {
@@ -857,7 +856,7 @@ pub fn spawn_viewed_files_sync(
             .await
             .map_err(|e| e.to_string());
         let _ = tx.send(Event::ViewedFilesSynced {
-            mr_iid,
+            pull_request_id,
             changes,
             result,
         });

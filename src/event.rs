@@ -76,10 +76,11 @@ pub enum Event {
     DiffFetchFailed(String),
     /// The debounce window of the GitHub "Viewed" sync for this MR/PR closed.
     ViewedSyncFlush(u64),
-    /// One GitHub "Viewed" sync request finished; `changes` maps paths to the
-    /// viewed state that was sent.
+    /// One GitHub "Viewed" sync request finished. `changes` maps paths to the
+    /// viewed state that was sent. The pull request is named by its GraphQL
+    /// node id, since its number recurs across the projects of a group.
     ViewedFilesSynced {
-        mr_iid: u64,
+        pull_request_id: String,
         changes: Vec<(String, bool)>,
         result: Result<(), String>,
     },

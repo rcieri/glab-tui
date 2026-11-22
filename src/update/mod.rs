@@ -111,6 +111,50 @@ mod tests {
     }
 
     #[test]
+    fn a_viewed_sync_result_for_another_projects_pull_request_with_the_same_number_is_dropped() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = App::default();
+        let mut diff_view = crate::app::DiffView::new(
+            42,
+            "org/project-b".to_string(),
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+             @@ -1,1 +1,1 @@\n-old\n+new\n"
+                .to_string(),
+        );
+        diff_view.restore_review_state(
+            &std::collections::HashMap::new(),
+            Some(crate::domain::viewed_files::PrViewedFiles {
+                pull_request_id: "PR_B".to_string(),
+                files: std::collections::HashMap::new(),
+            }),
+            false,
+        );
+        app.diff_view = Some(diff_view);
+
+        // Project A's #42 marked README.md and was closed before it landed.
+        update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_A".to_string(),
+                changes: vec![("README.md".to_string(), true)],
+                result: Ok(()),
+            },
+        );
+
+        let diff_view = app.diff_view.as_mut().expect("diff stays open");
+        assert!(diff_view.reviewed_files.is_empty());
+        let sync = diff_view.viewed_sync.as_mut().expect("GitHub sync");
+        sync.queue(&["README.md".to_string()], true);
+        assert_eq!(
+            sync.take_changes(),
+            vec![("README.md".to_string(), true)],
+            "project B's own mark still reaches GitHub"
+        );
+    }
+
+    #[test]
     fn a_tick_does_not_fetch_the_highlighted_pipelines_jobs_but_a_new_list_does() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();

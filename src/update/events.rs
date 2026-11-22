@@ -793,35 +793,31 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             let changes = sync.take_changes();
             if !changes.is_empty() {
                 let pull_request_id = sync.pull_request_id().to_string();
-                crate::fetch::spawn_viewed_files_sync(
-                    fx,
-                    client,
-                    pull_request_id,
-                    mr_iid,
-                    changes,
-                    sender,
-                );
+                crate::fetch::spawn_viewed_files_sync(fx, client, pull_request_id, changes, sender);
             }
         }
         Event::ViewedFilesSynced {
-            mr_iid,
+            pull_request_id,
             changes,
             result,
         } => {
             let sender = app.scoped_sender(tx.clone());
             let mut reverted_marks = None;
-            if let Some(diff_view) = app.diff_view.as_mut().filter(|v| v.mr_iid == mr_iid)
-                && let Some(sync) = diff_view.viewed_sync.as_mut()
+            if let Some(diff_view) = app.diff_view.as_mut()
+                && let Some(sync) = diff_view
+                    .viewed_sync
+                    .as_mut()
+                    .filter(|sync| sync.pull_request_id() == pull_request_id)
             {
                 let corrections = sync.settle(&changes, result.is_ok());
                 if sync.claim_follow_up_flush() {
-                    crate::fetch::spawn_viewed_sync_flush(fx, mr_iid, sender);
+                    crate::fetch::spawn_viewed_sync_flush(fx, diff_view.mr_iid, sender);
                 }
                 if diff_view.apply_review_corrections(&corrections) > 0 {
-                    reverted_marks = Some(diff_view.review_marks());
+                    reverted_marks = Some((diff_view.mr_iid, diff_view.review_marks()));
                 }
             }
-            if let Some(marks) = reverted_marks {
+            if let Some((mr_iid, marks)) = reverted_marks {
                 app.store_review_marks(mr_iid, marks);
             }
             if let Err(err) = result {

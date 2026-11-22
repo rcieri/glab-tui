@@ -44,6 +44,12 @@ pub struct DashboardFetchPlan {
     pub restarts_slow_refresh: bool,
 }
 
+impl DashboardFetchPlan {
+    pub fn fetches_nothing(&self) -> bool {
+        self.sources.is_empty() && !self.reads_activity
+    }
+}
+
 /// The repository's activity feed as the Dashboard last fetched it.
 #[derive(Debug, Default, Clone)]
 pub enum ContributionFeed {

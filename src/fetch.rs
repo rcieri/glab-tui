@@ -512,7 +512,9 @@ pub fn spawn_refresh_shown_tab(
 /// `Event::DashboardRefreshed`. The lists it fetches are marked loading so
 /// switching to their tab meanwhile does not fetch them a second time. A
 /// `Full` refresh forgets their last failure, so one that fails again is
-/// reported again instead of being taken for the repeat a card shows.
+/// reported again instead of being taken for the repeat a card shows. A
+/// plan that fetches nothing completes at once and spawns no task, so the
+/// cards never flash `Loading` for it.
 pub fn spawn_refresh_dashboard(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
@@ -521,15 +523,19 @@ pub fn spawn_refresh_dashboard(
     tx: ScopedSender,
 ) {
     let plan = app.dashboard_fetch_plan(refresh);
+    if plan.restarts_slow_refresh {
+        app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
+    }
+    if plan.fetches_nothing() {
+        app.complete_loading_tab(app::Tab::Dashboard, "Success");
+        return;
+    }
     app.start_loading_tab(app::Tab::Dashboard);
     for tab in &plan.sources {
         app.start_loading_tab(*tab);
         if refresh == crate::dashboard::DashboardRefresh::Full {
             app.fetch_failures.remove(tab);
         }
-    }
-    if plan.restarts_slow_refresh {
-        app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
     }
     fx.spawn(refresh_dashboard(
         client.clone(),
@@ -1428,6 +1434,30 @@ mod tests {
             tx,
         );
         assert!(!app.loading_tabs.contains(&app::Tab::Milestones));
+    }
+
+    #[test]
+    fn a_periodic_dashboard_refresh_with_nothing_due_spawns_nothing_and_leaves_no_loading_mark() {
+        let mut app = app::App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
+        app.start_loading_tab(app::Tab::Dashboard);
+        let client = dummy_client();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = app.scoped_sender(tx);
+        let mut fx = crate::effect::Effects::default();
+
+        spawn_refresh_dashboard(
+            &mut fx,
+            &client,
+            &mut app,
+            crate::dashboard::DashboardRefresh::Periodic,
+            tx,
+        );
+
+        assert!(fx.into_vec().is_empty());
+        assert!(app.loading_tabs.is_empty());
     }
 
     /// A GitHub app on the PRs tab with the inspector open on PR #11.

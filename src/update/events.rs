@@ -808,11 +808,15 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             changes,
             result,
         } => {
+            let sender = app.scoped_sender(tx.clone());
             let mut reverted_marks = None;
             if let Some(diff_view) = app.diff_view.as_mut().filter(|v| v.mr_iid == mr_iid)
                 && let Some(sync) = diff_view.viewed_sync.as_mut()
             {
                 let corrections = sync.settle(&changes, result.is_ok());
+                if sync.claim_follow_up_flush() {
+                    crate::fetch::spawn_viewed_sync_flush(fx, mr_iid, sender);
+                }
                 if diff_view.apply_review_corrections(&corrections) > 0 {
                     reverted_marks = Some(diff_view.review_marks());
                 }

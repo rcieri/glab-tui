@@ -829,12 +829,9 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
 }
 
 /// Toggles inside this window reach GitHub as one request, and a file toggled
-/// back and forth sends only its final state.
+/// back and forth sends only its final state. Follow-up flushes wait it too,
+/// which spaces out the batches of a large toggle.
 const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
-
-/// Files per "Viewed" mutation; every path is a `gh` argument, and Windows
-/// caps a command line at 32 KiB.
-const VIEWED_SYNC_BATCH: usize = 50;
 
 pub fn spawn_viewed_sync_flush(fx: &mut Effects, mr_iid: u64, tx: ScopedSender) {
     fx.spawn(async move {
@@ -843,8 +840,8 @@ pub fn spawn_viewed_sync_flush(fx: &mut Effects, mr_iid: u64, tx: ScopedSender) 
     });
 }
 
-/// Sends the viewed-state `changes` of a PR to GitHub, one result event per
-/// batch so each batch is settled (or reverted) on its own.
+/// Sends one batch of viewed-state `changes` of a PR to GitHub. `ViewedSync`
+/// keeps it the only request in flight and chains the next batch after it.
 pub fn spawn_viewed_files_sync(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
@@ -855,20 +852,15 @@ pub fn spawn_viewed_files_sync(
 ) {
     let client = client.clone();
     fx.spawn(async move {
-        for (i, batch) in changes.chunks(VIEWED_SYNC_BATCH).enumerate() {
-            if i > 0 {
-                crate::backend::rate_limit::pace_bulk_operation().await;
-            }
-            let result = client
-                .set_files_viewed(&pull_request_id, batch)
-                .await
-                .map_err(|e| e.to_string());
-            let _ = tx.send(Event::ViewedFilesSynced {
-                mr_iid,
-                changes: batch.to_vec(),
-                result,
-            });
-        }
+        let result = client
+            .set_files_viewed(&pull_request_id, &changes)
+            .await
+            .map_err(|e| e.to_string());
+        let _ = tx.send(Event::ViewedFilesSynced {
+            mr_iid,
+            changes,
+            result,
+        });
     });
 }
 

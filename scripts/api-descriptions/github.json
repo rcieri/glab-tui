@@ -649,6 +649,17 @@
               }
             }
           }
+        },
+        "id": {},
+        "files": {
+          "pageInfo": {
+            "hasNextPage": {},
+            "endCursor": {}
+          },
+          "nodes": {
+            "path": {},
+            "viewerViewedState": {}
+          }
         }
       }
     }

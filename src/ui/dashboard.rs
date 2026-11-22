@@ -359,23 +359,14 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
         .fg(theme.header_fg)
         .add_modifier(Modifier::BOLD);
     let mut title = match (card, card.tab()) {
-        (DashboardCard::Contributors, _) | (_, None) => {
-            let mut spans = vec![Span::styled(
-                format!(
-                    " {} Contributors · {} ",
-                    ctx.icons.user,
-                    contributors_view_label(ctx.app.dashboard.contributors_view)
-                ),
-                header,
-            )];
-            if let Some(note) = feed_cut_off_note(ctx) {
-                spans.push(Span::styled(
-                    format!("{note} "),
-                    Style::default().fg(theme.yellow),
-                ));
-            }
-            spans
-        }
+        (DashboardCard::Contributors, _) | (_, None) => vec![Span::styled(
+            format!(
+                " {} Contributors · {} ",
+                ctx.icons.user,
+                contributors_view_label(ctx.app.dashboard.contributors_view)
+            ),
+            header,
+        )],
         (DashboardCard::MergeRequests | DashboardCard::Issues, Some(tab)) => vec![Span::styled(
             format!(
                 " {} · {} ",
@@ -389,12 +380,6 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
             header,
         )],
     };
-    if let Some(cut) = ctx.app.dashboard_count_cut(card) {
-        title.push(Span::styled(
-            format!("{} ", count_cut_note(cut)),
-            Style::default().fg(theme.yellow),
-        ));
-    }
     if let Some(stale) = card.tab().and_then(|tab| ctx.app.stale_tabs.get(&tab)) {
         title.push(Span::styled(
             match stale {
@@ -410,10 +395,31 @@ fn card_title(ctx: &Context, card: DashboardCard) -> Line<'static> {
     Line::from(title)
 }
 
+/// Why a card's counts may be short. The notes sit on the bottom border,
+/// which no heading or badge shares, so even a card at `CARD_MIN_WIDTH`
+/// holds the longest of them whole.
+fn card_note(ctx: &Context, card: DashboardCard) -> Option<Line<'static>> {
+    let feed_note = match card {
+        DashboardCard::Contributors => feed_cut_off_note(ctx),
+        _ => None,
+    };
+    let notes: Vec<String> = feed_note
+        .into_iter()
+        .chain(ctx.app.dashboard_count_cut(card).map(count_cut_note))
+        .collect();
+    if notes.is_empty() {
+        return None;
+    }
+    Some(Line::styled(
+        format!(" {} ", notes.join(" ")),
+        Style::default().fg(ctx.theme.yellow),
+    ))
+}
+
 fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
     let theme = ctx.theme;
     let has_keys = ctx.is_card_focused(card);
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(if has_keys && ctx.focus == DashboardFocus::Cards {
             BorderType::Thick
@@ -426,6 +432,9 @@ fn render_card(f: &mut Frame, ctx: &Context, card: DashboardCard, area: Rect) {
             theme.border
         }))
         .title(card_title(ctx, card));
+    if let Some(note) = card_note(ctx, card) {
+        block = block.title_bottom(note);
+    }
     let body_area = block.inner(area);
     let (body_width, body_height) = (usize::from(body_area.width), usize::from(body_area.height));
 
@@ -1565,6 +1574,67 @@ mod tests {
 
         app.loaded_tabs.insert(Tab::MergeRequests);
         assert_eq!(contributors_availability(&app), ListAvailability::Ready);
+    }
+
+    #[test]
+    fn a_cards_count_note_fits_whole_on_its_bottom_border_at_the_minimum_width() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = dashboard_app(repository());
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.mrs.items = (1..=100)
+            .map(|iid| {
+                serde_json::from_value(serde_json::json!({
+                    "iid": iid,
+                    "title": format!("mr {iid}"),
+                    "state": "opened",
+                    "updated_at": "2026-10-28T00:00:00Z",
+                    "author": { "username": "bob" },
+                    "milestone": null,
+                    "target_branch": "main",
+                    "draft": false,
+                    "description": null,
+                }))
+                .expect("a valid merge request")
+            })
+            .collect();
+        let (theme, icons) = (Theme::default(), Icons::ascii());
+        let now = app.dashboard_now();
+        let ctx = Context {
+            app: &app,
+            theme: &theme,
+            icons: &icons,
+            kind: app.kind(),
+            now,
+            signed_in: None,
+            person: Person::Everyone,
+            rows: app.dashboard_rows(now),
+            selected: None,
+            selected_card: None,
+            focus: DashboardFocus::Tab,
+        };
+        let mut terminal =
+            Terminal::new(TestBackend::new(CARD_MIN_WIDTH, CARD_HEIGHT)).expect("a test terminal");
+
+        terminal
+            .draw(|f| render_card(f, &ctx, DashboardCard::Contributors, f.area()))
+            .expect("the card draws");
+
+        let buffer = terminal.backend().buffer();
+        let row = |y: u16| -> String {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        };
+        assert_eq!(row(0), "╭ @ Contributors · open work ──────╮");
+        assert_eq!(row(CARD_HEIGHT - 1), "╰ (newest 100 only) ───────────────╯");
     }
 
     #[test]

@@ -279,20 +279,32 @@ fn sorted_record_names(log_path: &Path) -> Vec<String> {
     names
 }
 
-/// Every call recorded in `<log_path>.argv.d/` the real CLI would refuse.
-pub fn violations_in_log(log_path: &Path) -> Vec<String> {
+/// Every call recorded in `<log_path>.argv.d/`, each as its arguments with
+/// the program name first.
+pub fn recorded_argvs(log_path: &Path) -> Vec<Vec<String>> {
     let dir = argv_dir(log_path);
-    let mut refused: Vec<String> = record_names(log_path)
+    record_names(log_path)
         .into_iter()
         .filter(|name| !name.starts_with('.'))
         .filter_map(|name| std::fs::read(dir.join(name)).ok())
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-        .filter_map(|record| {
-            let argv: Vec<&str> = record
+        .map(|record| {
+            record
                 .strip_suffix(ARG_END)
                 .unwrap_or(&record)
                 .split(ARG_END)
-                .collect();
+                .map(str::to_string)
+                .collect()
+        })
+        .collect()
+}
+
+/// Every call recorded in `<log_path>.argv.d/` the real CLI would refuse.
+pub fn violations_in_log(log_path: &Path) -> Vec<String> {
+    let mut refused: Vec<String> = recorded_argvs(log_path)
+        .iter()
+        .filter_map(|argv| {
+            let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
             violation(&argv)
         })
         .collect();

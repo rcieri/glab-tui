@@ -182,6 +182,12 @@ fn the_window_key_counts_each_contributors_activity_in_the_last_day_and_week() {
         "    1    0    0    0",
         "only the push of 2 hours ago is inside the last day",
     );
+    wait_for_line(
+        &mut session,
+        "@reviewer-user",
+        "    0    0    0    0",
+        "reviewer-user's diff comment and approval are older than a day",
+    );
 
     session.press_keys(b"w");
     session

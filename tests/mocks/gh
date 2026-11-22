@@ -44,6 +44,16 @@ if [[ "$*" == "repo view --json mergeCommitAllowed"* ]]; then
     exit 0
 fi
 
+# The branch list: the fixture, plus the branch a `git/refs` POST created.
+branches_json() {
+    if [[ -f "$LOG_FILE.created_branch" ]]; then
+        sed '$d' "$FIXTURES_DIR/branches.json" | sed '$s/}$/},/'
+        printf '  {"name": "%s", "merged": false, "protected": false, "default": false, "commit": {"id": "a1b2c3d4e5f67890123456789012345678901234", "sha": "a1b2c3d4e5f67890123456789012345678901234"}}\n]\n' "$(cat "$LOG_FILE.created_branch")"
+    else
+        cat "$FIXTURES_DIR/branches.json"
+    fi
+}
+
 # Match arguments to determine response
 if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     echo "mock github job trace output"
@@ -112,6 +122,14 @@ if [[ "$*" == "api graphql"*"entries(first"* ]]; then
     exit 0
 fi
 
+# Latest status of each deployment in tests/fixtures/gh_deployments.json.
+if [[ "$*" == "api graphql"*"latestStatus"* ]]; then
+    echo '{"data":{"repository":{"deployments":{"nodes":[
+        {"databaseId":100,"latestStatus":{"state":"FAILURE"}},
+        {"databaseId":99,"latestStatus":{"state":"SUCCESS"}}]}}}}'
+    exit 0
+fi
+
 if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
     echo '{"data":{"repository":{
         "pr_10":{"number":10,"stack":{"number":7,"size":2},"stackEntry":{"position":1}},
@@ -153,6 +171,19 @@ fi
 if [[ "$*" == *"api"* ]]; then
     if [[ "$*" == "api user "* ]]; then
         echo "test-user"
+    elif [[ "$*" == "api /repos/test-owner/test-repo" ]]; then
+        # Repository info: the branch list reads the default branch from it.
+        echo '{"default_branch": "main"}'
+    elif [[ "$*" == *"/actions/jobs/"*"/cancel"* ]]; then
+        # GitHub has no per-job cancel endpoint (#781).
+        echo 'gh: Not Found (HTTP 404)' >&2
+        exit 1
+    elif [[ "$*" == *"/git/refs/heads/"* && "$*" != *" -X "* ]]; then
+        # Resolving the branch a new one is created from.
+        echo '{"ref": "refs/heads/main", "object": {"sha": "a1b2c3d4e5f67890123456789012345678901234"}}'
+    elif [[ "$*" == *"/git/refs"* && " $* " == *" -X POST "* ]]; then
+        sed -n 's/.*"ref":"refs\/heads\/\([^"]*\)".*/\1/p' "$LOG_FILE.stdin" | tail -1 > "$LOG_FILE.created_branch"
+        echo '{}'
     elif [[ "$*" == *"closingIssuesReferences"* ]]; then
         echo '{"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}'
     elif [[ "$*" == *"orgs/"*"/repos"*" --jq .[].full_name"* ]]; then
@@ -184,7 +215,7 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
     elif [[ "$*" == *"/branches"* ]]; then
-        cat "$FIXTURES_DIR/branches.json"
+        branches_json
     elif [[ "$*" == *"/deployments/"*"/statuses"* ]]; then
         if [[ " $* " == *" -X POST "* ]]; then
             echo '{"id": 1}'

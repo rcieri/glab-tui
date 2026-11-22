@@ -1,0 +1,38 @@
+name: API Descriptions
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "scripts/gen-api-descriptions.py"
+      - "scripts/test_gen_api_descriptions.py"
+      - "scripts/api-descriptions/**"
+      - "tests/api-descriptions/**"
+      - ".github/workflows/api-descriptions.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "scripts/gen-api-descriptions.py"
+      - "scripts/test_gen_api_descriptions.py"
+      - "scripts/api-descriptions/**"
+      - "tests/api-descriptions/**"
+      - ".github/workflows/api-descriptions.yml"
+
+jobs:
+  generated:
+    name: Generated files match the pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install PyYAML
+        run: sudo apt-get update -y && sudo apt-get install -y python3-yaml
+
+      - name: Test the generator
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Check tests/api-descriptions against the pins
+        run: python3 scripts/gen-api-descriptions.py --check

@@ -173,7 +173,9 @@ mod tests {
 
     fn shell(script: &str) -> Command {
         let mut command = Command::new("sh");
-        command.args(["-c", script]);
+        command
+            .args(["-c", script])
+            .current_dir(env!("CARGO_MANIFEST_DIR"));
         command
     }
 

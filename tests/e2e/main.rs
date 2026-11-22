@@ -3,6 +3,9 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod api_graphql;
+mod api_lists;
+mod api_requests;
 mod cli_contract;
 mod config;
 mod custom_keybindings;
@@ -20,6 +23,7 @@ mod open_cli;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;
+mod rest_mutations;
 mod review_cli;
 mod review_threads;
 mod runners;
@@ -540,8 +544,9 @@ impl Sandbox {
 
 impl Drop for Sandbox {
     /// Fails the test when glab-tui made a `glab` / `gh` call the mocks have no
-    /// case for, or called a subcommand or flag the real CLI does not have.
-    /// Both problems are reported in one failure. A test that already failed
+    /// case for, called a subcommand or flag the real CLI does not have, or
+    /// sent a raw API call the pinned API descriptions do not confirm.
+    /// All problems are reported in one failure. A test that already failed
     /// keeps its own failure: panicking again while unwinding would abort the
     /// run.
     fn drop(&mut self) {
@@ -567,6 +572,13 @@ impl Drop for Sandbox {
                 "the real CLI would refuse these calls (if a newer CLI has them, bump \
                  the pins in scripts/gen-cli-reference.sh and rerun it):\n{}",
                 refused.join("\n")
+            ));
+        }
+        let api = api_requests::problems_in_log(&self.log_path);
+        if !api.is_empty() {
+            problems.push(format!(
+                "these API calls do not match the pinned API descriptions (tests/api-descriptions):\n{}",
+                api.join("\n")
             ));
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));

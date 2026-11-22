@@ -207,3 +207,34 @@ fn esc_back_to_the_pipelines_tab_returns_the_jobs_tab_to_the_branch_pipeline() {
         .wait_for_screen_without("› #12345", 5000)
         .expect("the Jobs tab title no longer names the opened pipeline");
 }
+
+/// GitLab's pipeline list carries no duration and no user, so both come
+/// from one GraphQL query over the listed pipelines.
+#[test]
+fn gitlab_pipelines_show_the_duration_and_user_from_graphql() {
+    let mut session = session_on_pipelines(&[]);
+
+    session
+        .wait_for_screen_contains("2m 5s", 5000)
+        .expect("the Duration column shows the pipeline's duration");
+
+    session.press_keys(b"i");
+    session
+        .wait_for_screen_contains("@grace", 5000)
+        .expect("the inspector names the user who ran the pipeline");
+}
+
+/// `glab ci view` refuses to run without a terminal, even with `-w`, so the
+/// pipeline page is opened by URL.
+#[test]
+fn gitlab_pipelines_tab_opens_the_pipeline_page() {
+    let mut session = session_on_pipelines(&[]);
+
+    session.press_keys(b"o");
+    session
+        .wait_for_cli_call(
+            "browser https://gitlab.com/test-owner/test-repo/-/pipelines/12345",
+            5000,
+        )
+        .expect("o opens the pipeline's page through the browser mock");
+}

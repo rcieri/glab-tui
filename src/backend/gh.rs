@@ -610,6 +610,65 @@ impl GhBackend {
             .as_deref()
     }
 
+    /// The REST deployment list, which carries no status.
+    async fn list_rest_deployments(
+        &self,
+        project: &str,
+        page_size: usize,
+        environment: Option<&str>,
+    ) -> Result<Vec<Deployment>> {
+        let mut endpoint = format!("/repos/{project}/deployments?per_page={page_size}");
+        if let Some(env) = environment {
+            endpoint.push_str(&format!("&environment={env}"));
+        }
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+            .await?;
+        #[derive(Deserialize)]
+        struct GhDeploy {
+            id: u64,
+            sha: String,
+            #[serde(rename = "ref")]
+            ref_name: String,
+            #[serde(default)]
+            description: Option<String>,
+            environment: Option<String>,
+            created_at: String,
+            updated_at: String,
+            #[serde(default)]
+            creator: Option<GhCreator>,
+        }
+        #[derive(Deserialize)]
+        struct GhCreator {
+            login: String,
+        }
+        let deploys: Vec<GhDeploy> = serde_json::from_str(&raw)?;
+        Ok(deploys
+            .into_iter()
+            .map(|d| Deployment {
+                id: d.id,
+                iid: d.id,
+                ref_name: d.ref_name,
+                tag: false,
+                sha: d.sha,
+                status: String::new(),
+                created_at: d.created_at,
+                updated_at: d.updated_at,
+                environment: d
+                    .environment
+                    .map(|e| crate::domain::deployments::EnvironmentInfo {
+                        name: e,
+                        external_url: None,
+                    }),
+                deployable: None,
+                description: d.description.unwrap_or_default(),
+                user: d
+                    .creator
+                    .map(|c| crate::domain::deployments::DeploymentUser { username: c.login }),
+            })
+            .collect())
+    }
+
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
         let stdout = self.run_gh_bounded(args, desc, None).await?;
         Ok(String::from_utf8(stdout.bytes)?)
@@ -1174,6 +1233,97 @@ fn parse_latest_deployment_state(raw: &str) -> Result<Option<String>> {
     let statuses: Vec<GhDeploymentStatus> =
         serde_json::from_str(raw).context("parsing GitHub deployment statuses")?;
     Ok(statuses.into_iter().next().map(|status| status.state))
+}
+
+/// Most nodes a GraphQL connection returns per page.
+const GRAPHQL_MAX_PAGE: usize = 100;
+
+/// GraphQL query for the latest status of the newest deployments, which the
+/// REST deployment list does not carry. Ordered newest first like the REST
+/// list, so both cover the same deployments up to `GRAPHQL_MAX_PAGE`.
+fn deployment_states_graphql_query(
+    owner: &str,
+    repo: &str,
+    environment: Option<&str>,
+    first: usize,
+) -> String {
+    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let owner = escape(owner);
+    let repo = escape(repo);
+    let environments = environment
+        .map(|env| format!("environments:[\"{}\"],", escape(env)))
+        .unwrap_or_default();
+    let first = first.min(GRAPHQL_MAX_PAGE);
+    format!(
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
+         deployments({environments}first:{first},orderBy:{{field:CREATED_AT,direction:DESC}}) {{ \
+         nodes {{ databaseId latestStatus {{ state }} }} }} }} }}"
+    )
+}
+
+/// Latest status per deployment id (`databaseId`, the REST id) in
+/// glab-tui's status words. A deployment without a status is left out, and
+/// a reply that does not parse gives no statuses at all.
+fn parse_deployment_states(raw: &str) -> HashMap<u64, String> {
+    #[derive(Deserialize)]
+    struct Response {
+        data: Option<Data>,
+    }
+    #[derive(Deserialize)]
+    struct Data {
+        repository: Option<Repository>,
+    }
+    #[derive(Deserialize)]
+    struct Repository {
+        deployments: Connection,
+    }
+    #[derive(Deserialize)]
+    struct Connection {
+        nodes: Vec<Option<Node>>,
+    }
+    #[derive(Deserialize)]
+    struct Node {
+        #[serde(rename = "databaseId")]
+        database_id: Option<u64>,
+        #[serde(rename = "latestStatus")]
+        latest_status: Option<Status>,
+    }
+    #[derive(Deserialize)]
+    struct Status {
+        state: String,
+    }
+    let Ok(Response {
+        data: Some(Data {
+            repository: Some(repository),
+        }),
+    }) = serde_json::from_str::<Response>(raw)
+    else {
+        return HashMap::new();
+    };
+    repository
+        .deployments
+        .nodes
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            Some((
+                node.database_id?,
+                github_deployment_status(&node.latest_status?.state),
+            ))
+        })
+        .collect()
+}
+
+/// A GitHub `DeploymentStatusState` in the words GitLab's deployment statuses
+/// use where one means the same, as GitHub run statuses are mapped.
+fn github_deployment_status(state: &str) -> String {
+    match state.to_ascii_uppercase().as_str() {
+        "SUCCESS" => "success".to_string(),
+        "FAILURE" => "failed".to_string(),
+        "IN_PROGRESS" => "running".to_string(),
+        "QUEUED" | "PENDING" | "WAITING" => "pending".to_string(),
+        _ => state.to_ascii_lowercase(),
+    }
 }
 
 /// Build the GraphQL query that finds the issues which a PR closes.
@@ -3839,68 +3989,33 @@ impl Backend for GhBackend {
                 ));
             }
         };
-        let mut endpoint = format!("/repos/{project}/deployments?per_page={page_size}");
-        if let Some(env) = environment {
-            endpoint.push_str(&format!("&environment={env}"));
-        }
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+        let mut deployments = self
+            .list_rest_deployments(project, page_size, environment)
             .await?;
-        #[derive(Deserialize)]
-        struct GhDeploy {
-            id: u64,
-            sha: String,
-            #[serde(rename = "ref")]
-            ref_name: String,
-            #[serde(default)]
-            description: Option<String>,
-            environment: Option<String>,
-            created_at: String,
-            updated_at: String,
-            #[serde(default)]
-            status: Option<String>,
-            #[serde(default)]
-            creator: Option<GhCreator>,
+        let (owner, repo) = project.split_once('/').unwrap_or((project, project));
+        let query = deployment_states_graphql_query(owner, repo, environment, page_size);
+        // Without the statuses the deployments still list, with an empty status.
+        if let Ok(raw) = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching Deployment Statuses",
+            )
+            .await
+        {
+            let mut states = parse_deployment_states(&raw);
+            for deployment in &mut deployments {
+                if let Some(state) = states.remove(&deployment.id) {
+                    deployment.status = state;
+                }
+            }
         }
-        #[derive(Deserialize)]
-        struct GhCreator {
-            login: String,
-        }
-        let deploys: Vec<GhDeploy> = serde_json::from_str(&raw)?;
-        Ok(deploys
-            .into_iter()
-            .map(|d| Deployment {
-                id: d.id,
-                iid: d.id,
-                ref_name: d.ref_name,
-                tag: false,
-                sha: d.sha,
-                status: d.status.unwrap_or_default(),
-                created_at: d.created_at,
-                updated_at: d.updated_at,
-                environment: d
-                    .environment
-                    .map(|e| crate::domain::deployments::EnvironmentInfo {
-                        name: e,
-                        external_url: None,
-                    }),
-                deployable: None,
-                description: d.description.unwrap_or_default(),
-                user: d
-                    .creator
-                    .map(|c| crate::domain::deployments::DeploymentUser { username: c.login }),
-            })
-            .collect())
+        Ok(deployments)
     }
 
     async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
         let name = &environment.name;
         let deployments = self
-            .list_deployments(
-                &Scope::Repository(project.to_string()),
-                STOP_DEPLOYMENT_LOOKBACK,
-                Some(name),
-            )
+            .list_rest_deployments(project, STOP_DEPLOYMENT_LOOKBACK, Some(name))
             .await?;
         // GitHub serves an environment from its newest deployment whose
         // latest status is `success`: a newer failed, pending or status-less
@@ -5360,6 +5475,58 @@ mod tests {
 
         // Malformed / missing field
         assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
+    }
+
+    #[test]
+    fn deployment_states_query_filters_by_environment_and_caps_the_page() {
+        let q = deployment_states_graphql_query("acme", "api", Some("prod\"x"), 500);
+        assert!(q.contains("repository(owner:\"acme\",name:\"api\")"));
+        assert!(q.contains("deployments(environments:[\"prod\\\"x\"],first:100,"));
+        assert!(q.contains("orderBy:{field:CREATED_AT,direction:DESC}"));
+        assert!(q.contains("nodes { databaseId latestStatus { state } }"));
+
+        let q = deployment_states_graphql_query("acme", "api", None, 30);
+        assert!(q.contains("deployments(first:30,"));
+    }
+
+    #[test]
+    fn deployment_states_are_keyed_by_rest_id_in_glab_tui_words() {
+        let raw = r#"{"data":{"repository":{"deployments":{"nodes":[
+            {"databaseId":7785087816,"latestStatus":{"state":"SUCCESS"}},
+            {"databaseId":2,"latestStatus":{"state":"FAILURE"}},
+            {"databaseId":3,"latestStatus":{"state":"ERROR"}},
+            {"databaseId":4,"latestStatus":{"state":"INACTIVE"}},
+            {"databaseId":5,"latestStatus":{"state":"IN_PROGRESS"}},
+            {"databaseId":6,"latestStatus":{"state":"QUEUED"}},
+            {"databaseId":7,"latestStatus":{"state":"PENDING"}},
+            {"databaseId":8,"latestStatus":{"state":"WAITING"}},
+            {"databaseId":9,"latestStatus":null},
+            null
+        ]}}}}"#;
+
+        let states = parse_deployment_states(raw);
+
+        let expected = [
+            (7785087816, "success"),
+            (2, "failed"),
+            (3, "error"),
+            (4, "inactive"),
+            (5, "running"),
+            (6, "pending"),
+            (7, "pending"),
+            (8, "pending"),
+        ];
+        assert_eq!(states.len(), expected.len(), "{states:?}");
+        for (id, status) in expected {
+            assert_eq!(states.get(&id).map(String::as_str), Some(status), "{id}");
+        }
+    }
+
+    #[test]
+    fn deployment_states_of_a_failed_query_are_empty() {
+        let raw = r#"{"data":null,"errors":[{"message":"Something went wrong"}]}"#;
+        assert!(parse_deployment_states(raw).is_empty());
+        assert!(parse_deployment_states("not json").is_empty());
     }
 
     #[test]

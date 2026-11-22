@@ -1,6 +1,6 @@
 [package]
 name = "glab-tui-crate"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2024"
 rust-version = "1.88"
 description = "A terminal user interface for GitLab and GitHub"
@@ -46,6 +46,7 @@ libc = "0.2.186"
 
 [dev-dependencies]
 libc = "0.2.186"
+graphql-parser = "0.4"
 
 [[test]]
 name = "e2e"

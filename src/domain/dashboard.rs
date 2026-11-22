@@ -453,7 +453,7 @@ impl ActivityWindow {
 /// What one person, or everyone, did in an activity window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityCounts {
-    pub commits: usize,
+    pub pushes: usize,
     pub comments: usize,
     pub threads: usize,
     pub reviews: usize,
@@ -476,7 +476,7 @@ pub fn activity_counts(
     });
     for contribution in made {
         match contribution.kind {
-            ContributionKind::Commit => counts.commits += 1,
+            ContributionKind::Commit => counts.pushes += 1,
             ContributionKind::Comment => counts.comments += 1,
             ContributionKind::ThreadComment => counts.threads += 1,
             ContributionKind::Review => counts.reviews += 1,
@@ -668,7 +668,7 @@ impl Activity<'_> {
 }
 
 /// The issues and MRs/PRs `person` takes part in, in any state, and their
-/// commits, comments and reviews made after `since`, most recently updated
+/// pushes, comments and reviews made after `since`, most recently updated
 /// first.
 pub fn recent_activity<'a>(
     issues: &'a [Issue],
@@ -1060,14 +1060,14 @@ mod tests {
         assert_eq!(
             counts(ActivityWindow::Day),
             ActivityCounts {
-                commits: 2,
+                pushes: 2,
                 ..ActivityCounts::default()
             }
         );
         assert_eq!(
             counts(ActivityWindow::Week),
             ActivityCounts {
-                commits: 2,
+                pushes: 2,
                 comments: 1,
                 threads: 1,
                 reviews: 0,
@@ -1080,7 +1080,7 @@ mod tests {
                 Person::Everyone,
                 ActivityWindow::Day.starts_at(now())
             )
-            .commits,
+            .pushes,
             3
         );
     }

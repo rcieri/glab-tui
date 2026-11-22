@@ -98,7 +98,7 @@ pub enum ContributorsView {
     /// Open MRs/PRs, pending reviews, assigned and overdue issues.
     #[default]
     OpenWork,
-    /// Commits, comments, thread comments and reviews in the window.
+    /// Pushes, comments, thread comments and reviews in the window.
     Activity(ActivityWindow),
 }
 
@@ -124,7 +124,7 @@ impl ContributorsView {
                 "iss",
                 "ovd",
             ],
-            ContributorsView::Activity(_) => ["cmt", "com", "thr", "rvw"],
+            ContributorsView::Activity(_) => ["psh", "com", "thr", "rvw"],
         }
     }
 
@@ -690,7 +690,7 @@ impl App {
                     window.starts_at(now),
                 );
                 [
-                    counts.commits,
+                    counts.pushes,
                     counts.comments,
                     counts.threads,
                     counts.reviews,

@@ -117,6 +117,12 @@ pub fn wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
     rows
 }
 
+pub fn parse_rfc3339(timestamp: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
 pub fn time_ago(date_str: &str) -> String {
     if let Ok(parsed_time) = date_str.parse::<DateTime<Utc>>() {
         let now = Utc::now();

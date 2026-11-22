@@ -8,6 +8,7 @@
 
 use crate::domain::client::GitlabClient;
 use crate::scope::Scope;
+use crate::utils::format::parse_rfc3339;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -59,7 +60,7 @@ impl ContributionHistory {
         let reaches_since = page
             .oldest_at
             .as_deref()
-            .and_then(parse_time)
+            .and_then(parse_rfc3339)
             .is_some_and(|oldest| oldest <= since);
         let is_last = page.is_last;
         let known_ids: HashSet<&str> = self.contributions.iter().map(|c| c.id.as_str()).collect();
@@ -76,12 +77,6 @@ impl ContributionHistory {
         };
         reaches_since || is_last
     }
-}
-
-fn parse_time(timestamp: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|t| t.with_timezone(&Utc))
 }
 
 /// The feed of the last `HISTORY_DAYS` days, read page by page.
@@ -258,7 +253,7 @@ fn gitlab_target_kind(noteable_type: &str) -> Option<TargetKind> {
 }
 
 fn gitlab_contribution(event: GlEvent) -> Option<Contribution> {
-    let made_at = parse_time(&event.created_at)?;
+    let made_at = parse_rfc3339(&event.created_at)?;
     let id = event.id.to_string();
     let base = |kind, summary, target, location| Contribution {
         id: id.clone(),
@@ -439,7 +434,7 @@ fn pull_request_target(pr: GhPullRequest) -> ContributionTarget {
 /// suffix when more were pushed), or `"pushed to <branch>"` when the feed
 /// leaves the commits out.
 fn github_contributions(event: GhEvent) -> Vec<Contribution> {
-    let Some(made_at) = parse_time(&event.created_at) else {
+    let Some(made_at) = parse_rfc3339(&event.created_at) else {
         return Vec::new();
     };
     let id = event.id;
@@ -575,7 +570,7 @@ mod tests {
                     author: "ada".to_string(),
                     kind: ContributionKind::Commit,
                     created_at: at.to_string(),
-                    made_at: parse_time(at).expect("valid time"),
+                    made_at: parse_rfc3339(at).expect("valid time"),
                     summary: String::new(),
                     target: None,
                     location: None,
@@ -594,7 +589,7 @@ mod tests {
     }
 
     fn since() -> DateTime<Utc> {
-        parse_time("2026-10-01T00:00:00Z").expect("valid time")
+        parse_rfc3339("2026-10-01T00:00:00Z").expect("valid time")
     }
 
     #[test]
@@ -674,7 +669,7 @@ mod tests {
             author: "ada".to_string(),
             kind: ContributionKind::Commit,
             created_at: at.to_string(),
-            made_at: parse_time(at).expect("valid time"),
+            made_at: parse_rfc3339(at).expect("valid time"),
             summary: String::new(),
             target: None,
             location: None,
@@ -772,7 +767,7 @@ mod tests {
                 title: title.to_string(),
             })
         };
-        let made_at = |at: &str| parse_time(at).expect("valid time");
+        let made_at = |at: &str| parse_rfc3339(at).expect("valid time");
         assert_eq!(
             contributions,
             vec![

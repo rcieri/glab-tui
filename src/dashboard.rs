@@ -11,6 +11,7 @@ use crate::domain::dashboard::{
 use crate::domain::pipelines::Pipeline;
 use crate::domain::releases::Release;
 use crate::domain::state_query::StateQuery;
+use crate::utils::format::parse_rfc3339;
 use chrono::{DateTime, Utc};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -74,8 +75,8 @@ impl ContributionFeed {
             return None;
         };
         let cut_off_at = history.cut_off_at.as_deref()?;
-        DateTime::parse_from_rfc3339(cut_off_at)
-            .is_ok_and(|at| at.with_timezone(&Utc) > since)
+        parse_rfc3339(cut_off_at)
+            .is_some_and(|at| at > since)
             .then_some(cut_off_at)
     }
 

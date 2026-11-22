@@ -8,6 +8,7 @@ use crate::domain::milestones::Milestone;
 use crate::domain::mr::MergeRequest;
 use crate::domain::mr_state::{self, WorkflowStatus};
 use crate::domain::pipelines::Pipeline;
+use crate::utils::format::parse_rfc3339;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use std::collections::BTreeSet;
 
@@ -79,8 +80,7 @@ pub fn days_until(date: Option<&str>, today: NaiveDate) -> Option<i64> {
 
 /// Whole days since an RFC 3339 timestamp. `None` when it does not parse.
 pub fn days_since(timestamp: &str, now: DateTime<Utc>) -> Option<i64> {
-    let then = DateTime::parse_from_rfc3339(timestamp).ok()?;
-    Some((now - then.with_timezone(&Utc)).num_days())
+    Some((now - parse_rfc3339(timestamp)?).num_days())
 }
 
 fn is_idle(updated_at: &str, idle_days: i64, now: DateTime<Utc>) -> bool {
@@ -368,15 +368,7 @@ impl IssueQueue {
 /// Sort by an RFC 3339 update timestamp, newest first unless
 /// `is_oldest_first`. Rows whose timestamp does not parse sort last.
 fn sort_by_update<T>(rows: &mut [T], updated_at: impl Fn(&T) -> &str, is_oldest_first: bool) {
-    sort_by_timestamp(
-        rows,
-        |row| {
-            DateTime::parse_from_rfc3339(updated_at(row))
-                .ok()
-                .map(|t| t.with_timezone(&Utc))
-        },
-        is_oldest_first,
-    );
+    sort_by_timestamp(rows, |row| parse_rfc3339(updated_at(row)), is_oldest_first);
 }
 
 /// Sort by a timestamp already parsed, newest first unless
@@ -641,16 +633,10 @@ impl Activity<'_> {
         }
     }
 
-    /// `updated_at` already parsed, so sorting a contribution never
-    /// reparses the timestamp `Contribution::made_at` already carries.
     fn made_at(&self) -> Option<DateTime<Utc>> {
         match self {
-            Activity::Issue(issue) => DateTime::parse_from_rfc3339(&issue.updated_at)
-                .ok()
-                .map(|t| t.with_timezone(&Utc)),
-            Activity::MergeRequest(mr) => DateTime::parse_from_rfc3339(&mr.updated_at)
-                .ok()
-                .map(|t| t.with_timezone(&Utc)),
+            Activity::Issue(issue) => parse_rfc3339(&issue.updated_at),
+            Activity::MergeRequest(mr) => parse_rfc3339(&mr.updated_at),
             Activity::Contribution(contribution) => Some(contribution.made_at),
         }
     }

@@ -228,6 +228,16 @@ fn github_repository_dashboard_summarizes_prs_issues_and_activity() {
     session
         .wait_for_screen_contains("@octocat", 15000)
         .expect("the contributors card lists the push event's author");
+    session.press_keys(b"ww");
+    session
+        .wait_for_screen_contains("Contributors · last 7 days", 5000)
+        .expect("w twice shows the last week of activity");
+    wait_for_line(
+        &mut session,
+        "@octocat",
+        "    1    0    1    0",
+        "the week holds octocat's push and review comment",
+    );
     session
         .wait_for_screen_contains("unassigned", 5000)
         .expect("the issues card lists its unassigned queue");

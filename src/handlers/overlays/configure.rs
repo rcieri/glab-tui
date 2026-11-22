@@ -69,6 +69,7 @@ pub fn handle_key(
                         if let Some(ref mut client) = app.gitlab_client {
                             client.page_size = new_size;
                         }
+                        app.refreshed_tabs.clear();
                         if let Some(client) = app.gitlab_client.clone() {
                             app.start_loading_tab(app.active_tab);
                             let tx = app.scoped_sender(tx.clone());
@@ -326,6 +327,37 @@ mod tests {
             1
         );
         assert!(app.loading_tabs.contains(&Tab::MergeRequests));
+        assert!(app.loading_tabs.contains(&Tab::Issues));
+    }
+
+    #[test]
+    fn a_new_page_size_makes_every_other_list_read_again_on_its_next_visit() {
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.active_tab = Tab::Issues;
+        app.refreshed_tabs
+            .extend([Tab::Issues, Tab::MergeRequests, Tab::Dashboard]);
+        app.editing_page_size = true;
+        app.page_size_input = "200".to_string();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+
+        handle_key(
+            &mut app,
+            &KeyPress::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &tx,
+            &mut fx,
+        );
+
+        assert!(app.refreshed_tabs.is_empty());
         assert!(app.loading_tabs.contains(&Tab::Issues));
     }
 }

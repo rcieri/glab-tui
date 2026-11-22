@@ -66,6 +66,7 @@ pub fn handle_key(
                             if let Some(ref mut client) = app.gitlab_client {
                                 client.page_size = new_size;
                             }
+                            app.refreshed_tabs.clear();
                             if let Some(client) = app.gitlab_client.clone() {
                                 app.start_loading_tab(app.active_tab);
                                 let tx = app.scoped_sender(tx.clone());

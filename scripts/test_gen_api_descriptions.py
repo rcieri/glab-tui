@@ -46,6 +46,7 @@ def mini_spec() -> dict[str, Any]:
                 },
                 "post": {
                     "operationId": "items/create",
+                    "requestBody": json_body({"$ref": "#/components/schemas/NewItem"}),
                     "responses": {
                         "201": json_body({"$ref": "#/components/schemas/Item"}),
                         "202": {"description": "accepted"},
@@ -98,6 +99,18 @@ def mini_spec() -> dict[str, Any]:
                         "note": {"type": "string", "nullable": True},
                         "extra": {"type": "string"},
                     },
+                },
+                "NewItem": {
+                    "required": ["name"],
+                    "allOf": [
+                        {"type": "object", "properties": {"name": {"type": "string", "description": "Its name."}}},
+                        {"type": "object", "properties": {
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "owner": {"$ref": "#/components/schemas/Owner"},
+                            "note": {"type": "string", "nullable": True},
+                            "meta": {"type": "object", "additionalProperties": {"type": "string"}},
+                        }},
+                    ],
                 },
                 "Owner": {
                     "type": "object",
@@ -380,6 +393,62 @@ class RestTests(unittest.TestCase):
         cfg["operations"][0]["absent_ok"] = {"target.title": "the description gives target no fields"}
         target = build(cfg, spec)["components"]["schemas"]["Item"]["properties"]["target"]
         self.assertEqual(target, {"type": "object", "properties": {}, "additionalProperties": False})
+
+    def test_a_request_body_is_kept_whole_and_inline(self) -> None:
+        body = build()["paths"]["/items"]["post"]["requestBody"]
+        self.assertEqual(body, json_body({
+            "type": "object",
+            "properties": {
+                "meta": {"type": "object", "additionalProperties": {"type": "string"}},
+                "name": {"type": "string"},
+                "note": {"type": ["string", "null"]},
+                "owner": {"type": "object", "properties": {
+                    "group_id": {"type": "string"}, "login": {"type": "string"}},
+                    "additionalProperties": False},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        }))
+
+    def test_a_request_body_branch_carries_the_properties_beside_it(self) -> None:
+        spec = mini_spec()
+        spec["paths"]["/items"]["post"]["requestBody"] = json_body({
+            "type": "object",
+            "properties": {"reviewers": {"type": "array", "items": {"type": "string"}}},
+            "anyOf": [{"required": ["reviewers"]}, {"required": ["team_reviewers"]}],
+        })
+        body = build(spec=spec)["paths"]["/items"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        branch = {"type": "object", "properties": {"reviewers": {"type": "array", "items": {"type": "string"}}},
+                  "additionalProperties": False}
+        self.assertEqual(body["anyOf"], [branch, branch])
+
+    def test_a_request_body_branch_that_refers_to_itself_stops_at_the_loop(self) -> None:
+        spec = mini_spec()
+        spec["components"]["schemas"]["Body"] = {
+            "properties": {"a": {"type": "string"}}, "oneOf": [{"$ref": "#/components/schemas/Body"}]}
+        spec["paths"]["/items"]["post"]["requestBody"] = json_body({"$ref": "#/components/schemas/Body"})
+        body = gen.request_body(spec, spec["paths"]["/items"]["post"])
+        self.assertEqual(body["content"]["application/json"]["schema"]["oneOf"], [{}])
+
+    def test_a_request_body_merge_leaves_the_description_untouched(self) -> None:
+        spec = mini_spec()
+        spec["components"]["schemas"]["Base"] = {"properties": {"a": {"type": "string"}}}
+        spec["components"]["schemas"]["Body"] = {
+            "properties": {"b": {"type": "string"}}, "allOf": [{"$ref": "#/components/schemas/Base"}]}
+        spec["paths"]["/items"]["post"]["requestBody"] = json_body({"$ref": "#/components/schemas/Body"})
+        gen.request_body(spec, spec["paths"]["/items"]["post"])
+        self.assertEqual(spec["components"]["schemas"]["Body"]["properties"], {"b": {"type": "string"}})
+
+    def test_an_operation_without_a_request_body_gets_none(self) -> None:
+        self.assertNotIn("requestBody", build()["paths"]["/items/{id}"]["delete"])
+
+    def test_a_request_body_that_refers_to_itself_stops_at_the_loop(self) -> None:
+        spec = mini_spec()
+        spec["components"]["schemas"]["Owner"]["properties"]["parent"] = {"$ref": "#/components/schemas/Owner"}
+        owner = build(spec=spec)["paths"]["/items"]["post"]["requestBody"]["content"]["application/json"][
+            "schema"]["properties"]["owner"]
+        self.assertEqual(owner["properties"]["parent"], {})
+
 
 
 SDL = '''

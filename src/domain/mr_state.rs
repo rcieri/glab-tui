@@ -246,10 +246,8 @@ pub fn derive_awaiting_you(can_approve: bool, you_approved: bool, approved: bool
     can_approve && !you_approved && !approved
 }
 
-/// True only when we can both confirm approval *and* attribute it. Shared
-/// with the Dashboard's `is_approved`, which must apply the same rule: a
-/// GitLab project with no approval rules sets `approved` true even though
-/// nobody approved anything.
+/// True only when we can both confirm approval *and* attribute it: a GitLab
+/// project with no approval rules sets `approved` even though nobody approved.
 pub(crate) fn is_attributably_approved(s: &ApprovalState) -> bool {
     s.approved && !s.approved_by.is_empty()
 }

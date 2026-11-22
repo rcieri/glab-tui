@@ -1299,17 +1299,14 @@ mod tests {
     /// repository's pull request templates, not its issue templates.
     #[test]
     fn picking_an_mr_template_fills_the_description_with_it() {
-        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
-        let repo = tempfile::tempdir().unwrap();
+        let _config = crate::config::isolate_config();
         for (dir, body) in [
             (".github/PULL_REQUEST_TEMPLATE", "PR template"),
             (".github/ISSUE_TEMPLATE", "issue template"),
         ] {
-            std::fs::create_dir_all(repo.path().join(dir)).unwrap();
-            std::fs::write(repo.path().join(dir).join("feature.md"), body).unwrap();
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(std::path::Path::new(dir).join("feature.md"), body).unwrap();
         }
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(repo.path()).unwrap();
 
         let kind = TemplateKind::of(&EditEntityKind::CreateMr);
         let descriptions: Vec<Option<String>> = [
@@ -1348,7 +1345,6 @@ mod tests {
         })
         .collect();
 
-        std::env::set_current_dir(original_dir).unwrap();
         assert_eq!(
             descriptions,
             vec![

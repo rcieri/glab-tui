@@ -668,11 +668,11 @@ fn selector_hints(selector: &crate::app::Selector, keys: &Keymap) -> String {
     let toggle = first(Action::SelectorToggle).filter(|_| selector.multi_select);
     let filter = first(Action::SelectorFilter).filter(|_| selector.purpose.has_filter_bar());
     [
+        first(Action::SelectorConfirm).map(|key| format!("{key} {confirm}")),
+        first(Action::SelectorClose).map(|key| format!("{key} close")),
         movement.map(|keys| format!("{keys} move")),
         toggle.map(|key| format!("{key} select")),
         filter.map(|key| format!("{key} filter")),
-        first(Action::SelectorConfirm).map(|key| format!("{key} {confirm}")),
-        first(Action::SelectorClose).map(|key| format!("{key} close")),
     ]
     .into_iter()
     .flatten()
@@ -1872,7 +1872,7 @@ command = "true"
         let mut keys = App::default().config.keybindings;
         assert_eq!(
             selector_hints(&selector, &keys),
-            "j/k move · Space select · f filter · Enter confirm · Esc close"
+            "Enter confirm · Esc close · j/k move · Space select · f filter"
         );
 
         keys.set(Action::SelectorFilter, &["s"]);
@@ -1880,7 +1880,45 @@ command = "true"
         keys.set(Action::SelectorToggle, &[]);
         assert_eq!(
             selector_hints(&selector, &keys),
-            "j/k move · s filter · Enter confirm · q close"
+            "Enter confirm · q close · j/k move · s filter"
+        );
+    }
+
+    /// The labels picker's footer is wider than the selector at 80 columns,
+    /// and what it loses must not be the way out.
+    #[test]
+    fn the_labels_picker_footer_keeps_its_close_key_at_80_columns() {
+        use crate::app::{Selector, SelectorField, SelectorPurpose};
+        let mut app = App::default();
+        app.open_selector(Selector {
+            title: "Labels".to_string(),
+            all_items: vec!["bug".to_string()],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 0,
+            entity_type: String::new(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
+            multi_select: true,
+            state: ListState::default(),
+            request: None,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let text = snapshot_text(&terminal);
+        assert!(
+            text.lines().any(|line| line.contains("Esc close")),
+            "close key clipped:\n{text}"
         );
     }
 

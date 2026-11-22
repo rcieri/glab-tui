@@ -135,6 +135,14 @@ impl ContributorsView {
         }
     }
 
+    /// The column of overdue issues, whose count turns a person's row red.
+    pub fn overdue_column(self) -> Option<usize> {
+        match self {
+            ContributorsView::OpenWork => Some(3),
+            ContributorsView::Activity(_) => None,
+        }
+    }
+
     /// The window whose contributions the item list shows. Open work counts
     /// none, so its list shows all of the feed that is read.
     pub fn activity_window(self) -> ActivityWindow {
@@ -1174,6 +1182,21 @@ mod tests {
         assert_eq!(
             ContributorsView::OpenWork.columns(BackendKind::GitLab),
             ["MRs", "rev", "iss", "ovd"]
+        );
+    }
+
+    #[test]
+    fn only_open_work_has_an_overdue_column_and_it_is_the_ovd_one() {
+        let columns = ContributorsView::OpenWork.columns(BackendKind::GitLab);
+        assert_eq!(
+            ContributorsView::OpenWork
+                .overdue_column()
+                .map(|column| columns[column]),
+            Some("ovd")
+        );
+        assert_eq!(
+            ContributorsView::Activity(ActivityWindow::Week).overdue_column(),
+            None
         );
     }
 

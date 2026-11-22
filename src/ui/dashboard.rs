@@ -51,9 +51,6 @@ const MILESTONES_SHOWN: usize = CARD_BODY_LINES / 2;
 const PROGRESS_BAR_CHARS: usize = 17;
 /// Width of one number column of the Contributors card.
 const CONTRIBUTOR_COLUMN_CHARS: usize = 5;
-/// Index of `overdue_issues` in the Open Work stats `contributor_stats`
-/// returns: `[open_mrs, reviews, open_issues, overdue_issues]`.
-const OVERDUE_ISSUES_COLUMN: usize = 3;
 const LIST_REF_WIDTH: u16 = 7;
 /// GitHub run ids run to 11 digits and release tags can be long.
 const LIST_REF_MAX_WIDTH: u16 = 14;
@@ -682,8 +679,10 @@ fn contributors_body(ctx: &Context, width: usize, height: usize) -> Vec<Line<'st
             Some(stats) => stats.iter().map(|value| format!("{value:>w$}")).collect(),
             None => format!("{:>w$}", "-").repeat(ContributorsView::COLUMN_COUNT),
         };
-        let is_late = view == ContributorsView::OpenWork
-            && stats.is_some_and(|s| s[OVERDUE_ISSUES_COLUMN] > 0);
+        let is_late = view
+            .overdue_column()
+            .zip(stats)
+            .is_some_and(|(column, stats)| stats[column] > 0);
         let late_color = if is_late {
             theme.red
         } else {

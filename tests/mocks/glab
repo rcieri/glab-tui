@@ -62,9 +62,14 @@ fi
 
 # Merge settings the merge dialog reads: merge commits unless
 # TEST_GLAB_MERGE_METHOD names another merge_method, squash preselected
-# unless TEST_GLAB_SQUASH_OPTION names another squash_option.
+# unless TEST_GLAB_SQUASH_OPTION names another squash_option. The project
+# named by TEST_GLAB_ALWAYS_SQUASH_PROJECT squashes every merge instead.
 if [[ "$*" == "repo view --output json"* ]]; then
-    echo "{\"id\":1,\"merge_method\":\"${TEST_GLAB_MERGE_METHOD:-merge}\",\"squash_option\":\"${TEST_GLAB_SQUASH_OPTION:-default_on}\"}"
+    squash_option="${TEST_GLAB_SQUASH_OPTION:-default_on}"
+    if [[ -n "$TEST_GLAB_ALWAYS_SQUASH_PROJECT" && "$*" == *" -- $TEST_GLAB_ALWAYS_SQUASH_PROJECT" ]]; then
+        squash_option="always"
+    fi
+    echo "{\"id\":1,\"merge_method\":\"${TEST_GLAB_MERGE_METHOD:-merge}\",\"squash_option\":\"$squash_option\"}"
     exit 0
 fi
 

@@ -136,11 +136,11 @@ fn run_dialog_choice(
 /// the plain merge, whose error then names the problem.
 async fn stacked_prs(
     client: &crate::domain::client::GitlabClient,
-    items: &[(String, u64, Option<String>)],
+    items: &[(String, u64, Option<String>, bool)],
 ) -> std::collections::HashSet<(String, u64)> {
     let mut by_project: std::collections::HashMap<&str, Vec<u64>> =
         std::collections::HashMap::new();
-    for (project, iid, _) in items {
+    for (project, iid, _, _) in items {
         by_project.entry(project).or_default().push(*iid);
     }
     let mut stacked = std::collections::HashSet::new();
@@ -502,7 +502,9 @@ fn run_submit_action(
             };
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
-            let mut items_with_sha: Vec<(String, u64, Option<String>)> =
+            // Whether a project squashes every merge is read per MR: the
+            // dialog's own flag holds only when every project does.
+            let mut items_with_sha: Vec<(String, u64, Option<String>, bool)> =
                 Vec::with_capacity(items.len());
             for (project_path, mr_iid) in &items {
                 let sha = app
@@ -515,7 +517,11 @@ fn run_submit_action(
                     })
                     .and_then(|m| m.sha.clone());
                 let project = app.scope.project_of(project_path).to_string();
-                items_with_sha.push((project, *mr_iid, sha));
+                let squashes_every_merge = app
+                    .merge_methods
+                    .get(&project)
+                    .is_some_and(crate::domain::mr::MergeMethods::squashes_every_merge);
+                items_with_sha.push((project, *mr_iid, sha, squashes_every_merge));
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
                 }) {
@@ -531,16 +537,20 @@ fn run_submit_action(
             fx.spawn(async move {
                 let stacked = stacked_prs(&client, &items_with_sha).await;
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (proj, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
+                for (i, (proj, mr_iid, sha, squashes_every_merge)) in
+                    items_with_sha.into_iter().enumerate()
+                {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
                     let result = if stacked.contains(&(proj.clone(), mr_iid)) {
                         client.merge_pr_stack(&proj, mr_iid, merge.method).await
                     } else {
-                        client
-                            .merge_mr(&proj, mr_iid, &merge.options(sha.as_deref()))
-                            .await
+                        let options = crate::backend::MergeOptions {
+                            squashes_every_merge,
+                            ..merge.options(sha.as_deref())
+                        };
+                        client.merge_mr(&proj, mr_iid, &options).await
                     };
                     if let Err(e) = result {
                         failures.push((mr_iid, e.to_string()));

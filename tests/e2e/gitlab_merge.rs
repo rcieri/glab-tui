@@ -7,7 +7,8 @@
 //! sets the MR's squash flag with `TEST_GLAB_MR_SQUASH`, and takes the
 //! project's `squash_option` from `TEST_GLAB_SQUASH_OPTION`, which picks the
 //! preselected method: Squash on `default_on`, Merge commit on `default_off`,
-//! and Squash for an MR whose squash flag is set.
+//! and Squash for an MR whose squash flag is set. The project named by
+//! `TEST_GLAB_ALWAYS_SQUASH_PROJECT` squashes every merge instead.
 
 use crate::{Sandbox, TestSession};
 
@@ -195,5 +196,61 @@ fn a_rebase_on_a_project_that_always_squashes_leaves_the_squash_flag_alone() {
     assert_eq!(
         merge_calls(&session),
         ["glab mr merge 2 -R test-owner/test-repo --remove-source-branch --rebase --yes"]
+    );
+}
+
+/// In group scope alpha!5 and beta!5 are both listed, and only alpha always
+/// squashes. Both fast-forward, so Rebase is a method they share.
+#[test]
+fn a_bulk_rebase_leaves_the_squash_flag_of_an_always_squash_project_alone() {
+    let sandbox = Sandbox::new(false).unwrap();
+    let conf_dir = sandbox.config_dir.join("glab-tui");
+    std::fs::create_dir_all(&conf_dir).unwrap();
+    std::fs::write(conf_dir.join("config.toml"), "icons = \"ascii\"\n").unwrap();
+    let mut session = TestSession::launch_with_args(
+        sandbox,
+        40,
+        160,
+        &["-g", "test-group"],
+        &[
+            ("TEST_GLAB_MERGE_METHOD", "ff"),
+            ("TEST_GLAB_ALWAYS_SQUASH_PROJECT", "test-group/alpha"),
+            ("TEST_GLAB_MR_SQUASH", "1"),
+        ],
+    );
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("Beta feature", 15000)
+        .expect("the MRs tab should list both projects' MRs");
+    session.press_keys(b" j ");
+    session.send_input(b"m");
+    session
+        .wait_for_screen_contains("Merge method", 15000)
+        .expect("the bulk merge dialog should show its method radio");
+    session
+        .wait_for_screen_without("loading…", 15000)
+        .expect("the dialog should list the methods both projects allow");
+    session.press_keys(b"\tl ");
+    session
+        .wait_for_screen_contains("* Rebase", 5000)
+        .expect("Rebase should be picked");
+    session.press_keys(b"\t\th");
+    session
+        .wait_for_screen_contains("Enter merge", 5000)
+        .expect("the focus should be back on Submit");
+    session.send_input(b"\r");
+    session
+        .wait_for_cli_call_count("glab mr merge 5", 2, 15000)
+        .expect("both MRs should be merged");
+    assert_eq!(
+        merge_calls(&session),
+        [
+            "glab mr merge 5 -R test-group/alpha --remove-source-branch --rebase --yes",
+            "glab mr update 5 --squash-before-merge -R test-group/beta",
+            "glab mr merge 5 -R test-group/beta --remove-source-branch --rebase --yes",
+        ]
     );
 }

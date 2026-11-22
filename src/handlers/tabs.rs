@@ -3332,8 +3332,6 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effe
             };
             if is_listed {
                 maybe_fetch_related_mrs(app, tx);
-            } else {
-                app.issues.state.select(None);
             }
             app.detail_visible = true;
         }
@@ -3344,8 +3342,6 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effe
             };
             if is_listed {
                 maybe_fetch_mr_related_issues(app, tx);
-            } else {
-                app.mrs.state.select(None);
             }
             app.detail_visible = true;
         }
@@ -3354,7 +3350,8 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effe
 
 /// Selects issue `iid` of `project` on the Issues tab, fetching it when the
 /// list does not hold it. Returns whether it was listed. Until a fetched
-/// issue arrives the selection is left where it was.
+/// issue arrives nothing is selected, so the preview never shows another
+/// issue in its place.
 pub(crate) fn focus_or_fetch_issue(
     app: &mut App,
     client: &crate::domain::client::GitlabClient,
@@ -3366,6 +3363,7 @@ pub(crate) fn focus_or_fetch_issue(
     if app.focus_issue(Some(project), iid) {
         return true;
     }
+    app.issues.state.select(None);
     crate::fetch::spawn_fetch_issue(fx, client, project, iid, app.scoped_sender(tx.clone()));
     false
 }
@@ -3382,6 +3380,7 @@ pub(crate) fn focus_or_fetch_mr(
     if app.focus_mr(Some(project), iid) {
         return true;
     }
+    app.mrs.state.select(None);
     crate::fetch::spawn_fetch_mr(fx, client, project, iid, app.scoped_sender(tx.clone()));
     false
 }
@@ -4644,6 +4643,31 @@ pub(crate) mod tests {
             "project_path": project,
         }))
         .expect("merge request fixture")
+    }
+
+    #[test]
+    fn opening_an_unlisted_mr_clears_the_selection_until_it_is_fetched() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("acme/alpha".to_string());
+        app.mrs.items = vec![mr_in("acme/alpha", 1, "bob")];
+        app.mrs.state.select(Some(0));
+        let client = crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+
+        let is_listed = focus_or_fetch_mr(&mut app, &client, "acme/alpha", 9, &tx, &mut fx);
+
+        assert!(!is_listed);
+        assert_eq!(app.mrs.state.selected(), None);
+        assert_eq!(fx.into_vec().len(), 1);
     }
 
     fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {

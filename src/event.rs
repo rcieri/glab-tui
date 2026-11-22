@@ -134,10 +134,10 @@ pub enum Event {
     MrDeleted,
     BranchesFetched(Vec<crate::domain::branches::Branch>),
     EnvironmentsFetched(Vec<crate::domain::deployments::Environment>),
-    /// Every list the Dashboard summarizes has been fetched, successfully or
-    /// not: each list reported its own outcome through its usual event.
+    /// The lists a Dashboard refresh fetched have all reported through their
+    /// own events.
     DashboardRefreshed,
-    /// The repository's activity feed, fetched with every Dashboard refresh.
+    /// The repository's activity feed, read when the refresh plan asks for it.
     ContributionsFetched(Result<crate::domain::contributions::ContributionHistory, String>),
     DeploymentsFetched {
         environment: String,

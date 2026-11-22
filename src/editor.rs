@@ -45,31 +45,43 @@ pub fn editor_name() -> String {
     editor_command_string()
 }
 
+/// Formats the raw command string passed to `cmd /S /C` on Windows.
+///
+/// Wraps the entire command line in an outer pair of quotes:
+/// `cmd.exe /S /C "<command>"`
+/// Under `cmd /S /C`, `cmd.exe` strips exactly the outermost pair of quotes,
+/// leaving all inner quotes (around `$EDITOR` and around the file path) intact,
+/// without inserting backslashes that corrupt file paths or fail argument parsing.
+#[cfg(any(windows, test))]
+pub(crate) fn windows_editor_command_string(editor: &str, file_path: &std::path::Path) -> String {
+    let path_str = file_path.to_string_lossy();
+    format!("\"{editor} \"{path_str}\"\"")
+}
+
 /// Creates a shell command that executes the editor string, passing the file path
-/// as a positional argument (`"$@"` on Unix, embedded quoted path on Windows) so
-/// arguments in `$EDITOR` (e.g. `code --wait`, `nvim -u minimal.lua`,
+/// as a positional argument (`"$@"` on Unix, raw `/S /C` command line on Windows)
+/// so arguments in `$EDITOR` (e.g. `code --wait`, `nvim -u minimal.lua`,
 /// `omarchy-launch-editor --inline`) are honored without breaking path escaping.
 ///
 /// Prefer [`editor_command`] for normal use; this is exposed as `pub(crate)` for
 /// unit testing of the command-building logic.
+#[cfg(windows)]
 pub(crate) fn editor_process(editor: &str, file_path: &std::path::Path) -> std::process::Command {
-    if cfg!(windows) {
-        // On Windows, `cmd /C "string"` does not expand %1 from subsequent
-        // argument slots — the file path must be embedded directly in the
-        // command string. We quote it with double-quotes; paths containing
-        // double-quotes are vanishingly rare on Windows.
-        let path_str = file_path.to_string_lossy();
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.arg("/C").arg(format!("{editor} \"{path_str}\""));
-        cmd
-    } else {
-        let mut cmd = std::process::Command::new("sh");
-        cmd.arg("-c")
-            .arg(format!("{editor} \"$@\""))
-            .arg("sh")
-            .arg(file_path);
-        cmd
-    }
+    use std::os::windows::process::CommandExt;
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/S", "/C"]);
+    cmd.raw_arg(windows_editor_command_string(editor, file_path));
+    cmd
+}
+
+#[cfg(not(windows))]
+pub(crate) fn editor_process(editor: &str, file_path: &std::path::Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(format!("{editor} \"$@\""))
+        .arg("sh")
+        .arg(file_path);
+    cmd
 }
 
 pub fn edit_in_editor(current_val: &str, terminal: &mut AppTerminal) -> Option<String> {
@@ -252,10 +264,13 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(cmd.get_program(), "cmd");
             let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-            // Windows: path is embedded directly in the /C string (no %1 expansion)
-            assert_eq!(args[0], "/C");
-            assert_eq!(args[1], "nvim -u minimal.lua --clean \"/tmp/test note.md\"");
-            assert_eq!(args.len(), 2, "no trailing file arg on Windows");
+            assert_eq!(args[0], "/S");
+            assert_eq!(args[1], "/C");
+            assert_eq!(
+                args[2],
+                "\"nvim -u minimal.lua --clean \"/tmp/test note.md\"\""
+            );
+            assert_eq!(args.len(), 3, "raw /S /C command line on Windows");
         } else {
             assert_eq!(cmd.get_program(), "sh");
             let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
@@ -264,6 +279,25 @@ mod tests {
             assert_eq!(args[2], "sh");
             assert_eq!(args[3], file_path.as_os_str());
         }
+    }
+
+    #[test]
+    fn windows_editor_command_string_preserves_inner_quotes_under_cmd_s_c() {
+        let file_path = Path::new(r"C:\Users\User Name\AppData\Local\Temp\test note.md");
+        let raw = windows_editor_command_string("code --wait", file_path);
+        assert_eq!(
+            raw,
+            "\"code --wait \"C:\\Users\\User Name\\AppData\\Local\\Temp\\test note.md\"\""
+        );
+
+        let quoted_editor = windows_editor_command_string(
+            "\"C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd\" --wait",
+            file_path,
+        );
+        assert_eq!(
+            quoted_editor,
+            "\"\"C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd\" --wait \"C:\\Users\\User Name\\AppData\\Local\\Temp\\test note.md\"\""
+        );
     }
 
     #[test]

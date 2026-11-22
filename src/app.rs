@@ -4307,6 +4307,7 @@ pub struct App {
     pub layout: Option<crate::ui::layout::LayoutPlan>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
+    pub top_nav_hits: Vec<(Rect, Tab)>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
     pub cached_labels: Vec<String>,
     /// Real per-label colors fetched from the API (name → color).
@@ -4467,6 +4468,7 @@ impl App {
             layout: None,
             content_rect: None,
             detail_rect: None,
+            top_nav_hits: Vec::new(),
             overlay_stack: vec![],
             cached_labels: Vec::new(),
             label_colors: std::collections::HashMap::new(),
@@ -6998,6 +7000,17 @@ impl App {
             current_index - 1
         };
         self.switch_to_tab(tabs[prev_index]);
+    }
+
+    /// Whether the preview pane fills the workspace. A zoom request on the
+    /// Pipelines tab only takes effect once a pipeline's jobs are listed.
+    pub fn preview_zoomed(&self) -> bool {
+        self.details_zoomed && (self.active_tab != Tab::Pipelines || !self.jobs.items.is_empty())
+    }
+
+    /// Whether the next/previous-tab keys switch tabs right now.
+    pub fn tab_switch_enabled(&self) -> bool {
+        self.config.layout.tab_switch_in_zoom || !self.preview_zoomed()
     }
 
     /// The user moving to `tab` (tab keys, sidebar click): leaves select mode

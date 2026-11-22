@@ -3060,16 +3060,20 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::GlobalNextTab, key_event) =>
             {
-                app.next_tab();
-                load_entered_tab(app, tx, fx);
+                if app.tab_switch_enabled() {
+                    app.next_tab();
+                    load_entered_tab(app, tx, fx);
+                }
             }
             _ if app
                 .config
                 .keybindings
                 .matches(Action::GlobalPrevTab, key_event) =>
             {
-                app.previous_tab();
-                load_entered_tab(app, tx, fx);
+                if app.tab_switch_enabled() {
+                    app.previous_tab();
+                    load_entered_tab(app, tx, fx);
+                }
             }
             _ if app
                 .config

@@ -145,6 +145,87 @@ fn render_mode_indicator(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Re
     f.render_widget(indicator, area);
 }
 
+/// Renders the one-row horizontal tab navigation bar across `area`.
+///
+/// Lays every visible tab label onto a virtual strip. When the strip exceeds `area.width`,
+/// it scrolls to keep the active tab centered, clamping to the edges at the ends.
+/// Returns the hit rects and corresponding tabs for mouse clicks.
+fn render_top_nav(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Rect) -> Vec<(Rect, Tab)> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+    let theme = &ctx.theme;
+    let kind = ctx.kind;
+    let tabs = app.available_tabs();
+
+    // Lay every label out on a virtual strip: (tab, label, start column).
+    // Labels carry a space of padding on each side, so adjacent tabs sit two
+    // columns apart with no extra gap.
+    let mut strip = Vec::with_capacity(tabs.len());
+    let mut strip_width = 0;
+    for tab in &tabs {
+        let label = format!(" {} ", tab.title(kind, ctx.icons).to_uppercase());
+        let width = label.chars().count();
+        strip.push((*tab, label, strip_width));
+        strip_width += width;
+    }
+
+    let view = area.width as usize;
+    let offset = if strip_width <= view {
+        0
+    } else {
+        let active = tabs.iter().position(|t| *t == app.active_tab).unwrap_or(0);
+        let (_, _, active_start) = strip[active];
+        let active_width = strip[active].1.chars().count();
+        let center = active_start + active_width / 2;
+        let ideal = center.saturating_sub(view / 2);
+        ideal.min(strip_width.saturating_sub(view))
+    };
+
+    let mut spans = Vec::new();
+    let mut hits = Vec::new();
+    let y = area.y;
+    let base_x = area.x;
+
+    for (tab, label, start) in &strip {
+        let end = start + label.chars().count();
+        if end <= offset || *start >= offset + view {
+            continue;
+        }
+        let clip_left = offset.saturating_sub(*start);
+        let clip_right = end.saturating_sub(offset + view);
+        let visible_chars: String = label
+            .chars()
+            .skip(clip_left)
+            .take(label.chars().count().saturating_sub(clip_left + clip_right))
+            .collect();
+        let width = visible_chars.chars().count() as u16;
+        if width == 0 {
+            continue;
+        }
+
+        let x = (base_x as usize + start.saturating_sub(offset)) as u16;
+        let is_active = *tab == app.active_tab;
+        let style = if is_active {
+            Style::default()
+                .bg(theme.border_focused)
+                .fg(theme.highlight_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_muted)
+        };
+
+        spans.push(Span::styled(visible_chars, style));
+        hits.push((Rect::new(x, y, width, 1), *tab));
+    }
+
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg)),
+        area,
+    );
+    hits
+}
+
 /// What sets a diff row apart from the rows around it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowHighlight {
@@ -461,52 +542,69 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     }
 
-    let title = Paragraph::new(Line::from(title_spans))
-        .style(Style::default().bg(ctx.theme.bg))
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(ctx.theme.border)),
-        );
+    // Top banner: a text row (left content and a right-aligned mode
+    // indicator) above a separator that spans the full width.
+    let header_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(plan.header_area);
+
+    let title = Paragraph::new(Line::from(title_spans)).style(Style::default().bg(ctx.theme.bg));
     f.render_widget(title, plan.banner_title);
     render_mode_indicator(f, ctx, app, plan.banner_mode);
+
+    f.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(ctx.theme.border))
+            .style(Style::default().bg(ctx.theme.bg)),
+        header_rows[1],
+    );
+
+    if plan.has_top_nav() {
+        app.top_nav_hits = render_top_nav(f, ctx, app, plan.top_nav_area);
+    } else {
+        app.top_nav_hits.clear();
+    }
 
     let sidebar_rect = plan.sidebar_rect;
     let content_area = plan.content_area;
     let detail_rect = plan.detail_rect;
+    let kind = ctx.kind;
 
     // Sidebar: Tabs
-    let kind = ctx.kind;
-    let sidebar_items: Vec<ListItem> = app
-        .available_tabs()
-        .iter()
-        .map(|t| {
-            let title = format!(" {} ", t.title(kind, ctx.icons).to_uppercase());
-            if *t == app.active_tab {
-                ListItem::new(title).style(
-                    Style::default()
-                        .bg(ctx.theme.border_focused)
-                        .fg(ctx.theme.highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                ListItem::new(title).style(Style::default().fg(ctx.theme.text_muted))
-            }
-        })
-        .collect();
+    if plan.has_sidebar() {
+        let sidebar_items: Vec<ListItem> = app
+            .available_tabs()
+            .iter()
+            .map(|t| {
+                let title = format!(" {} ", t.title(kind, ctx.icons).to_uppercase());
+                if *t == app.active_tab {
+                    ListItem::new(title).style(
+                        Style::default()
+                            .bg(ctx.theme.border_focused)
+                            .fg(ctx.theme.highlight_bg)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    ListItem::new(title).style(Style::default().fg(ctx.theme.text_muted))
+                }
+            })
+            .collect();
 
-    let sidebar = List::new(sidebar_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(ctx.theme.border))
-            .title(format!(" {} Navigation ", icons.label_navigation))
-            .title_style(
-                Style::default()
-                    .fg(ctx.theme.text_muted)
-                    .add_modifier(Modifier::BOLD),
-            ),
-    );
-    f.render_widget(sidebar, sidebar_rect);
+        let sidebar = List::new(sidebar_items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ctx.theme.border))
+                .title(format!(" {} Navigation ", icons.label_navigation))
+                .title_style(
+                    Style::default()
+                        .fg(ctx.theme.text_muted)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        );
+        f.render_widget(sidebar, sidebar_rect);
+    }
 
     // Main Area Title
     // Inside a pipeline descent the tab name alone no longer says where you
@@ -2364,5 +2462,90 @@ diff --git a/a.rs b/a.rs
             .find(|row| row.contains("FILTERED"))
             .expect("filtered title drawn");
         assert!(title.contains("foo (1/1)"), "{title}");
+    }
+
+    #[test]
+    fn header_separator_spans_the_full_width() {
+        for nav in [
+            crate::config::NavPosition::Left,
+            crate::config::NavPosition::Top,
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+            let mut app = App::default();
+            app.config.layout.nav_position = nav;
+
+            terminal.draw(|f| render(f, &mut app)).unwrap();
+
+            let separator = &rendered_rows(&terminal)[1];
+            assert!(separator.chars().all(|c| c == '─'), "{nav:?}: {separator}");
+        }
+    }
+
+    #[test]
+    fn left_nav_is_default_and_registers_no_top_targets() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.top_nav_hits.is_empty());
+    }
+
+    fn top_nav_hits_at(width: u16, active_index: usize) -> (Vec<(Rect, Tab)>, Tab) {
+        let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+        let mut app = App::default();
+        app.config.layout.nav_position = crate::config::NavPosition::Top;
+        let tabs = app.available_tabs();
+        let target = tabs[active_index];
+        app.active_tab = target;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        (app.top_nav_hits.clone(), target)
+    }
+
+    #[test]
+    fn top_nav_registers_click_targets() {
+        let (hits, active_tab) = top_nav_hits_at(160, 0);
+        let registered: Vec<Tab> = hits.iter().map(|(_, t)| *t).collect();
+        assert_eq!(registered, App::default().available_tabs());
+        assert!(hits.iter().all(|(r, _)| r.y == 2 && r.height == 1));
+        assert!(hits.iter().any(|(_, t)| *t == active_tab));
+    }
+
+    #[test]
+    fn top_nav_keeps_active_tab_centred_while_scrolling() {
+        let count = App::default().available_tabs().len();
+        for active in [count / 2 - 1, count / 2, count / 2 + 1] {
+            let (hits, tab) = top_nav_hits_at(60, active);
+            let (rect, _) = hits.iter().find(|(_, t)| *t == tab).unwrap();
+            let center = rect.x + rect.width / 2;
+            assert!(center.abs_diff(30) <= 1, "{tab:?} centred at {center}");
+            assert!(hits.iter().all(|(r, _)| r.right() <= 60));
+        }
+    }
+
+    #[test]
+    fn top_nav_pins_to_the_ends() {
+        let count = App::default().available_tabs().len();
+        let (hits, tab) = top_nav_hits_at(60, 0);
+        assert_eq!(hits[0], (Rect::new(0, 2, hits[0].0.width, 1), tab));
+
+        let (hits, tab) = top_nav_hits_at(60, count - 1);
+        let (last, last_tab) = hits.last().unwrap();
+        assert_eq!(*last_tab, tab);
+        assert_eq!(last.right(), 60);
+    }
+
+    #[test]
+    fn top_nav_hides_in_a_zoomed_preview_when_tab_switching_is_off_there() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        let mut app = App::default();
+        app.config.layout.nav_position = crate::config::NavPosition::Top;
+        app.config.layout.tab_switch_in_zoom = false;
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(!app.top_nav_hits.is_empty(), "shown when not zoomed");
+
+        app.details_zoomed = true;
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        assert!(app.top_nav_hits.is_empty(), "hidden while zoomed");
     }
 }

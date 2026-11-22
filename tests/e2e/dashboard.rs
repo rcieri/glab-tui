@@ -75,10 +75,11 @@ fn a_queue_lists_its_items_and_enter_opens_one() {
         "the mock reports no review state, so the MR waits for nobody: {}",
         session.emulator.get_text()
     );
-    assert!(
-        screen_line_with(&session, "unassigned").contains("  2 @ unassigned"),
-        "both issues are unassigned: {}",
-        session.emulator.get_text()
+    wait_for_line(
+        &mut session,
+        "unassigned",
+        "  2 @ unassigned",
+        "both issues are unassigned",
     );
 
     session.press_keys(b"\r\r\r");
@@ -155,6 +156,9 @@ fn esc_climbs_back_one_level_at_a_time() {
 #[test]
 fn the_pipelines_card_lists_its_runs_and_opens_one_in_its_tab() {
     let mut session = dashboard_session();
+    session
+        .wait_for_screen_contains("100% succeeded of the last 1", 5000)
+        .expect("the pipelines card counts the fetched run before Enter opens its list");
     session.press_keys(b"\rj\r");
     session
         .wait_for_screen_contains("Enter open · Esc back", 5000)
@@ -247,6 +251,9 @@ fn github_repository_dashboard_summarizes_prs_issues_and_activity() {
         session.emulator.get_text()
     );
 
+    session
+        .wait_for_screen_contains("100% succeeded of the last 1", 5000)
+        .expect("the pipelines card counts the fetched run before Enter opens its list");
     session.press_keys(b"\rj\r");
     session
         .wait_for_screen_contains("Enter open · Esc back", 5000)

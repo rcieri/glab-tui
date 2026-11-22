@@ -165,10 +165,10 @@ fn awaits_review_from(mr: &MergeRequest, login: &str, signed_in: Option<&str>) -
     if let Some(workflow) = signed_in_workflow(mr, login, signed_in) {
         return workflow == WorkflowStatus::ReviewRequested;
     }
-    let has_approved = mr
-        .approval
-        .as_ref()
-        .is_some_and(|a| a.approved_by.iter().any(|u| u == login));
+    let Some(approval) = mr.approval.as_ref() else {
+        return false;
+    };
+    let has_approved = approval.approved_by.iter().any(|u| u == login);
     is_mr_reviewer(mr, login) && !has_approved && !is_returned_to(mr, login, signed_in)
 }
 
@@ -177,9 +177,9 @@ fn awaits_review_from(mr: &MergeRequest, login: &str, signed_in: Option<&str>) -
 pub enum MrQueue {
     /// Every open one, or the ones a person authored, is assigned or reviews.
     Open,
-    /// Not yet reviewed and not a draft: everyone's are the ones neither
-    /// approved nor sent back, a person's are the ones they review and
-    /// have not.
+    /// Not yet reviewed and not a draft, among the ones whose review state
+    /// is known: everyone's are the ones neither approved nor sent back, a
+    /// person's are the ones they review and have not.
     AwaitingReview,
     /// Changes requested, a person's only on the ones they authored.
     ChangesRequested,
@@ -204,6 +204,18 @@ impl MrQueue {
         MrQueue::Drafts,
     ];
 
+    /// A GitHub organization's PR search carries no review or merge state,
+    /// so these queues are always empty there.
+    pub fn needs_review_state(self) -> bool {
+        matches!(
+            self,
+            MrQueue::AwaitingReview
+                | MrQueue::ChangesRequested
+                | MrQueue::ReadyToMerge
+                | MrQueue::Blocked
+        )
+    }
+
     /// `signed_in` is the signed-in user's login, whose review state the
     /// fetch knows better than anyone else's.
     pub fn holds(
@@ -221,7 +233,10 @@ impl MrQueue {
             Person::Everyone => match self {
                 MrQueue::Open => true,
                 MrQueue::AwaitingReview => {
-                    !mr.draft && !is_approved(mr) && !has_changes_requested(mr)
+                    mr.approval.is_some()
+                        && !mr.draft
+                        && !is_approved(mr)
+                        && !has_changes_requested(mr)
                 }
                 MrQueue::ChangesRequested => has_changes_requested(mr),
                 MrQueue::ReadyToMerge => is_ready_to_merge(mr),
@@ -771,7 +786,10 @@ mod tests {
     #[test]
     fn a_persons_review_queue_holds_what_they_review_and_have_not_approved() {
         let mrs = [
-            mr(1, json!({ "reviewers": [{ "username": "ada" }] })),
+            mr(
+                1,
+                json!({ "reviewers": [{ "username": "ada" }], "approval": {} }),
+            ),
             mr(
                 2,
                 json!({
@@ -779,7 +797,10 @@ mod tests {
                     "approval": { "approved_by": ["ada"] },
                 }),
             ),
-            mr(3, json!({ "reviewers": [{ "username": "cy" }] })),
+            mr(
+                3,
+                json!({ "reviewers": [{ "username": "cy" }], "approval": {} }),
+            ),
             mr(
                 4,
                 json!({ "state": "merged", "reviewers": [{ "username": "ada" }] }),
@@ -791,6 +812,21 @@ mod tests {
             mr_queue(MrQueue::AwaitingReview, &mrs, Person::Everyone),
             vec![1, 2, 3]
         );
+    }
+
+    #[test]
+    fn an_mr_whose_review_state_is_unknown_is_in_no_review_queue() {
+        let mrs = [mr(
+            1,
+            json!({ "reviewers": [{ "username": "ada" }], "approval": null }),
+        )];
+
+        for queue in MrQueue::ALL.into_iter().filter(|q| q.needs_review_state()) {
+            for person in [Person::Everyone, ADA] {
+                assert_eq!(mr_queue(queue, &mrs, person), Vec::<u64>::new());
+            }
+        }
+        assert_eq!(mr_queue(MrQueue::Open, &mrs, ADA), vec![1]);
     }
 
     #[test]

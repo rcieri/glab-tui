@@ -71,8 +71,8 @@ fn a_queue_lists_its_items_and_enter_opens_one() {
         .wait_for_screen_contains("Open · 1 ", 5000)
         .expect("the first queue, everyone's open MRs, is listed below the cards");
     assert!(
-        screen_line_with(&session, "waiting for review").contains("  1 ? waiting for review"),
-        "the MR without approval waits for review: {}",
+        screen_line_with(&session, "waiting for review").contains("  0 ? waiting for review"),
+        "the mock reports no review state, so the MR waits for nobody: {}",
         session.emulator.get_text()
     );
     assert!(

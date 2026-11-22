@@ -549,8 +549,12 @@ fn mr_queue_style<'a>(queue: MrQueue, ctx: &Context<'a>) -> (&'a str, Color) {
 
 fn merge_requests_body(ctx: &Context) -> Vec<Line<'static>> {
     let mrs = &ctx.app.mrs.items;
-    MrQueue::ALL
-        .into_iter()
+    ctx.rows
+        .iter()
+        .filter_map(|row| match row {
+            DashboardRow::Mr(queue) => Some(*queue),
+            _ => None,
+        })
         .map(|queue| {
             let (icon, color) = mr_queue_style(queue, ctx);
             queue_line(

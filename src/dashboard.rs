@@ -524,10 +524,16 @@ impl App {
     /// Every selectable row, card by card.
     pub fn dashboard_rows(&self, now: Now) -> Vec<DashboardRow> {
         let shows_due_dates = self.kind().is_gitlab();
+        let shows_review_state = !(self.kind().is_github() && self.scope.is_group());
         let mut rows = Vec::new();
         for card in self.dashboard_cards() {
             match card {
-                DashboardCard::MergeRequests => rows.extend(MrQueue::ALL.map(DashboardRow::Mr)),
+                DashboardCard::MergeRequests => rows.extend(
+                    MrQueue::ALL
+                        .into_iter()
+                        .filter(|queue| shows_review_state || !queue.needs_review_state())
+                        .map(DashboardRow::Mr),
+                ),
                 DashboardCard::Issues => rows.extend(
                     IssueQueue::ALL
                         .into_iter()
@@ -1335,6 +1341,38 @@ mod tests {
             app.dashboard_fetch_plan(DashboardRefresh::Full).sources,
             vec![Tab::MergeRequests, Tab::Issues, Tab::Pipelines]
         );
+    }
+
+    #[test]
+    fn a_github_org_lists_only_the_mr_queues_its_pr_search_can_fill() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Group("org".to_string());
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        let mr_rows = |app: &App| -> Vec<MrQueue> {
+            app.dashboard_rows(app.dashboard_now())
+                .into_iter()
+                .filter_map(|row| match row {
+                    DashboardRow::Mr(queue) => Some(queue),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            mr_rows(&app),
+            vec![MrQueue::Open, MrQueue::Idle, MrQueue::Drafts]
+        );
+        app.scope = crate::scope::Scope::Repository("org/repo".to_string());
+        assert_eq!(mr_rows(&app), MrQueue::ALL.to_vec());
     }
 
     #[test]

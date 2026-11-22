@@ -152,6 +152,36 @@ fn a_failed_merge_sets_the_cleared_squash_flag_again() {
     );
 }
 
+/// The second `mr update` is the restore, so only it fails with 404, while
+/// every `mr merge` fails with 500.
+#[test]
+fn a_failed_restore_still_reports_why_the_merge_failed() {
+    let mut session = merge_the_listed_mr(
+        &[
+            ("TEST_GLAB_SQUASH_OPTION", "default_off"),
+            ("TEST_GLAB_MR_SQUASH", "1"),
+            ("TEST_GLAB_FAIL_MATCH", "mr update"),
+            ("TEST_GLAB_FAIL_NTH", "2"),
+            ("TEST_GLAB_FAIL_MATCH_2", "mr merge"),
+        ],
+        Pick::MergeCommit,
+    );
+    session
+        .wait_for_screen_contains(
+            "mock: 500 Internal Server Error (restoring the squash flag of !2 also failed: glab command failed: mock: 404 Not Found)",
+            15000,
+        )
+        .expect("the toast should give the merge's reason, then the restore's");
+    assert_eq!(
+        merge_calls(&session),
+        [
+            "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
+            "glab mr merge 2 -R test-owner/test-repo --remove-source-branch --yes",
+            "glab mr update 2 --squash-before-merge -R test-owner/test-repo",
+        ]
+    );
+}
+
 #[test]
 fn a_rebase_on_a_project_that_always_squashes_leaves_the_squash_flag_alone() {
     let session = merge_the_listed_mr(

@@ -2088,9 +2088,9 @@ impl Backend for GlabBackend {
                     .toggle_mr_squash(project, iid, "RESTORING MR SQUASH")
                     .await
             {
-                return Err(merge_error.context(format!(
-                    "restoring the squash flag of !{iid} also failed: {restore_error:#}"
-                )));
+                return Err(anyhow::anyhow!(
+                    "{merge_error:#} (restoring the squash flag of !{iid} also failed: {restore_error:#})"
+                ));
             }
             return Err(merge_error);
         }

@@ -18,15 +18,15 @@ pub fn handle_refresh(
         .keybindings
         .matches(Action::GlobalRefresh, key_event);
 
-    if is_refresh
-        && app.text_input.is_none()
-        && app.date_picker.is_none()
-        && app.edit_menu.is_none()
-        && app.selector.is_none()
-        && !app.is_typing_search
-        && !app.job_trace_searching
-        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
-    {
+    let can_refresh = match app.top_modal() {
+        None => true,
+        Some(crate::app::Modal::Diff(d)) => !d.search_active,
+        Some(crate::app::Modal::ReviewThreads(_)) => true,
+        Some(crate::app::Modal::Configure(c)) => !c.editing_page_size,
+        _ => false,
+    };
+
+    if is_refresh && can_refresh && !app.is_typing_search && !app.job_trace_searching {
         app.last_list_refresh = Instant::now();
         app.last_attr_refresh = Instant::now();
         if let Some(client) = app.gitlab_client.clone() {

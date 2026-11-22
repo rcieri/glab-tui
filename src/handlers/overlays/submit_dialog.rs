@@ -15,7 +15,15 @@ pub fn handle_submit_dialog(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
-    let Some(dialog) = app.submit_dialog.as_mut() else {
+    if app.submit_dialog().is_none() {
+        return false;
+    }
+    let resolved = app
+        .config
+        .keybindings
+        .resolve(crate::keymap::KeyContext::Dialog, key_event);
+
+    let Some(dialog) = app.submit_dialog_mut() else {
         return false;
     };
     if dialog.form.is_editing() {
@@ -24,11 +32,7 @@ pub fn handle_submit_dialog(
         return true;
     }
 
-    let action = match app
-        .config
-        .keybindings
-        .resolve(crate::keymap::KeyContext::Dialog, key_event)
-    {
+    let action = match resolved {
         Some(action) => dialog.form.handle_action(action),
         None => dialog.form.handle_unbound_key(key_event),
     };
@@ -45,7 +49,7 @@ pub fn click_submit_dialog(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(dialog) = app.submit_dialog.as_mut() else {
+    let Some(dialog) = app.submit_dialog_mut() else {
         return;
     };
     let action = dialog.form.click_at(col, row);
@@ -66,9 +70,11 @@ fn apply_form_action(
             file_suffix: ".txt".to_string(),
             purpose: EditPurpose::DialogField { path },
         }),
-        FormAction::Cancel => app.submit_dialog = None,
+        FormAction::Cancel => {
+            app.pop_submit_dialog();
+        }
         FormAction::Activate(button) => {
-            let Some(dialog) = app.submit_dialog.take() else {
+            let Some(dialog) = app.pop_submit_dialog() else {
                 return;
             };
             if button == SubmitDialog::SUBMIT_BUTTON_INDEX {
@@ -115,7 +121,7 @@ fn run_dialog_choice(
             app.show_notice(format!("Discarded {drafts}"));
         }
     }
-    app.diff_view = None;
+    app.close_diff_view();
 }
 
 /// The PRs among `items` (project path, number) that sit in a stack, which

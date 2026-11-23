@@ -722,17 +722,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             let mut diff_view = *diff_view;
             let mr_iid = diff_view.mr_iid;
             let held_back = app.restore_draft_comments(&diff_view);
-            let previous_sync = app
-                .diff_view_mut()
-                .filter(|v| v.mr_iid == mr_iid)
-                .map(|v| v.viewed_sync.take());
-            let reopened = previous_sync.is_none();
+            let reopened = app.diff_view().is_none_or(|v| v.mr_iid != mr_iid);
             diff_view.restore_review_state(
                 &app.review_marks_for_mr(&diff_view.project_path, mr_iid),
                 viewed_files,
                 app.hide_reviewed_files,
             );
-            diff_view.adopt_viewed_sync(previous_sync.flatten());
+            app.sync_viewed_state(&mut diff_view);
             app.store_review_marks(&diff_view.project_path, mr_iid, diff_view.review_marks());
             let changed = diff_view.changed_since_review.len();
             if reopened && changed > 0 {
@@ -785,20 +781,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.diff_loading = false;
             app.show_cli_error(err_msg);
         }
-        Event::ViewedSyncFlush(mr_iid) => {
+        Event::ViewedSyncFlush(pull_request_id) => {
             let sender = app.scoped_sender(tx.clone());
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let Some(diff_view) = app.diff_view_mut().filter(|v| v.mr_iid == mr_iid) else {
-                return;
-            };
-            let Some(sync) = diff_view.viewed_sync.as_mut() else {
+            let Some(sync) = app.viewed_syncs.get_mut(&pull_request_id) else {
                 return;
             };
             let changes = sync.take_changes();
             if !changes.is_empty() {
-                let pull_request_id = sync.pull_request_id().to_string();
                 crate::fetch::spawn_viewed_files_sync(
                     fx,
                     &client,
@@ -814,24 +806,24 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             result,
         } => {
             let sender = app.scoped_sender(tx.clone());
-            let mut reverted_marks = None;
-            if let Some(diff_view) = app.diff_view_mut()
-                && let Some(sync) = diff_view
-                    .viewed_sync
-                    .as_mut()
-                    .filter(|sync| sync.pull_request_id() == pull_request_id)
-            {
-                let corrections = sync.settle(&changes, result.is_ok());
+            let mut corrections = Vec::new();
+            if let Some(sync) = app.viewed_syncs.get_mut(&pull_request_id) {
+                corrections = sync.settle(&changes, result.is_ok());
                 if sync.claim_follow_up_flush() {
-                    crate::fetch::spawn_viewed_sync_flush(fx, diff_view.mr_iid, sender);
+                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), sender);
                 }
-                if diff_view.apply_review_corrections(&corrections) > 0 {
-                    reverted_marks = Some((
-                        diff_view.project_path.clone(),
-                        diff_view.mr_iid,
-                        diff_view.review_marks(),
-                    ));
-                }
+            }
+            let mut reverted_marks = None;
+            if let Some(diff_view) = app
+                .diff_view_mut()
+                .filter(|v| v.pull_request_id.as_deref() == Some(pull_request_id.as_str()))
+                && diff_view.apply_review_corrections(&corrections) > 0
+            {
+                reverted_marks = Some((
+                    diff_view.project_path.clone(),
+                    diff_view.mr_iid,
+                    diff_view.review_marks(),
+                ));
             }
             if let Some((project_path, mr_iid, marks)) = reverted_marks {
                 app.store_review_marks(&project_path, mr_iid, marks);

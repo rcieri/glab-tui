@@ -833,10 +833,10 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
 /// which spaces out the batches of a large toggle.
 const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
 
-pub fn spawn_viewed_sync_flush(fx: &mut Effects, mr_iid: u64, tx: ScopedSender) {
+pub fn spawn_viewed_sync_flush(fx: &mut Effects, pull_request_id: String, tx: ScopedSender) {
     fx.spawn(async move {
         tokio::time::sleep(VIEWED_SYNC_DEBOUNCE).await;
-        let _ = tx.send(Event::ViewedSyncFlush(mr_iid));
+        let _ = tx.send(Event::ViewedSyncFlush(pull_request_id));
     });
 }
 

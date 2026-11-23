@@ -277,10 +277,12 @@ pub fn handle_key(
                     diff_view.mr_iid,
                     diff_view.review_marks(),
                 );
-                if diff_view.queue_viewed_sync(&paths, marked) {
+                if let Some(pull_request_id) = diff_view.pull_request_id.clone()
+                    && app.queue_viewed_sync(&pull_request_id, &paths, marked)
+                {
                     crate::fetch::spawn_viewed_sync_flush(
                         fx,
-                        diff_view.mr_iid,
+                        pull_request_id,
                         app.scoped_sender(tx.clone()),
                     );
                 }

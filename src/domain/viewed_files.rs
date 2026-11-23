@@ -57,7 +57,9 @@ pub const VIEWED_SYNC_BATCH: usize = 50;
 ///
 /// Toggles are queued and flushed after a short debounce, so rapid toggles of
 /// one file collapse into its last state, and a file toggled back to what the
-/// server already holds sends nothing.
+/// server already holds sends nothing. One lives per pull request for the
+/// whole session, so closing the diff loses neither queued intents nor the
+/// request in flight.
 #[derive(Clone, Debug)]
 pub struct ViewedSync {
     pull_request_id: String,
@@ -66,10 +68,11 @@ pub struct ViewedSync {
     /// Latest unsent intent per path.
     pending: HashMap<String, bool>,
     flush_scheduled: bool,
-    /// Requests go out one at a time: two in flight could reach GitHub in
-    /// either order, and an intent queued meanwhile can only be told apart
-    /// from a no-op once the request ahead of it has landed.
-    request_in_flight: bool,
+    /// The batch sent and not settled yet. Requests go out one at a time: two
+    /// in flight could reach GitHub in either order, and an intent queued
+    /// meanwhile can only be told apart from a no-op once the request ahead
+    /// of it has landed.
+    in_flight: Vec<(String, bool)>,
 }
 
 impl ViewedSync {
@@ -79,7 +82,7 @@ impl ViewedSync {
             confirmed,
             pending: HashMap::new(),
             flush_scheduled: false,
-            request_in_flight: false,
+            in_flight: Vec::new(),
         }
     }
 
@@ -101,7 +104,7 @@ impl ViewedSync {
     /// caller flushes again once it settles (`claim_follow_up_flush`).
     pub fn take_changes(&mut self) -> Vec<(String, bool)> {
         self.flush_scheduled = false;
-        if self.request_in_flight {
+        if !self.in_flight.is_empty() {
             return Vec::new();
         }
         let confirmed = &self.confirmed;
@@ -121,7 +124,7 @@ impl ViewedSync {
         for (path, _) in &changes {
             self.pending.remove(path);
         }
-        self.request_in_flight = !changes.is_empty();
+        self.in_flight.clone_from(&changes);
         changes
     }
 
@@ -129,7 +132,7 @@ impl ViewedSync {
     /// paths must show: the server's. Paths toggled again since are left out;
     /// their newer intent is still on its way.
     pub fn settle(&mut self, changes: &[(String, bool)], succeeded: bool) -> Vec<(String, bool)> {
-        self.request_in_flight = false;
+        self.in_flight.clear();
         changes
             .iter()
             .filter_map(|(path, viewed)| {
@@ -153,20 +156,31 @@ impl ViewedSync {
         !self.pending.is_empty() && !std::mem::replace(&mut self.flush_scheduled, true)
     }
 
-    /// Takes over the unsent intents of the sync this one replaces (the diff
-    /// was re-fetched before they were flushed) and returns them, so the
-    /// caller re-applies them on top of the freshly loaded server state.
-    pub fn adopt_pending(&mut self, previous: ViewedSync) -> Vec<(String, bool)> {
-        if previous.pull_request_id != self.pull_request_id {
-            return Vec::new();
-        }
-        // The flush event the previous sync scheduled is still queued, and
-        // the request it sent will settle against this one.
-        self.flush_scheduled |= previous.flush_scheduled;
-        self.request_in_flight |= previous.request_in_flight;
-        let carried: Vec<(String, bool)> = previous.pending.into_iter().collect();
-        self.pending.extend(carried.iter().cloned());
-        carried
+    /// Replaces the server state with a freshly fetched one; queued intents
+    /// and the request in flight are kept.
+    pub fn reload(&mut self, confirmed: HashSet<String>) {
+        self.confirmed = confirmed;
+    }
+
+    /// The state the user asked for and the server may not show yet: the
+    /// batch in flight, overridden by intents queued since, sorted.
+    pub fn unsettled(&self) -> Vec<(String, bool)> {
+        let mut intents: HashMap<&str, bool> = self
+            .in_flight
+            .iter()
+            .map(|(path, viewed)| (path.as_str(), *viewed))
+            .collect();
+        intents.extend(
+            self.pending
+                .iter()
+                .map(|(path, viewed)| (path.as_str(), *viewed)),
+        );
+        let mut unsettled: Vec<(String, bool)> = intents
+            .into_iter()
+            .map(|(path, viewed)| (path.to_string(), viewed))
+            .collect();
+        unsettled.sort();
+        unsettled
     }
 }
 
@@ -307,40 +321,34 @@ mod tests {
     }
 
     #[test]
-    fn a_replacement_adopts_unsent_intents_of_the_same_pull_request() {
-        let mut previous = sync_with_viewed(&[]);
-        assert!(previous.queue(&paths(&["a.rs"]), true));
-
-        let mut fresh = sync_with_viewed(&[]);
+    fn unsettled_is_the_batch_in_flight_overridden_by_newer_intents() {
+        let mut sync = sync_with_viewed(&[]);
+        sync.queue(&paths(&["a.rs", "b.rs"]), true);
+        sync.take_changes();
+        sync.queue(&paths(&["b.rs", "c.rs"]), false);
         assert_eq!(
-            fresh.adopt_pending(previous),
-            vec![("a.rs".to_string(), true)]
+            sync.unsettled(),
+            vec![
+                ("a.rs".to_string(), true),
+                ("b.rs".to_string(), false),
+                ("c.rs".to_string(), false),
+            ]
         );
-        assert!(
-            !fresh.queue(&paths(&["b.rs"]), true),
-            "the previous flush is still scheduled"
-        );
-        assert_eq!(fresh.take_changes().len(), 2);
-
-        let mut other = ViewedSync::new("PR_2".to_string(), HashSet::new());
-        other.queue(&paths(&["a.rs"]), true);
-        let mut fresh = sync_with_viewed(&[]);
-        assert!(fresh.adopt_pending(other).is_empty());
     }
 
     #[test]
-    fn a_replacement_waits_for_the_request_its_predecessor_sent() {
-        let mut previous = sync_with_viewed(&[]);
-        previous.queue(&paths(&["a.rs"]), true);
-        let in_flight = previous.take_changes();
+    fn a_reload_keeps_the_request_in_flight_and_judges_intents_against_the_new_state() {
+        let mut sync = sync_with_viewed(&[]);
+        sync.queue(&paths(&["a.rs"]), true);
+        let in_flight = sync.take_changes();
 
-        let mut fresh = sync_with_viewed(&[]);
-        fresh.adopt_pending(previous);
-        fresh.queue(&paths(&["b.rs"]), true);
-        assert!(fresh.take_changes().is_empty());
+        // Viewed in the browser meanwhile: unmarking it is a real change now.
+        sync.reload(HashSet::from(["b.rs".to_string()]));
+        sync.queue(&paths(&["b.rs"]), false);
+        assert!(sync.take_changes().is_empty(), "one request at a time");
 
-        fresh.settle(&in_flight, true);
-        assert!(fresh.claim_follow_up_flush());
-        assert_eq!(fresh.take_changes(), vec![("b.rs".to_string(), true)]);
+        sync.settle(&in_flight, true);
+        assert!(sync.claim_follow_up_flush());
+        assert_eq!(sync.take_changes(), vec![("b.rs".to_string(), false)]);
     }
 }

@@ -74,8 +74,9 @@ pub enum Event {
         viewed_files: Option<crate::domain::viewed_files::PrViewedFiles>,
     },
     DiffFetchFailed(String),
-    /// The debounce window of the GitHub "Viewed" sync for this MR/PR closed.
-    ViewedSyncFlush(u64),
+    /// The debounce window of the GitHub "Viewed" sync of this pull request,
+    /// named by its GraphQL node id, closed.
+    ViewedSyncFlush(String),
     /// One GitHub "Viewed" sync request finished. `changes` maps paths to the
     /// viewed state that was sent. The pull request is named by its GraphQL
     /// node id, since its number recurs across the projects of a group.

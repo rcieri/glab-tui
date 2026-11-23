@@ -1470,8 +1470,9 @@ pub struct DiffView {
     /// fingerprint so the indicator survives re-fetches until the file is
     /// toggled.
     stale_marks: HashMap<String, String>,
-    /// GitHub "Viewed" sync, present once the PR's server-side state loaded.
-    pub viewed_sync: Option<ViewedSync>,
+    /// GraphQL node id of the pull request, set once GitHub's viewed state
+    /// loaded; it keys the session's `App::viewed_syncs` entry.
+    pub pull_request_id: Option<String>,
     /// Filter reviewed files out of the tree (`M`).
     pub hide_reviewed: bool,
 }
@@ -1894,7 +1895,7 @@ impl DiffView {
             file_fingerprints,
             changed_since_review: HashSet::new(),
             stale_marks: HashMap::new(),
-            viewed_sync: None,
+            pull_request_id: None,
             hide_reviewed: false,
         };
 
@@ -1919,7 +1920,7 @@ impl DiffView {
         self.reviewed_files.clear();
         self.changed_since_review.clear();
         self.stale_marks.clear();
-        self.viewed_sync = None;
+        self.pull_request_id = None;
         match server {
             Some(server) => {
                 for (path, state) in server.files {
@@ -1936,10 +1937,7 @@ impl DiffView {
                         FileViewedState::Unviewed => {}
                     }
                 }
-                self.viewed_sync = Some(ViewedSync::new(
-                    server.pull_request_id,
-                    self.reviewed_files.clone(),
-                ));
+                self.pull_request_id = Some(server.pull_request_id);
             }
             None => {
                 for (path, reviewed_fingerprint) in saved {
@@ -1986,24 +1984,6 @@ impl DiffView {
                 (path.to_string(), fingerprint.unwrap_or_default())
             })
             .collect()
-    }
-
-    /// Queues a reviewed-state change for the GitHub "Viewed" sync. Returns
-    /// true when the caller must schedule a flush.
-    pub fn queue_viewed_sync(&mut self, paths: &[String], viewed: bool) -> bool {
-        self.viewed_sync
-            .as_mut()
-            .is_some_and(|sync| sync.queue(paths, viewed))
-    }
-
-    /// Carries the unsent sync intents of the view this one replaces over and
-    /// re-applies them on top of the state just loaded.
-    pub fn adopt_viewed_sync(&mut self, previous: Option<ViewedSync>) {
-        let (Some(sync), Some(previous)) = (self.viewed_sync.as_mut(), previous) else {
-            return;
-        };
-        let carried = sync.adopt_pending(previous);
-        self.apply_review_corrections(&carried);
     }
 
     /// Forces the reviewed state of the given files (sync results); returns how
@@ -4429,6 +4409,11 @@ pub struct App {
     pub hide_reviewed_files: bool,
     /// Session-wide diff layout, `Auto` until a layout key pins one.
     pub diff_layout: DiffLayout,
+    /// GitHub "Viewed" sync of each pull request opened this session, by
+    /// GraphQL node id. It outlives the diff view so intents queued just before
+    /// closing still go out, and a reopened diff waits for the request the
+    /// closed one sent.
+    pub viewed_syncs: HashMap<String, ViewedSync>,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4600,6 +4585,7 @@ impl App {
             in_review_mode: false,
             hide_reviewed_files: false,
             diff_layout: DiffLayout::Auto,
+            viewed_syncs: HashMap::new(),
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             page_size: config.page_size,
@@ -5045,6 +5031,9 @@ impl App {
         self.milestones.state.select(Some(0));
         self.branches.reset_cursor();
         self.environments.reset_cursor();
+        // Results of the old scope's requests are dropped by generation, so a
+        // kept entry would wait on its request forever.
+        self.viewed_syncs.clear();
     }
 
     pub fn drill_into(&mut self, repo: String) {
@@ -7018,6 +7007,35 @@ impl App {
                 .insert(mr_iid, marks);
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+    }
+
+    /// Hooks a freshly fetched diff up to its pull request's sync: the server
+    /// state it loaded becomes the confirmed state, and what the user asked
+    /// for that the server may not show yet is laid on top of it.
+    pub fn sync_viewed_state(&mut self, diff_view: &mut DiffView) {
+        let Some(pull_request_id) = diff_view.pull_request_id.clone() else {
+            return;
+        };
+        let confirmed = diff_view.reviewed_files.clone();
+        let sync = self
+            .viewed_syncs
+            .entry(pull_request_id)
+            .or_insert_with_key(|id| ViewedSync::new(id.clone(), HashSet::new()));
+        sync.reload(confirmed);
+        diff_view.apply_review_corrections(&sync.unsettled());
+    }
+
+    /// Queues a reviewed-state change for a pull request's GitHub sync.
+    /// Returns true when the caller must schedule a flush.
+    pub fn queue_viewed_sync(
+        &mut self,
+        pull_request_id: &str,
+        paths: &[String],
+        viewed: bool,
+    ) -> bool {
+        self.viewed_syncs
+            .get_mut(pull_request_id)
+            .is_some_and(|sync| sync.queue(paths, viewed))
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
@@ -10287,6 +10305,19 @@ mod tests {
 
         assert!(!app.job_trace_follow);
         assert!(!app.job_trace_poll_in_flight);
+    }
+
+    #[test]
+    fn reset_on_scope_change_forgets_viewed_syncs_whose_results_it_will_drop() {
+        let mut sync = ViewedSync::new("PR_1".to_string(), HashSet::new());
+        sync.queue(&["a.rs".to_string()], true);
+        sync.take_changes();
+        let mut app = App::default();
+        app.viewed_syncs.insert("PR_1".to_string(), sync);
+
+        app.reset_on_scope_change();
+
+        assert!(app.viewed_syncs.is_empty());
     }
 
     #[tokio::test]
@@ -13831,31 +13862,31 @@ index 123456..789012 100644
         // A dismissed file is unreviewed, so the reviewed filter keeps it.
         assert!(tree_shows_file(&view, "README.md"));
         assert!(!tree_shows_file(&view, "src/app.rs"));
-        assert_eq!(
-            view.viewed_sync.as_ref().map(|s| s.pull_request_id()),
-            Some("PR_1")
-        );
+        assert_eq!(view.pull_request_id.as_deref(), Some("PR_1"));
     }
 
     #[test]
-    fn unsent_sync_intents_survive_a_refetch() {
+    fn unsent_sync_intents_survive_closing_and_reopening_the_diff() {
         let server = || PrViewedFiles {
             pull_request_id: "PR_1".to_string(),
             files: HashMap::new(),
         };
+        let mut app = App::default();
         let mut before = review_fixture();
         before.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.sync_viewed_state(&mut before);
         select_file(&mut before, "README.md");
         before.toggle_reviewed();
-        assert!(before.queue_viewed_sync(&["README.md".to_string()], true));
+        assert!(app.queue_viewed_sync("PR_1", &["README.md".to_string()], true));
+        drop(before);
 
-        // The server does not have the mark yet when the diff is re-fetched.
+        // Reopened before the flush: the server does not have the mark yet.
         let mut after = review_fixture();
         after.restore_review_state(&HashMap::new(), Some(server()), false);
-        after.adopt_viewed_sync(before.viewed_sync);
+        app.sync_viewed_state(&mut after);
 
         assert!(after.reviewed_files.contains("README.md"));
-        let sync = after.viewed_sync.as_mut().unwrap();
+        let sync = app.viewed_syncs.get_mut("PR_1").unwrap();
         assert_eq!(sync.take_changes(), vec![("README.md".to_string(), true)]);
     }
 

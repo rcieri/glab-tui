@@ -84,6 +84,78 @@ mod tests {
         Event::KeyPress(KeyPress::from(KeyEvent::new(code, modifiers)))
     }
 
+    fn github_diff_fetched(pull_request_id: &str) -> Event {
+        Event::DiffFetched {
+            diff_view: Box::new(crate::app::DiffView::new(
+                42,
+                "org/project".to_string(),
+                "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+                 @@ -1,1 +1,1 @@\n-old\n+new\n"
+                    .to_string(),
+            )),
+            comments: Ok(vec![]),
+            viewed_files: Some(crate::domain::viewed_files::PrViewedFiles {
+                pull_request_id: pull_request_id.to_string(),
+                files: std::collections::HashMap::new(),
+            }),
+        }
+    }
+
+    fn flush(app: &mut App, pull_request_id: &str) -> usize {
+        spawned(&update(
+            app,
+            Event::ViewedSyncFlush(pull_request_id.to_string()),
+        ))
+    }
+
+    #[test]
+    fn a_viewed_mark_queued_just_before_closing_the_diff_still_reaches_github() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        assert!(app.queue_viewed_sync("PR_1", &["README.md".to_string()], true));
+
+        app.close_diff_view();
+
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+    }
+
+    #[test]
+    fn a_request_sent_before_closing_the_diff_still_holds_back_the_reopened_ones() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        app.close_diff_view();
+
+        update(&mut app, github_diff_fetched("PR_1"));
+        assert!(
+            app.diff_view()
+                .unwrap()
+                .reviewed_files
+                .contains("README.md"),
+            "the mark in flight shows on the reopened diff"
+        );
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], false);
+        assert_eq!(flush(&mut app, "PR_1"), 0, "the first request is in flight");
+
+        let effects = update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: vec![("README.md".to_string(), true)],
+                result: Ok(()),
+            },
+        );
+        assert_eq!(spawned(&effects), 1, "the follow-up flush");
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+    }
+
     #[test]
     fn opening_a_page_in_the_browser_refetches_neither_the_tab_nor_the_diff() {
         let mut app = with_open_diff(app_with_client());
@@ -131,6 +203,7 @@ mod tests {
             }),
             false,
         );
+        app.sync_viewed_state(&mut diff_view);
         app.open_diff_view(diff_view);
 
         // Project A's #42 marked README.md and was closed before it landed.
@@ -143,9 +216,9 @@ mod tests {
             },
         );
 
-        let diff_view = app.diff_view_mut().expect("diff stays open");
+        let diff_view = app.diff_view().expect("diff stays open");
         assert!(diff_view.reviewed_files.is_empty());
-        let sync = diff_view.viewed_sync.as_mut().expect("GitHub sync");
+        let sync = app.viewed_syncs.get_mut("PR_B").expect("GitHub sync");
         sync.queue(&["README.md".to_string()], true);
         assert_eq!(
             sync.take_changes(),

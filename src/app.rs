@@ -635,8 +635,7 @@ pub enum SelectorPurpose {
 }
 
 impl SelectorPurpose {
-    /// Whether the selector shows a filter box: short fixed lists (comment
-    /// and draft actions, a PR's related MRs, an MR's linked issues) do not.
+    /// Whether the selector shows a filter box. A short fixed list does not.
     pub fn has_filter_bar(&self) -> bool {
         !matches!(
             self,

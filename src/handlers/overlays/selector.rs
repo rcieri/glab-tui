@@ -626,8 +626,6 @@ pub fn handle_key(
                         }
 
                         if let Some(val) = selected_val {
-                            // The list mixes pushed comments (`ID: <n> | …`)
-                            // and drafts (`DRAFT #<n> | …`).
                             if let Some(idx_str) = val
                                 .strip_prefix("DRAFT #")
                                 .and_then(|s| s.split('|').next())

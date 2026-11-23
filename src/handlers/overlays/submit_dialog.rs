@@ -9,6 +9,10 @@ use crate::handlers::tabs::{
 use crate::keybinding::KeyPress;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Reached only if `merge_blocker` let Submit through without a picked
+/// method, which the dialog has already been popped for.
+const NO_MERGE_METHOD: &str = "No merge method is picked";
+
 pub fn handle_submit_dialog(
     app: &mut App,
     key_event: &KeyPress,
@@ -437,6 +441,7 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
             let Some(merge) = merge else {
+                app.show_error(NO_MERGE_METHOD.to_string());
                 return;
             };
             // Capture the source-branch head SHA before removing the row so
@@ -473,6 +478,7 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::MergeStack(pr_number) => {
             let Some(MergeChoices { method, .. }) = merge else {
+                app.show_error(NO_MERGE_METHOD.to_string());
                 return;
             };
             let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
@@ -498,6 +504,7 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
             let Some(merge) = merge else {
+                app.show_error(NO_MERGE_METHOD.to_string());
                 return;
             };
             // Snapshot each MR's head SHA before removing the rows so the

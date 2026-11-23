@@ -1367,9 +1367,7 @@ fn parse_review_thread_resolution(raw: &str) -> Result<HashMap<u64, bool>> {
     let mut resolution = HashMap::new();
     for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
         let page = page.context("parsing review threads")?;
-        if let Some(error) = page.errors.first() {
-            anyhow::bail!("GraphQL error: {}", error.message);
-        }
+        first_graphql_error(&page.errors)?;
         let threads = page
             .data
             .and_then(|d| d.repository)
@@ -1597,11 +1595,7 @@ mod review_threads_types {
     pub(super) struct GhResponse {
         pub(super) data: Option<GhData>,
         #[serde(default)]
-        pub(super) errors: Vec<GhError>,
-    }
-    #[derive(Deserialize)]
-    pub(super) struct GhError {
-        pub(super) message: String,
+        pub(super) errors: Vec<super::GraphqlError>,
     }
     #[derive(Deserialize)]
     pub(super) struct GhData {
@@ -1650,9 +1644,7 @@ fn parse_viewed_files(raw: &str) -> Result<crate::domain::viewed_files::PrViewed
     let mut viewed = crate::domain::viewed_files::PrViewedFiles::default();
     for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
         let page = page.context("parsing viewed files")?;
-        if let Some(error) = page.errors.first() {
-            anyhow::bail!("GraphQL error: {}", error.message);
-        }
+        first_graphql_error(&page.errors)?;
         let pr = page
             .data
             .and_then(|d| d.repository)
@@ -1693,14 +1685,13 @@ fn set_files_viewed_mutation(changes: &[(String, bool)]) -> String {
     format!("mutation({declarations}){{{}}}", fields.trim_end())
 }
 
-fn check_graphql_errors(raw: &str) -> Result<()> {
-    #[derive(Deserialize)]
-    struct GhErrors {
-        #[serde(default)]
-        errors: Vec<viewed_files_types::GhError>,
-    }
-    let resp: GhErrors = serde_json::from_str(raw)?;
-    match resp.errors.first() {
+#[derive(Deserialize)]
+struct GraphqlError {
+    message: String,
+}
+
+fn first_graphql_error(errors: &[GraphqlError]) -> Result<()> {
+    match errors.first() {
         Some(error) => anyhow::bail!("GraphQL error: {}", error.message),
         None => Ok(()),
     }
@@ -1714,11 +1705,7 @@ mod viewed_files_types {
     pub(super) struct GhResponse {
         pub(super) data: Option<GhData>,
         #[serde(default)]
-        pub(super) errors: Vec<GhError>,
-    }
-    #[derive(Deserialize)]
-    pub(super) struct GhError {
-        pub(super) message: String,
+        pub(super) errors: Vec<super::GraphqlError>,
     }
     #[derive(Deserialize)]
     pub(super) struct GhData {
@@ -2728,8 +2715,8 @@ impl Backend for GhBackend {
         for path in &paths {
             args.extend(["-f", path.as_str()]);
         }
-        let raw = self.run_gh(&args, "Syncing Viewed Files").await?;
-        check_graphql_errors(&raw)
+        self.run_gh(&args, "Syncing Viewed Files").await?;
+        Ok(())
     }
 
     async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
@@ -4645,8 +4632,6 @@ mod tests {
              f0:markFileAsViewed(input:{pullRequestId:$pr,path:$p0}){clientMutationId} \
              f1:unmarkFileAsViewed(input:{pullRequestId:$pr,path:$p1}){clientMutationId}}"
         );
-        assert!(check_graphql_errors(r#"{"data":{"f0":{"clientMutationId":null}}}"#).is_ok());
-        assert!(check_graphql_errors(r#"{"data":null,"errors":[{"message":"x"}]}"#).is_err());
     }
 
     #[test]

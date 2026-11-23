@@ -132,6 +132,9 @@ fn choosing_a_contributor_scopes_the_cards_and_lists_their_activity() {
     session
         .wait_for_screen_contains("┌ # Issues ", 5000)
         .expect("Enter on a comment opens the issue it is on");
+    session
+        .wait_for_screen_contains("Preview: Issue #7 ", 5000)
+        .expect("the commented issue is selected with its preview open");
 }
 
 #[test]

@@ -839,10 +839,15 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 if entry.sync.claim_follow_up_flush() {
                     crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), tx.clone());
                 }
-                settled = Some((entry.project_path.clone(), entry.mr_iid, corrections));
+                settled = Some((
+                    entry.scope.clone(),
+                    entry.project_path.clone(),
+                    entry.mr_iid,
+                    corrections,
+                ));
             }
-            if let Some((project_path, mr_iid, corrections)) = settled {
-                app.apply_viewed_corrections(&project_path, mr_iid, &corrections);
+            if let Some((saved_in, project_path, mr_iid, corrections)) = settled {
+                app.apply_viewed_corrections(&saved_in, &project_path, mr_iid, &corrections);
             }
             match result {
                 Err(err) => app.show_cli_error(format!(

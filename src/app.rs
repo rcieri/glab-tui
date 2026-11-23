@@ -4223,12 +4223,46 @@ impl EnvironmentDeployments {
 /// closed or the scope switched. Batches go out through the client that
 /// opened the diff: after a scope switch `App::gitlab_client` is being
 /// rebuilt, or reaches another host. `project_path` and `mr_iid` name the
-/// saved marks a settled request corrects.
+/// saved marks a settled request corrects, and `scope` the cache they were
+/// saved in when the diff was opened.
 pub struct PullRequestViewedSync {
     pub sync: ViewedSync,
     pub client: crate::domain::client::GitlabClient,
+    pub scope: crate::scope::Scope,
     pub project_path: String,
     pub mr_iid: u64,
+}
+
+/// Drops the marks of an MR/PR that a settled viewed sync left unviewed on
+/// GitHub. Returns whether any was dropped.
+fn drop_unviewed_marks(
+    review_marks: &mut HashMap<String, HashMap<u64, HashMap<String, String>>>,
+    project_path: &str,
+    mr_iid: u64,
+    corrections: &[(String, bool)],
+) -> bool {
+    let Some(project_marks) = review_marks.get_mut(project_path) else {
+        return false;
+    };
+    let Some(marks) = project_marks.get_mut(&mr_iid) else {
+        return false;
+    };
+    let saved = marks.len();
+    for (path, viewed) in corrections {
+        if !viewed {
+            marks.remove(path);
+        }
+    }
+    if marks.len() == saved {
+        return false;
+    }
+    if marks.is_empty() {
+        project_marks.remove(&mr_iid);
+        if project_marks.is_empty() {
+            review_marks.remove(project_path);
+        }
+    }
+    true
 }
 
 pub struct App {
@@ -7048,6 +7082,7 @@ impl App {
                 .or_insert_with(|| PullRequestViewedSync {
                     sync: ViewedSync::default(),
                     client: client.clone(),
+                    scope: self.scope.clone(),
                     project_path: diff_view.project_path.clone(),
                     mr_iid: diff_view.mr_iid,
                 });
@@ -7073,14 +7108,23 @@ impl App {
     /// viewed-sync request left on GitHub. Its open diff takes every
     /// correction, even one opened without GitHub's state. Without an open
     /// diff only the saved marks GitHub does not hold are dropped: saving a
-    /// mark takes the file's fingerprint, which only a diff has.
+    /// mark takes the file's fingerprint, which only a diff has. The cache of
+    /// `saved_in`, the scope the marks were saved in, drops them too when the
+    /// user has switched away from it.
     pub fn apply_viewed_corrections(
         &mut self,
+        saved_in: &crate::scope::Scope,
         project_path: &str,
         mr_iid: u64,
         corrections: &[(String, bool)],
     ) {
-        let marks = match self
+        if *saved_in != self.scope {
+            let mut cache = crate::utils::cache::load_cache(saved_in.as_str());
+            if drop_unviewed_marks(&mut cache.review_marks, project_path, mr_iid, corrections) {
+                crate::utils::cache::save_cache(saved_in.as_str(), &cache);
+            }
+        }
+        match self
             .diff_view_mut()
             .filter(|view| view.project_path == project_path && view.mr_iid == mr_iid)
         {
@@ -7088,23 +7132,16 @@ impl App {
                 if diff_view.apply_review_corrections(corrections) == 0 {
                     return;
                 }
-                diff_view.review_marks()
+                let marks = diff_view.review_marks();
+                self.store_review_marks(project_path, mr_iid, marks);
             }
             None => {
-                let mut marks = self.review_marks_for_mr(project_path, mr_iid);
-                let saved = marks.len();
-                for (path, viewed) in corrections {
-                    if !viewed {
-                        marks.remove(path);
-                    }
+                let review_marks = &mut self.project_cache.review_marks;
+                if drop_unviewed_marks(review_marks, project_path, mr_iid, corrections) {
+                    crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
                 }
-                if marks.len() == saved {
-                    return;
-                }
-                marks
             }
-        };
-        self.store_review_marks(project_path, mr_iid, marks);
+        }
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.

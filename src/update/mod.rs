@@ -353,6 +353,22 @@ mod tests {
     }
 
     #[test]
+    fn a_viewed_mark_that_failed_after_a_scope_switch_drops_it_from_the_scope_it_was_saved_in() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_readme_mark_on_its_way_and_the_diff_closed();
+        let saved_in = app.scope.clone();
+        app.drill_into("org/other".to_string());
+        app.project_cache = crate::utils::cache::load_cache(app.scope.as_str());
+
+        update(&mut app, readme_mark_failed());
+
+        let saved = crate::utils::cache::load_cache(saved_in.as_str());
+        assert_eq!(saved.review_marks, std::collections::HashMap::new());
+    }
+
+    #[test]
     fn a_viewed_mark_that_failed_reverts_on_a_diff_reopened_without_github_state() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();

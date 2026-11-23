@@ -1538,6 +1538,27 @@ mod tests {
     }
 
     #[test]
+    fn jumping_to_an_issue_or_mr_hands_h_and_l_back_on_return() {
+        let jumps: [fn(&mut App); 2] = [
+            |app| {
+                app.focus_issue(None, 1);
+            },
+            |app| {
+                app.focus_mr(None, 1);
+            },
+        ];
+        for jump in jumps {
+            let mut app = repository_app();
+            app.active_tab = Tab::Dashboard;
+            app.dashboard.focus = DashboardFocus::List;
+            jump(&mut app);
+            app.switch_to_tab(Tab::Dashboard);
+
+            assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
+        }
+    }
+
+    #[test]
     fn a_scope_switch_drops_the_selection_and_restores_the_configured_person() {
         let mut app = repository_app();
         app.config.dashboard.person = "everyone".to_string();

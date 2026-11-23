@@ -3331,11 +3331,7 @@ pub fn handle_active_tab_key(
 /// preview open.
 fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     use crate::dashboard::DashboardAction;
-    let action = app.enter_dashboard();
-    if action != DashboardAction::Stay {
-        app.dashboard.leave();
-    }
-    match action {
+    match app.enter_dashboard() {
         DashboardAction::Stay => {}
         DashboardAction::OpenPipeline(id) => {
             app.focus_pipeline(id);

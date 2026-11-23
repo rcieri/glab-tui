@@ -3822,7 +3822,7 @@ impl SubmitDialog {
             } else {
                 shared.preferred()
             };
-        let preferred = shared
+        let preselected_index = shared
             .allowed()
             .iter()
             .position(|&method| method == preselected)
@@ -3830,7 +3830,7 @@ impl SubmitDialog {
         self.methods = shared.allowed().to_vec();
         self.squashes_every_merge = shared.squashes_every_merge();
         self.form.apply_loaded(Self::METHODS, |kind| {
-            *kind = GroupKind::Radio(Radio::new(labels, preferred));
+            *kind = GroupKind::Radio(Radio::new(labels, preselected_index));
         });
     }
 

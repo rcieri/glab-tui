@@ -1189,6 +1189,18 @@ fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
     }
 }
 
+/// `viewerDefaultMergeMethod` of a GitHub repository. A method this build
+/// does not know leaves the dialog without a preselection instead of failing.
+#[derive(Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ViewerDefaultMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+    #[serde(other)]
+    Unknown,
+}
+
 fn parse_repo_merge_methods(raw: &str) -> Result<MergeMethods> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -1197,7 +1209,7 @@ fn parse_repo_merge_methods(raw: &str) -> Result<MergeMethods> {
         squash_merge_allowed: bool,
         rebase_merge_allowed: bool,
         #[serde(default)]
-        viewer_default_merge_method: Option<String>,
+        viewer_default_merge_method: Option<ViewerDefaultMergeMethod>,
     }
     let settings: RepoMergeSettings =
         serde_json::from_str(raw.trim()).context("parsing `gh repo view` merge settings")?;
@@ -1209,12 +1221,14 @@ fn parse_repo_merge_methods(raw: &str) -> Result<MergeMethods> {
     .into_iter()
     .filter_map(|(method, is_allowed)| is_allowed.then_some(method))
     .collect();
-    let preferred = match settings.viewer_default_merge_method.as_deref() {
-        Some("MERGE") => Some(MergeMethod::Merge),
-        Some("SQUASH") => Some(MergeMethod::Squash),
-        Some("REBASE") => Some(MergeMethod::Rebase),
-        _ => None,
-    };
+    let preferred = settings
+        .viewer_default_merge_method
+        .and_then(|method| match method {
+            ViewerDefaultMergeMethod::Merge => Some(MergeMethod::Merge),
+            ViewerDefaultMergeMethod::Squash => Some(MergeMethod::Squash),
+            ViewerDefaultMergeMethod::Rebase => Some(MergeMethod::Rebase),
+            ViewerDefaultMergeMethod::Unknown => None,
+        });
     MergeMethods::new(&allowed, preferred)
         .ok_or_else(|| anyhow::anyhow!("the repository allows no merge method"))
 }
@@ -5835,6 +5849,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(methods.preferred(), MergeMethod::Squash);
+    }
+
+    #[test]
+    fn a_viewer_default_this_build_does_not_know_is_no_preference() {
+        let methods = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":true,"squashMergeAllowed":false,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"AUTO"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            methods.allowed(),
+            &[MergeMethod::Merge, MergeMethod::Rebase]
+        );
+        assert_eq!(methods.preferred(), MergeMethod::Merge);
     }
 
     #[test]

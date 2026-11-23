@@ -1636,44 +1636,39 @@ mod review_threads_types {
 
 /// Values travel as GraphQL variables (`gh api graphql -f name=value`), so
 /// paths and repository names need no escaping. 100 is the connection's
-/// page-size cap.
-const VIEWED_FILES_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!,$cursor:String){\
+/// page-size cap. `gh api graphql --paginate` feeds `$endCursor` back in until
+/// `pageInfo.hasNextPage` is false.
+const VIEWED_FILES_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!,$endCursor:String){\
      repository(owner:$owner,name:$name){pullRequest(number:$number){id \
-     files(first:100,after:$cursor){pageInfo{hasNextPage endCursor} \
+     files(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} \
      nodes{path viewerViewedState}}}}}";
 
-struct ViewedFilesPage {
-    pull_request_id: String,
-    files: Vec<(String, crate::domain::viewed_files::FileViewedState)>,
-    next_cursor: Option<String>,
-}
-
-fn parse_viewed_files_page(raw: &str) -> Result<ViewedFilesPage> {
+/// The pull request's node id and every file's viewed state, across every page
+/// `gh api graphql --paginate` printed (one JSON object per page, back to back).
+fn parse_viewed_files(raw: &str) -> Result<crate::domain::viewed_files::PrViewedFiles> {
     use viewed_files_types::*;
-    let resp: GhResponse = serde_json::from_str(raw)?;
-    if let Some(error) = resp.errors.first() {
-        anyhow::bail!("GraphQL error: {}", error.message);
+    let mut viewed = crate::domain::viewed_files::PrViewedFiles::default();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
+        let page = page.context("parsing viewed files")?;
+        if let Some(error) = page.errors.first() {
+            anyhow::bail!("GraphQL error: {}", error.message);
+        }
+        let pr = page
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .context("pull request not found")?;
+        viewed.pull_request_id = pr.id;
+        viewed.files.extend(
+            pr.files
+                .unwrap_or_default()
+                .nodes
+                .into_iter()
+                .map(|f| (f.path, f.viewer_viewed_state)),
+        );
     }
-    let pr = resp
-        .data
-        .and_then(|d| d.repository)
-        .and_then(|r| r.pull_request)
-        .context("pull request not found")?;
-    let files = pr.files.unwrap_or_default();
-    let next_cursor = if files.page_info.has_next_page {
-        files.page_info.end_cursor
-    } else {
-        None
-    };
-    Ok(ViewedFilesPage {
-        pull_request_id: pr.id,
-        files: files
-            .nodes
-            .into_iter()
-            .map(|f| (f.path, f.viewer_viewed_state))
-            .collect(),
-        next_cursor,
-    })
+    anyhow::ensure!(!viewed.pull_request_id.is_empty(), "pull request not found");
+    Ok(viewed)
 }
 
 /// One aliased mutation per file, `markFileAsViewed` or `unmarkFileAsViewed`,
@@ -1741,16 +1736,7 @@ mod viewed_files_types {
     }
     #[derive(Deserialize, Default)]
     pub(super) struct GhFiles {
-        #[serde(rename = "pageInfo")]
-        pub(super) page_info: GhPageInfo,
         pub(super) nodes: Vec<GhFile>,
-    }
-    #[derive(Deserialize, Default)]
-    pub(super) struct GhPageInfo {
-        #[serde(rename = "hasNextPage")]
-        pub(super) has_next_page: bool,
-        #[serde(rename = "endCursor")]
-        pub(super) end_cursor: Option<String>,
     }
     #[derive(Deserialize)]
     pub(super) struct GhFile {
@@ -2710,25 +2696,20 @@ impl Backend for GhBackend {
         let owner = format!("owner={owner}");
         let name = format!("name={repo}");
         let number = format!("number={iid}");
-        let mut viewed = crate::domain::viewed_files::PrViewedFiles::default();
-        let mut cursor: Option<String> = None;
-        loop {
-            let after = cursor.as_ref().map(|c| format!("cursor={c}"));
-            let mut args = vec![
-                "api", "graphql", "-f", &query, "-f", &owner, "-f", &name, "-F", &number,
-            ];
-            if let Some(after) = after.as_deref() {
-                args.extend(["-f", after]);
-            }
-            let raw = self.run_gh(&args, "Fetching Viewed Files").await?;
-            let page = parse_viewed_files_page(&raw)?;
-            viewed.pull_request_id = page.pull_request_id;
-            viewed.files.extend(page.files);
-            match page.next_cursor {
-                Some(next) => cursor = Some(next),
-                None => return Ok(viewed),
-            }
-        }
+        let args = [
+            "api",
+            "graphql",
+            "--paginate",
+            "-f",
+            &query,
+            "-f",
+            &owner,
+            "-f",
+            &name,
+            "-F",
+            &number,
+        ];
+        parse_viewed_files(&self.run_gh(&args, "Fetching Viewed Files").await?)
     }
 
     async fn set_files_viewed(
@@ -4612,33 +4593,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn viewed_files_page_reads_states_and_the_next_cursor() {
+    fn viewed_files_reads_the_states_of_every_paginated_page() {
         use crate::domain::viewed_files::FileViewedState;
         let raw = r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
             "pageInfo":{"hasNextPage":true,"endCursor":"MTAw"},
             "nodes":[{"path":"a.rs","viewerViewedState":"VIEWED"},
-                     {"path":"b.rs","viewerViewedState":"DISMISSED"},
-                     {"path":"c.rs","viewerViewedState":"UNVIEWED"}]}}}}}"#;
-        let page = parse_viewed_files_page(raw).unwrap();
-        assert_eq!(page.pull_request_id, "PR_kw1");
-        assert_eq!(page.next_cursor.as_deref(), Some("MTAw"));
+                     {"path":"b.rs","viewerViewedState":"DISMISSED"}]}}}}}
+            {"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
+            "pageInfo":{"hasNextPage":false,"endCursor":null},
+            "nodes":[{"path":"c.rs","viewerViewedState":"UNVIEWED"}]}}}}}"#;
+        let viewed = parse_viewed_files(raw).unwrap();
+        assert_eq!(viewed.pull_request_id, "PR_kw1");
         assert_eq!(
-            page.files,
-            vec![
+            viewed.files,
+            HashMap::from([
                 ("a.rs".to_string(), FileViewedState::Viewed),
                 ("b.rs".to_string(), FileViewedState::Dismissed),
                 ("c.rs".to_string(), FileViewedState::Unviewed),
-            ]
+            ])
         );
+    }
 
-        let last = raw.replace("\"hasNextPage\":true", "\"hasNextPage\":false");
-        assert_eq!(parse_viewed_files_page(&last).unwrap().next_cursor, None);
+    #[test]
+    fn viewed_files_query_takes_the_cursor_gh_paginate_feeds_back() {
+        assert!(VIEWED_FILES_QUERY.contains("$endCursor:String"));
+        assert!(VIEWED_FILES_QUERY.contains("after:$endCursor"));
     }
 
     #[test]
     fn viewed_files_errors_and_missing_pull_request_are_errors() {
-        assert!(parse_viewed_files_page(r#"{"errors":[{"message":"nope"}]}"#).is_err());
-        assert!(parse_viewed_files_page(r#"{"data":{"repository":null}}"#).is_err());
+        assert!(parse_viewed_files(r#"{"errors":[{"message":"nope"}]}"#).is_err());
+        assert!(parse_viewed_files(r#"{"data":{"repository":null}}"#).is_err());
+        assert!(parse_viewed_files("").is_err());
+        let good =
+            r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{"nodes":[]}}}}}"#;
+        let error_on_page_two = format!(r#"{good}{{"errors":[{{"message":"nope"}}]}}"#);
+        assert_eq!(
+            parse_viewed_files(&error_on_page_two)
+                .unwrap_err()
+                .to_string(),
+            "GraphQL error: nope"
+        );
     }
 
     #[test]

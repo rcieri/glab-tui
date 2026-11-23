@@ -6456,6 +6456,12 @@ impl App {
         self.kind().is_github()
     }
 
+    /// Whether a diff fetch should load GitHub's viewed state: GitLab has no
+    /// API for it.
+    pub fn syncs_viewed_files(&self) -> bool {
+        self.config.sync_viewed_files && self.is_github()
+    }
+
     pub fn start_loading_tab(&mut self, tab: Tab) {
         if !self.loading_tabs.contains(&tab) {
             self.loading_tabs.insert(tab);

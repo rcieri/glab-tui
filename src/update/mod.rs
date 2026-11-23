@@ -84,21 +84,56 @@ mod tests {
         Event::KeyPress(KeyPress::from(KeyEvent::new(code, modifiers)))
     }
 
-    fn github_diff_fetched(pull_request_id: &str) -> Event {
+    fn readme_diff() -> crate::app::DiffView {
+        crate::app::DiffView::new(
+            42,
+            "org/project".to_string(),
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+             @@ -1,1 +1,1 @@\n-old\n+new\n"
+                .to_string(),
+        )
+    }
+
+    fn diff_fetched(
+        viewed_files: Option<Result<crate::domain::viewed_files::PrViewedFiles, String>>,
+    ) -> Event {
         Event::DiffFetched {
-            diff_view: Box::new(crate::app::DiffView::new(
-                42,
-                "org/project".to_string(),
-                "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
-                 @@ -1,1 +1,1 @@\n-old\n+new\n"
-                    .to_string(),
-            )),
+            diff_view: Box::new(readme_diff()),
             comments: Ok(vec![]),
-            viewed_files: Some(crate::domain::viewed_files::PrViewedFiles {
-                pull_request_id: pull_request_id.to_string(),
-                files: std::collections::HashMap::new(),
-            }),
+            viewed_files,
         }
+    }
+
+    fn github_diff_fetched(pull_request_id: &str) -> Event {
+        diff_fetched(Some(Ok(crate::domain::viewed_files::PrViewedFiles {
+            pull_request_id: pull_request_id.to_string(),
+            files: std::collections::HashMap::new(),
+        })))
+    }
+
+    #[test]
+    fn a_failed_viewed_state_fetch_raises_one_error_and_keeps_the_local_marks() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = App::default();
+        let marks = readme_diff().marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project", 42, marks);
+
+        update(&mut app, diff_fetched(Some(Err("HTTP 403".to_string()))));
+
+        let diff_view = app.diff_view().expect("diff opens");
+        assert!(diff_view.reviewed_files.contains("README.md"));
+        assert_eq!(diff_view.pull_request_id, None);
+        assert!(app.viewed_syncs.is_empty());
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some(
+                "Failed to load GitHub viewed state, so marks stay local until the next open \
+                 replaces them with GitHub's (sync_viewed_files = false keeps them local): \
+                 HTTP 403"
+            )
+        );
     }
 
     fn flush(app: &mut App, pull_request_id: &str) -> usize {

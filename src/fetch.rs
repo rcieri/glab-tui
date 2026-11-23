@@ -8,10 +8,10 @@ use crate::git_helpers::get_current_branch;
 /// Fetches an MR/PR diff with its review comments and, when `sync_viewed`,
 /// GitHub's viewed state of its files, all concurrently so syncing does not
 /// make opening the diff slower. Only the diff itself is required: comments
-/// that fail to load come back as their error beside the diff, and a missing
-/// viewed state falls back to the local marks. The `DiffView` is built on a
-/// blocking thread, so the event loop keeps drawing (and the loading overlay
-/// stays up) while a large diff is parsed and highlighted.
+/// and viewed state that fail to load come back as their error beside the
+/// diff. The `DiffView` is built on a blocking thread, so the event loop keeps
+/// drawing (and the loading overlay stays up) while a large diff is parsed and
+/// highlighted.
 pub async fn fetch_diff_view(
     client: &domain::client::GitlabClient,
     project_path: &str,
@@ -20,12 +20,19 @@ pub async fn fetch_diff_view(
 ) -> anyhow::Result<(
     Box<app::DiffView>,
     Result<Vec<domain::mr::DiscussionNote>, String>,
-    Option<domain::viewed_files::PrViewedFiles>,
+    Option<Result<domain::viewed_files::PrViewedFiles, String>>,
 )> {
+    let viewed_files = async {
+        if sync_viewed {
+            Some(client.list_viewed_files(project_path, mr_iid).await)
+        } else {
+            None
+        }
+    };
     let (diff_res, comments_res, viewed_files) = tokio::join!(
         client.get_mr_diff(project_path, mr_iid),
         client.list_mr_notes(project_path, mr_iid),
-        client.synced_viewed_files(project_path, mr_iid, sync_viewed),
+        viewed_files,
     );
     let raw_diff = diff_res?;
     let project_path = project_path.to_string();
@@ -36,7 +43,7 @@ pub async fn fetch_diff_view(
     Ok((
         diff_view,
         comments_res.map_err(|err| format!("{err:#}")),
-        viewed_files,
+        viewed_files.map(|result| result.map_err(|err| format!("{err:#}"))),
     ))
 }
 

@@ -69,9 +69,9 @@ pub enum Event {
     DiffFetched {
         diff_view: Box<crate::app::DiffView>,
         comments: Result<Vec<crate::domain::mr::DiscussionNote>, String>,
-        /// GitHub's viewed state of the PR's files; `None` when sync is off,
-        /// on GitLab, or when the fetch failed (local marks apply instead).
-        viewed_files: Option<crate::domain::viewed_files::PrViewedFiles>,
+        /// GitHub's viewed state of the PR's files; `None` when sync is off or
+        /// on GitLab, `Err` when the fetch failed (local marks apply instead).
+        viewed_files: Option<Result<crate::domain::viewed_files::PrViewedFiles, String>>,
     },
     DiffFetchFailed(String),
     /// The debounce window of the GitHub "Viewed" sync of this pull request,

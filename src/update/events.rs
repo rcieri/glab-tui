@@ -723,9 +723,14 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             let mr_iid = diff_view.mr_iid;
             let held_back = app.restore_draft_comments(&diff_view);
             let reopened = app.diff_view().is_none_or(|v| v.mr_iid != mr_iid);
+            let (server_state, viewed_error) = match viewed_files {
+                Some(Ok(server_state)) => (Some(server_state), None),
+                Some(Err(err)) => (None, Some(err)),
+                None => (None, None),
+            };
             diff_view.restore_review_state(
                 &app.review_marks_for_mr(&diff_view.project_path, mr_iid),
-                viewed_files,
+                server_state,
                 app.hide_reviewed_files,
             );
             app.sync_viewed_state(&mut diff_view);
@@ -746,12 +751,24 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     )
                 });
             }
+            // One toast for both: a second would replace the first unseen.
+            let mut errors = Vec::new();
             match comments {
                 Ok(comments) => app.current_comments = comments,
                 Err(err) => {
                     app.current_comments.clear();
-                    app.show_cli_error(format!("Failed to load review comments: {err}"));
+                    errors.push(format!("Failed to load review comments: {err}"));
                 }
+            }
+            if let Some(err) = viewed_error {
+                errors.push(format!(
+                    "Failed to load GitHub viewed state, so marks stay local until the next \
+                     open replaces them with GitHub's (sync_viewed_files = false keeps them \
+                     local): {err}"
+                ));
+            }
+            if !errors.is_empty() {
+                app.show_cli_error(errors.join(". "));
             }
             let mut diff_ref: Option<&crate::app::DiffView> = None;
             let mut overview_mut: Option<&mut crate::app::ReviewThreadsOverview> = None;
@@ -932,7 +949,7 @@ fn refetch_after_mutation(
     ) else {
         return;
     };
-    let sync_viewed = app.config.sync_viewed_files;
+    let sync_viewed = app.syncs_viewed_files();
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
         if let Ok((diff_view, comments, viewed_files)) =

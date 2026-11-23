@@ -1,5 +1,6 @@
 [advisories]
 ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono is a direct dependency, and every version is affected. Unmaintained, not a vulnerability. Remove once chrono is replaced (#808)." },
     { id = "RUSTSEC-2025-0141", reason = "bincode 1.3.3 is reached only through syntect, which loads its bundled syntax and theme dumps with it. Unmaintained, not a vulnerability. Re-check whenever syntect is upgraded." },
 ]
 
@@ -20,7 +21,6 @@ skip = [
     { crate = "foldhash", reason = "hashbrown 0.15 (petgraph, via arboard's tree_magic_mini) uses 0.1 while hashbrown 0.16/0.17 (ratatui) use 0.2." },
     { crate = "hashbrown", reason = "petgraph (via arboard's tree_magic_mini), kasuari and ratatui each pin a different hashbrown minor." },
     { crate = "syn", reason = "async-trait, clap_derive and serde_derive moved to syn 3 while darling, derive_more, instability and strum_macros (ratatui) are still on syn 2." },
-    { crate = "windows-sys", reason = "arboard pins windows-sys 0.60 while crossterm, tokio and anstream use 0.61." },
 ]
 
 [sources]

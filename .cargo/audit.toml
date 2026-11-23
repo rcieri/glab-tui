@@ -1,5 +1,8 @@
 [advisories]
 ignore = [
+    # chrono, a direct dependency; every version is affected. Advisory class:
+    # unmaintained, not a vulnerability. Remove once chrono is replaced (#808).
+    "RUSTSEC-2026-0543",
     # bincode 1.3.3, reached only through syntect, which uses it to load its
     # bundled syntax and theme dumps. Advisory class: unmaintained, not a
     # vulnerability. Re-check this entry whenever syntect is upgraded.

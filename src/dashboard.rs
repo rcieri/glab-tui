@@ -26,7 +26,7 @@ pub const SLOW_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardRefresh {
     /// Every list and the activity feed: startup, a scope switch, the
-    /// refresh key.
+    /// refresh key, a page size change.
     Full,
     /// Only what was not read yet: switching to the tab.
     Missing,
@@ -527,7 +527,7 @@ impl App {
     }
 
     /// Org pipelines cost one call per repository of the org, so the timer
-    /// never reads them: only the refresh key and entering the tab do.
+    /// never reads them: only `Full` and `Missing` refreshes do.
     fn is_read_only_on_request(&self, tab: Tab) -> bool {
         tab == Tab::Pipelines && self.scope.is_group()
     }

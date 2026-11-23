@@ -69,9 +69,8 @@ pub const VIEWED_SYNC_BATCH: usize = 50;
 /// server already holds sends nothing. One lives per pull request for the
 /// whole session, so closing the diff loses neither queued intents nor the
 /// request in flight.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ViewedSync {
-    pull_request_id: String,
     /// Paths the server is known to hold as viewed.
     confirmed: HashSet<String>,
     /// Latest unsent intent per path.
@@ -85,20 +84,6 @@ pub struct ViewedSync {
 }
 
 impl ViewedSync {
-    pub fn new(pull_request_id: String, confirmed: HashSet<String>) -> Self {
-        Self {
-            pull_request_id,
-            confirmed,
-            pending: HashMap::new(),
-            flush_scheduled: false,
-            in_flight: Vec::new(),
-        }
-    }
-
-    pub fn pull_request_id(&self) -> &str {
-        &self.pull_request_id
-    }
-
     /// Records the user's latest intent for `paths`. Returns true when the
     /// caller must schedule a flush; one already scheduled picks these up.
     pub fn queue(&mut self, paths: &[String], viewed: bool) -> bool {
@@ -207,7 +192,9 @@ mod tests {
     }
 
     fn sync_with_viewed(names: &[&str]) -> ViewedSync {
-        ViewedSync::new("PR_1".to_string(), paths(names).into_iter().collect())
+        let mut sync = ViewedSync::default();
+        sync.reload(paths(names).into_iter().collect());
+        sync
     }
 
     fn applied() -> HashSet<&'static str> {

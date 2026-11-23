@@ -7023,10 +7023,7 @@ impl App {
             return;
         };
         let confirmed = diff_view.reviewed_files.clone();
-        let sync = self
-            .viewed_syncs
-            .entry(pull_request_id)
-            .or_insert_with_key(|id| ViewedSync::new(id.clone(), HashSet::new()));
+        let sync = self.viewed_syncs.entry(pull_request_id).or_default();
         sync.reload(confirmed);
         diff_view.apply_review_corrections(&sync.unsettled());
     }
@@ -10312,7 +10309,7 @@ mod tests {
 
     #[test]
     fn reset_on_scope_change_forgets_viewed_syncs_whose_results_it_will_drop() {
-        let mut sync = ViewedSync::new("PR_1".to_string(), HashSet::new());
+        let mut sync = ViewedSync::default();
         sync.queue(&["a.rs".to_string()], true);
         sync.take_changes();
         let mut app = App::default();

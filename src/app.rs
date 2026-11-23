@@ -1987,7 +1987,9 @@ impl DiffView {
     }
 
     /// Forces the reviewed state of the given files (sync results); returns how
-    /// many actually changed.
+    /// many actually changed. A file forced to reviewed loses its "changed
+    /// since review" flag, as a toggle does. One forced back to unreviewed (a
+    /// failed sync) keeps whatever flag the server state gave it.
     pub fn apply_review_corrections(&mut self, corrections: &[(String, bool)]) -> usize {
         let before = self.reviewed_files.clone();
         for (path, reviewed) in corrections {
@@ -1996,6 +1998,8 @@ impl DiffView {
             }
             if *reviewed {
                 self.reviewed_files.insert(path.clone());
+                self.changed_since_review.remove(path);
+                self.stale_marks.remove(path);
             } else {
                 self.reviewed_files.remove(path);
             }
@@ -13888,6 +13892,41 @@ index 123456..789012 100644
         assert!(after.reviewed_files.contains("README.md"));
         let sync = app.viewed_syncs.get_mut("PR_1").unwrap();
         assert_eq!(sync.take_changes(), vec![("README.md".to_string(), true)]);
+    }
+
+    #[test]
+    fn a_mark_carried_over_a_refetch_takes_a_dismissed_file_out_of_the_changed_set() {
+        let server = || PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::from([("README.md".to_string(), FileViewedState::Dismissed)]),
+        };
+        let mut app = App::default();
+        let mut before = review_fixture();
+        before.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.sync_viewed_state(&mut before);
+        select_file(&mut before, "README.md");
+        before.toggle_reviewed();
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+
+        // A mutation refetches the diff before the flush.
+        let mut after = review_fixture();
+        after.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.sync_viewed_state(&mut after);
+
+        assert_eq!(
+            after.reviewed_files,
+            HashSet::from(["README.md".to_string()])
+        );
+        assert!(after.changed_since_review.is_empty());
+
+        let mut reverted = review_fixture();
+        reverted.restore_review_state(&HashMap::new(), Some(server()), false);
+        reverted.apply_review_corrections(&[("README.md".to_string(), false)]);
+        assert_eq!(
+            reverted.changed_since_review,
+            HashSet::from(["README.md".to_string()]),
+            "an unreviewed correction keeps the server's flag"
+        );
     }
 
     #[test]

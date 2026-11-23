@@ -224,8 +224,8 @@ const CALENDAR_ROWS: u16 = 8;
 const DAY_COLUMNS: u16 = 4;
 /// Columns between two neighbouring days in the date picker's grid.
 const DAY_GAP_COLUMNS: u16 = 1;
-/// Seven days with a gap between each two, plus the frame.
-const DATE_PICKER_WIDTH: u16 = 7 * DAY_COLUMNS + 6 * DAY_GAP_COLUMNS + 4;
+/// Seven days with a gap between each two.
+const DATE_PICKER_WIDTH: u16 = super::form::outer_columns(7 * DAY_COLUMNS + 6 * DAY_GAP_COLUMNS);
 /// Columns of the previous and next month arrows at each end of the month line.
 const MONTH_ARROW_COLUMNS: u16 = 4;
 

@@ -105,6 +105,11 @@ pub(crate) fn text_columns(width: u16) -> u16 {
     width.saturating_sub(2 * CONTENT_MARGIN.horizontal)
 }
 
+/// Width of a form whose content is `text` columns wide.
+pub(crate) const fn outer_columns(text: u16) -> u16 {
+    text + 2 * CONTENT_MARGIN.horizontal
+}
+
 /// The steps that shrink a body too tall for the screen, in the order they
 /// are taken. Each step keeps the ones before it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

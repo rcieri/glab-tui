@@ -21,8 +21,8 @@ pub const DUE_SOON_DAYS: i64 = 7;
 /// How many days without an update make an open MR/PR or issue idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdleDays {
-    pub mrs: i64,
-    pub issues: i64,
+    pub mrs: u32,
+    pub issues: u32,
 }
 
 impl Default for IdleDays {
@@ -83,8 +83,8 @@ pub fn days_since(timestamp: &str, now: DateTime<Utc>) -> Option<i64> {
     Some((now - parse_rfc3339(timestamp)?).num_days())
 }
 
-fn is_idle(updated_at: &str, idle_days: i64, now: DateTime<Utc>) -> bool {
-    days_since(updated_at, now).is_some_and(|days| days >= idle_days)
+fn is_idle(updated_at: &str, idle_days: u32, now: DateTime<Utc>) -> bool {
+    days_since(updated_at, now).is_some_and(|days| days >= i64::from(idle_days))
 }
 
 fn is_open_mr(mr: &MergeRequest) -> bool {

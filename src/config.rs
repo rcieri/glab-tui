@@ -1463,8 +1463,8 @@ impl Default for DashboardConfig {
         Self {
             enabled: false,
             person: "me".to_string(),
-            mr_idle_days: u32::try_from(idle.mrs).unwrap_or(u32::MAX),
-            issue_idle_days: u32::try_from(idle.issues).unwrap_or(u32::MAX),
+            mr_idle_days: idle.mrs,
+            issue_idle_days: idle.issues,
         }
     }
 }
@@ -1472,8 +1472,8 @@ impl Default for DashboardConfig {
 impl DashboardConfig {
     pub fn idle_days(&self) -> crate::domain::dashboard::IdleDays {
         crate::domain::dashboard::IdleDays {
-            mrs: i64::from(self.mr_idle_days),
-            issues: i64::from(self.issue_idle_days),
+            mrs: self.mr_idle_days,
+            issues: self.issue_idle_days,
         }
     }
 }

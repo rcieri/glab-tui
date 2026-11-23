@@ -1494,9 +1494,9 @@ fn note_span(text: String, color: Color) -> Span<'static> {
     Span::styled(format!("{text} "), Style::default().fg(color))
 }
 
-fn idle_note(ctx: &Context, updated_at: &str, idle_days: i64) -> Option<Span<'static>> {
+fn idle_note(ctx: &Context, updated_at: &str, idle_days: u32) -> Option<Span<'static>> {
     dashboard::days_since(updated_at, ctx.now.instant)
-        .filter(|days| *days >= idle_days)
+        .filter(|days| *days >= i64::from(idle_days))
         .map(|days| note_span(format!("idle {days}d"), ctx.theme.yellow))
 }
 

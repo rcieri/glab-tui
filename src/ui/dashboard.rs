@@ -679,15 +679,20 @@ fn contributors_body(ctx: &Context, width: usize, height: usize) -> Vec<Line<'st
             },
             DashboardPerson::User(login) => format!("@{}", sanitize_untrusted(login)),
         };
-        let stats = app.contributor_stats(person, ctx.now);
-        let numbers: String = match stats {
-            Some(stats) => stats.iter().map(|value| format!("{value:>w$}")).collect(),
-            None => format!("{:>w$}", "-").repeat(ContributorsView::COLUMN_COUNT),
-        };
+        let stats = app
+            .contributor_stats(person, ctx.now)
+            .unwrap_or([None; ContributorsView::COLUMN_COUNT]);
+        let numbers: String = stats
+            .iter()
+            .map(|value| match value {
+                Some(value) => format!("{value:>w$}"),
+                None => format!("{:>w$}", "-"),
+            })
+            .collect();
         let is_late = view
             .overdue_column()
-            .zip(stats)
-            .is_some_and(|(column, stats)| stats[column] > 0);
+            .and_then(|column| stats[column])
+            .is_some_and(|overdue| overdue > 0);
         let late_color = if is_late {
             theme.red
         } else {

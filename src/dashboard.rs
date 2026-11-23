@@ -543,10 +543,20 @@ impl App {
             .resolve(self.dashboard_signed_in_user())
     }
 
+    /// GitHub issues have no due date.
+    fn shows_due_dates(&self) -> bool {
+        self.kind().is_gitlab()
+    }
+
+    /// A GitHub organization's PR search carries no review state.
+    fn shows_review_state(&self) -> bool {
+        !(self.kind().is_github() && self.scope.is_group())
+    }
+
     /// Every selectable row, card by card.
     pub fn dashboard_rows(&self, now: Now) -> Vec<DashboardRow> {
-        let shows_due_dates = self.kind().is_gitlab();
-        let shows_review_state = !(self.kind().is_github() && self.scope.is_group());
+        let shows_due_dates = self.shows_due_dates();
+        let shows_review_state = self.shows_review_state();
         let mut rows = Vec::new();
         for card in self.dashboard_cards() {
             match card {
@@ -692,12 +702,13 @@ impl App {
     }
 
     /// The Contributors card's numbers for `person` in its current view.
-    /// `None` for the signed-in user while their login is unknown.
+    /// `None` for the signed-in user while their login is unknown, and a
+    /// `None` cell for a column the host or scope cannot fill.
     pub fn contributor_stats(
         &self,
         person: &DashboardPerson,
         now: Now,
-    ) -> Option<[usize; ContributorsView::COLUMN_COUNT]> {
+    ) -> Option<[Option<usize>; ContributorsView::COLUMN_COUNT]> {
         let signed_in = self.dashboard_signed_in_user();
         if *person == DashboardPerson::Me && signed_in.is_none() {
             return None;
@@ -713,10 +724,10 @@ impl App {
                     now,
                 );
                 [
-                    load.open_mrs,
-                    load.reviews,
-                    load.open_issues,
-                    load.overdue_issues,
+                    Some(load.open_mrs),
+                    self.shows_review_state().then_some(load.reviews),
+                    Some(load.open_issues),
+                    self.shows_due_dates().then_some(load.overdue_issues),
                 ]
             }
             ContributorsView::Activity(window) => {
@@ -726,10 +737,10 @@ impl App {
                     window.starts_at(now),
                 );
                 [
-                    counts.pushes,
-                    counts.comments,
-                    counts.threads,
-                    counts.reviews,
+                    Some(counts.pushes),
+                    Some(counts.comments),
+                    Some(counts.threads),
+                    Some(counts.reviews),
                 ]
             }
         })
@@ -750,7 +761,8 @@ impl App {
         logins.sort_by_cached_key(|login| {
             let value = self
                 .contributor_stats(&DashboardPerson::User(login.to_string()), now)
-                .map_or(0, |stats| stats[sort.column]);
+                .and_then(|stats| stats[sort.column])
+                .unwrap_or(0);
             let key = if sort.is_descending {
                 usize::MAX - value
             } else {
@@ -1275,7 +1287,7 @@ mod tests {
         app.cycle_contributors_sort(true);
         assert_eq!(
             app.contributor_stats(&DashboardPerson::User("cy".into()), now),
-            Some([2, 0, 0, 0])
+            Some([Some(2), Some(0), Some(0), Some(0)])
         );
         assert_eq!(contributors(&app), vec!["cy", "bob"]);
         app.reverse_contributors_sort();
@@ -1450,6 +1462,39 @@ mod tests {
         );
         app.scope = crate::scope::Scope::Repository("org/repo".to_string());
         assert_eq!(mr_rows(&app), MrQueue::ALL.to_vec());
+    }
+
+    #[test]
+    fn open_work_leaves_the_columns_a_github_host_cannot_fill_unknown() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.dashboard.contributors_view = ContributorsView::OpenWork;
+        let now = app.dashboard_now();
+        let ada = DashboardPerson::User("ada".to_string());
+
+        assert_eq!(
+            app.contributor_stats(&ada, now),
+            Some([Some(0), Some(0), Some(0), Some(0)])
+        );
+        app.scope = crate::scope::Scope::Group("org".to_string());
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        assert_eq!(
+            app.contributor_stats(&ada, now),
+            Some([Some(0), None, Some(0), None])
+        );
+        app.scope = crate::scope::Scope::Repository("org/repo".to_string());
+        assert_eq!(
+            app.contributor_stats(&ada, now),
+            Some([Some(0), Some(0), Some(0), None])
+        );
     }
 
     #[test]

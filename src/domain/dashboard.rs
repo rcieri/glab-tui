@@ -169,7 +169,7 @@ fn awaits_review_from(mr: &MergeRequest, login: &str, signed_in: Option<&str>) -
         return false;
     };
     let has_approved = approval.approved_by.iter().any(|u| u == login);
-    is_mr_reviewer(mr, login) && !has_approved && !is_returned_to(mr, login, signed_in)
+    is_mr_reviewer(mr, login) && !has_approved && !approval.changes_requested
 }
 
 /// A slice of the open MRs/PRs the dashboard counts and lists.
@@ -179,7 +179,9 @@ pub enum MrQueue {
     Open,
     /// Not yet reviewed and not a draft, among the ones whose review state
     /// is known: everyone's are the ones neither approved nor sent back, a
-    /// person's are the ones they review and have not.
+    /// person's are the ones not sent back that they review and have not
+    /// approved, and the signed-in user's the ones they review and have not
+    /// reviewed.
     AwaitingReview,
     /// Changes requested, a person's only on the ones they authored.
     ChangesRequested,
@@ -795,6 +797,13 @@ mod tests {
             mr(
                 4,
                 json!({ "state": "merged", "reviewers": [{ "username": "ada" }] }),
+            ),
+            mr(
+                5,
+                json!({
+                    "reviewers": [{ "username": "ada" }],
+                    "approval": { "changes_requested": true },
+                }),
             ),
         ];
 

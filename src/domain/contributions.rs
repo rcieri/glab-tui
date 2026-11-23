@@ -155,7 +155,8 @@ pub enum TargetKind {
 pub struct ContributionTarget {
     pub kind: TargetKind,
     pub iid: u64,
-    pub title: String,
+    /// `None` when the feed event names none, as GitHub's review events do.
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,7 +293,7 @@ fn gitlab_contribution(event: GlEvent) -> Option<Contribution> {
             .map(|(kind, iid)| ContributionTarget {
                 kind,
                 iid,
-                title: event.target_title.clone().unwrap_or_default(),
+                title: event.target_title.clone(),
             });
         let kind = match event.target_type.as_deref() {
             Some("DiffNote" | "DiscussionNote") => ContributionKind::ThreadComment,
@@ -305,7 +306,7 @@ fn gitlab_contribution(event: GlEvent) -> Option<Contribution> {
         let target = event.target_iid.map(|iid| ContributionTarget {
             kind: TargetKind::MergeRequest,
             iid,
-            title: event.target_title.clone().unwrap_or_default(),
+            title: event.target_title.clone(),
         });
         return Some(base(
             ContributionKind::Review,
@@ -381,7 +382,7 @@ struct GhIssueCommentPayload {
 struct GhIssue {
     number: u64,
     #[serde(default)]
-    title: String,
+    title: Option<String>,
     /// Present when the issue is a pull request.
     #[serde(default)]
     pull_request: Option<serde_json::Value>,
@@ -398,8 +399,6 @@ struct GhComment {
 #[derive(Deserialize)]
 struct GhPullRequest {
     number: u64,
-    #[serde(default)]
-    title: String,
 }
 
 #[derive(Deserialize)]
@@ -428,7 +427,7 @@ fn pull_request_target(pr: GhPullRequest) -> ContributionTarget {
     ContributionTarget {
         kind: TargetKind::MergeRequest,
         iid: pr.number,
-        title: pr.title,
+        title: None,
     }
 }
 
@@ -771,7 +770,7 @@ mod tests {
             Some(ContributionTarget {
                 kind,
                 iid,
-                title: title.to_string(),
+                title: Some(title.to_string()),
             })
         };
         let made_at = |at: &str| parse_rfc3339(at).expect("valid time");
@@ -842,7 +841,7 @@ mod tests {
         let raw = r#"[
             {"type": "PullRequestReviewEvent", "actor": {"login": "cy"}, "created_at": "2026-10-03T00:00:00Z",
              "payload": {"action": "dismissed", "review": {"state": "approved"},
-                         "pull_request": {"number": 9, "title": "Add cache"}}}
+                         "pull_request": {"number": 9}}}
         ]"#;
 
         assert!(
@@ -905,10 +904,10 @@ mod tests {
             {"type": "PullRequestReviewCommentEvent", "actor": {"login": "cy"},
              "created_at": "2026-10-03T00:00:00Z",
              "payload": {"comment": {"body": "nit", "path": "src/cache.rs"},
-                         "pull_request": {"number": 9, "title": "Add cache"}}},
+                         "pull_request": {"number": 9}}},
             {"type": "PullRequestReviewEvent", "actor": {"login": "cy"}, "created_at": "2026-10-03T00:00:00Z",
              "payload": {"action": "created", "review": {"state": "changes_requested"},
-                         "pull_request": {"number": 9, "title": "Add cache"}}},
+                         "pull_request": {"number": 9}}},
             {"type": "WatchEvent", "actor": {"login": "dee"}, "created_at": "2026-10-01T00:00:00Z",
              "payload": {}}
         ]"#;
@@ -924,7 +923,9 @@ mod tests {
                     c.kind,
                     c.summary,
                     c.location.unwrap_or_default(),
-                    c.target.map_or(String::new(), |t| format!("#{}", t.iid)),
+                    c.target.map_or(String::new(), |t| {
+                        format!("#{} {}", t.iid, t.title.unwrap_or_default())
+                    }),
                 )
             })
             .collect();
@@ -934,9 +935,9 @@ mod tests {
             vec![
                 "ada Commit Second (+1 more) | main 22222222 | ",
                 "ada Commit pushed to dev | dev abcdef01 | ",
-                "bob Comment LGTM |  | #9",
-                "cy ThreadComment nit | src/cache.rs | #9",
-                "cy Review requested changes |  | #9",
+                "bob Comment LGTM |  | #9 Add cache",
+                "cy ThreadComment nit | src/cache.rs | #9 ",
+                "cy Review requested changes |  | #9 ",
             ]
         );
     }

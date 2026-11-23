@@ -18,7 +18,9 @@ use crate::dashboard::{
     ContributionFeed, ContributorsView, CountCut, DashboardCard, DashboardFocus, DashboardItem,
     DashboardPerson, DashboardRow,
 };
-use crate::domain::contributions::{ContributionKind, TargetKind};
+use crate::domain::contributions::{
+    Contribution, ContributionKind, ContributionTarget, TargetKind,
+};
 use crate::domain::dashboard::{
     self, Activity, ActivityWindow, IdleDays, IssueQueue, MilestoneProgress, MrQueue, Now, Person,
     PipelineOutcome,
@@ -1396,13 +1398,7 @@ fn activity_row(ctx: &Context, item: &Activity, columns: &ListColumns) -> Row<'s
                 Some(target) => format!("#{}", target.iid),
                 None => String::new(),
             };
-            let summary = sanitize_untrusted(&contribution.summary).into_owned();
-            let title = match &contribution.target {
-                Some(target) if !target.title.is_empty() => {
-                    format!("{summary} · on {}", sanitize_untrusted(&target.title))
-                }
-                _ => summary,
-            };
+            let title = contribution_title(ctx.app, contribution);
             let location = contribution
                 .location
                 .as_deref()
@@ -1433,6 +1429,39 @@ fn activity_row(ctx: &Context, item: &Activity, columns: &ListColumns) -> Row<'s
         },
         columns,
     )
+}
+
+/// A contribution's summary, followed by the title of the issue or MR/PR it
+/// was made on when the feed or the listed items know it.
+fn contribution_title(app: &App, contribution: &Contribution) -> String {
+    let summary = sanitize_untrusted(&contribution.summary).into_owned();
+    let on = contribution.target.as_ref().and_then(|target| {
+        target
+            .title
+            .as_deref()
+            .or_else(|| listed_title(app, target))
+    });
+    match on {
+        Some(on) => format!("{summary} · on {}", sanitize_untrusted(on)),
+        None => summary,
+    }
+}
+
+fn listed_title<'a>(app: &'a App, target: &ContributionTarget) -> Option<&'a str> {
+    match target.kind {
+        TargetKind::Issue => app
+            .issues
+            .items
+            .iter()
+            .find(|issue| issue.iid == target.iid)
+            .map(|issue| issue.title.as_str()),
+        TargetKind::MergeRequest => app
+            .mrs
+            .items
+            .iter()
+            .find(|mr| mr.iid == target.iid)
+            .map(|mr| mr.title.as_str()),
+    }
 }
 
 /// `text` cut to at most `width` characters, its `...` included.
@@ -1723,5 +1752,50 @@ mod tests {
                 ..every_column
             }
         );
+    }
+
+    #[test]
+    fn a_contribution_without_a_title_in_the_feed_takes_the_listed_mr_title() {
+        let mut app = App::default();
+        app.mrs.items = vec![
+            serde_json::from_value(serde_json::json!({
+                "iid": 9,
+                "title": "Add cache",
+                "state": "opened",
+                "updated_at": "2026-10-28T00:00:00Z",
+                "author": { "username": "bob" },
+                "milestone": null,
+                "target_branch": "main",
+                "draft": false,
+                "description": null,
+            }))
+            .expect("a valid merge request"),
+        ];
+        let review_comment = |iid: u64, title: Option<&str>| Contribution {
+            id: "1".to_string(),
+            author: "cy".to_string(),
+            kind: ContributionKind::ThreadComment,
+            created_at: "2026-10-28T00:00:00Z".to_string(),
+            made_at: chrono::DateTime::parse_from_rfc3339("2026-10-28T00:00:00Z")
+                .expect("valid time")
+                .with_timezone(&chrono::Utc),
+            summary: "nit".to_string(),
+            target: Some(ContributionTarget {
+                kind: TargetKind::MergeRequest,
+                iid,
+                title: title.map(str::to_string),
+            }),
+            location: None,
+        };
+
+        assert_eq!(
+            contribution_title(&app, &review_comment(9, None)),
+            "nit · on Add cache"
+        );
+        assert_eq!(
+            contribution_title(&app, &review_comment(9, Some("Add a cache"))),
+            "nit · on Add a cache"
+        );
+        assert_eq!(contribution_title(&app, &review_comment(10, None)), "nit");
     }
 }

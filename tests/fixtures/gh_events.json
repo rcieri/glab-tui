@@ -4,5 +4,7 @@
                "commits": [{"sha": "a1b2c3d4e5f60718", "message": "Speed up the monorepo build"}]}},
   {"id": "40000000002", "type": "PullRequestReviewCommentEvent", "actor": {"login": "octocat"}, "created_at": "HOURS_AGO_30",
    "payload": {"comment": {"body": "Can we cache this step?", "path": "build.sh"},
-               "pull_request": {"number": 1, "title": "Rewrite the monorepo build"}}}
+               "pull_request": {"url": "https://api.github.com/repos/octo/repo/pulls/1", "id": 3000000001, "number": 1,
+                                "head": {"ref": "fast-build", "sha": "a1b2c3d4e5f60718"},
+                                "base": {"ref": "main", "sha": "0f1e2d3c4b5a6978"}}}}
 ]

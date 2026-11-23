@@ -507,14 +507,8 @@ pub fn spawn_refresh_shown_tab(
     }
 }
 
-/// Refresh the Dashboard: fetch the lists and the activity feed `refresh`
-/// calls for, each list reporting through its own tab's events, then report
-/// `Event::DashboardRefreshed`. The lists it fetches are marked loading so
-/// switching to their tab meanwhile does not fetch them a second time. A
-/// `Full` refresh forgets their last failure, so one that fails again is
-/// reported again instead of being taken for the repeat a card shows. A
-/// plan that fetches nothing completes at once and spawns no task, so the
-/// cards never flash `Loading` for it.
+/// Refresh what `refresh` calls for on the Dashboard. `Event::DashboardRefreshed`
+/// completes its loading mark, or this does at once when nothing is fetched.
 pub fn spawn_refresh_dashboard(
     fx: &mut Effects,
     client: &domain::client::GitlabClient,
@@ -527,6 +521,7 @@ pub fn spawn_refresh_dashboard(
         app.dashboard.slow_refreshed_at = Some(std::time::Instant::now());
     }
     if plan.fetches_nothing() {
+        // No task, so the cards never flash `Loading` for a refresh that reads nothing.
         app.complete_loading_tab(app::Tab::Dashboard, "Success");
         return;
     }

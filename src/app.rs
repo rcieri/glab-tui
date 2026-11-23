@@ -4219,12 +4219,16 @@ impl EnvironmentDeployments {
     }
 }
 
-/// A pull request's GitHub "Viewed" sync and the client that opened its diff.
-/// Batches go out through that client: after a scope switch
-/// `App::gitlab_client` is being rebuilt, or reaches another host.
+/// A pull request's GitHub "Viewed" sync with what it needs once its diff is
+/// closed or the scope switched. Batches go out through the client that
+/// opened the diff: after a scope switch `App::gitlab_client` is being
+/// rebuilt, or reaches another host. `project_path` and `mr_iid` name the
+/// saved marks a settled request corrects.
 pub struct PullRequestViewedSync {
     pub sync: ViewedSync,
     pub client: crate::domain::client::GitlabClient,
+    pub project_path: String,
+    pub mr_iid: u64,
 }
 
 pub struct App {
@@ -7040,13 +7044,15 @@ impl App {
             return;
         };
         let confirmed = diff_view.reviewed_files.clone();
-        let entry = self
-            .viewed_syncs
-            .entry(pull_request_id)
-            .or_insert_with(|| PullRequestViewedSync {
-                sync: ViewedSync::default(),
-                client: client.clone(),
-            });
+        let entry =
+            self.viewed_syncs
+                .entry(pull_request_id)
+                .or_insert_with(|| PullRequestViewedSync {
+                    sync: ViewedSync::default(),
+                    client: client.clone(),
+                    project_path: diff_view.project_path.clone(),
+                    mr_iid: diff_view.mr_iid,
+                });
         let mut corrections = entry.sync.reload(confirmed, fetched_at);
         corrections.extend(entry.sync.unsettled());
         diff_view.apply_review_corrections(&corrections);
@@ -7063,6 +7069,44 @@ impl App {
         self.viewed_syncs
             .get_mut(pull_request_id)
             .is_some_and(|entry| entry.sync.queue(paths, viewed))
+    }
+
+    /// Brings the reviewed marks of an MR/PR in line with what a settled
+    /// viewed-sync request left on GitHub. Its open diff takes every
+    /// correction, even one opened without GitHub's state. Without an open
+    /// diff only the saved marks GitHub does not hold are dropped: saving a
+    /// mark takes the file's fingerprint, which only a diff has.
+    pub fn apply_viewed_corrections(
+        &mut self,
+        project_path: &str,
+        mr_iid: u64,
+        corrections: &[(String, bool)],
+    ) {
+        let marks = match self
+            .diff_view_mut()
+            .filter(|view| view.project_path == project_path && view.mr_iid == mr_iid)
+        {
+            Some(diff_view) => {
+                if diff_view.apply_review_corrections(corrections) == 0 {
+                    return;
+                }
+                diff_view.review_marks()
+            }
+            None => {
+                let mut marks = self.review_marks_for_mr(project_path, mr_iid);
+                let saved = marks.len();
+                for (path, viewed) in corrections {
+                    if !viewed {
+                        marks.remove(path);
+                    }
+                }
+                if marks.len() == saved {
+                    return;
+                }
+                marks
+            }
+        };
+        self.store_review_marks(project_path, mr_iid, marks);
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.

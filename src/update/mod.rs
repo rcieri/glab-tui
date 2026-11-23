@@ -318,6 +318,61 @@ mod tests {
         assert_eq!(flush(&mut app, "PR_1"), 1, "the batch left over");
     }
 
+    fn app_with_a_readme_mark_on_its_way_and_the_diff_closed() -> App {
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        let marks = readme_diff().marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project", 42, marks);
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        app.close_diff_view();
+        app
+    }
+
+    fn readme_mark_failed() -> Event {
+        Event::ViewedFilesSynced {
+            pull_request_id: "PR_1".to_string(),
+            changes: vec![("README.md".to_string(), true)],
+            result: Err("HTTP 502".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_viewed_mark_that_failed_after_its_diff_closed_leaves_the_saved_marks() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_readme_mark_on_its_way_and_the_diff_closed();
+
+        update(&mut app, readme_mark_failed());
+
+        assert_eq!(
+            app.review_marks_for_mr("org/project", 42),
+            std::collections::HashMap::new()
+        );
+    }
+
+    #[test]
+    fn a_viewed_mark_that_failed_reverts_on_a_diff_reopened_without_github_state() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_readme_mark_on_its_way_and_the_diff_closed();
+        update(&mut app, diff_fetched(Some(Err("HTTP 403".to_string()))));
+        let reopened = app.diff_view().expect("diff opens");
+        assert_eq!(reopened.pull_request_id, None);
+        assert!(reopened.reviewed_files.contains("README.md"));
+
+        update(&mut app, readme_mark_failed());
+
+        let diff_view = app.diff_view().expect("diff stays open");
+        assert_eq!(diff_view.reviewed_files, std::collections::HashSet::new());
+        assert_eq!(
+            app.review_marks_for_mr("org/project", 42),
+            std::collections::HashMap::new()
+        );
+    }
+
     #[test]
     fn a_partly_refused_viewed_sync_reverts_only_the_refused_marks() {
         let _guard = crate::config::lock_test_env();

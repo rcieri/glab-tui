@@ -833,27 +833,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             };
             app.viewed_settles = app.viewed_settles.next();
             let settled_at = app.viewed_settles;
-            let mut corrections = Vec::new();
+            let mut settled = None;
             if let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) {
-                corrections = entry.sync.settle(&changes, &rejected, settled_at);
+                let corrections = entry.sync.settle(&changes, &rejected, settled_at);
                 if entry.sync.claim_follow_up_flush() {
                     crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), tx.clone());
                 }
+                settled = Some((entry.project_path.clone(), entry.mr_iid, corrections));
             }
-            let mut reverted_marks = None;
-            if let Some(diff_view) = app
-                .diff_view_mut()
-                .filter(|v| v.pull_request_id.as_deref() == Some(pull_request_id.as_str()))
-                && diff_view.apply_review_corrections(&corrections) > 0
-            {
-                reverted_marks = Some((
-                    diff_view.project_path.clone(),
-                    diff_view.mr_iid,
-                    diff_view.review_marks(),
-                ));
-            }
-            if let Some((project_path, mr_iid, marks)) = reverted_marks {
-                app.store_review_marks(&project_path, mr_iid, marks);
+            if let Some((project_path, mr_iid, corrections)) = settled {
+                app.apply_viewed_corrections(&project_path, mr_iid, &corrections);
             }
             match result {
                 Err(err) => app.show_cli_error(format!(

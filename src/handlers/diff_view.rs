@@ -272,7 +272,11 @@ pub fn handle_key(
                 format!("{} files", paths.len())
             };
             if let Some((_, marked)) = diff_view.toggle_reviewed() {
-                app.store_review_marks(diff_view.mr_iid, diff_view.review_marks());
+                app.store_review_marks(
+                    &diff_view.project_path,
+                    diff_view.mr_iid,
+                    diff_view.review_marks(),
+                );
                 if diff_view.queue_viewed_sync(&paths, marked) {
                     crate::fetch::spawn_viewed_sync_flush(
                         fx,

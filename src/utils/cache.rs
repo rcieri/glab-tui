@@ -31,12 +31,14 @@ pub struct ProjectCache {
     pub label_colors: HashMap<String, String>,
     #[serde(default)]
     pub members: Vec<String>,
-    /// Files marked as reviewed in the diff view, keyed by MR/PR iid, then by
-    /// path, mapped to the fingerprint of the diff the mark was made on. The
-    /// path-only `reviewed_files` map of older versions is ignored on load and
-    /// dropped on the next save: which version those marks covered is unknown.
+    /// Files marked as reviewed in the diff view, by project path, then MR/PR
+    /// iid, then path, mapped to the fingerprint of the diff the mark was made
+    /// on. A group-scope cache is shared by every project in the group, and the
+    /// same iid recurs across them. The path-only `reviewed_files` map of older
+    /// versions is ignored on load and dropped on the next save: which version
+    /// those marks covered is unknown.
     #[serde(default)]
-    pub review_marks: HashMap<u64, HashMap<String, String>>,
+    pub review_marks: HashMap<String, HashMap<u64, HashMap<String, String>>>,
     /// Draft review comments not yet submitted, by project path, then MR/PR
     /// iid. A group-scope cache is shared by every project in the group, and
     /// the same iid recurs across them.

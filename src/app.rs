@@ -6986,21 +6986,36 @@ impl App {
 
     /// Reviewed-file marks of an MR/PR (path → fingerprint of the reviewed
     /// version), restored from the project cache.
-    pub fn review_marks_for_mr(&self, mr_iid: u64) -> HashMap<String, String> {
+    pub fn review_marks_for_mr(&self, project_path: &str, mr_iid: u64) -> HashMap<String, String> {
         self.project_cache
             .review_marks
-            .get(&mr_iid)
+            .get(project_path)
+            .and_then(|marks| marks.get(&mr_iid))
             .cloned()
             .unwrap_or_default()
     }
 
     /// Writes the reviewed-file marks of an MR/PR into the project cache and
     /// persists it.
-    pub fn store_review_marks(&mut self, mr_iid: u64, marks: HashMap<String, String>) {
+    pub fn store_review_marks(
+        &mut self,
+        project_path: &str,
+        mr_iid: u64,
+        marks: HashMap<String, String>,
+    ) {
+        let all_marks = &mut self.project_cache.review_marks;
         if marks.is_empty() {
-            self.project_cache.review_marks.remove(&mr_iid);
+            if let Some(project_marks) = all_marks.get_mut(project_path) {
+                project_marks.remove(&mr_iid);
+                if project_marks.is_empty() {
+                    all_marks.remove(project_path);
+                }
+            }
         } else {
-            self.project_cache.review_marks.insert(mr_iid, marks);
+            all_marks
+                .entry(project_path.to_string())
+                .or_default()
+                .insert(mr_iid, marks);
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }

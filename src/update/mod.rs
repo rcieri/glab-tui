@@ -155,6 +155,41 @@ mod tests {
     }
 
     #[test]
+    fn opening_another_projects_pull_request_with_the_same_number_leaves_its_marks_alone() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = App::default();
+        let diff = |added: &str| {
+            format!(
+                "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+                 @@ -1,1 +1,1 @@\n-old\n+{added}\n"
+            )
+        };
+        let reviewed = crate::app::DiffView::new(42, "org/project-a".to_string(), diff("new"));
+        let marks = reviewed.marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project-a", 42, marks.clone());
+
+        update(
+            &mut app,
+            Event::DiffFetched {
+                diff_view: Box::new(crate::app::DiffView::new(
+                    42,
+                    "org/project-b".to_string(),
+                    diff("other"),
+                )),
+                comments: Ok(vec![]),
+                viewed_files: None,
+            },
+        );
+
+        assert_eq!(app.review_marks_for_mr("org/project-a", 42), marks);
+        let diff_view = app.diff_view().expect("diff opens");
+        assert!(diff_view.reviewed_files.is_empty());
+        assert!(diff_view.changed_since_review.is_empty());
+    }
+
+    #[test]
     fn diff_fetched_updates_diff_in_place_without_lifting_it_above_review_threads() {
         let mut app = with_open_diff(app_with_client());
         let overview = crate::app::ReviewThreadsOverview::new(&[], app.diff_view().unwrap());

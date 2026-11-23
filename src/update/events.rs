@@ -728,12 +728,12 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 .map(|v| v.viewed_sync.take());
             let reopened = previous_sync.is_none();
             diff_view.restore_review_state(
-                &app.review_marks_for_mr(mr_iid),
+                &app.review_marks_for_mr(&diff_view.project_path, mr_iid),
                 viewed_files,
                 app.hide_reviewed_files,
             );
             diff_view.adopt_viewed_sync(previous_sync.flatten());
-            app.store_review_marks(mr_iid, diff_view.review_marks());
+            app.store_review_marks(&diff_view.project_path, mr_iid, diff_view.review_marks());
             let changed = diff_view.changed_since_review.len();
             if reopened && changed > 0 {
                 app.show_notice(format!(
@@ -826,11 +826,15 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     crate::fetch::spawn_viewed_sync_flush(fx, diff_view.mr_iid, sender);
                 }
                 if diff_view.apply_review_corrections(&corrections) > 0 {
-                    reverted_marks = Some((diff_view.mr_iid, diff_view.review_marks()));
+                    reverted_marks = Some((
+                        diff_view.project_path.clone(),
+                        diff_view.mr_iid,
+                        diff_view.review_marks(),
+                    ));
                 }
             }
-            if let Some((mr_iid, marks)) = reverted_marks {
-                app.store_review_marks(mr_iid, marks);
+            if let Some((project_path, mr_iid, marks)) = reverted_marks {
+                app.store_review_marks(&project_path, mr_iid, marks);
             }
             if let Err(err) = result {
                 app.show_cli_error(format!(

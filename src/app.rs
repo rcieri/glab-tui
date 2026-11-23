@@ -4260,7 +4260,7 @@ impl SubmitDialog {
     }
 
     pub(crate) fn is_on_cancel(&self) -> bool {
-        self.form.focused_button() == Some(self.form.cancel())
+        self.form.cancel().is_some() && self.form.focused_button() == self.form.cancel()
     }
 
     pub(crate) fn body(&self) -> &str {

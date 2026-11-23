@@ -429,8 +429,9 @@ pub struct Form {
     tone: FormTone,
     groups: Vec<Group>,
     buttons: Vec<Button>,
-    primary: usize,
-    cancel: usize,
+    /// `None` in a panel, which has no buttons, so no key can activate one.
+    primary: Option<usize>,
+    cancel: Option<usize>,
     focus: Focus,
     /// First body row on screen, moved by each draw to keep the focus visible.
     pub scroll: usize,
@@ -448,8 +449,8 @@ impl Form {
             tone: FormTone::Normal,
             groups,
             buttons,
-            primary: 0,
-            cancel,
+            primary: Some(0),
+            cancel: Some(cancel),
             focus: Focus::Button(0),
             scroll: 0,
             layout: None,
@@ -458,16 +459,17 @@ impl Form {
 
     /// A form without buttons, for an overlay that handles its own keys and
     /// draws its content into [`GroupKind::Custom`] regions. Its title is the
-    /// one the overlay's `FormFrame` draws.
+    /// one the overlay's `FormFrame` draws. It opens on its first group and
+    /// never returns [`FormAction::Activate`].
     pub fn panel(groups: Vec<Group>) -> Self {
         Self {
             title: String::new(),
             tone: FormTone::Normal,
             groups,
             buttons: Vec::new(),
-            primary: 0,
-            cancel: 0,
-            focus: Focus::Button(0),
+            primary: None,
+            cancel: None,
+            focus: Focus::Group(GroupPath::top(0)),
             scroll: 0,
             layout: None,
         }
@@ -476,7 +478,9 @@ impl Form {
     pub fn danger(mut self) -> Self {
         self.tone = FormTone::Danger;
         self.primary = self.cancel;
-        self.focus = Focus::Button(self.cancel);
+        if let Some(cancel) = self.cancel {
+            self.focus = Focus::Button(cancel);
+        }
         self
     }
 
@@ -492,12 +496,16 @@ impl Form {
         &self.buttons
     }
 
-    pub fn primary(&self) -> usize {
+    pub fn primary(&self) -> Option<usize> {
         self.primary
     }
 
-    pub fn cancel(&self) -> usize {
+    pub fn cancel(&self) -> Option<usize> {
         self.cancel
+    }
+
+    fn activate_primary(&self) -> FormAction {
+        self.primary.map_or(FormAction::None, FormAction::Activate)
     }
 
     pub fn focus(&self) -> Focus {
@@ -696,19 +704,18 @@ impl Form {
             }
             Action::DialogActivate => match self.focus {
                 Focus::Button(button) => FormAction::Activate(button),
-                _ if self.focused_line_input().is_some() => FormAction::Activate(self.primary),
+                _ if self.focused_line_input().is_some() => self.activate_primary(),
                 _ => {
                     self.press_focused();
                     FormAction::None
                 }
             },
-            Action::DialogSubmit => {
-                if self.focus == Focus::Button(self.primary) {
-                    FormAction::Activate(self.primary)
-                } else {
-                    FormAction::None
+            Action::DialogSubmit => match self.focus {
+                Focus::Button(button) if Some(button) == self.primary => {
+                    FormAction::Activate(button)
                 }
-            }
+                _ => FormAction::None,
+            },
             _ => FormAction::None,
         }
     }
@@ -750,9 +757,7 @@ impl Form {
             KeyCode::Char(' ') => self.press_focused(),
             KeyCode::Enter => match self.focus {
                 Focus::Button(button) => return FormAction::Activate(button),
-                _ if self.focused_line_input().is_some() => {
-                    return FormAction::Activate(self.primary);
-                }
+                _ if self.focused_line_input().is_some() => return self.activate_primary(),
                 _ => self.press_focused(),
             },
             KeyCode::Esc => return FormAction::Cancel,
@@ -766,7 +771,7 @@ impl Form {
 
     fn handle_editing_key(&mut self, key: &KeyEvent) -> FormAction {
         match key.code {
-            KeyCode::Enter => return FormAction::Activate(self.primary),
+            KeyCode::Enter => return self.activate_primary(),
             KeyCode::Esc => self.stop_editing(),
             KeyCode::Tab => self.step_stop(1),
             KeyCode::BackTab => self.step_stop(-1),
@@ -922,7 +927,7 @@ impl Form {
             self.step_across(step);
             return;
         }
-        let count = stops.len() + 1;
+        let count = stops.len() + usize::from(self.cancel.is_some());
         let current = match self.focus {
             Focus::Group(path) | Focus::Editing(path) => {
                 stops.iter().position(|&p| p == path).unwrap_or(0)
@@ -935,7 +940,7 @@ impl Form {
                 self.enter_group(path, step);
                 self.start_editing();
             }
-            None => self.focus = Focus::Button(self.cancel),
+            None => self.focus_cancel(),
         }
     }
 
@@ -959,7 +964,7 @@ impl Form {
                 let position = stops.iter().position(|&p| p == path).unwrap_or(0);
                 match position.checked_add_signed(step) {
                     Some(next) if next < stops.len() => self.enter_group(stops[next], step),
-                    Some(_) => self.focus = Focus::Button(self.cancel),
+                    Some(_) => self.focus_cancel(),
                     None => {}
                 }
             }
@@ -969,6 +974,13 @@ impl Form {
                 }
             }
             Focus::Button(_) => {}
+        }
+    }
+
+    /// Moves the focus onto Cancel, which a panel does not have.
+    fn focus_cancel(&mut self) {
+        if let Some(cancel) = self.cancel {
+            self.focus = Focus::Button(cancel);
         }
     }
 
@@ -1124,7 +1136,7 @@ impl Form {
     /// the footer. A panel without buttons only names `Esc`: its owner
     /// names its own keys.
     pub fn key_hints(&self) -> Vec<KeyHint> {
-        let Some(primary) = self.buttons.get(self.primary) else {
+        let Some(primary) = self.primary.and_then(|primary| self.buttons.get(primary)) else {
             return vec![KeyHint::new("Esc", "close")];
         };
         let primary = primary.label.to_lowercase();
@@ -1394,6 +1406,22 @@ mod tests {
         assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(0));
     }
 
+    #[test]
+    fn a_panel_never_activates_a_button_it_does_not_have() {
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::LineInput(LineInput::new("Fix".into(), None))).with_id(SUBJECT),
+        ]);
+        form.edit(SUBJECT);
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
+        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::Down] {
+            press(&mut form, code);
+            assert_eq!(form.focused_button(), None, "{code:?}");
+        }
+        press(&mut form, KeyCode::Esc);
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
+        assert_eq!(form.key_hints(), vec![KeyHint::new("Esc", "close")]);
+    }
+
     fn message_form() -> Form {
         Form::new(
             "Merge",
@@ -1609,7 +1637,7 @@ mod tests {
         press(&mut form, KeyCode::Char('a'));
         press(&mut form, KeyCode::Tab);
         press(&mut form, KeyCode::Tab);
-        assert_eq!(form.focus(), Focus::Button(form.cancel()));
+        assert_eq!(form.focused_button(), form.cancel());
         press(&mut form, KeyCode::Char('a'));
         assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
         assert_eq!(

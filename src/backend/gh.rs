@@ -3065,13 +3065,13 @@ impl Backend for GhBackend {
                 let mut all_pipelines: Vec<Pipeline> = Vec::new();
                 for repo in repos {
                     let endpoint = format!("repos/{repo}/actions/runs?per_page=10");
-                    if let Ok(raw) = self.run_gh(&["api", &endpoint], "Fetching Actions").await {
-                        if let Ok(mut runs) = parse_github_actions_runs(&raw) {
-                            for run in runs.iter_mut() {
-                                run.project_path = repo.clone();
-                            }
-                            all_pipelines.extend(runs);
+                    if let Ok(raw) = self.run_gh(&["api", &endpoint], "Fetching Actions").await
+                        && let Ok(mut runs) = parse_github_actions_runs(&raw)
+                    {
+                        for run in runs.iter_mut() {
+                            run.project_path = repo.clone();
                         }
+                        all_pipelines.extend(runs);
                     }
                 }
                 all_pipelines.sort_by(|a, b| b.created_at().cmp(&a.created_at()));
@@ -3642,16 +3642,16 @@ impl Backend for GhBackend {
             args.push("-f".into());
             args.push(format!("description={description}"));
         }
-        if let Some(due) = due_date {
-            if !due.is_empty() {
-                let iso_due = if due.contains('T') {
-                    due.to_string()
-                } else {
-                    format!("{due}T00:00:00Z")
-                };
-                args.push("-f".into());
-                args.push(format!("due_on={iso_due}"));
-            }
+        if let Some(due) = due_date
+            && !due.is_empty()
+        {
+            let iso_due = if due.contains('T') {
+                due.to_string()
+            } else {
+                format!("{due}T00:00:00Z")
+            };
+            args.push("-f".into());
+            args.push(format!("due_on={iso_due}"));
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "CREATING MILESTONE").await?;
@@ -3706,16 +3706,16 @@ impl Backend for GhBackend {
             args.push("-f".into());
             args.push(format!("description={description}"));
         }
-        if let Some(due) = due_date {
-            if !due.is_empty() {
-                let iso_due = if due.contains('T') {
-                    due.to_string()
-                } else {
-                    format!("{due}T00:00:00Z")
-                };
-                args.push("-f".into());
-                args.push(format!("due_on={iso_due}"));
-            }
+        if let Some(due) = due_date
+            && !due.is_empty()
+        {
+            let iso_due = if due.contains('T') {
+                due.to_string()
+            } else {
+                format!("{due}T00:00:00Z")
+            };
+            args.push("-f".into());
+            args.push(format!("due_on={iso_due}"));
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "Updating Milestone").await?;
@@ -3862,26 +3862,25 @@ impl Backend for GhBackend {
                     "Fetching Default Branch",
                 )
                 .await
+                && let Ok(br) = serde_json::from_str::<GhBr>(&br_raw)
             {
-                if let Ok(br) = serde_json::from_str::<GhBr>(&br_raw) {
-                    branches.push(Branch {
-                        default: true,
-                        protected: br.protected,
-                        web_url: format!("https://github.com/{project}/tree/{}", br.name),
-                        name: br.name,
-                        can_push: false,
-                        commit_sha: br
-                            .commit
-                            .as_ref()
-                            .map(|c| c.sha.clone())
-                            .unwrap_or_default(),
-                        commit_message: None,
-                        author_name: None,
-                        author_email: None,
-                        commit_date: None,
-                        ahead_behind: None,
-                    });
-                }
+                branches.push(Branch {
+                    default: true,
+                    protected: br.protected,
+                    web_url: format!("https://github.com/{project}/tree/{}", br.name),
+                    name: br.name,
+                    can_push: false,
+                    commit_sha: br
+                        .commit
+                        .as_ref()
+                        .map(|c| c.sha.clone())
+                        .unwrap_or_default(),
+                    commit_message: None,
+                    author_name: None,
+                    author_email: None,
+                    commit_date: None,
+                    ahead_behind: None,
+                });
             }
         }
         Ok(branches)

@@ -474,37 +474,37 @@ pub fn build_mr_document(
     }
 
     let mut description = mr.description.clone().unwrap_or_default();
-    if let Some(entries) = &mr.stack_entries {
-        if !entries.is_empty() {
-            if !description.is_empty() {
-                description.push_str("\n\n---\n\n");
-            }
-            let stack_num = mr.stack.as_ref().map(|s| s.number).unwrap_or(0);
-            if stack_num > 0 {
-                description.push_str(&format!(
-                    "### Stack #{stack_num} ({} PRs)\n\n",
-                    entries.len()
-                ));
+    if let Some(entries) = &mr.stack_entries
+        && !entries.is_empty()
+    {
+        if !description.is_empty() {
+            description.push_str("\n\n---\n\n");
+        }
+        let stack_num = mr.stack.as_ref().map(|s| s.number).unwrap_or(0);
+        if stack_num > 0 {
+            description.push_str(&format!(
+                "### Stack #{stack_num} ({} PRs)\n\n",
+                entries.len()
+            ));
+        } else {
+            description.push_str(&format!("### Stack ({} PRs)\n\n", entries.len()));
+        }
+        for entry in entries {
+            let current_marker = if entry.number == mr.iid {
+                format!(" {} (current)", icons.nav_prev)
             } else {
-                description.push_str(&format!("### Stack ({} PRs)\n\n", entries.len()));
-            }
-            for entry in entries {
-                let current_marker = if entry.number == mr.iid {
-                    format!(" {} (current)", icons.nav_prev)
-                } else {
-                    String::new()
-                };
-                let draft_str = if entry.is_draft { " [draft]" } else { "" };
-                description.push_str(&format!(
-                    "{}. #{}: {} ({}){}{}\n",
-                    entry.position,
-                    entry.number,
-                    entry.title,
-                    entry.state.to_uppercase(),
-                    draft_str,
-                    current_marker
-                ));
-            }
+                String::new()
+            };
+            let draft_str = if entry.is_draft { " [draft]" } else { "" };
+            description.push_str(&format!(
+                "{}. #{}: {} ({}){}{}\n",
+                entry.position,
+                entry.number,
+                entry.title,
+                entry.state.to_uppercase(),
+                draft_str,
+                current_marker
+            ));
         }
     }
 
@@ -734,11 +734,7 @@ pub fn build_milestone_document(
             0.0
         };
         let bar_segments = 10;
-        let filled_len = if total > 0 {
-            (closed * bar_segments) / total
-        } else {
-            0
-        };
+        let filled_len = (closed * bar_segments).checked_div(total).unwrap_or(0);
         let bar = format!(
             "[{}{}] {:.0}% ({}/{} closed)",
             "█".repeat(filled_len),
@@ -1229,10 +1225,10 @@ pub fn apply_field_text_change(
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.title = value.clone();
                 }
-            } else if entity_is_mr(entity_type) {
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.title = value.clone();
-                }
+            } else if entity_is_mr(entity_type)
+                && let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
+            {
+                item.title = value.clone();
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -1346,10 +1342,10 @@ pub fn apply_field_text_change(
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.description = Some(value.clone());
                 }
-            } else if entity_is_mr(entity_type) {
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.description = Some(value.clone());
-                }
+            } else if entity_is_mr(entity_type)
+                && let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
+            {
+                item.description = Some(value.clone());
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -1443,10 +1439,10 @@ pub fn apply_selector_changes(
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.labels = values;
                 }
-            } else if entity_is_mr(entity_type) {
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.labels = values;
-                }
+            } else if entity_is_mr(entity_type)
+                && let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
+            {
+                item.labels = values;
             }
         }
         SelectorField::Assignees => {
@@ -1513,15 +1509,15 @@ pub fn apply_selector_changes(
                         })
                         .collect();
                 }
-            } else if entity_is_mr(entity_type) {
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.assignees = clean_values
-                        .iter()
-                        .map(|username| crate::domain::mr::Assignee {
-                            username: username.clone(),
-                        })
-                        .collect();
-                }
+            } else if entity_is_mr(entity_type)
+                && let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
+            {
+                item.assignees = clean_values
+                    .iter()
+                    .map(|username| crate::domain::mr::Assignee {
+                        username: username.clone(),
+                    })
+                    .collect();
             }
         }
         SelectorField::Reviewers => {
@@ -1591,16 +1587,16 @@ pub fn apply_selector_changes(
                         })
                     };
                 }
-            } else if entity_is_mr(entity_type) {
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.milestone = if clear_milestone {
-                        None
-                    } else {
-                        Some(crate::domain::mr::Milestone {
-                            title: first_val.clone(),
-                        })
-                    };
-                }
+            } else if entity_is_mr(entity_type)
+                && let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
+            {
+                item.milestone = if clear_milestone {
+                    None
+                } else {
+                    Some(crate::domain::mr::Milestone {
+                        title: first_val.clone(),
+                    })
+                };
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -1624,24 +1620,22 @@ pub fn apply_selector_changes(
                 ));
             });
         }
-        SelectorField::Confidential => {
-            if entity_is_issue(entity_type) {
-                let is_confidential = values.iter().any(|v| v == "Yes" || v == "true");
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = app.project_path_for_issue(iid);
-                let tx2 = tx.clone();
-                fx.spawn(async move {
-                    let result = client
-                        .update_issue_confidential(&project_path, iid, is_confidential)
-                        .await;
-                    let _ = tx2.send(Event::CommandCompleted(
-                        tab,
-                        CommandOutcome::mutation(result),
-                    ));
-                });
-            }
+        SelectorField::Confidential if entity_is_issue(entity_type) => {
+            let is_confidential = values.iter().any(|v| v == "Yes" || v == "true");
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let project_path = app.project_path_for_issue(iid);
+            let tx2 = tx.clone();
+            fx.spawn(async move {
+                let result = client
+                    .update_issue_confidential(&project_path, iid, is_confidential)
+                    .await;
+                let _ = tx2.send(Event::CommandCompleted(
+                    tab,
+                    CommandOutcome::mutation(result),
+                ));
+            });
         }
         _ => {}
     }
@@ -1727,40 +1721,40 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 source_on_forge: false,
             });
         }
-    } else if entity_is_milestone(entity_type) {
-        if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
-            let milestone = milestone.clone();
-            let selected_idx = app.edit_menu().map(|m| m.selected_idx).unwrap_or(0);
-            let is_github = app.is_github();
+    } else if entity_is_milestone(entity_type)
+        && let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid)
+    {
+        let milestone = milestone.clone();
+        let selected_idx = app.edit_menu().map(|m| m.selected_idx).unwrap_or(0);
+        let is_github = app.is_github();
 
-            let issues_ref = app.milestone_issues(milestone.iid);
-            let progress = app.milestone_progress_cache.get(&milestone.iid).copied();
-            let mut doc = build_milestone_document(&milestone, issues_ref, progress, is_github);
-            doc.fields.push(crate::app::Field::text(
-                "Description",
-                milestone.description.clone().unwrap_or_default(),
-            ));
+        let issues_ref = app.milestone_issues(milestone.iid);
+        let progress = app.milestone_progress_cache.get(&milestone.iid).copied();
+        let mut doc = build_milestone_document(&milestone, issues_ref, progress, is_github);
+        doc.fields.push(crate::app::Field::text(
+            "Description",
+            milestone.description.clone().unwrap_or_default(),
+        ));
 
-            app.open_edit_menu(crate::app::EditMenu {
-                title: format!("Edit Milestone %{}", milestone.iid),
-                entity_project: milestone.project_path.clone(),
-                fields: doc.fields,
-                initial_fields: std::collections::HashMap::new(),
-                selected_idx,
-                entity_iid: milestone.iid,
-                entity_kind: crate::app::EditEntityKind::EditMilestone,
-                state: {
-                    let mut s = ratatui::widgets::ListState::default();
-                    s.select(Some(selected_idx));
-                    s
-                },
-                workflow_inputs: vec![],
-                cursor_pos: 0,
-                editing: false,
-                desc_scroll: 0,
-                source_on_forge: false,
-            });
-        }
+        app.open_edit_menu(crate::app::EditMenu {
+            title: format!("Edit Milestone %{}", milestone.iid),
+            entity_project: milestone.project_path.clone(),
+            fields: doc.fields,
+            initial_fields: std::collections::HashMap::new(),
+            selected_idx,
+            entity_iid: milestone.iid,
+            entity_kind: crate::app::EditEntityKind::EditMilestone,
+            state: {
+                let mut s = ratatui::widgets::ListState::default();
+                s.select(Some(selected_idx));
+                s
+            },
+            workflow_inputs: vec![],
+            cursor_pos: 0,
+            editing: false,
+            desc_scroll: 0,
+            source_on_forge: false,
+        });
     }
 }
 

@@ -772,22 +772,20 @@ impl Form {
             KeyCode::BackTab => self.step_stop(-1),
             KeyCode::Char(_) if crate::keybinding::is_shortcut(key.code, key.modifiers) => {}
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
-                if let Some(path) = self.focused_line_input() {
-                    if let Some(group) = self.group_at_mut(path) {
-                        if let GroupKind::LineInput(input) = &mut group.kind {
-                            input.buffer.apply_edit_key(key.code);
-                            group.is_touched = true;
-                        }
-                    }
+                if let Some(path) = self.focused_line_input()
+                    && let Some(group) = self.group_at_mut(path)
+                    && let GroupKind::LineInput(input) = &mut group.kind
+                {
+                    input.buffer.apply_edit_key(key.code);
+                    group.is_touched = true;
                 }
             }
             KeyCode::Left | KeyCode::Right => {
-                if let Some(path) = self.focused_line_input() {
-                    if let Some(GroupKind::LineInput(input)) =
+                if let Some(path) = self.focused_line_input()
+                    && let Some(GroupKind::LineInput(input)) =
                         self.group_at_mut(path).map(|group| &mut group.kind)
-                    {
-                        input.buffer.apply_edit_key(key.code);
-                    }
+                {
+                    input.buffer.apply_edit_key(key.code);
                 }
             }
             _ => {}
@@ -851,11 +849,11 @@ impl Form {
             return None;
         };
         let mut text = input.buffer.value().to_string();
-        if let Some(preview) = self.body_preview(path) {
-            if !preview.lines.is_empty() {
-                text.push_str("\n\n");
-                text.push_str(&preview.lines.join("\n"));
-            }
+        if let Some(preview) = self.body_preview(path)
+            && !preview.lines.is_empty()
+        {
+            text.push_str("\n\n");
+            text.push_str(&preview.lines.join("\n"));
         }
         Some(text)
     }
@@ -881,15 +879,13 @@ impl Form {
             input.buffer.set_value(first);
             group.is_touched = true;
         }
-        if let Some(preview_path) = preview_path {
-            if let Some(group) = self.group_at_mut(preview_path) {
-                if let GroupKind::Preview(preview) = &mut group.kind {
-                    if preview.lines != rest {
-                        preview.lines = rest;
-                        group.is_touched = true;
-                    }
-                }
-            }
+        if let Some(preview_path) = preview_path
+            && let Some(group) = self.group_at_mut(preview_path)
+            && let GroupKind::Preview(preview) = &mut group.kind
+            && preview.lines != rest
+        {
+            preview.lines = rest;
+            group.is_touched = true;
         }
     }
 
@@ -1075,10 +1071,12 @@ impl Form {
         };
         section.is_expanded = !section.is_expanded;
         let is_expanded = section.is_expanded;
-        if let Focus::Group(path) | Focus::Editing(path) = self.focus {
-            if !is_expanded && path.index == index && path.child.is_some() {
-                self.focus = Focus::Group(GroupPath::top(index));
-            }
+        if let Focus::Group(path) | Focus::Editing(path) = self.focus
+            && !is_expanded
+            && path.index == index
+            && path.child.is_some()
+        {
+            self.focus = Focus::Group(GroupPath::top(index));
         }
     }
 

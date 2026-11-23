@@ -51,11 +51,11 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
-    if app.edit_menu().is_some() {
-        if let Some(rect) = app.detail_rect {
-            app.overlay_stack
-                .push((crate::app::OverlayKind::EditMenu, rect));
-        }
+    if app.edit_menu().is_some()
+        && let Some(rect) = app.detail_rect
+    {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::EditMenu, rect));
     }
 
     // Below every other overlay: its comment actions and reply prompts open on top.
@@ -578,16 +578,16 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
                     (_, clean) => spans.push(Span::styled(clean.into_owned(), style)),
                 }
                 // Repos sharing a basename are told apart by their path.
-                if is_switch_repo && !is_group {
-                    if let Some(path) = switch_repo_paths
+                if is_switch_repo
+                    && !is_group
+                    && let Some(path) = switch_repo_paths
                         .get(item)
                         .filter(|path| !path.is_empty() && *path != item)
-                    {
-                        spans.push(Span::styled(
-                            format!(" {path}"),
-                            Style::default().fg(theme.text_muted).bg(item_bg),
-                        ));
-                    }
+                {
+                    spans.push(Span::styled(
+                        format!(" {path}"),
+                        Style::default().fg(theme.text_muted).bg(item_bg),
+                    ));
                 }
                 ListItem::new(Line::from(spans)).style(Style::default().bg(item_bg))
             })

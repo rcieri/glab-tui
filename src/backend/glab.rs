@@ -691,10 +691,8 @@ fn merge_tolerating_partial_failure(
         }
     }
 
-    if !any_batch_succeeded {
-        if let Some(e) = last_err {
-            return Err(e);
-        }
+    if !any_batch_succeeded && let Some(e) = last_err {
+        return Err(e);
     }
 
     Ok(merged)
@@ -1681,15 +1679,16 @@ impl Backend for GlabBackend {
             };
             args.extend(["--milestone".into(), val.to_string()]);
         }
-        if let Some(ref due_date) = update.due_date {
-            if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
-                args.extend(["--due-date".into(), due_date.clone()]);
-            }
+        if let Some(ref due_date) = update.due_date
+            && !due_date.is_empty()
+            && due_date != "YYYY-MM-DD"
+        {
+            args.extend(["--due-date".into(), due_date.clone()]);
         }
-        if let Some(ref weight) = update.weight {
-            if !weight.is_empty() {
-                args.extend(["--weight".into(), weight.clone()]);
-            }
+        if let Some(ref weight) = update.weight
+            && !weight.is_empty()
+        {
+            args.extend(["--weight".into(), weight.clone()]);
         }
         if let Some(confidential) = update.confidential {
             if confidential {
@@ -2652,13 +2651,12 @@ impl Backend for GlabBackend {
         cursor: &TraceCursor,
     ) -> Result<TraceUpdate> {
         let endpoint = Self::job_trace_endpoint(project, job_id);
-        if !ignores_trace_ranges(project) {
-            if let Some(update) = self
+        if !ignores_trace_ranges(project)
+            && let Some(update) = self
                 .read_job_trace_ranges(project, &endpoint, cursor)
                 .await?
-            {
-                return Ok(update);
-            }
+        {
+            return Ok(update);
         }
         let log = self.read_job_trace(&endpoint).await?;
         Ok(match cursor.new_bytes_in_full_read(&log.bytes) {
@@ -2862,12 +2860,12 @@ impl Backend for GlabBackend {
         let runner_str = runner_id.to_string();
         let mut args = vec!["runner", "update", &runner_str, "--pause"];
         let proj;
-        if let Scope::Repository(p) = scope {
-            if !p.is_empty() {
-                proj = p.as_str();
-                args.push("-R");
-                args.push(proj);
-            }
+        if let Scope::Repository(p) = scope
+            && !p.is_empty()
+        {
+            proj = p.as_str();
+            args.push("-R");
+            args.push(proj);
         }
         self.run_glab(&args, "PAUSING RUNNER").await?;
         Ok(())
@@ -2877,12 +2875,12 @@ impl Backend for GlabBackend {
         let runner_str = runner_id.to_string();
         let mut args = vec!["runner", "update", &runner_str, "--unpause"];
         let proj;
-        if let Scope::Repository(p) = scope {
-            if !p.is_empty() {
-                proj = p.as_str();
-                args.push("-R");
-                args.push(proj);
-            }
+        if let Scope::Repository(p) = scope
+            && !p.is_empty()
+        {
+            proj = p.as_str();
+            args.push("-R");
+            args.push(proj);
         }
         self.run_glab(&args, "RESUMING RUNNER").await?;
         Ok(())
@@ -3147,15 +3145,15 @@ impl Backend for GlabBackend {
         if !description.is_empty() {
             body_val["description"] = serde_json::Value::String(description.to_string());
         }
-        if let Some(sd) = start_date {
-            if !sd.is_empty() {
-                body_val["start_date"] = serde_json::Value::String(sd.to_string());
-            }
+        if let Some(sd) = start_date
+            && !sd.is_empty()
+        {
+            body_val["start_date"] = serde_json::Value::String(sd.to_string());
         }
-        if let Some(dd) = due_date {
-            if !dd.is_empty() {
-                body_val["due_date"] = serde_json::Value::String(dd.to_string());
-            }
+        if let Some(dd) = due_date
+            && !dd.is_empty()
+        {
+            body_val["due_date"] = serde_json::Value::String(dd.to_string());
         }
         let body = body_val.to_string();
         self.raw_api(&endpoint, "POST", Some(&body), "CREATING MILESTONE")
@@ -3213,17 +3211,17 @@ impl Backend for GlabBackend {
             args.push("--description".into());
             args.push(description.into());
         }
-        if let Some(start) = start_date {
-            if !start.is_empty() {
-                args.push("--start-date".into());
-                args.push(start.into());
-            }
+        if let Some(start) = start_date
+            && !start.is_empty()
+        {
+            args.push("--start-date".into());
+            args.push(start.into());
         }
-        if let Some(due) = due_date {
-            if !due.is_empty() {
-                args.push("--due-date".into());
-                args.push(due.into());
-            }
+        if let Some(due) = due_date
+            && !due.is_empty()
+        {
+            args.push("--due-date".into());
+            args.push(due.into());
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "Updating Milestone").await?;
@@ -3384,46 +3382,37 @@ impl Backend for GlabBackend {
             if let Ok(proj_raw) = self
                 .raw_api(&proj_endpoint, "GET", None, "Fetching Project Info")
                 .await
+                && let Ok(proj) = serde_json::from_str::<GiProj>(&proj_raw)
+                && let Some(def) = proj.default_branch
             {
-                if let Ok(proj) = serde_json::from_str::<GiProj>(&proj_raw) {
-                    if let Some(def) = proj.default_branch {
-                        let br_encoded = url_encode_branch(&def);
-                        let br_endpoint =
-                            format!("/projects/{encoded}/repository/branches/{br_encoded}");
-                        if let Ok(br_raw) = self
-                            .raw_api(&br_endpoint, "GET", None, "Fetching Default Branch")
-                            .await
-                        {
-                            if let Ok(b) = serde_json::from_str::<GiBr>(&br_raw) {
-                                let (
-                                    commit_sha,
-                                    commit_message,
-                                    author_name,
-                                    author_email,
-                                    commit_date,
-                                ) = if let Some(c) = b.commit {
-                                    let msg = c.message.filter(|m| !m.is_empty()).or(c.title);
-                                    let date = c.committed_date.or(c.authored_date);
-                                    (c.id, msg, c.author_name, c.author_email, date)
-                                } else {
-                                    (String::new(), None, None, None, None)
-                                };
-                                branches.push(Branch {
-                                    name: b.name,
-                                    default: true,
-                                    protected: b.protected.unwrap_or(false),
-                                    web_url: b.web_url.unwrap_or_default(),
-                                    can_push: b.can_push.unwrap_or(false),
-                                    commit_sha,
-                                    commit_message,
-                                    author_name,
-                                    author_email,
-                                    commit_date,
-                                    ahead_behind: None,
-                                });
-                            }
-                        }
-                    }
+                let br_encoded = url_encode_branch(&def);
+                let br_endpoint = format!("/projects/{encoded}/repository/branches/{br_encoded}");
+                if let Ok(br_raw) = self
+                    .raw_api(&br_endpoint, "GET", None, "Fetching Default Branch")
+                    .await
+                    && let Ok(b) = serde_json::from_str::<GiBr>(&br_raw)
+                {
+                    let (commit_sha, commit_message, author_name, author_email, commit_date) =
+                        if let Some(c) = b.commit {
+                            let msg = c.message.filter(|m| !m.is_empty()).or(c.title);
+                            let date = c.committed_date.or(c.authored_date);
+                            (c.id, msg, c.author_name, c.author_email, date)
+                        } else {
+                            (String::new(), None, None, None, None)
+                        };
+                    branches.push(Branch {
+                        name: b.name,
+                        default: true,
+                        protected: b.protected.unwrap_or(false),
+                        web_url: b.web_url.unwrap_or_default(),
+                        can_push: b.can_push.unwrap_or(false),
+                        commit_sha,
+                        commit_message,
+                        author_name,
+                        author_email,
+                        commit_date,
+                        ahead_behind: None,
+                    });
                 }
             }
         }

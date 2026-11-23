@@ -75,11 +75,11 @@ fn apply_form_action(
             app.pop_submit_dialog();
         }
         FormAction::Activate(button) => {
-            if button == SubmitDialog::SUBMIT_BUTTON_INDEX {
-                if let Some(blocker) = app.submit_dialog().and_then(SubmitDialog::merge_blocker) {
-                    app.show_error(blocker);
-                    return;
-                }
+            if button == SubmitDialog::SUBMIT_BUTTON_INDEX
+                && let Some(blocker) = app.submit_dialog().and_then(SubmitDialog::merge_blocker)
+            {
+                app.show_error(blocker);
+                return;
             }
             let Some(dialog) = app.pop_submit_dialog() else {
                 return;

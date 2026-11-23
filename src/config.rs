@@ -1000,10 +1000,9 @@ fn repo_local_config_paths() -> Vec<PathBuf> {
                     return false;
                 }
                 if let (Some(c1), Some(c2)) = (std::fs::canonicalize(path).ok(), &global_canonical)
+                    && c1 == *c2
                 {
-                    if c1 == *c2 {
-                        return false;
-                    }
+                    return false;
                 }
                 true
             })
@@ -1187,12 +1186,11 @@ impl Theme {
     fn preset_from(user_themes: Option<&std::path::Path>, name: &str) -> Option<Self> {
         if let Some(dir) = user_themes {
             let theme_path = dir.join(format!("{name}.toml"));
-            if let Ok(contents) = std::fs::read_to_string(&theme_path) {
-                if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
-                    if let Some(theme) = tf.to_theme() {
-                        return Some(theme);
-                    }
-                }
+            if let Ok(contents) = std::fs::read_to_string(&theme_path)
+                && let Ok(tf) = toml::from_str::<ThemeToml>(&contents)
+                && let Some(theme) = tf.to_theme()
+            {
+                return Some(theme);
             }
         }
         // Fall back to bundled theme
@@ -1205,10 +1203,10 @@ impl Theme {
 }
 
 fn apply_color(field: &mut Color, override_val: &Option<String>) {
-    if let Some(s) = override_val {
-        if let Some(c) = parse_color(s) {
-            *field = c;
-        }
+    if let Some(s) = override_val
+        && let Some(c) = parse_color(s)
+    {
+        *field = c;
     }
 }
 
@@ -1710,21 +1708,21 @@ page_size = 100
         let mut layout_problems = Vec::new();
 
         let path = Self::config_path();
-        if let Ok(global_contents) = std::fs::read_to_string(&path) {
-            if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_config_file(&mut global_val);
-                layout_problems.extend(layout::drop_invalid_values(&mut global_val));
-                merge_toml_values(&mut merged_value, global_val);
-            }
+        if let Ok(global_contents) = std::fs::read_to_string(&path)
+            && let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents)
+        {
+            normalize_config_file(&mut global_val);
+            layout_problems.extend(layout::drop_invalid_values(&mut global_val));
+            merge_toml_values(&mut merged_value, global_val);
         }
 
         for p in repo_local_config_paths() {
-            if let Ok(workspace_contents) = std::fs::read_to_string(&p) {
-                if let Ok(mut workspace_val) = toml::from_str::<toml::Value>(&workspace_contents) {
-                    normalize_config_file(&mut workspace_val);
-                    layout_problems.extend(layout::drop_invalid_values(&mut workspace_val));
-                    merge_toml_values(&mut merged_value, workspace_val);
-                }
+            if let Ok(workspace_contents) = std::fs::read_to_string(&p)
+                && let Ok(mut workspace_val) = toml::from_str::<toml::Value>(&workspace_contents)
+            {
+                normalize_config_file(&mut workspace_val);
+                layout_problems.extend(layout::drop_invalid_values(&mut workspace_val));
+                merge_toml_values(&mut merged_value, workspace_val);
             }
         }
 
@@ -1816,12 +1814,12 @@ pub fn all_theme_presets() -> Vec<String> {
     if let Some(entries) = user_themes_dir().and_then(|dir| std::fs::read_dir(dir).ok()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "toml") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    let name = stem.to_string();
-                    if !presets.contains(&name) {
-                        presets.push(name);
-                    }
+            if path.extension().is_some_and(|e| e == "toml")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                let name = stem.to_string();
+                if !presets.contains(&name) {
+                    presets.push(name);
                 }
             }
         }
@@ -1838,12 +1836,12 @@ impl Config {
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
 
         let path = Self::config_path();
-        if let Ok(global_contents) = std::fs::read_to_string(&path) {
-            if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_config_file(&mut global_val);
-                layout::drop_invalid_values(&mut global_val);
-                merge_toml_values(&mut merged_value, global_val);
-            }
+        if let Ok(global_contents) = std::fs::read_to_string(&path)
+            && let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents)
+        {
+            normalize_config_file(&mut global_val);
+            layout::drop_invalid_values(&mut global_val);
+            merge_toml_values(&mut merged_value, global_val);
         }
 
         Config::deserialize(merged_value).unwrap_or_default()

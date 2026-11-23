@@ -141,7 +141,11 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             app.overlay_stack
                 .push((crate::app::OverlayKind::Configure, layout.area));
             if let Some(configure) = app.configure_mut() {
-                configure.visible_rows = targets.into_iter().skip(state.offset()).collect();
+                configure.visible_rows = targets
+                    .into_iter()
+                    .skip(state.offset())
+                    .take(usize::from(layout.groups[0].height))
+                    .collect();
                 configure.layout = Some(layout);
             }
         }

@@ -609,11 +609,8 @@ pub enum SelectorPurpose {
     },
     SwitchRepo,
     Theme,
-    /// Opened on an empty Description of a creation form.
-    BlankDescriptionTemplate {
-        kind: TemplateKind,
-    },
-    /// The creation form's "Description Template" row.
+    /// A creation form's description template picker, opened from the
+    /// "Description Template" row or on an empty Description.
     DescriptionTemplate {
         kind: TemplateKind,
     },

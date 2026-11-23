@@ -2133,9 +2133,7 @@ pub fn handle_key(
                                 is_loading: false,
                                 entity_iid: 0,
                                 entity_type: entity_type.clone(),
-                                purpose: crate::app::SelectorPurpose::BlankDescriptionTemplate {
-                                    kind,
-                                },
+                                purpose: crate::app::SelectorPurpose::DescriptionTemplate { kind },
                                 multi_select: false,
                                 state: {
                                     let mut s = ListState::default();

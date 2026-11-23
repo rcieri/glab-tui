@@ -861,8 +861,7 @@ pub fn handle_key(
                         }
                     }
 
-                    app::SelectorPurpose::BlankDescriptionTemplate { kind }
-                    | app::SelectorPurpose::DescriptionTemplate { kind } => {
+                    app::SelectorPurpose::DescriptionTemplate { kind } => {
                         let filtered_items = selector.get_filtered_items();
                         let mut selected_val = selector.selected_items.iter().next().cloned();
                         if selected_val.is_none() && !filtered_items.is_empty() {
@@ -1259,7 +1258,7 @@ mod tests {
         }
     }
 
-    /// Both template pickers of a new MR fill the Description from the
+    /// The template picker of a new MR fills the Description from the
     /// repository's pull request templates, not its issue templates.
     #[test]
     fn picking_an_mr_template_fills_the_description_with_it() {
@@ -1271,55 +1270,41 @@ mod tests {
             std::fs::create_dir_all(dir).unwrap();
             std::fs::write(std::path::Path::new(dir).join("feature.md"), body).unwrap();
         }
+        let mut app = App::default();
+        app.open_edit_menu(new_mr_menu());
+        app.open_selector(Selector {
+            title: "Template".to_string(),
+            all_items: vec![BLANK_TEMPLATE_CHOICE.to_string(), "feature".to_string()],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 1,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 0,
+            entity_type: String::new(),
+            purpose: SelectorPurpose::DescriptionTemplate {
+                kind: TemplateKind::of(&EditEntityKind::CreateMr),
+            },
+            multi_select: false,
+            state: ListState::default(),
+            request: None,
+        });
+        let tx = app.tx.clone();
+        let mut fx = Effects::default();
+        let enter = KeyPress::from(crossterm::event::KeyEvent::new(
+            KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        handle_key(&mut app, &enter, &tx, &mut fx);
 
-        let kind = TemplateKind::of(&EditEntityKind::CreateMr);
-        let descriptions: Vec<Option<String>> = [
-            SelectorPurpose::DescriptionTemplate { kind },
-            SelectorPurpose::BlankDescriptionTemplate { kind },
-        ]
-        .into_iter()
-        .map(|purpose| {
-            let mut app = App::default();
-            app.open_edit_menu(new_mr_menu());
-            app.open_selector(Selector {
-                title: "Template".to_string(),
-                all_items: vec![BLANK_TEMPLATE_CHOICE.to_string(), "feature".to_string()],
-                selected_items: std::collections::HashSet::new(),
-                cursor_idx: 1,
-                search_query: String::new(),
-                is_filtering: false,
-                is_loading: false,
-                entity_iid: 0,
-                entity_type: String::new(),
-                purpose,
-                multi_select: false,
-                state: ListState::default(),
-                request: None,
-            });
-            let tx = app.tx.clone();
-            let mut fx = Effects::default();
-            let enter = KeyPress::from(crossterm::event::KeyEvent::new(
-                KeyCode::Enter,
-                crossterm::event::KeyModifiers::NONE,
-            ));
-            handle_key(&mut app, &enter, &tx, &mut fx);
-            app.edit_menu()
-                .and_then(|menu| menu.fields.iter().find(|f| f.label == "Description"))
-                .map(|f| f.value.clone())
-        })
-        .collect();
-
-        assert_eq!(
-            descriptions,
-            vec![
-                Some("PR template".to_string()),
-                Some("PR template".to_string())
-            ]
-        );
+        let description = app
+            .edit_menu()
+            .and_then(|menu| menu.fields.iter().find(|f| f.label == "Description"))
+            .map(|f| f.value.clone());
+        assert_eq!(description, Some("PR template".to_string()));
     }
 
-    /// The blank picker on an empty Description names its pick in the
-    /// Description Template row, as the row's own picker does.
+    /// Picking the blank template clears the Description Template row.
     #[test]
     fn a_blank_pick_from_the_description_clears_the_template_row() {
         let mut menu = new_mr_menu();
@@ -1336,7 +1321,7 @@ mod tests {
             is_loading: false,
             entity_iid: 0,
             entity_type: String::new(),
-            purpose: SelectorPurpose::BlankDescriptionTemplate {
+            purpose: SelectorPurpose::DescriptionTemplate {
                 kind: TemplateKind::of(&EditEntityKind::CreateMr),
             },
             multi_select: false,

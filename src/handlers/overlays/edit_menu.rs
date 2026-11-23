@@ -2354,8 +2354,6 @@ mod tests {
         );
     }
 
-    /// Enter on a selector row opens the picker for that row, special rows
-    /// included, so the pick is written back to the row it came from.
     #[test]
     fn enter_on_a_selector_row_opens_the_picker_for_that_row() {
         use crate::app::{EditEntityKind, EditMenu, Field, SelectorField, SelectorPurpose};

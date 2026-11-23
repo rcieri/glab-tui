@@ -76,7 +76,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Environments & Deployments** — browse environments and their deployment status, walk an environment's deployment history with `Enter`, inspect each deployment's commit, deployer, job and notes, roll back with `R`, stop an environment with `d` and copy its URL with `y`
 - **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status and unified error toasts
 - **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
-- **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
+- **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), reorder columns (`J`/`K`), group by any column, set sort order, page size and theme, and arrange the tabs and panes for every tab
 - **Value-based Column Filtering** — press `Enter` on any column inside the configure popup to filter rows by that column's values (e.g. Issues → `State` → `opened`); multi-select supports multiple values per column
 - **Live Search** — fuzzy-filter across all visible columns by pressing `/`
 - **Jump to issue/MR by ID** — press `g` from any tab to jump straight to an issue/MR by ID (rows show as `#123` / `!456`); type an ID such as `#123` or `!456` into the fuzzy search — rows not already loaded are fetched from the API
@@ -257,7 +257,7 @@ and hosts serving both platforms require the override.
 
 ### Config file
 
-The config file is optional; the app boots from in-memory defaults when none exists. To create one, open the **Configure View** popup (default `Tab`) and submit **Save View**, which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
+The config file is optional; the app boots from in-memory defaults when none exists. To create one, open the **Configure View** popup (default `Tab`) and submit **Save View**, which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). A global save leaves out every setting the repo-local config sets, so one repository's overrides never reach the others: the global file keeps its own value there, and a change to such a setting is only saved by a repo-local save. Locations:
 
 ```
 ~/.config/glab-tui/config.toml          # Linux / macOS (XDG)
@@ -343,6 +343,13 @@ toggle_side_by_side = "d"
 search_previous = "Ctrl+p"
 # ...
 
+# Tabs and panes (see "Layout" below). The Configure View edits all but the
+# *_min_* thresholds.
+# [layout]
+# tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
+# preview = "auto"
+# terminal_pane_visible = false
+
 # Persist default column visibility / grouping / filters per pane.
 # On a GitHub repository, a State filter with a single state also makes
 # `gh issue list` / `gh pr list` fetch only that state (`--state open`).
@@ -359,6 +366,33 @@ search_previous = "Ctrl+p"
 # [mrs.column_filters]
 # State = ["opened"]
 ```
+
+### Layout
+
+The `[layout]` section decides which tabs show and in what order, and where the panes go. The Configure View's **TABS** and **LAYOUT** sections change all of it at runtime except the three `*_min_*` thresholds, and **Save View** writes them to the global or repo-local file.
+
+```toml
+[layout]
+# Tabs to show, in order: the sidebar, the next_tab / prev_tab keys and the
+# sidebar clicks all follow it. A tab left out is hidden; unset or empty shows
+# every tab. A name that is no tab is skipped and reported in the Terminal tab,
+# and so is any [layout] value its key cannot hold, which keeps the default.
+tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
+nav_visible = true             # navigation sidebar, toggled with Alt+n (toggle_nav)
+nav_width = 22
+nav_min_width = 80             # the sidebar hides on narrower terminals
+preview = "auto"               # auto (right, below the list when narrow) | right | bottom | off; with no place, the Pipelines inspector opens full screen
+preview_width = "auto"         # "auto" (30, 45 or 35% by terminal width), cells (40) or "35%"
+preview_height = "auto"        # height of a bottom preview: "auto" (half), cells or a percentage
+preview_min_width = 68         # columns beside the sidebar; narrower: an auto preview moves below, a right preview hides
+terminal_pane_visible = true   # compact terminal pane, toggled with Alt+t (toggle_terminal_pane)
+terminal_pane_height = 6
+terminal_pane_min_height = 18  # the terminal pane hides on shorter terminals
+```
+
+Each tab remembers whether its preview was open, so switching away and back restores it. Whatever the sizes, the list keeps at least 30 columns and 5 rows: the sidebar, preview and terminal pane shrink first. A `preview_width` set in cells or percent that does not fit beside the list shrinks to the widest that does.
+
+**Deprecated keys.** `disabled_tabs = [...]` and the `[ui]` keys `sidebar_visible`, `sidebar_width` and `terminal_pane_visible` are still read for this release and will be removed in the next minor release. They apply to the file they are written in, and only where that file's `[layout]` does not set the same thing: `disabled_tabs` becomes a `tabs` list of every other tab, and the `[ui]` keys map to `nav_visible`, `nav_width` and `terminal_pane_visible`. A repo-local `disabled_tabs` therefore still overrides a global `layout.tabs`. Saving from the Configure View writes `[layout]` and removes the deprecated keys from the file it saves to. Toggling the sidebar or terminal pane with their keys changes only the running session until you save.
 
 ### Custom themes
 
@@ -514,8 +548,9 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 ### Column configuration & value-based filtering
 
 1. Press **`Tab`** (or **`,`**) to open the **Configure View** popup.
-2. The **COLUMNS** section lists every available column for the active tab. Use `j`/`k` (or arrows) to move through it.
+2. The **COLUMNS** section lists every available column for the active tab, in display order. Use `j`/`k` (or arrows) to move through the popup, and `Tab` / `Shift+Tab` to jump to the next / previous section.
    - **`Space`** toggles whether a column is shown in the table.
+   - **`J`** / **`K`** move the focused column right / left in the table. **Save View** keeps the order: `columns = [...]` lists the shown columns in display order. A column the list leaves out is hidden, and goes after the listed ones when you show it again. A list in alphabetical order, which is how earlier versions saved every list, is read as carrying no order, so those tables keep the built-in order.
    - **`Enter`** opens a **value-based filter** for that column: a searchable multi-select of the distinct values currently loaded. For example, on the Issues tab, `Enter` on the `State` column lets you filter to just `opened` issues — or on the `Labels` column, to specific labels.
 3. Inside the filter selector: `Space` toggles values on/off, `/` or `f` fuzzy-searches the values, `Enter` applies the filter, `Esc` cancels. Selecting multiple values is supported (e.g. `opened` **and** `closed`).
 4. Applied filters are shown as a count next to the column, e.g. `[x] State (1)`. Re-open the column, uncheck every value, and press `Enter` to clear the filter for that column; uncheck only some to widen it.
@@ -530,9 +565,16 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 - **PAGE SIZE** controls how many items are fetched per tab. **`Enter`** on it puts it into edit mode.
 - **THEME** lets you switch the color theme on the fly; selections persist via **Save View** below.
 
+### Tabs & layout
+
+These two sections apply to every tab.
+
+- **TABS** lists every tab. `Space` shows or hides one (the last shown tab stays), and `J` / `K` move a shown tab later / earlier in the sidebar and in the `h` / `l` order. Hiding the active tab moves to the first shown one.
+- **LAYOUT** holds the navigation sidebar, the preview (placement, width, height) and the terminal pane (visibility, height). `Space` or `l` / `→` picks the next value, `h` / `←` the previous one.
+
 ### Saving & persistence
 
-- The **Save View** button at the bottom of the popup writes the current layout — enabled columns, group-by, order, filters, and page size — to `config.toml` (repo-local `.glab-tui/config.toml` or global `~/.config/glab-tui/config.toml`).
+- The **Save View** button at the bottom of the popup writes the current layout — enabled columns in their order, group-by, order, filters, page size, the tab list and the `[layout]` settings — to `config.toml` (repo-local `.glab-tui/config.toml` or global `~/.config/glab-tui/config.toml`).
 
 ### A note on filtering
 
@@ -552,7 +594,9 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 |---|---|---|
 | `l` / `→` | Next tab | `next_tab` |
 | `h` / `←` | Previous tab | `prev_tab` |
-| `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) | `configure` |
+| `Tab` / `,` | Open the Configure View (`Space` toggle, `Enter` filter by column values, `J`/`K` reorder columns and tabs) | `configure` |
+| `Alt+n` | Show / hide the navigation sidebar | `toggle_nav` |
+| `Alt+t` | Show / hide the terminal pane | `toggle_terminal_pane` |
 | `Esc` | Close configure popup / overlay | — |
 | `j` / `↓` | Move selection down | `list.next_row` |
 | `k` / `↑` | Move selection up | `list.previous_row` |
@@ -1081,7 +1125,7 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 
 ### Development & Tasks (`just`)
 
-The repository includes `rust-toolchain.toml` to automatically pin the Rust version (`1.88.0`) and required components (`clippy`, `rustfmt`, `llvm-tools-preview`) via standard `rustup`.
+The repository includes `rust-toolchain.toml` to automatically pin the Rust version for development and CI and the required components (`clippy`, `rustfmt`, `llvm-tools-preview`) via standard `rustup`. The minimum supported Rust version is `rust-version` in `Cargo.toml`, which the MSRV workflow checks.
 
 A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 

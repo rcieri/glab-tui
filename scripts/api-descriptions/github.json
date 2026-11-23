@@ -1,0 +1,672 @@
+{
+  "host_rule": "none",
+  "corrections": [],
+  "operations": [
+    {
+      "method": "get",
+      "path": "/notifications",
+      "code": [
+        "GhBackend::list_notifications, parse_github_notifications"
+      ],
+      "read": {
+        "id": {},
+        "repository": {
+          "full_name": {},
+          "html_url": {}
+        },
+        "subject": {
+          "title": {},
+          "type": {},
+          "url": {},
+          "latest_comment_url": {}
+        },
+        "unread": {},
+        "updated_at": {},
+        "reason": {}
+      }
+    },
+    {
+      "method": "put",
+      "path": "/notifications",
+      "code": [
+        "GhBackend::mark_all_notifications_as_read (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/notifications/threads/{thread_id}",
+      "code": [
+        "GhBackend::mark_notification_as_done"
+      ],
+      "read": {}
+    },
+    {
+      "method": "patch",
+      "path": "/notifications/threads/{thread_id}",
+      "code": [
+        "GhBackend::mark_notification_as_read"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/notifications/threads/{thread_id}/subscription",
+      "code": [
+        "GhBackend::unsubscribe_from_notification"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/orgs/{org}/members",
+      "code": [
+        "GhBackend::fetch_members, GhAsn"
+      ],
+      "read": {
+        "login": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/orgs/{org}/repos",
+      "code": [
+        "GhBackend::list_pipelines, --jq .[].full_name",
+        "GhBackend::list_group_projects, parse_group_projects GhRepo"
+      ],
+      "read": {
+        "full_name": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}",
+      "code": [
+        "GhBackend::list_branches, GhRepo (default_branch)"
+      ],
+      "read": {
+        "default_branch": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/actions/jobs/{job_id}/cancel",
+      "code": [
+        "GhBackend::cancel_job (response unread)"
+      ],
+      "read": {},
+      "spec_absent_ok": "GitHub REST has no per-job cancel; only runs/{run_id}/cancel and force-cancel exist. The request check needs the operation marked here to report the call as known but missing; the finding with its issue (#781) is in tests/api-lists.json"
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/actions/runners",
+      "code": [
+        "GhBackend::list_runners, GhRunners/GhRunner"
+      ],
+      "read": {
+        "runners": {
+          "id": {},
+          "name": {},
+          "status": {},
+          "labels": {
+            "name": {}
+          }
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/actions/runs",
+      "code": [
+        "GhBackend::list_pipelines, parse_github_actions_runs"
+      ],
+      "read": {
+        "workflow_runs": {
+          "id": {},
+          "status": {},
+          "conclusion": {},
+          "head_branch": {},
+          "updated_at": {},
+          "created_at": {},
+          "run_started_at": {},
+          "name": {},
+          "display_title": {},
+          "head_sha": {},
+          "event": {},
+          "actor": {
+            "login": {}
+          },
+          "triggering_actor": {
+            "login": {}
+          },
+          "html_url": {},
+          "repository": {
+            "full_name": {}
+          },
+          "head_commit": {
+            "message": {},
+            "author": {
+              "name": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/assignees",
+      "code": [
+        "GhBackend::fetch_members, GhAsn"
+      ],
+      "read": {
+        "login": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/branches",
+      "code": [
+        "GhBackend::list_branches, GhBr/GhBrCommit"
+      ],
+      "read": {
+        "name": {},
+        "protected": {},
+        "commit": {
+          "sha": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/branches/{branch}",
+      "code": [
+        "GhBackend::list_branches, GhBr/GhBrCommit"
+      ],
+      "read": {
+        "name": {},
+        "protected": {},
+        "commit": {
+          "sha": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/comments/{comment_id}",
+      "code": [
+        "GhBackend::get_notification_detail, parse_github_notification_detail, latest_comment_url of a commit comment [plausible]"
+      ],
+      "read": {
+        "body": {},
+        "user": {
+          "login": {}
+        },
+        "author": {
+          "login": {}
+        }
+      },
+      "absent_ok": {
+        "author": "one GhDetail struct serves every detail endpoint; a comment names its author user"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/commits/{ref}",
+      "code": [
+        "GhBackend::get_notification_detail, parse_github_notification_detail, subject.url of a Commit [plausible]"
+      ],
+      "read": {
+        "body": {},
+        "user": {
+          "login": {}
+        },
+        "author": {
+          "login": {}
+        }
+      },
+      "absent_ok": {
+        "body": "a commit has no body (its text is commit.message): the preview stays empty",
+        "user": "one GhDetail struct serves every detail endpoint; a commit names its author author"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/deployments",
+      "code": [
+        "GhBackend::list_rest_deployments, GhDeploy/GhCreator (list_deployments, stop_environment)"
+      ],
+      "read": {
+        "id": {},
+        "sha": {},
+        "ref": {},
+        "description": {},
+        "environment": {},
+        "created_at": {},
+        "updated_at": {},
+        "creator": {
+          "login": {}
+        }
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/deployments",
+      "code": [
+        "GhBackend::rollback_deployment (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
+      "code": [
+        "GhBackend::stop_environment, parse_latest_deployment_state"
+      ],
+      "read": {
+        "state": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
+      "code": [
+        "GhBackend::stop_environment (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/environments",
+      "code": [
+        "GhBackend::list_environments, GhEnvResp/GhEnv"
+      ],
+      "read": {
+        "environments": {
+          "id": {},
+          "name": {},
+          "html_url": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/events",
+      "code": [
+        "GhBackend::list_contribution_page, domain::contributions::parse_github_events"
+      ],
+      "read": {
+        "id": {},
+        "type": {},
+        "actor": {
+          "login": {}
+        },
+        "created_at": {},
+        "payload": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/git/refs",
+      "code": [
+        "GhBackend::create_branch (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/repos/{owner}/{repo}/git/refs/{ref}",
+      "code": [
+        "GhBackend::delete_branch"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/git/refs/{ref}",
+      "code": [
+        "GhBackend::create_branch, serde_json::Value, reads object.sha or sha"
+      ],
+      "read": {
+        "object": {
+          "sha": {}
+        },
+        "sha": {}
+      },
+      "spec_absent_ok": "the spec documents GET only as /git/ref/{ref} (singular); /git/refs/heads/x is the legacy matching form"
+    },
+    {
+      "method": "delete",
+      "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
+      "code": [
+        "overlays::selector::handle_key"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
+      "code": [
+        "GhBackend::get_notification_detail, parse_github_notification_detail, latest_comment_url"
+      ],
+      "read": {
+        "body": {},
+        "user": {
+          "login": {}
+        },
+        "author": {
+          "login": {}
+        }
+      },
+      "absent_ok": {
+        "author": "one GhDetail struct serves every detail endpoint; a comment names its author user"
+      }
+    },
+    {
+      "method": "patch",
+      "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
+      "code": [
+        "editor_result::spawn_comment_edit, --input - -X PATCH (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/milestones",
+      "code": [
+        "GhBackend::list_milestones, GhMs"
+      ],
+      "read": {
+        "id": {},
+        "number": {},
+        "title": {},
+        "description": {},
+        "state": {},
+        "due_on": {},
+        "created_at": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/milestones",
+      "code": [
+        "GhBackend::create_milestone, implicit POST via -f (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/repos/{owner}/{repo}/milestones/{milestone_number}",
+      "code": [
+        "GhBackend::delete_milestone"
+      ],
+      "read": {}
+    },
+    {
+      "method": "patch",
+      "path": "/repos/{owner}/{repo}/milestones/{milestone_number}",
+      "code": [
+        "GhBackend::update_milestone_state, GhBackend::update_milestone (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      "code": [
+        "overlays::selector::handle_key"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      "code": [
+        "GhBackend::get_notification_detail, parse_github_notification_detail, latest_comment_url of a PR review comment [plausible]"
+      ],
+      "read": {
+        "body": {},
+        "user": {
+          "login": {}
+        },
+        "author": {
+          "login": {}
+        }
+      },
+      "absent_ok": {
+        "author": "one GhDetail struct serves every detail endpoint; a comment names its author user"
+      }
+    },
+    {
+      "method": "patch",
+      "path": "/repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      "code": [
+        "editor_result::spawn_comment_edit, --input - -X PATCH (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      "code": [
+        "GhBackend::list_mr_notes, --paginate, GhReviewComment"
+      ],
+      "read": {
+        "id": {},
+        "body": {},
+        "user": {
+          "login": {}
+        },
+        "created_at": {},
+        "path": {},
+        "line": {},
+        "side": {},
+        "start_line": {},
+        "in_reply_to_id": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      "code": [
+        "GhBackend::reply_to_thread (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "put",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/merge-async",
+      "code": [
+        "GhBackend::merge_pr_stack, AsyncMergeResult"
+      ],
+      "read": {
+        "status": {},
+        "details": {
+          "message": {},
+          "uuid": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/merge-async/{uuid}",
+      "code": [
+        "GhBackend::merge_pr_stack, AsyncMergeResult"
+      ],
+      "read": {
+        "status": {},
+        "details": {
+          "message": {},
+          "uuid": {}
+        }
+      }
+    },
+    {
+      "method": "post",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      "code": [
+        "GhBackend::submit_review (response unread)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/releases",
+      "code": [
+        "GhBackend::list_releases, GhRel/GhAuthor"
+      ],
+      "read": {
+        "name": {},
+        "tag_name": {},
+        "published_at": {},
+        "created_at": {},
+        "body": {},
+        "author": {
+          "login": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/repos/{owner}/{repo}/releases/{release_id}",
+      "code": [
+        "GhBackend::get_notification_detail, parse_github_notification_detail, subject.url of a Release"
+      ],
+      "read": {
+        "body": {},
+        "user": {
+          "login": {}
+        },
+        "author": {
+          "login": {}
+        }
+      },
+      "absent_ok": {
+        "user": "one GhDetail struct serves every detail endpoint; a release names its author author"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/search/issues",
+      "code": [
+        "GhBackend::list_issues, GhSearchResponse/GhSearchIssueItem",
+        "GhBackend::list_mrs, GhSearchResponse/GhSearchPrItem"
+      ],
+      "read": {
+        "items": {
+          "number": {},
+          "title": {},
+          "state": {},
+          "labels": {
+            "name": {}
+          },
+          "user": {
+            "login": {}
+          },
+          "body": {},
+          "created_at": {},
+          "updated_at": {},
+          "closed_at": {},
+          "milestone": {
+            "title": {},
+            "number": {},
+            "state": {}
+          },
+          "assignees": {
+            "login": {}
+          },
+          "html_url": {},
+          "repository_url": {},
+          "pull_request": {},
+          "draft": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/user",
+      "code": [
+        "GhBackend::current_user, --jq .login, parse_gh_login"
+      ],
+      "read": {
+        "login": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/users/{username}/repos",
+      "code": [
+        "GhBackend::list_pipelines, --jq .[].full_name",
+        "GhBackend::list_group_projects, parse_group_projects GhRepo"
+      ],
+      "read": {
+        "full_name": {}
+      }
+    }
+  ],
+  "graphql": {
+    "repository": {
+      "deployments": {
+        "nodes": {
+          "databaseId": {},
+          "latestStatus": {
+            "state": {}
+          }
+        }
+      },
+      "issue": {
+        "closedByPullRequestsReferences": {
+          "nodes": {
+            "number": {},
+            "title": {},
+            "state": {}
+          }
+        }
+      },
+      "pullRequest": {
+        "number": {},
+        "title": {},
+        "state": {},
+        "isDraft": {},
+        "stack": {
+          "number": {},
+          "size": {},
+          "entries": {
+            "nodes": {
+              "position": {},
+              "pullRequest": {
+                "number": {},
+                "title": {},
+                "state": {},
+                "isDraft": {}
+              }
+            }
+          }
+        },
+        "stackEntry": {
+          "position": {}
+        },
+        "closingIssuesReferences": {
+          "nodes": {
+            "number": {},
+            "title": {},
+            "state": {}
+          }
+        },
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": {},
+            "endCursor": {}
+          },
+          "nodes": {
+            "isResolved": {},
+            "comments": {
+              "nodes": {
+                "databaseId": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

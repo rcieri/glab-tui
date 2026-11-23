@@ -3,6 +3,9 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod api_graphql;
+mod api_lists;
+mod api_requests;
 mod cli_contract;
 mod config;
 mod custom_keybindings;
@@ -20,6 +23,7 @@ mod open_cli;
 mod pagination;
 mod pipelines;
 mod pr_diff_fallback;
+mod rest_mutations;
 mod review_cli;
 mod review_threads;
 mod runners;
@@ -393,8 +397,8 @@ impl TerminalEmulator {
 
     pub fn get_text(&self) -> String {
         let mut res = String::new();
-        for r in 0..self.rows {
-            let row_str: String = self.grid[r].iter().collect();
+        for row in self.grid.iter().take(self.rows) {
+            let row_str: String = row.iter().collect();
             res.push_str(&row_str);
             res.push('\n');
         }
@@ -514,6 +518,15 @@ impl Sandbox {
         ]
     }
 
+    /// The request bodies the mocks read with `--input -`, one per call, in
+    /// the order the calls were recorded.
+    pub fn request_bodies(&self) -> Vec<String> {
+        cli_contract::recorded_calls(&self.log_path)
+            .into_iter()
+            .filter_map(|call| call.stdin)
+            .collect()
+    }
+
     /// Waits until the call log has stopped growing: mocks glab-tui started
     /// keep running after the app is killed, and may still log a call.
     /// The log has to stay unchanged for `QUIET`, long enough for a mock forked
@@ -540,8 +553,9 @@ impl Sandbox {
 
 impl Drop for Sandbox {
     /// Fails the test when glab-tui made a `glab` / `gh` call the mocks have no
-    /// case for, or called a subcommand or flag the real CLI does not have.
-    /// Both problems are reported in one failure. A test that already failed
+    /// case for, called a subcommand or flag the real CLI does not have, or
+    /// sent a raw API call the pinned API descriptions do not confirm.
+    /// All problems are reported in one failure. A test that already failed
     /// keeps its own failure: panicking again while unwinding would abort the
     /// run.
     fn drop(&mut self) {
@@ -567,6 +581,13 @@ impl Drop for Sandbox {
                 "the real CLI would refuse these calls (if a newer CLI has them, bump \
                  the pins in scripts/gen-cli-reference.sh and rerun it):\n{}",
                 refused.join("\n")
+            ));
+        }
+        let api = api_requests::problems_in_log(&self.log_path);
+        if !api.is_empty() {
+            problems.push(format!(
+                "these API calls do not match the pinned API descriptions (tests/api-descriptions):\n{}",
+                api.join("\n")
             ));
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
@@ -824,16 +845,5 @@ impl TestSession {
 }
 
 fn find_glab_tui_binary() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        let mut path = exe.clone();
-        path.pop(); // to deps/
-        if path.file_name().and_then(|s| s.to_str()) == Some("deps") {
-            path.pop(); // to debug/ or release/
-        }
-        let bin = path.join("glab-tui");
-        if bin.exists() {
-            return bin;
-        }
-    }
-    PathBuf::from("target/debug/glab-tui")
+    PathBuf::from(env!("CARGO_BIN_EXE_glab-tui"))
 }

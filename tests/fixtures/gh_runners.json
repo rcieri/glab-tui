@@ -1,0 +1,21 @@
+{
+  "runners": [
+    {
+      "id": 9876,
+      "name": "Shared Runner 1",
+      "status": "online",
+      "labels": [
+        {
+          "id": 1,
+          "name": "self-hosted",
+          "type": "read-only"
+        },
+        {
+          "id": 2,
+          "name": "gpu",
+          "type": "custom"
+        }
+      ]
+    }
+  ]
+}

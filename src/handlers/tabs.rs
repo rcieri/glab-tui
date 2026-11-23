@@ -467,6 +467,34 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
         });
     });
 }
+
+/// After the user moved to another tab: fetch it unless it is loading or
+/// fresh, and the related items its highlighted row previews.
+pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    if let Some(client) = app.gitlab_client.clone()
+        && !app.loading_tabs.contains(&app.active_tab)
+        && !app.refreshed_tabs.contains(&app.active_tab)
+    {
+        if !app.loaded_tabs.contains(&app.active_tab) {
+            app.loading_tabs.insert(app.active_tab);
+        }
+        let tx = app.scoped_sender(tx.clone());
+        crate::fetch::spawn_refresh_shown_tab(
+            fx,
+            &client,
+            app,
+            crate::dashboard::DashboardRefresh::Missing,
+            tx,
+        );
+    }
+    if app.active_tab == Tab::Issues {
+        maybe_fetch_related_mrs(app, tx);
+    }
+    if app.active_tab == Tab::MergeRequests {
+        maybe_fetch_mr_related_issues(app, tx);
+    }
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -549,13 +577,14 @@ fn with_pr_stack(
     // Stacks exist only in GitHub repositories; anywhere else the answer is
     // already known to be "not stacked".
     let can_be_stacked = app.is_github() && app.scope.is_repository();
-    if !is_known && can_be_stacked {
-        if let Some(client) = app.gitlab_client.clone() {
-            crate::fetch::request_pr_stack(fx, &client, app, pr.clone(), tx);
-            app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
-            app.pending_stack_action = Some((pr, action));
-            return;
-        }
+    if !is_known
+        && can_be_stacked
+        && let Some(client) = app.gitlab_client.clone()
+    {
+        crate::fetch::request_pr_stack(fx, &client, app, pr.clone(), tx);
+        app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
+        app.pending_stack_action = Some((pr, action));
+        return;
     }
     run_stack_action(app, &pr.0, pr.1, action);
 }
@@ -582,7 +611,7 @@ fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
         }
         _ => crate::app::ConfirmAction::MergeMr(pr_number),
     };
-    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+    app.open_submit_dialog(crate::app::SubmitDialog::build_with_project(
         action,
         project.to_string(),
         app,
@@ -647,7 +676,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
         },
         request: None,
     };
-    app.selector = Some(selector);
+    app.open_selector(selector);
 }
 
 /// Scrolls the detail pane by a full or half page for the
@@ -960,7 +989,7 @@ pub fn handle_active_tab_key(
                             let client = app.gitlab_client.clone();
                             jump_to_mr_tab(app, items[0].iid, client, tx.clone(), fx);
                         } else {
-                            app.selector = Some(crate::app::Selector {
+                            app.open_selector(crate::app::Selector {
                                 title: format!(
                                     " Related {} for Issue #{} ",
                                     if is_github {
@@ -1020,28 +1049,28 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::IssuesOpenInBrowser, key_event) =>
             {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    if let Some(issue) = app.filtered_issues().get(selected_idx) {
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return false;
-                        };
-                        let project_path = if !issue.project_path.is_empty() {
-                            issue.project_path.clone()
-                        } else {
-                            app.scope.as_str().to_string()
-                        };
-                        let iid_str = issue.iid.to_string();
-                        let tx2 = tx.clone();
-                        fx.spawn(async move {
-                            let result = client
-                                .open_in_browser(&project_path, "issue", &iid_str)
-                                .await;
-                            let _ = tx2.send(Event::CommandCompleted(
-                                crate::app::Tab::Issues,
-                                CommandOutcome::read_only(result),
-                            ));
-                        });
-                    }
+                if let Some(selected_idx) = app.issues.state.selected()
+                    && let Some(issue) = app.filtered_issues().get(selected_idx)
+                {
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return false;
+                    };
+                    let project_path = if !issue.project_path.is_empty() {
+                        issue.project_path.clone()
+                    } else {
+                        app.scope.as_str().to_string()
+                    };
+                    let iid_str = issue.iid.to_string();
+                    let tx2 = tx.clone();
+                    fx.spawn(async move {
+                        let result = client
+                            .open_in_browser(&project_path, "issue", &iid_str)
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Issues,
+                            CommandOutcome::read_only(result),
+                        ));
+                    });
                 }
             }
             _ if app
@@ -1049,14 +1078,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::IssuesSelectIssue, key_event) =>
             {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    if let Some(i) = app.filtered_issues().get(selected_idx) {
-                        let key = (i.project_path.clone(), i.iid);
-                        if app.selected_issues.contains(&key) {
-                            app.selected_issues.remove(&key);
-                        } else {
-                            app.selected_issues.insert(key);
-                        }
+                if let Some(selected_idx) = app.issues.state.selected()
+                    && let Some(i) = app.filtered_issues().get(selected_idx)
+                {
+                    let key = (i.project_path.clone(), i.iid);
+                    if app.selected_issues.contains(&key) {
+                        app.selected_issues.remove(&key);
+                    } else {
+                        app.selected_issues.insert(key);
                     }
                 }
             }
@@ -1065,14 +1094,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::IssuesDrillIntoScope, key_event) =>
             {
-                if app.scope.is_group() {
-                    if let Some(idx) = app.issues.state.selected() {
-                        let filtered = app.filtered_issues();
-                        if let Some(issue) = filtered.get(idx) {
-                            if !issue.project_path.is_empty() {
-                                app.drill_into(issue.project_path.clone());
-                            }
-                        }
+                if app.scope.is_group()
+                    && let Some(idx) = app.issues.state.selected()
+                {
+                    let filtered = app.filtered_issues();
+                    if let Some(issue) = filtered.get(idx)
+                        && !issue.project_path.is_empty()
+                    {
+                        app.drill_into(issue.project_path.clone());
                     }
                 }
             }
@@ -1186,14 +1215,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::MrsSelectMr, key_event)
             {
-                if let Some(selected_idx) = app.mrs.state.selected() {
-                    if let Some(m) = app.filtered_mrs().get(selected_idx) {
-                        let key = (m.project_path.clone(), m.iid);
-                        if app.selected_mrs.contains(&key) {
-                            app.selected_mrs.remove(&key);
-                        } else {
-                            app.selected_mrs.insert(key);
-                        }
+                if let Some(selected_idx) = app.mrs.state.selected()
+                    && let Some(m) = app.filtered_mrs().get(selected_idx)
+                {
+                    let key = (m.project_path.clone(), m.iid);
+                    if app.selected_mrs.contains(&key) {
+                        app.selected_mrs.remove(&key);
+                    } else {
+                        app.selected_mrs.insert(key);
                     }
                 }
             } else if app
@@ -1201,14 +1230,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::MrsDrillIntoScope, key_event)
             {
-                if app.scope.is_group() {
-                    if let Some(idx) = app.mrs.state.selected() {
-                        let filtered = app.filtered_mrs();
-                        if let Some(mr) = filtered.get(idx) {
-                            if !mr.project_path.is_empty() {
-                                app.drill_into(mr.project_path.clone());
-                            }
-                        }
+                if app.scope.is_group()
+                    && let Some(idx) = app.mrs.state.selected()
+                {
+                    let filtered = app.filtered_mrs();
+                    if let Some(mr) = filtered.get(idx)
+                        && !mr.project_path.is_empty()
+                    {
+                        app.drill_into(mr.project_path.clone());
                     }
                 }
             } else if app
@@ -1263,8 +1292,7 @@ pub fn handle_active_tab_key(
                     if let Some(mr) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let pr_suffix = if is_github { "PR" } else { "MR" };
-                        let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid)
-                        {
+                        let unresolved = if app.diff_view().map(|d| d.mr_iid) == Some(mr.iid) {
                             Some(app.unresolved_threads_count())
                         } else {
                             None
@@ -1310,7 +1338,7 @@ pub fn handle_active_tab_key(
             {
                 let mut items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
                 items.sort_unstable();
-                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                app.open_submit_dialog(crate::app::SubmitDialog::build(
                     crate::app::ConfirmAction::BulkMergeMrs(items),
                     app,
                 ));
@@ -1345,12 +1373,13 @@ pub fn handle_active_tab_key(
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
                                 RebaseGate::Allowed => {
-                                    app.submit_dialog =
-                                        Some(crate::app::SubmitDialog::build_with_project(
+                                    app.open_submit_dialog(
+                                        crate::app::SubmitDialog::build_with_project(
                                             crate::app::ConfirmAction::RebaseMr(mr_iid),
                                             app.scope.project_of(&mr.project_path).to_string(),
                                             app,
-                                        ));
+                                        ),
+                                    );
                                 }
                                 RebaseGate::ResolveLocally => {
                                     app.show_error(
@@ -1394,7 +1423,7 @@ pub fn handle_active_tab_key(
                                     .find(|p| p.ref_branch() == mr.source_branch)
                                     .map(|p| p.id())
                             });
-                            app.active_tab = crate::app::Tab::Pipelines;
+                            app.set_active_tab_keeping_preview(crate::app::Tab::Pipelines);
                             app.pending_pipeline_select = pipe_id;
                             if let Some(client) = &app.gitlab_client {
                                 crate::fetch::spawn_refresh_active_tab(
@@ -1528,7 +1557,7 @@ pub fn handle_active_tab_key(
                                     } else {
                                         let is_github = app.is_github();
                                         let pr_term = if is_github { "PR" } else { "MR" };
-                                        app.selector = Some(crate::app::Selector {
+                                        app.open_selector(crate::app::Selector {
                                             title: format!(
                                                 " Linked Issues for {pr_term} #{mr_iid} "
                                             ),
@@ -1852,19 +1881,18 @@ pub fn handle_active_tab_key(
                     .map(|p| format!("#{} — {} ({})", p.id(), p.ref_branch(), p.status()))
                     .collect();
                 let mut pre_selected = std::collections::HashSet::new();
-                if let Some(active_id) = app.active_pipeline_id {
-                    if let Some(i) = app.pipelines.items.iter().position(|p| p.id() == active_id) {
-                        if let Some(p) = pipelines.get(i) {
-                            pre_selected.insert(p.clone());
-                        }
-                    }
+                if let Some(active_id) = app.active_pipeline_id
+                    && let Some(i) = app.pipelines.items.iter().position(|p| p.id() == active_id)
+                    && let Some(p) = pipelines.get(i)
+                {
+                    pre_selected.insert(p.clone());
                 }
                 let start_idx = pre_selected
                     .iter()
                     .next()
                     .and_then(|sel| pipelines.iter().position(|p| p == sel))
                     .unwrap_or(0);
-                app.selector = Some(crate::app::Selector {
+                app.open_selector(crate::app::Selector {
                     title: " Select Pipeline ".to_string(),
                     all_items: pipelines,
                     selected_items: pre_selected,
@@ -2261,7 +2289,7 @@ pub fn handle_active_tab_key(
                         .matches(Action::RunnersEditDescription, key_event) =>
                     {
                         let current_desc = item.description.clone().unwrap_or_default();
-                        app.text_input = Some(crate::app::TextInput::new(
+                        app.open_text_input(crate::app::TextInput::new(
                             " Edit Runner Description ",
                             current_desc,
                             crate::app::TextInputAction::EditField {
@@ -2859,7 +2887,7 @@ pub fn handle_active_tab_key(
                         app.close_job_trace();
                     } else {
                         app.close_opened_pipeline();
-                        app.active_tab = crate::app::Tab::Pipelines;
+                        app.set_active_tab(crate::app::Tab::Pipelines);
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
                     app.ascend();
@@ -2959,14 +2987,13 @@ pub fn handle_active_tab_key(
                                         if let Some(mr) = filtered.get(selected_idx) {
                                             let is_github = app.is_github();
                                             let pr_suffix = if is_github { "PR" } else { "MR" };
-                                            let unresolved =
-                                                if app.diff_view.as_ref().map(|d| d.mr_iid)
-                                                    == Some(mr.iid)
-                                                {
-                                                    Some(app.unresolved_threads_count())
-                                                } else {
-                                                    None
-                                                };
+                                            let unresolved = if app.diff_view().map(|d| d.mr_iid)
+                                                == Some(mr.iid)
+                                            {
+                                                Some(app.unresolved_threads_count())
+                                            } else {
+                                                None
+                                            };
                                             let is_fetching_issues =
                                                 app.fetching_mr_related_issues.contains(&mr.iid);
                                             let mut doc = crate::entity_editor::build_mr_document(
@@ -3060,7 +3087,7 @@ pub fn handle_active_tab_key(
                 .matches(Action::GlobalNextTab, key_event) =>
             {
                 app.next_tab();
-                fetch_for_entered_tab(app, tx, fx);
+                load_entered_tab(app, tx, fx);
             }
             _ if app
                 .config
@@ -3068,7 +3095,7 @@ pub fn handle_active_tab_key(
                 .matches(Action::GlobalPrevTab, key_event) =>
             {
                 app.previous_tab();
-                fetch_for_entered_tab(app, tx, fx);
+                load_entered_tab(app, tx, fx);
             }
             _ if app
                 .config
@@ -3313,17 +3340,17 @@ fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effe
         DashboardAction::OpenPipeline(id) => {
             app.focus_pipeline(id);
             app.detail_visible = true;
-            fetch_for_entered_tab(app, tx, fx);
+            load_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenMilestone(iid) => {
             app.focus_milestone(iid);
             app.detail_visible = true;
-            fetch_for_entered_tab(app, tx, fx);
+            load_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenRelease(tag) => {
             app.focus_release(&tag);
             app.detail_visible = true;
-            fetch_for_entered_tab(app, tx, fx);
+            load_entered_tab(app, tx, fx);
         }
         DashboardAction::OpenIssue { project, iid } => {
             let is_listed = match app.gitlab_client.clone() {
@@ -3383,33 +3410,6 @@ pub(crate) fn focus_or_fetch_mr(
     app.mrs.state.select(None);
     crate::fetch::spawn_fetch_mr(fx, client, project, iid, app.scoped_sender(tx.clone()));
     false
-}
-
-/// Start what a tab needs once switched to: its list, unless it is loading
-/// or was already refreshed this session, and the linked MRs/issues of the
-/// highlighted issue or MR.
-pub(crate) fn fetch_for_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if let Some(client) = app.gitlab_client.clone()
-        && !app.loading_tabs.contains(&app.active_tab)
-        && !app.refreshed_tabs.contains(&app.active_tab)
-    {
-        if !app.loaded_tabs.contains(&app.active_tab) {
-            app.loading_tabs.insert(app.active_tab);
-        }
-        let tx = app.scoped_sender(tx.clone());
-        crate::fetch::spawn_refresh_shown_tab(
-            fx,
-            &client,
-            app,
-            crate::dashboard::DashboardRefresh::Missing,
-            tx,
-        );
-    }
-    match app.active_tab {
-        crate::app::Tab::Issues => maybe_fetch_related_mrs(app, tx),
-        crate::app::Tab::MergeRequests => maybe_fetch_mr_related_issues(app, tx),
-        _ => {}
-    }
 }
 
 /// Switch to the Merge Requests tab, drop the filters that would hide the
@@ -3558,7 +3558,7 @@ pub fn apply_opened_pipeline(
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
                 app.close_job_trace();
-                app.active_tab = crate::app::Tab::Jobs;
+                app.set_active_tab_keeping_preview(crate::app::Tab::Jobs);
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }
@@ -4032,7 +4032,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         assert!(matches!(
             dialog.action,
             crate::app::ConfirmAction::CancelPipeline(42)
@@ -4102,7 +4102,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         match &dialog.action {
             crate::app::ConfirmAction::CancelJobs {
                 pipeline_id,
@@ -4623,7 +4623,10 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.expect("close opens a confirm dialog");
+        let dialog = app
+            .submit_dialog()
+            .cloned()
+            .expect("close opens a confirm dialog");
         assert!(matches!(
             dialog.action,
             crate::app::ConfirmAction::CloseMilestone(ref milestone) if milestone.id == 20
@@ -4670,6 +4673,23 @@ pub(crate) mod tests {
         assert_eq!(fx.into_vec().len(), 1);
     }
 
+    #[tokio::test]
+    async fn following_an_mr_pipeline_from_an_open_preview_keeps_the_preview_open() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::MergeRequests;
+        app.detail_visible = true;
+        app.mrs.items = vec![mr_in("acme/app", 3, "alice")];
+        app.mrs.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Pipelines);
+        assert!(app.detail_visible);
+    }
+
     fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {
         HashMap::from([(column.to_string(), HashSet::from([value.to_string()]))])
     }
@@ -4695,7 +4715,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
         );
 
-        let menu = app.edit_menu.expect("create milestone menu");
+        let menu = app.edit_menu().cloned().expect("create milestone menu");
         assert_eq!(menu.entity_project, "grp/b");
     }
 
@@ -4810,6 +4830,24 @@ pub(crate) mod tests {
         assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
+    #[test]
+    fn opening_a_pipeline_from_an_open_inspector_keeps_the_preview_open_on_jobs() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.detail_visible = true;
+        app.pipelines.items = vec![listed_pipeline(7)];
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Jobs);
+        assert!(app.detail_visible);
+    }
+
     /// Enter pressed twice before the first reply: the first reply descends,
     /// so the second finds its pipeline no longer listed and must not push a
     /// second level.
@@ -4845,7 +4883,7 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
         );
-        let menu = app.edit_menu.as_ref().expect("MR creation form opened");
+        let menu = app.edit_menu().expect("MR creation form opened");
         let source_field = menu.fields.iter().find(|f| f.label == "Source Branch");
         assert_eq!(source_field.map(|f| f.value.as_str()), Some("branch-00"));
     }
@@ -4881,7 +4919,7 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
-        let dialog = app.submit_dialog.as_ref().expect("Delete dialog shown");
+        let dialog = app.submit_dialog().expect("Delete dialog shown");
         assert_eq!(dialog.form.title, "Delete Branch 'branch-00'");
         if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
             assert_eq!(name, "branch-00");
@@ -4911,15 +4949,12 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
-        let dialog = app
-            .submit_dialog
-            .as_ref()
-            .expect("Bulk delete dialog shown");
+        let dialog = app.submit_dialog().expect("Bulk delete dialog shown");
         assert_eq!(dialog.form.title, "Delete 2 Branches");
         if let crate::app::ConfirmAction::BulkDeleteBranches(names) = &dialog.action {
             assert_eq!(
-                names,
-                &vec!["branch-00".to_string(), "branch-01".to_string()]
+                names.as_slice(),
+                &["branch-00".to_string(), "branch-01".to_string()]
             );
         } else {
             panic!("Expected ConfirmAction::BulkDeleteBranches");
@@ -5065,7 +5100,7 @@ pub(crate) mod tests {
         dispatch(&mut app, &key(KeyCode::Char('j')));
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         let crate::app::ConfirmAction::RollbackDeployment {
             environment,
             deployment,
@@ -5083,7 +5118,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert_eq!(
             app.toast_notice().map(Notice::text),
             Some(NO_DEPLOYMENT_SELECTED)
@@ -5097,7 +5132,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert_eq!(
             app.toast_notice().map(Notice::text),
             Some("Deployment #1 has no deploy job to re-run")
@@ -5110,7 +5145,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('d')));
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         assert!(matches!(
             &dialog.action,
             crate::app::ConfirmAction::StopEnvironment(env) if env.id == 1

@@ -47,13 +47,8 @@ pub fn handle_tab_key(app: &mut App, key_event: &KeyPress) -> bool {
 }
 
 /// Keys of the command inspector. The re-run confirmation it opens is drawn
-/// on top and takes its keys first. A selector or text input opened over it,
-/// such as the repo switcher, reads its keys later in the main loop, so the
-/// inspector leaves them alone.
+/// on top and takes its keys first.
 pub fn handle_inspector_key(app: &mut App, key_event: &KeyPress) -> bool {
-    if app.selector.is_some() || app.text_input.is_some() {
-        return false;
-    }
     let Some(mut inspector) = app.terminal_inspector else {
         return false;
     };
@@ -221,16 +216,31 @@ mod tests {
         let mut app = App::default();
         app.start_command("Creating branch: x from main".to_string());
         app.open_terminal_inspector().unwrap();
-        app.selector = Some(crate::app::Selector::draft_actions(0));
+        app.open_selector(crate::app::Selector::draft_actions(0));
 
-        for code in [KeyCode::Char('j'), KeyCode::Enter, KeyCode::Esc] {
-            let key = KeyEvent::new(code, KeyModifiers::NONE).into();
-            assert!(!handle_inspector_key(&mut app, &key), "{code:?}");
-        }
+        crate::update::update(
+            &mut app,
+            crate::event::Event::KeyPress(KeyPress::from(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::NONE,
+            ))),
+        );
+        let selector = app.selector().expect("selector is open");
+        assert_eq!(selector.cursor_idx, 1);
         assert_eq!(
             app.terminal_inspector.map(|inspector| inspector.scroll),
             Some(0)
         );
+
+        crate::update::update(
+            &mut app,
+            crate::event::Event::KeyPress(KeyPress::from(KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE,
+            ))),
+        );
+        assert!(app.selector().is_none());
+        assert!(app.terminal_inspector.is_some());
     }
 
     #[test]

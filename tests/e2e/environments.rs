@@ -22,7 +22,7 @@
 use crate::TestSession;
 
 /// The older deployment's SHA: shown only while the deployments are listed.
-const DEPLOYMENT_SHA: &str = "0ldc0de1";
+const OLDER_DEPLOYMENT_SHA: &str = "0ldc0de1";
 /// Long enough for several redraws, so a stale deployments table would have
 /// been painted by the time the screen is checked for its absence.
 const REDRAW_WINDOW_MS: u64 = 500;
@@ -35,7 +35,7 @@ fn session_showing_production_deployments() -> TestSession {
         .expect("the Environments tab lists the fixture environments");
     session.send_input(b"\r");
     session
-        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_SHA, 15000)
         .expect("Enter shows the deployments of the highlighted environment");
     session
 }
@@ -44,7 +44,7 @@ fn assert_deployments_hidden(session: &mut TestSession) {
     session.settle(REDRAW_WINDOW_MS);
     let screen = session.emulator.get_text();
     assert!(
-        !screen.contains(DEPLOYMENT_SHA),
+        !screen.contains(OLDER_DEPLOYMENT_SHA),
         "deployments of production are still shown:\n{screen}"
     );
 }
@@ -142,7 +142,7 @@ fn focused_deployments_select_an_older_deployment_and_show_its_details() {
         .expect("j moves to the older deployment and the pane shows its job");
     let screen = session.emulator.get_text();
     assert!(
-        screen.contains(DEPLOYMENT_SHA),
+        screen.contains(OLDER_DEPLOYMENT_SHA),
         "the deployments of production stay listed:\n{screen}"
     );
     assert!(
@@ -162,7 +162,7 @@ fn github_lists_deployments_without_a_description() {
         .expect("the Environments tab lists the fixture environments");
     session.send_input(b"\r");
     session
-        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_SHA, 15000)
         .expect("Enter lists the deployments, the one with a null description first");
 }
 
@@ -175,7 +175,7 @@ fn github_deployments_show_their_latest_status() {
         .expect("the Environments tab lists the fixture environments");
     session.send_input(b"\r");
     session
-        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_SHA, 15000)
         .expect("Enter lists the deployments of production");
     session.settle(REDRAW_WINDOW_MS);
     let screen = session.emulator.get_text();
@@ -260,7 +260,7 @@ fn session_showing_staging_actions(is_github: bool) -> TestSession {
         .expect("the Environments tab lists the fixture environments");
     session.send_input(b"\r");
     session
-        .wait_for_screen_contains(DEPLOYMENT_SHA, 15000)
+        .wait_for_screen_contains(OLDER_DEPLOYMENT_SHA, 15000)
         .expect("Enter shows the deployments of the highlighted environment");
     session.press_keys(b"\x1bj");
     session

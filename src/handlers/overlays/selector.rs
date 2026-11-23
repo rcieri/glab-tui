@@ -56,29 +56,29 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(mut selector) = app.selector.take() else {
+    let Some(mut selector) = app.pop_selector() else {
         return;
     };
     if selector.is_filtering {
         match key_event.code {
             KeyCode::Enter | KeyCode::Esc => {
                 selector.is_filtering = false;
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             KeyCode::Backspace => {
                 selector.search_query.pop();
                 selector.cursor_idx = 0;
                 selector.state.select(Some(0));
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             KeyCode::Char(c) => {
                 selector.search_query.push(c);
                 selector.cursor_idx = 0;
                 selector.state.select(Some(0));
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             _ => {
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
         }
     } else {
@@ -96,26 +96,23 @@ pub fn handle_key(
                     selector.search_query.clear();
                     selector.cursor_idx = 0;
                     selector.state.select(Some(0));
-                    app.selector = Some(selector);
+                    app.push_modal(crate::app::Modal::Selector(selector));
                 }
                 // else: leave the selector taken out so the
                 // caller closes it (EditMenu stays open).
             }
             Some(Action::SelectorFilter) => {
-                let has_filter = selector.field_type != "comment_action_select"
-                    && selector.field_type != "related_mrs"
-                    && selector.field_type != "linked_issues";
-                if has_filter {
+                if selector.has_filter_bar() {
                     selector.is_filtering = true;
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorNext) => {
                 if !filtered_items.is_empty() {
                     selector.cursor_idx = (selector.cursor_idx + 1) % filtered_items.len();
                     selector.state.select(Some(selector.cursor_idx));
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorPrevious) => {
                 if !filtered_items.is_empty() {
@@ -126,7 +123,7 @@ pub fn handle_key(
                     }
                     selector.state.select(Some(selector.cursor_idx));
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             // The selector does not store its list height, so a
             // half page is a fixed number of rows.
@@ -136,7 +133,7 @@ pub fn handle_key(
                 .matches(Action::GlobalScrollHalfPageDown, key_event) =>
             {
                 selector.move_by(true, SELECTOR_HALF_PAGE_ROWS);
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             _ if app
                 .config
@@ -144,7 +141,7 @@ pub fn handle_key(
                 .matches(Action::GlobalScrollHalfPageUp, key_event) =>
             {
                 selector.move_by(false, SELECTOR_HALF_PAGE_ROWS);
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorToggle) => {
                 if !filtered_items.is_empty() {
@@ -176,7 +173,7 @@ pub fn handle_key(
                         selector.selected_items.insert(item.clone());
                     }
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorConfirm) => {
                 let field_type = selector.field_type.clone();
@@ -226,15 +223,13 @@ pub fn handle_key(
                         handle_jump(app, kind, id);
                         handled = true;
                     }
-                    if !handled {
-                        if let Some(val) = selected_val {
-                            if let Some((kind, id)) =
-                                parse_row_kind(&val).or_else(|| crate::app::parse_jump_input(&val))
-                            {
-                                handle_jump(app, kind, id);
-                                handled = true;
-                            }
-                        }
+                    if !handled
+                        && let Some(val) = selected_val
+                        && let Some((kind, id)) =
+                            parse_row_kind(&val).or_else(|| crate::app::parse_jump_input(&val))
+                    {
+                        handle_jump(app, kind, id);
+                        handled = true;
                     }
                     if !handled {
                         app.show_error(
@@ -325,8 +320,9 @@ pub fn handle_key(
                                 crate::utils::cache::add_recent_repo(&target_path_str);
                                 app.config = crate::config::Config::load();
                                 app.apply_config();
-                                app.fall_back_from_hidden_tab();
-                                app.load_keybindings();
+                                app.land_on_available_tab();
+                                let problems = app.load_keybindings();
+                                app.report_config_problems(problems);
                                 crate::config::reload_command_timeout();
 
                                 if let Ok(context) = domain::client::get_project_context() {
@@ -347,7 +343,7 @@ pub fn handle_key(
                                 app.milestones.items.clear();
                                 app.pipeline_jobs.clear();
                                 app.fetching_pipelines.clear();
-                                app.edit_menu = None;
+                                app.close_edit_menu();
                                 app.selected_milestone_issues = None;
                                 app.selected_milestone_iid = None;
 
@@ -453,7 +449,7 @@ pub fn handle_key(
                             desc_val = content.clone();
                         }
                     }
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         if let Some(f) = menu.fields.iter_mut().find(|f| {
                             (f.label == "Description" || f.label == "Release Notes")
                                 && f.kind == crate::app::FieldType::Text
@@ -506,10 +502,10 @@ pub fn handle_key(
 
                 if field_type == crate::app::THEME_PICKER_FIELD_TYPE {
                     let picked = selector.highlighted_theme();
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(name) = picked {
                         app.config.theme_preset = Some(name);
-                        app.apply_config();
+                        app.apply_theme();
                     }
                     return;
                 }
@@ -526,24 +522,23 @@ pub fn handle_key(
                         .next()
                         .cloned()
                         .or_else(|| filtered_items.get(selector.cursor_idx).cloned());
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(item) = picked {
                         if let Some(iid_str) = item
                             .strip_prefix('!')
                             .and_then(|s| s.split_whitespace().next())
+                            && let Ok(mr_iid) = iid_str.parse::<u64>()
                         {
-                            if let Ok(mr_iid) = iid_str.parse::<u64>() {
-                                if let Some(client) = app.gitlab_client.clone() {
-                                    crate::handlers::tabs::jump_to_mr_tab_from_selector(
-                                        app,
-                                        mr_iid,
-                                        tx.clone(),
-                                        &client,
-                                        fx,
-                                    );
-                                }
-                                return;
+                            if let Some(client) = app.gitlab_client.clone() {
+                                crate::handlers::tabs::jump_to_mr_tab_from_selector(
+                                    app,
+                                    mr_iid,
+                                    tx.clone(),
+                                    &client,
+                                    fx,
+                                );
                             }
+                            return;
                         }
                         app.show_error("Could not parse the selected MR/PR iid".to_string());
                     }
@@ -563,7 +558,7 @@ pub fn handle_key(
                         .next()
                         .cloned()
                         .or_else(|| filtered_items.get(selector.cursor_idx).cloned());
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(item) = picked {
                         let iid_str = item.split_whitespace().find_map(|tok| {
                             tok.strip_prefix('#')
@@ -607,24 +602,23 @@ pub fn handle_key(
                         .next()
                         .cloned()
                         .or_else(|| filtered_items.get(selector.cursor_idx).cloned());
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(item) = picked {
                         if let Some(iid_str) = item
                             .strip_prefix('#')
                             .and_then(|s| s.split_whitespace().next())
+                            && let Ok(issue_iid) = iid_str.parse::<u64>()
                         {
-                            if let Ok(issue_iid) = iid_str.parse::<u64>() {
-                                if let Some(client) = app.gitlab_client.clone() {
-                                    crate::handlers::tabs::jump_to_issue_tab_from_selector(
-                                        app,
-                                        issue_iid,
-                                        tx.clone(),
-                                        &client,
-                                        fx,
-                                    );
-                                }
-                                return;
+                            if let Some(client) = app.gitlab_client.clone() {
+                                crate::handlers::tabs::jump_to_issue_tab_from_selector(
+                                    app,
+                                    issue_iid,
+                                    tx.clone(),
+                                    &client,
+                                    fx,
+                                );
                             }
+                            return;
                         }
                         app.show_error("Could not parse the selected Issue iid".to_string());
                     }
@@ -637,22 +631,22 @@ pub fn handle_key(
                     if selected_val.is_none() && !filtered_items.is_empty() {
                         selected_val = Some(filtered_items[selector.cursor_idx].clone());
                     }
-                    if let Some(val) = selected_val {
-                        if let Some(id_str) =
+                    if let Some(val) = selected_val
+                        && let Some(id_str) =
                             val.strip_prefix('#').and_then(|s| s.split(" — ").next())
-                        {
-                            if let Ok(pipeline_id) = id_str.parse::<u64>() {
-                                if app.gitlab_client.is_some() {
-                                    app.open_pipeline_in_jobs_tab(pipeline_id);
-                                }
-                                if let Some(client) = &app.gitlab_client {
-                                    let project_context = app.project_path_for_jobs();
-                                    app.jobs.state.select(Some(0));
-                                    app.jobs.items.clear();
-                                    app.loading_tabs.insert(app::Tab::Jobs);
-                                    let client_clone = client.clone();
-                                    let tx = app.scoped_sender(tx.clone());
-                                    fx.spawn(async move {
+                        && let Ok(pipeline_id) = id_str.parse::<u64>()
+                    {
+                        if app.gitlab_client.is_some() {
+                            app.open_pipeline_in_jobs_tab(pipeline_id);
+                        }
+                        if let Some(client) = &app.gitlab_client {
+                            let project_context = app.project_path_for_jobs();
+                            app.jobs.state.select(Some(0));
+                            app.jobs.items.clear();
+                            app.loading_tabs.insert(app::Tab::Jobs);
+                            let client_clone = client.clone();
+                            let tx = app.scoped_sender(tx.clone());
+                            fx.spawn(async move {
                                         match domain::pipelines::list_pipeline_jobs(
                                             &client_clone,
                                             &project_context,
@@ -682,8 +676,6 @@ pub fn handle_key(
                                             }
                                         }
                                     });
-                                }
-                            }
                         }
                     }
                     return;
@@ -711,35 +703,36 @@ pub fn handle_key(
                             if let Ok(n) = idx_str.trim().parse::<usize>() {
                                 let draft_idx = n.saturating_sub(1);
                                 if draft_idx < app.draft_comments.len() {
-                                    app.selector =
-                                        Some(crate::app::Selector::draft_actions(draft_idx));
+                                    app.open_selector(crate::app::Selector::draft_actions(
+                                        draft_idx,
+                                    ));
                                     return;
                                 }
                             }
                         } else if let Some(id_str) =
                             val.strip_prefix("ID: ").and_then(|s| s.split(" |").next())
+                            && let Ok(comment_id) = id_str.parse::<u64>()
                         {
-                            if let Ok(comment_id) = id_str.parse::<u64>() {
-                                if let Some(comment) = app
-                                    .current_comments
-                                    .iter()
-                                    .find(|c| c.id == Some(comment_id))
-                                    .cloned()
-                                {
-                                    app.selector = crate::app::Selector::comment_actions(
-                                        &comment,
-                                        selector.entity_iid,
-                                        app.is_github(),
-                                    );
-                                    return;
-                                }
-                                // Edit entity: close menu, writes happen on field-level handlers
-                                app.edit_menu = None;
+                            if let Some(comment) = app
+                                .current_comments
+                                .iter()
+                                .find(|c| c.id == Some(comment_id))
+                                .cloned()
+                                && let Some(actions) = crate::app::Selector::comment_actions(
+                                    &comment,
+                                    selector.entity_iid,
+                                    app.is_github(),
+                                )
+                            {
+                                app.open_selector(actions);
                                 return;
                             }
+                            // Edit entity: close menu, writes happen on field-level handlers
+                            app.close_edit_menu();
+                            return;
                         }
                     }
-                    app.selector = None;
+                    app.close_selector();
                     return;
                 }
 
@@ -750,7 +743,7 @@ pub fn handle_key(
                         selected_val = Some(filtered_items[selector.cursor_idx].clone());
                     }
 
-                    app.selector = None;
+                    app.close_selector();
 
                     if let Some(action_str) = selected_val {
                         // The single-match `a` path and
@@ -776,8 +769,7 @@ pub fn handle_key(
                                     "Delete Draft" => {
                                         app.draft_comments.remove(draft_idx);
                                         if let Some((project, mr_iid)) = app
-                                            .diff_view
-                                            .as_ref()
+                                            .diff_view()
                                             .map(|d| (d.project_path.clone(), d.mr_iid))
                                         {
                                             app.persist_draft_comments(&project, mr_iid);
@@ -805,7 +797,7 @@ pub fn handle_key(
                                         .discussion_id
                                         .clone()
                                         .unwrap_or_else(|| comment_id.to_string());
-                                    app.text_input = Some(crate::app::TextInput::new(
+                                    app.open_text_input(crate::app::TextInput::new(
                                         format!(" Reply to @{} ", comment.author.username),
                                         String::new(),
                                         crate::app::TextInputAction::ReplyToComment {
@@ -958,16 +950,15 @@ pub fn handle_key(
                         "issue"
                     };
                     let mut desc_val = String::new();
-                    if choice != "-- (blank)" {
-                        if let Some(content) = list_templates(template_type)
+                    if choice != "-- (blank)"
+                        && let Some(content) = list_templates(template_type)
                             .iter()
                             .find(|(n, _)| n == &choice)
                             .map(|(_, c)| c)
-                        {
-                            desc_val = content.clone();
-                        }
+                    {
+                        desc_val = content.clone();
                     }
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         if let Some(f) = menu
                             .fields
                             .iter_mut()
@@ -987,7 +978,7 @@ pub fn handle_key(
                             };
                         }
                     }
-                    app.selector = None;
+                    app.close_selector();
                     return;
                 }
 
@@ -999,15 +990,14 @@ pub fn handle_key(
                     }
                     if let Some(val) = selected_val {
                         let current_val = app
-                            .edit_menu
-                            .as_ref()
+                            .edit_menu()
                             .and_then(|m| m.fields.iter().find(|f| f.label == "Create from Issue"))
                             .map(|f| f.value.clone())
                             .unwrap_or_default();
 
                         if val == current_val {
                             // Deselect if it's already selected
-                            if let Some(ref mut menu) = app.edit_menu {
+                            if let Some(ref mut menu) = app.edit_menu_mut() {
                                 for label in [
                                     "Title",
                                     "Source Branch",
@@ -1029,9 +1019,8 @@ pub fn handle_key(
                                 .strip_prefix('#')
                                 .and_then(|s| s.split(|c: char| !c.is_numeric()).next())
                                 .and_then(|s| s.parse::<u64>().ok());
-                            if let Some(iid) = parsed_iid {
-                                if let Some(issue) = app.issues.items.iter().find(|i| i.iid == iid)
-                                {
+                            let issue_details = parsed_iid.and_then(|iid| {
+                                app.issues.items.iter().find(|i| i.iid == iid).map(|issue| {
                                     let title = issue.title.clone();
                                     let source_branch =
                                         format!("{}-{}", issue.iid, slugify(&issue.title));
@@ -1055,34 +1044,51 @@ pub fn handle_key(
                                         .as_ref()
                                         .map(|m| m.title.clone())
                                         .unwrap_or_default();
-                                    if let Some(ref mut menu) = app.edit_menu {
-                                        for (label, value) in [
-                                            ("Title", title.clone()),
-                                            ("Source Branch", source_branch),
-                                            ("Assignees", assignees.clone()),
-                                            ("Milestone", milestone),
-                                            ("Labels", labels.clone()),
-                                        ] {
-                                            if let Some(f) =
-                                                menu.fields.iter_mut().find(|f| f.label == label)
-                                            {
-                                                f.value = value;
-                                            }
-                                        }
-                                        if let Some(f) = menu
-                                            .fields
-                                            .iter_mut()
-                                            .find(|f| f.label == "Create from Issue")
-                                        {
-                                            f.value = val.clone();
-                                        }
-                                        menu.entity_iid = issue.iid;
+                                    (
+                                        issue.iid,
+                                        title,
+                                        source_branch,
+                                        labels,
+                                        assignees,
+                                        milestone,
+                                    )
+                                })
+                            });
+                            if let Some((
+                                issue_iid,
+                                title,
+                                source_branch,
+                                labels,
+                                assignees,
+                                milestone,
+                            )) = issue_details
+                                && let Some(ref mut menu) = app.edit_menu_mut()
+                            {
+                                for (label, value) in [
+                                    ("Title", title),
+                                    ("Source Branch", source_branch),
+                                    ("Assignees", assignees),
+                                    ("Milestone", milestone),
+                                    ("Labels", labels),
+                                ] {
+                                    if let Some(f) =
+                                        menu.fields.iter_mut().find(|f| f.label == label)
+                                    {
+                                        f.value = value;
                                     }
                                 }
+                                if let Some(f) = menu
+                                    .fields
+                                    .iter_mut()
+                                    .find(|f| f.label == "Create from Issue")
+                                {
+                                    f.value = val.clone();
+                                }
+                                menu.entity_iid = issue_iid;
                             }
                         }
                     }
-                    app.selector = None;
+                    app.close_selector();
                     return;
                 }
 
@@ -1114,9 +1120,10 @@ pub fn handle_key(
                     }
                 }
 
-                if app.edit_menu.is_some() {
+                if app.edit_menu().is_some() {
+                    let mut project_fetch_val = None;
                     // Write the values directly to the active field of app.edit_menu
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         let target_field_name = match field_type.as_str() {
                             "labels" => "Labels",
                             "assignees" => "Assignees",
@@ -1135,170 +1142,161 @@ pub fn handle_key(
                             other if other.starts_with("Input: ") => other,
                             _ => "",
                         };
-                        if !target_field_name.is_empty() {
-                            if let Some(f) = menu
+                        if !target_field_name.is_empty()
+                            && let Some(f) = menu
                                 .fields
                                 .iter_mut()
                                 .find(|f| f.label == target_field_name)
-                            {
-                                let display_val = if field_type == "confidential" {
-                                    selected_list
-                                        .first()
-                                        .cloned()
-                                        .unwrap_or_else(|| "No".to_string())
-                                } else if field_type == "draft_status" {
-                                    selected_list
-                                        .first()
-                                        .cloned()
-                                        .unwrap_or_else(|| "Ready".to_string())
-                                } else if field_type == "mr_pipeline" {
-                                    selected_list
-                                        .first()
-                                        .cloned()
-                                        .unwrap_or_else(|| "No".to_string())
-                                } else {
-                                    selected_list.join(", ")
-                                };
+                        {
+                            let display_val = if field_type == "confidential" {
+                                selected_list
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_else(|| "No".to_string())
+                            } else if field_type == "draft_status" {
+                                selected_list
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_else(|| "Ready".to_string())
+                            } else if field_type == "mr_pipeline" {
+                                selected_list
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_else(|| "No".to_string())
+                            } else {
+                                selected_list.join(", ")
+                            };
 
-                                let is_workflow_file =
-                                    field_type == "workflow_file" && !display_val.is_empty();
+                            let is_workflow_file =
+                                field_type == "workflow_file" && !display_val.is_empty();
 
-                                f.value = display_val.clone();
+                            f.value = display_val.clone();
 
-                                if field_type == "project" {
-                                    menu.entity_project = display_val.clone();
-                                    if !display_val.is_empty()
-                                        && crate::backend::glab::validate_project_path(&display_val)
-                                            .is_ok()
-                                    {
-                                        if let Some(client) = &app.gitlab_client {
-                                            let client = client.clone();
-                                            let proj_scope = crate::scope::Scope::Repository(
-                                                display_val.clone(),
-                                            );
-                                            let tx = crate::event::ScopedSender::new(
-                                                tx.clone(),
-                                                app.scope_generation,
-                                            );
-                                            let (c1, c2, c3, c4) = (
-                                                client.clone(),
-                                                client.clone(),
-                                                client.clone(),
-                                                client.clone(),
-                                            );
-                                            let (p1, p2, p3, p4) = (
-                                                proj_scope.clone(),
-                                                proj_scope.clone(),
-                                                proj_scope.clone(),
-                                                proj_scope.clone(),
-                                            );
-                                            let (d1, d2, d3, d4) = (
-                                                display_val.clone(),
-                                                display_val.clone(),
-                                                display_val.clone(),
-                                                display_val.clone(),
-                                            );
-                                            let (tx1, tx2, tx3, tx4) =
-                                                (tx.clone(), tx.clone(), tx.clone(), tx.clone());
-
-                                            fx.spawn(async move {
-                                                if let Ok(labels) = c1.fetch_labels(&p1).await {
-                                                    let _ =
-                                                        tx1.send(Event::ProjectAttributesFetched {
-                                                            project: d1,
-                                                            labels,
-                                                            members: Vec::new(),
-                                                            milestones: Vec::new(),
-                                                            branches: Vec::new(),
-                                                        });
-                                                }
-                                            });
-                                            fx.spawn(async move {
-                                                if let Ok(members) = c2.fetch_members(&p2).await {
-                                                    let _ =
-                                                        tx2.send(Event::ProjectAttributesFetched {
-                                                            project: d2,
-                                                            labels: Vec::new(),
-                                                            members,
-                                                            milestones: Vec::new(),
-                                                            branches: Vec::new(),
-                                                        });
-                                                }
-                                            });
-                                            fx.spawn(async move {
-                                                if let Ok(milestones) =
-                                                    c3.fetch_milestones(&p3).await
-                                                {
-                                                    let _ =
-                                                        tx3.send(Event::ProjectAttributesFetched {
-                                                            project: d3,
-                                                            labels: Vec::new(),
-                                                            members: Vec::new(),
-                                                            milestones,
-                                                            branches: Vec::new(),
-                                                        });
-                                                }
-                                            });
-                                            fx.spawn(async move {
-                                                if let Ok(branches) = c4.fetch_branches(&p4).await {
-                                                    let _ =
-                                                        tx4.send(Event::ProjectAttributesFetched {
-                                                            project: d4,
-                                                            labels: Vec::new(),
-                                                            members: Vec::new(),
-                                                            milestones: Vec::new(),
-                                                            branches,
-                                                        });
-                                                }
-                                            });
-                                        }
-                                    }
+                            if field_type == "project" {
+                                menu.entity_project = display_val.clone();
+                                if !display_val.is_empty()
+                                    && crate::backend::glab::validate_project_path(&display_val)
+                                        .is_ok()
+                                {
+                                    project_fetch_val = Some(display_val.clone());
                                 }
+                            }
 
-                                let _ = f; // release borrow before modifying fields
+                            let _ = f; // release borrow before modifying fields
 
-                                // When a workflow file is selected, parse
-                                // its workflow_dispatch inputs and rebuild
-                                // the edit menu fields to show per-input fields.
-                                if is_workflow_file {
-                                    // Safe on the UI thread: pure local
-                                    // git object-DB resolve, no network.
-                                    let repo_root = std::process::Command::new("git")
-                                        .args(["rev-parse", "--show-toplevel"])
-                                        .output()
-                                        .ok()
-                                        .and_then(|o| String::from_utf8(o.stdout).ok())
-                                        .map(|s| s.trim().to_string());
+                            // When a workflow file is selected, parse
+                            // its workflow_dispatch inputs and rebuild
+                            // the edit menu fields to show per-input fields.
+                            if is_workflow_file {
+                                // Safe on the UI thread: pure local
+                                // git object-DB resolve, no network.
+                                let repo_root = std::process::Command::new("git")
+                                    .args(["rev-parse", "--show-toplevel"])
+                                    .output()
+                                    .ok()
+                                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                                    .map(|s| s.trim().to_string());
 
-                                    if let Some(root) = repo_root {
-                                        let yaml_path =
-                                            format!("{root}/.github/workflows/{display_val}");
-                                        if let Some(inputs) =
-                                            crate::domain::workflow_inputs::parse_workflow_inputs(
-                                                &yaml_path,
-                                            )
-                                        {
-                                            menu.workflow_inputs = inputs.clone();
-                                            menu.fields.retain(|f| f.label != "Inputs");
-                                            let insert_pos = menu
-                                                .fields
-                                                .iter()
-                                                .position(|f| f.label == "Variables")
-                                                .unwrap_or(menu.fields.len());
-                                            for input in inputs.iter().rev() {
-                                                let label = format!("Input: {}", input.name);
-                                                let default_val =
-                                                    input.default.clone().unwrap_or_default();
-                                                menu.fields.insert(
-                                                    insert_pos,
-                                                    crate::app::Field::text(&label, default_val),
-                                                );
-                                            }
+                                if let Some(root) = repo_root {
+                                    let yaml_path =
+                                        format!("{root}/.github/workflows/{display_val}");
+                                    if let Some(inputs) =
+                                        crate::domain::workflow_inputs::parse_workflow_inputs(
+                                            &yaml_path,
+                                        )
+                                    {
+                                        menu.workflow_inputs = inputs.clone();
+                                        menu.fields.retain(|f| f.label != "Inputs");
+                                        let insert_pos = menu
+                                            .fields
+                                            .iter()
+                                            .position(|f| f.label == "Variables")
+                                            .unwrap_or(menu.fields.len());
+                                        for input in inputs.iter().rev() {
+                                            let label = format!("Input: {}", input.name);
+                                            let default_val =
+                                                input.default.clone().unwrap_or_default();
+                                            menu.fields.insert(
+                                                insert_pos,
+                                                crate::app::Field::text(&label, default_val),
+                                            );
                                         }
                                     }
                                 }
                             }
                         }
+                    }
+
+                    if let Some(display_val) = project_fetch_val
+                        && let Some(client) = &app.gitlab_client
+                    {
+                        let client = client.clone();
+                        let proj_scope = crate::scope::Scope::Repository(display_val.clone());
+                        let tx = crate::event::ScopedSender::new(tx.clone(), app.scope_generation);
+                        let (c1, c2, c3, c4) = (
+                            client.clone(),
+                            client.clone(),
+                            client.clone(),
+                            client.clone(),
+                        );
+                        let (p1, p2, p3, p4) = (
+                            proj_scope.clone(),
+                            proj_scope.clone(),
+                            proj_scope.clone(),
+                            proj_scope.clone(),
+                        );
+                        let (d1, d2, d3, d4) = (
+                            display_val.clone(),
+                            display_val.clone(),
+                            display_val.clone(),
+                            display_val.clone(),
+                        );
+                        let (tx1, tx2, tx3, tx4) = (tx.clone(), tx.clone(), tx.clone(), tx.clone());
+
+                        fx.spawn(async move {
+                            if let Ok(labels) = c1.fetch_labels(&p1).await {
+                                let _ = tx1.send(Event::ProjectAttributesFetched {
+                                    project: d1,
+                                    labels,
+                                    members: Vec::new(),
+                                    milestones: Vec::new(),
+                                    branches: Vec::new(),
+                                });
+                            }
+                        });
+                        fx.spawn(async move {
+                            if let Ok(members) = c2.fetch_members(&p2).await {
+                                let _ = tx2.send(Event::ProjectAttributesFetched {
+                                    project: d2,
+                                    labels: Vec::new(),
+                                    members,
+                                    milestones: Vec::new(),
+                                    branches: Vec::new(),
+                                });
+                            }
+                        });
+                        fx.spawn(async move {
+                            if let Ok(milestones) = c3.fetch_milestones(&p3).await {
+                                let _ = tx3.send(Event::ProjectAttributesFetched {
+                                    project: d3,
+                                    labels: Vec::new(),
+                                    members: Vec::new(),
+                                    milestones,
+                                    branches: Vec::new(),
+                                });
+                            }
+                        });
+                        fx.spawn(async move {
+                            if let Ok(branches) = c4.fetch_branches(&p4).await {
+                                let _ = tx4.send(Event::ProjectAttributesFetched {
+                                    project: d4,
+                                    labels: Vec::new(),
+                                    members: Vec::new(),
+                                    milestones: Vec::new(),
+                                    branches,
+                                });
+                            }
+                        });
                     }
                 } else {
                     apply_selector_changes(
@@ -1315,7 +1313,7 @@ pub fn handle_key(
                 }
             }
             _ => {
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
         }
     }

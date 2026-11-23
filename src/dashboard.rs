@@ -417,7 +417,7 @@ impl DashboardState {
             .and_then(|card| cards.iter().position(|c| *c == card))
             .unwrap_or(0);
         let next = match step {
-            CardStep::Left => (current % columns != 0).then(|| current - 1),
+            CardStep::Left => (!current.is_multiple_of(columns)).then(|| current - 1),
             CardStep::Right => {
                 (current % columns + 1 < columns && current < last).then(|| current + 1)
             }
@@ -1206,7 +1206,12 @@ mod tests {
         assert!(!app.available_tabs().contains(&Tab::Dashboard));
         app.config.dashboard.enabled = true;
         assert!(app.available_tabs().contains(&Tab::Dashboard));
-        app.config.disabled_tabs = Some(vec!["dashboard".to_string()]);
+        app.config.layout.tabs = Some(
+            Tab::ALL
+                .into_iter()
+                .filter(|&t| t != Tab::Dashboard)
+                .collect(),
+        );
         assert!(!app.available_tabs().contains(&Tab::Dashboard));
     }
 
@@ -1427,7 +1432,12 @@ mod tests {
     #[test]
     fn a_refresh_skips_hidden_tabs_and_lists_already_loading() {
         let mut app = repository_app();
-        app.config.disabled_tabs = Some(vec!["Releases".to_string()]);
+        app.config.layout.tabs = Some(
+            Tab::ALL
+                .into_iter()
+                .filter(|&t| t != Tab::Releases)
+                .collect(),
+        );
         app.loading_tabs.insert(Tab::Issues);
 
         assert_eq!(
@@ -1522,8 +1532,8 @@ mod tests {
         let mut app = repository_app();
         app.active_tab = Tab::Dashboard;
         app.dashboard.focus = DashboardFocus::List;
-        app.activate_tab(Tab::Issues);
-        app.activate_tab(Tab::Dashboard);
+        app.switch_to_tab(Tab::Issues);
+        app.switch_to_tab(Tab::Dashboard);
 
         assert_eq!(app.dashboard.focus, DashboardFocus::Tab);
     }

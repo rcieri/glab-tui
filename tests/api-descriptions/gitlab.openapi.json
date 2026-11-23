@@ -1,0 +1,7911 @@
+{
+  "components": {
+    "schemas": {
+      "APIEntitiesBranch": {
+        "additionalProperties": false,
+        "properties": {
+          "can_push": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesCommit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "developers_can_merge": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "developers_can_push": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "merged": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "protected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesCiBridge": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_failure": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "commit": {},
+          "coverage": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "downstream_pipeline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesCiPipelineBasic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "erased_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pipeline": {},
+          "project": {},
+          "queued_duration": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tag": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "user": {},
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesCiJob": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_failure": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/APIEntitiesCiJobArtifact"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "artifacts_expire_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifacts_file": {},
+          "commit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesCommit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "erased_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pipeline": {},
+          "project": {},
+          "queued_duration": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesCiRunner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runner_manager": {},
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tag": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "tag_list": {},
+          "user": {},
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesCiJobArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "file_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesCiPipelineBasic": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesCiRunner": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_by": {},
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ip_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_shared": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "job_execution_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "online": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "paused": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "runner_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesCommit": {
+        "additionalProperties": false,
+        "properties": {
+          "author_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "authored_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "committed_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "committer_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "committer_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extended_trailers": {},
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_ids": {},
+          "short_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trailers": {},
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesDeployment": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deployable": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesCiJob"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesEnvironmentBasic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesUserBasic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesDraftNote": {
+        "additionalProperties": false,
+        "properties": {
+          "author_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "commit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discussion_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "line_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_request_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {},
+          "resolve_discussion": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesEnvironment": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_stop_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_stop_setting": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cluster_agent": {},
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "flux_resource_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kubernetes_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_deployment": {},
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project": {},
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesEnvironmentBasic": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "action_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author": {},
+          "author_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "author_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imported_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesNote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "push_data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesPushEventPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wiki_page": {}
+        },
+        "type": "object"
+      },
+      "APIEntitiesGroupLabel": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "closed_issues_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description_html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open_issues_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "open_merge_requests_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "subscribed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "text_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "_links": {},
+          "assignee": {},
+          "assignees": {
+            "items": {
+              "$ref": "#/components/schemas/APIEntitiesUserBasic"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesUserBasic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocking_issues_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_by": {},
+          "confidential": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discussion_locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "downvotes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "epic": {},
+          "epic_iid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_tasks": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "health_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imported_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "iteration": {},
+          "labels": {},
+          "merge_requests_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesMilestone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "moved_to_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "references": {},
+          "service_desk_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subscribed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "task_completion_status": {},
+          "task_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "time_stats": {},
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upvotes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user_notes_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "weight": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesIssueBasic": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee": {},
+          "assignees": {},
+          "author": {},
+          "blocking_issues_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_by": {},
+          "confidential": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discussion_locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "downvotes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "issue_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labels": {},
+          "merge_requests_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "milestone": {},
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_completion_status": {},
+          "time_stats": {},
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upvotes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user_notes_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "weight": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesMember": {
+        "additionalProperties": false,
+        "properties": {
+          "access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_by": {},
+          "custom_attributes": {},
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group_saml_identity": {},
+          "group_scim_identity": {},
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "is_using_seat": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "member_role": {},
+          "membership_state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "override": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "public_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "two_factor_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesMergeRequestAuthor": {
+        "additionalProperties": false,
+        "properties": {
+          "avatar_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bot": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "custom_attributes": {},
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "public_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesMergeRequestBasic": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_collaboration": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "allow_maintainer_to_push": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "approvals_before_merge": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "assignee": {},
+          "assignees": {
+            "items": {
+              "$ref": "#/components/schemas/APIEntitiesUserBasic"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesMergeRequestAuthor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocking_discussions_resolved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_by": {},
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description_html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detailed_merge_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discussion_locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "downvotes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "draft": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "force_remove_source_branch": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "has_conflicts": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imported_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labels": {},
+          "merge_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_user": {},
+          "merge_when_pipeline_succeeds": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "merged_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merged_by": {},
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesMilestone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prepared_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "references": {},
+          "reviewers": {
+            "items": {
+              "$ref": "#/components/schemas/APIEntitiesUserBasic"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "should_remove_source_branch": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "source_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "squash": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "squash_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "squash_on_merge": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "task_completion_status": {},
+          "time_stats": {},
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title_html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upvotes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user_notes_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "work_in_progress": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesMilestone": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expired": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "group_id": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iid": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesNote": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {},
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commands_changes": {},
+          "commit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidential": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imported_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "internal": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "noteable_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "noteable_iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "noteable_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resolvable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resolved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_by": {},
+          "suggestions": {},
+          "system": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesProject": {
+        "additionalProperties": false,
+        "properties": {
+          "_links": {},
+          "allow_merge_on_skipped_pipeline": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "allow_pipeline_trigger_approve_deployment": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "analytics_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "approvals_before_merge": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "auto_cancel_pending_pipelines": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_devops_deploy_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_devops_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "auto_duo_code_review_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "autoclose_referenced_issues": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "automatic_rebase_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_git_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_timeout": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "builds_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "can_create_merge_request_in": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_allow_fork_pipelines_to_run_in_parent_project": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_config_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ci_default_git_depth": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ci_delete_pipelines_in_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ci_display_pipeline_variables": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_forward_deployment_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_forward_deployment_rollback_allowed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_id_token_sub_claim_components": {},
+          "ci_job_token_scope_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_pipeline_variables_minimum_override_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ci_push_repository_for_job_token_allowed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_restrict_pipeline_cancellation_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ci_separated_caches": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_skip_branch_pipelines_for_mrs": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "compliance_frameworks": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "container_expiration_policy": {},
+          "container_registry_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "container_registry_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "container_registry_image_prefix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creator_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "custom_attributes": {},
+          "default_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description_html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_code_review_decisions_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_code_review_default_depth": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_code_review_depth_allowed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "duo_dependency_bump_breaking_changes_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_foundational_flows_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_remote_flows_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_sast_fp_detection_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_sast_vr_workflow_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_scheduled_automations_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_secret_detection_fp_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emails_disabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "emails_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "empty_repo": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "enforce_auth_checks_on_uploads": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "environments_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_authorization_classification_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "feature_flags_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forked_from_project": {},
+          "forking_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forks_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "group_runners_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "http_url_to_repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "import_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "infrastructure_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_branch_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issues_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issues_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "issues_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jobs_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "keep_latest_artifact": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_activity_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lfs_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "license": {},
+          "license_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marked_for_deletion_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marked_for_deletion_on": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_artifacts_size": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_pipelines_per_merge_train": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_commit_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_pipelines_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_request_title_regex": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_request_title_regex_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_requests_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_requests_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "merge_requests_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_train_enforcement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_trains_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_trains_skip_train_allowed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror_overwrites_diverged_branches": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror_trigger_builds": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_experiments_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_registry_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "monitor_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mr_default_target_self": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "mr_default_title_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name_with_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespace": {},
+          "only_allow_merge_if_all_discussions_are_resolved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "only_allow_merge_if_all_status_checks_passed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "only_allow_merge_if_pipeline_succeeds": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "only_mirror_protected_branches": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open_issues_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {},
+          "package_registry_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "packages_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "pages_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path_with_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pre_receive_secret_detection_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "prevent_merge_without_jira_issue": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "printing_merge_request_link_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "protect_merge_request_pipelines": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "public_jobs": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "readme_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "releases_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remove_source_branch_after_merge": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "repository_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_object_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_storage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_access_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "requirements_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requirements_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolve_outdated_diff_discussions": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resource_group_default_process_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "restrict_user_defined_variables": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reviewer_assignment_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runner_token_expiration_interval": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runners_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_push_protection_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "security_and_compliance_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "security_and_compliance_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "security_policy_pipeline_must_succeed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "service_desk_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_desk_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "shared_runners_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "shared_with_groups": {},
+          "show_diff_preview_in_email": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "snippets_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snippets_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "spp_repository_pipeline_access": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "squash_commit_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "squash_option": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ssh_url_to_repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "star_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "statistics": {},
+          "suggestion_commit_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tag_list": {},
+          "topics": {},
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warn_about_potentially_unwanted_characters": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "web_based_commit_signing_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wiki_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wiki_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesProjectIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name_with_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path_with_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesProjectsWithAccessAndCatalogSetting": {
+        "additionalProperties": false,
+        "properties": {
+          "_links": {},
+          "allow_merge_on_skipped_pipeline": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "allow_pipeline_trigger_approve_deployment": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "analytics_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "approvals_before_merge": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "auto_cancel_pending_pipelines": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_devops_deploy_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_devops_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "auto_duo_code_review_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "autoclose_referenced_issues": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "automatic_rebase_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_git_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_timeout": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "builds_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "can_create_merge_request_in": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_allow_fork_pipelines_to_run_in_parent_project": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_config_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ci_default_git_depth": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ci_delete_pipelines_in_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ci_display_pipeline_variables": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_forward_deployment_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_forward_deployment_rollback_allowed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_id_token_sub_claim_components": {},
+          "ci_job_token_scope_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_pipeline_variables_minimum_override_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ci_push_repository_for_job_token_allowed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_restrict_pipeline_cancellation_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ci_separated_caches": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ci_skip_branch_pipelines_for_mrs": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "cicd_catalog_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "compliance_frameworks": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "container_expiration_policy": {},
+          "container_registry_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "container_registry_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "container_registry_image_prefix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creator_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "custom_attributes": {},
+          "default_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description_html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_code_review_decisions_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_code_review_default_depth": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_code_review_depth_allowed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "duo_dependency_bump_breaking_changes_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_foundational_flows_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_remote_flows_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_sast_fp_detection_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_sast_vr_workflow_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_scheduled_automations_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duo_secret_detection_fp_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emails_disabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "emails_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "empty_repo": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "enforce_auth_checks_on_uploads": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "environments_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_authorization_classification_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "feature_flags_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forked_from_project": {},
+          "forking_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forks_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "group_runners_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "http_url_to_repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "import_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "infrastructure_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_branch_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issues_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issues_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "issues_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jobs_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "keep_latest_artifact": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_activity_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lfs_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "license": {},
+          "license_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marked_for_deletion_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marked_for_deletion_on": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_artifacts_size": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_pipelines_per_merge_train": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_commit_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_pipelines_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_request_title_regex": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_request_title_regex_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_requests_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_requests_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "merge_requests_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_train_enforcement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_trains_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_trains_skip_train_allowed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror_overwrites_diverged_branches": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror_trigger_builds": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mirror_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_experiments_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_registry_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "monitor_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mr_default_target_self": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "mr_default_title_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name_with_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespace": {},
+          "only_allow_merge_if_all_discussions_are_resolved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "only_allow_merge_if_all_status_checks_passed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "only_allow_merge_if_pipeline_succeeds": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "only_mirror_protected_branches": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open_issues_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {},
+          "package_registry_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "packages_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "pages_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path_with_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissions": {},
+          "pre_receive_secret_detection_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "prevent_merge_without_jira_issue": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "printing_merge_request_link_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "protect_merge_request_pipelines": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "public_jobs": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "readme_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "releases_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remove_source_branch_after_merge": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "repository_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_object_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_storage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_access_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "requirements_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requirements_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolve_outdated_diff_discussions": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resource_group_default_process_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "restrict_user_defined_variables": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reviewer_assignment_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runner_token_expiration_interval": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runners_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_push_protection_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "security_and_compliance_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "security_and_compliance_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "security_policy_pipeline_must_succeed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "service_desk_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_desk_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "shared_runners_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "shared_with_groups": {},
+          "show_diff_preview_in_email": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "snippets_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snippets_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "spp_repository_pipeline_access": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "squash_commit_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "squash_option": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ssh_url_to_repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "star_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "statistics": {},
+          "suggestion_commit_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tag_list": {},
+          "topics": {},
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warn_about_potentially_unwanted_characters": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "web_based_commit_signing_enabled": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wiki_access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wiki_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesPushEventPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "commit_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ref_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesTodo": {
+        "additionalProperties": false,
+        "properties": {
+          "action_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesUserBasic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group": {},
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesProjectIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "target_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesUserBasic": {
+        "additionalProperties": false,
+        "properties": {
+          "avatar_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "custom_attributes": {},
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "public_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The REST API of gitlab, cut to what glab-tui uses. Generated by scripts/gen-api-descriptions.py, do not edit. A modified excerpt of the GitLab API description doc/api/openapi/openapi_v3.yaml in gitlab-org/gitlab, Copyright GitLab B.V., licensed under CC BY-SA 4.0. Cut to the operations and fields glab-tui uses, with every property marked nullable and the corrections listed in scripts/api-descriptions/gitlab.json applied.",
+    "license": {
+      "name": "CC BY-SA 4.0",
+      "url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "title": "glab-tui pruned gitlab API",
+    "version": "19.6",
+    "x-host-rule": "all_nullable",
+    "x-required-rule": "spec required list cut to the fields read",
+    "x-schema-names": "union",
+    "x-source": {
+      "commit": "a63260946aaf41f9effa51234e03f4e6693f6ae8",
+      "path": "doc/api/openapi/openapi_v3.yaml",
+      "repo": "gitlab-org/gitlab",
+      "sha256": "458acad3e40be731212801caff84b3befedbfcec96567cf00df10fc745e9937c"
+    }
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v4/groups/{id}/issues": {
+      "get": {
+        "operationId": "GetApiV4GroupsIdIssues",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignee_id",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignee_username",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author_username",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "closed_by_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confidential",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "due_date",
+            "schema": {
+              "enum": [
+                "0",
+                "any",
+                "today",
+                "tomorrow",
+                "overdue",
+                "week",
+                "month",
+                "next_month_and_previous_two_weeks",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "epic_id",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "health_status",
+            "schema": {
+              "enum": [
+                "on_track",
+                "needs_attention",
+                "at_risk",
+                "none",
+                "any"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iids",
+            "schema": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "in",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issue_type",
+            "schema": {
+              "enum": [
+                "issue",
+                "incident",
+                "test_case",
+                "requirement",
+                "task",
+                "ticket"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iteration_id",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "iteration_title",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labels",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "milestone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "milestone_id",
+            "schema": {
+              "enum": [
+                "Any",
+                "None",
+                "Upcoming",
+                "Started"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "my_reaction_emoji",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "non_archived",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not",
+            "schema": {
+              "type": "object"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[assignee_id]",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[assignee_username]",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[author_id]",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[author_username]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[iids]",
+            "schema": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[iteration_id]",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[iteration_title]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[labels]",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[milestone]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[milestone_id]",
+            "schema": {
+              "enum": [
+                "Any",
+                "None",
+                "Upcoming",
+                "Started"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[weight]",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order_by",
+            "schema": {
+              "enum": [
+                "created_at",
+                "due_date",
+                "label_priority",
+                "milestone_due",
+                "popularity",
+                "priority",
+                "relative_position",
+                "title",
+                "updated_at",
+                "weight"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "enum": [
+                "created-by-me",
+                "assigned-to-me",
+                "created_by_me",
+                "assigned_to_me",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "enum": [
+                "opened",
+                "closed",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "weight",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_labels_details",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesIssue"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_issues, domain::issues::Issue"
+        ]
+      }
+    },
+    "/api/v4/groups/{id}/labels": {
+      "get": {
+        "operationId": "GetApiV4GroupsIdLabels",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_ancestor_groups",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_descendant_groups",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "only_group_labels",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_counts",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesGroupLabel"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::fetch_labels, GiLabel"
+        ]
+      }
+    },
+    "/api/v4/groups/{id}/members/all": {
+      "get": {
+        "operationId": "GetApiV4GroupsIdMembersAll",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "show_seat_info",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "enum": [
+                "awaiting",
+                "active"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "user_ids",
+            "schema": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesMember"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::fetch_members, GiMember"
+        ]
+      }
+    },
+    "/api/v4/groups/{id}/merge_requests": {
+      "get": {
+        "operationId": "GetApiV4GroupsIdMergeRequests",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "approved_by_ids",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "approved_by_usernames",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "approver_ids",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignee_id",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignee_username",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author_username",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deployed_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deployed_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "draft",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "in",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labels",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "merge_user_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "merge_user_username",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "merged_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "merged_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "milestone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "my_reaction_emoji",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "non_archived",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not",
+            "schema": {
+              "type": "object"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[assignee_id]",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[assignee_username]",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[author_id]",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[author_username]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[labels]",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[milestone]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[my_reaction_emoji]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[reviewer_id]",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "not[reviewer_username]",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order_by",
+            "schema": {
+              "enum": [
+                "created_at",
+                "label_priority",
+                "milestone_due",
+                "popularity",
+                "priority",
+                "title",
+                "updated_at",
+                "merged_at"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reviewer_id",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "reviewer_username",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "enum": [
+                "created-by-me",
+                "assigned-to-me",
+                "created_by_me",
+                "assigned_to_me",
+                "reviews_for_me",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_branch",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_project_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "enum": [
+                "opened",
+                "closed",
+                "locked",
+                "merged",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_branch",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "simple"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "wip",
+            "schema": {
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_labels_details",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_merge_status_recheck",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesMergeRequestBasic"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_mrs, domain::mr::MergeRequest"
+        ]
+      }
+    },
+    "/api/v4/groups/{id}/milestones": {
+      "get": {
+        "operationId": "GetApiV4GroupsIdMilestones",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "containing_date",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_date",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iids",
+            "schema": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_ancestors",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_descendants",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_parent_milestones",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search_title",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "due_date_asc",
+                "due_date_desc",
+                "start_date_asc",
+                "start_date_desc",
+                "name_asc",
+                "name_desc",
+                "created_asc",
+                "created_desc",
+                "updated_asc",
+                "updated_desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_date",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "enum": [
+                "active",
+                "closed",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "title",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_before",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesMilestone"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_milestones, GiMs"
+        ]
+      }
+    },
+    "/api/v4/groups/{id}/projects": {
+      "get": {
+        "operationId": "GetApiV4GroupsIdProjects",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "custom_attributes",
+            "schema": {
+              "type": "object"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_ancestor_groups",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_subgroups",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_access_level",
+            "schema": {
+              "enum": [
+                10,
+                15,
+                20,
+                25,
+                30,
+                40,
+                50
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order_by",
+            "schema": {
+              "enum": [
+                "id",
+                "name",
+                "path",
+                "created_at",
+                "updated_at",
+                "last_activity_at",
+                "similarity",
+                "star_count"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owned",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "simple",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "starred",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility",
+            "schema": {
+              "enum": [
+                "private",
+                "internal",
+                "public"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_custom_attributes",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_issues_enabled",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_merge_requests_enabled",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_security_reports",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_shared",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesProject"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_group_projects, GiProject, parse_group_projects"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}": {
+      "get": {
+        "operationId": "GetApiV4ProjectsId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "custom_attributes",
+            "schema": {
+              "type": "object"
+            }
+          },
+          {
+            "in": "query",
+            "name": "license",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "statistics",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_custom_attributes",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIEntitiesProjectsWithAccessAndCatalogSetting"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_branches, GiProj"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/deployments": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdDeployments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "finished_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "finished_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order_by",
+            "schema": {
+              "enum": [
+                "id",
+                "iid",
+                "created_at",
+                "updated_at",
+                "finished_at"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "created",
+                "running",
+                "success",
+                "failed",
+                "canceled",
+                "skipped",
+                "blocked"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_before",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesDeployment"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_deployments, GiDeploy, also via GlabBackend::list_environments"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/environments": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdEnvironments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "states",
+            "schema": {
+              "enum": [
+                "stopped",
+                "stopping",
+                "available"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesEnvironment"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_environments, GiEnv"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/environments/{environment_id}/stop": {
+      "post": {
+        "operationId": "PostApiV4ProjectsIdEnvironmentsEnvironmentIdStop",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::stop_environment (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/events": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_type",
+            "schema": {
+              "enum": [
+                "issue",
+                "milestone",
+                "merge_request",
+                "note",
+                "project",
+                "snippet",
+                "user",
+                "wiki",
+                "design"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesEvent"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_contribution_page, domain::contributions::parse_gitlab_events"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/issues/{issue_iid}/closed_by": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdIssuesIssueIidClosedBy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "issue_iid",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesMergeRequestBasic"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_issue_related_mrs, GiClosedBy"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/jobs/{job_id}/play": {
+      "post": {
+        "operationId": "PostApiV4ProjectsIdJobsJobIdPlay",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "job_inputs": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "job_variables_attributes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "key": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "value": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::start_job (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/jobs/{job_id}/trace": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdJobsJobIdTrace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "byte_limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "byte_offset",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::read_job_trace, GlabBackend::read_job_trace_ranges (plain text, read as bytes)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/members/all": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdMembersAll",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "show_seat_info",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "enum": [
+                "awaiting",
+                "active"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "user_ids",
+            "schema": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesMember"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::fetch_members, GiMember"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/closes_issues": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdMergeRequestsMergeRequestIidClosesIssues",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "merge_request_iid",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesIssueBasic"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_mr_related_issues, GiClosesIssue"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/draft_notes": {
+      "post": {
+        "operationId": "PostApiV4ProjectsIdMergeRequestsMergeRequestIidDraftNotes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "merge_request_iid",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "commit_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "in_reply_to_discussion_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "position": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "base_sha": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "head_sha": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "height": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "line_range": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "end": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "line_code": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "new_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "old_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "type": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "type": [
+                              "object",
+                              "null"
+                            ]
+                          },
+                          "start": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "line_code": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "new_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "old_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "type": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "type": [
+                              "object",
+                              "null"
+                            ]
+                          }
+                        },
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "new_line": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "new_path": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "old_line": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "old_path": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "position_type": {
+                        "type": "string"
+                      },
+                      "start_sha": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "width": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "x": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "y": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "resolve_discussion": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIEntitiesDraftNote"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::publish_draft_notes, GiDraftNote, endpoint built in GlabBackend::submit_review"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish": {
+      "post": {
+        "operationId": "PostApiV4ProjectsIdMergeRequestsMergeRequestIidDraftNotesBulkPublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "merge_request_iid",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "internal": {
+                    "type": "boolean"
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reviewer_state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No content",
+            "x-bodyless": true
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::publish_draft_notes (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}": {
+      "delete": {
+        "operationId": "DeleteApiV4ProjectsIdMergeRequestsMergeRequestIidDraftNotesDraftNoteId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_note_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "merge_request_iid",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::delete_draft_notes (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/merge_requests/{noteable_id}/notes/{note_id}": {
+      "delete": {
+        "operationId": "DeleteApiV4ProjectsIdMergeRequestsNoteableIdNotesNoteId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "noteable_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "overlays::selector::handle_key (response not parsed)"
+        ]
+      },
+      "put": {
+        "operationId": "PutApiV4ProjectsIdMergeRequestsNoteableIdNotesNoteId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "noteable_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "confidential": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "editor_result::spawn_comment_edit (glab api -X PUT --input -, response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/milestones": {
+      "post": {
+        "operationId": "PostApiV4ProjectsIdMilestones",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "due_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "start_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::create_milestone (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/pipelines": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdPipelines",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order_by",
+            "schema": {
+              "enum": [
+                "id",
+                "status",
+                "ref",
+                "updated_at",
+                "user_id"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ref",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "enum": [
+                "running",
+                "pending",
+                "finished",
+                "branches",
+                "tags"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "schema": {
+              "enum": [
+                "unknown",
+                "push",
+                "web",
+                "trigger",
+                "schedule",
+                "api",
+                "external",
+                "pipeline",
+                "chat",
+                "webide",
+                "merge_request_event",
+                "external_pull_request_event",
+                "parent_pipeline",
+                "ondemand_dast_scan",
+                "ondemand_dast_validation",
+                "security_orchestration_policy",
+                "container_registry_push",
+                "duo_workflow",
+                "pipeline_execution_policy_schedule",
+                "dependency_management_security_update"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "created",
+                "waiting_for_resource",
+                "preparing",
+                "waiting_for_callback",
+                "pending",
+                "running",
+                "success",
+                "failed",
+                "canceling",
+                "canceled",
+                "skipped",
+                "manual",
+                "scheduled"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "username",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "yaml_errors",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesCiPipelineBasic"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_pipelines, GiPipe"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/pipelines/{pipeline_id}/bridges": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdPipelinesPipelineIdBridges",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "created",
+                    "waiting_for_resource",
+                    "preparing",
+                    "waiting_for_callback",
+                    "pending",
+                    "running",
+                    "success",
+                    "failed",
+                    "canceling",
+                    "canceled",
+                    "skipped",
+                    "manual",
+                    "scheduled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesCiBridge"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_pipeline_bridges, domain::pipelines::Bridge"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/pipelines/{pipeline_id}/jobs": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdPipelinesPipelineIdJobs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_retried",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "created",
+                    "waiting_for_resource",
+                    "preparing",
+                    "waiting_for_callback",
+                    "pending",
+                    "running",
+                    "success",
+                    "failed",
+                    "canceling",
+                    "canceled",
+                    "skipped",
+                    "manual",
+                    "scheduled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesCiJob"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_pipeline_jobs, GiJob",
+          "GlabBackend::retry_failed_jobs, FailedJob, scope[]=failed, reads id only"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/pipelines/{pipeline_id}/retry": {
+      "post": {
+        "operationId": "PostApiV4ProjectsIdPipelinesPipelineIdRetry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::retry_pipeline (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/repository/branches": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdRepositoryBranches",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "regex",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "name_asc",
+                "updated_asc",
+                "updated_desc"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesBranch"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_branches, GiBr"
+        ]
+      },
+      "post": {
+        "operationId": "PostApiV4ProjectsIdRepositoryBranches",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "branch": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "ref": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::create_branch (response not parsed; branch and ref as query string)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/repository/branches/{branch}": {
+      "delete": {
+        "operationId": "DeleteApiV4ProjectsIdRepositoryBranchesBranch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content",
+            "x-bodyless": true
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::delete_branch (response not parsed)"
+        ]
+      },
+      "get": {
+        "operationId": "GetApiV4ProjectsIdRepositoryBranchesBranch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIEntitiesBranch"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_branches, GiBr"
+        ]
+      }
+    },
+    "/api/v4/runners/{id}": {
+      "put": {
+        "operationId": "PutApiV4RunnersId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "access_level": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "active": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "locked": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "maintenance_note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "maximum_timeout": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "paused": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "run_untagged": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "tag_list": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::update_runner_description (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/todos": {
+      "get": {
+        "operationId": "GetApiV4Todos",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "enum": [
+                "assigned",
+                "review_requested",
+                "mentioned",
+                "build_failed",
+                "marked",
+                "approval_required",
+                "unmergeable",
+                "directly_addressed",
+                "member_access_requested",
+                "review_submitted",
+                "review_approved",
+                "review_changes_requested",
+                "ssh_key_expired",
+                "ssh_key_expiring_soon",
+                "transfer_failed",
+                "merge_train_removed",
+                "okr_checkin_requested",
+                "added_approver",
+                "duo_pro_access_granted",
+                "duo_enterprise_access_granted",
+                "duo_core_access_granted",
+                "duo_workflow_input_required",
+                "orbit_access_granted"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "enum": [
+                "pending",
+                "done"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "enum": [
+                "Commit",
+                "Issue",
+                "WorkItem",
+                "MergeRequest",
+                "DesignManagement::Design",
+                "AlertManagement::Alert",
+                "Namespace",
+                "Project",
+                "Key",
+                "WikiPage::Meta",
+                "Epic",
+                "Vulnerability",
+                "User",
+                "ComplianceManagement::Projects::ComplianceViolation",
+                "Ai::DuoWorkflows::Workflow"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesTodo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_notifications, GiTodo, parse_gitlab_todos"
+        ]
+      }
+    }
+  }
+}

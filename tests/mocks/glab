@@ -18,14 +18,27 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "glab $*" >> "$LOG_FILE"
 # One file per call with the exact argument boundaries, checked against the
-# generated CLI reference by the e2e harness. A shared file would interleave
-# concurrent calls. The record is written under a dot name and renamed once
-# complete, so the harness can wait for it.
+# generated CLI reference by the e2e harness, and beside it, under the same
+# name plus `.stdin`, the request body piped with `--input -`, and `.stdout`,
+# what the mock printed. A shared file would interleave concurrent calls.
+# Each is written under a dot name and renamed once complete, the body
+# first and the output on exit, so the harness can wait for the record. The
+# record's name is appended to `.order` once the record is renamed, which
+# gives the harness the call order: file times are too coarse on some
+# kernels to tell back-to-back calls apart.
 if [[ -n "$TEST_LOG_PATH" ]]; then
     mkdir -p "$TEST_LOG_PATH.argv.d"
     argv_record=$(mktemp "$TEST_LOG_PATH.argv.d/.XXXXXXXX")
+    record="${argv_record%/.*}/${argv_record##*/.}"
+    if [[ " $* " == *" --input - "* ]]; then
+        cat > "$argv_record.stdin"
+        mv "$argv_record.stdin" "$record.stdin"
+    fi
     printf '%s\x1f' glab "$@" > "$argv_record"
-    mv "$argv_record" "${argv_record%/.*}/${argv_record##*/.}"
+    mv "$argv_record" "$record"
+    printf '%s\n' "${record##*/}" >> "$TEST_LOG_PATH.argv.d/.order"
+    exec 3>&1 > "$argv_record.stdout"
+    trap 'cat "$argv_record.stdout" >&3; mv "$argv_record.stdout" "$record.stdout"' EXIT
 fi
 
 # A call this mock has no case for. The test harness fails the test when
@@ -69,10 +82,16 @@ if [[ -n "$TEST_GLAB_HANG_MATCH" && "$*" == *"$TEST_GLAB_HANG_MATCH"* ]]; then
     exec sleep 300
 fi
 
-# Request bodies piped with `--input -`, one per line, for payload assertions.
-if [[ " $* " == *" --input - "* ]]; then
-    { cat; echo; } >> "$LOG_FILE.stdin"
-fi
+# The branch list: the fixture, plus the branch a repository/branches POST
+# created.
+branches_json() {
+    if [[ -f "$LOG_FILE.created_branch" ]]; then
+        sed '$d' "$FIXTURES_DIR/branches.json" | sed '$s/}$/},/'
+        printf '  {"name": "%s", "merged": false, "protected": false, "default": false, "commit": {"id": "a1b2c3d4e5f67890123456789012345678901234"}}\n]\n' "$(cat "$LOG_FILE.created_branch")"
+    else
+        cat "$FIXTURES_DIR/branches.json"
+    fi
+}
 
 # Match arguments to determine response
 if [[ "$*" == *"api"* ]]; then
@@ -117,12 +136,20 @@ if [[ "$*" == *"api"* ]]; then
         else
             echo "[]"
         fi
+    elif [[ "$*" == *"/closed_by"* ]]; then
+        cat "$FIXTURES_DIR/closed_by_mrs.json"
+    elif [[ "$*" == *"/closes_issues"* ]]; then
+        cat "$FIXTURES_DIR/closes_issues.json"
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
+    elif [[ "$*" == *"/repository/branches?branch="* && " $* " == *" -X POST "* ]]; then
+        # The new branch's name is the `branch` query parameter.
+        sed -n 's/.*[?&]branch=\([^& ]*\)&ref=.*/\1/p' <<< "$*" > "$LOG_FILE.created_branch"
+        echo '{}'
     elif [[ "$*" == *"/branches"* ]]; then
-        cat "$FIXTURES_DIR/branches.json"
+        branches_json
     elif [[ "$*" == *"/environments"* ]]; then
         cat "$FIXTURES_DIR/environments.json"
     elif [[ "$*" == *"/deployments"* ]]; then
@@ -168,16 +195,17 @@ if [[ "$*" == *"api"* ]]; then
                 echo '[]'
             fi
         elif [[ -n "$TEST_GLAB_FAILED_JOBS" && "$*" == *"scope[]=failed"* ]]; then
-            echo '[{"id": 54322, "status": "failed", "stage": "test", "name": "rubocop"},
-                   {"id": 54323, "status": "failed", "stage": "test", "name": "eslint"}]'
+            cat "$FIXTURES_DIR/pipeline_failed_jobs.json"
         elif [[ -n "$TEST_GLAB_FAILED_JOBS" ]]; then
             # Jobs carry the pipeline's commit and, when failed, why.
             commit='"commit": {"title": "Bump parser to 2.1", "author_name": "Grace Hopper"}'
-            echo "[{\"id\": 54321, \"status\": \"success\", \"stage\": \"test\", \"name\": \"rspec\", $commit},
-                   {\"id\": 54322, \"status\": \"failed\", \"stage\": \"test\", \"name\": \"rubocop\",
-                    \"failure_reason\": \"script_failure\", $commit}]"
+            cat <<EOF
+[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", $commit},
+ {"id": 54322, "status": "failed", "stage": "test", "name": "rubocop",
+  "failure_reason": "script_failure", $commit}]
+EOF
         else
-            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec", "duration": 95.4, "queued_duration": 3.2, "runner": {"id": 7, "description": "shared-runner-7"}, "web_url": "https://gitlab.com/test-owner/test-repo/-/jobs/54321", "artifacts": [{"file_type": "archive"}, {"file_type": "trace"}, {"file_type": "junit"}]}]'
+            cat "$FIXTURES_DIR/pipeline_jobs.json"
         fi
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"

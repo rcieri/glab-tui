@@ -46,7 +46,7 @@ fn selected_issue(app: &mut App, build: fn(u64) -> ConfirmAction) {
     };
     let issue_iid = issue.iid;
     let project_path = app.scope.project_of(&issue.project_path).to_string();
-    app.submit_dialog = Some(SubmitDialog::build_with_project(
+    app.open_submit_dialog(SubmitDialog::build_with_project(
         build(issue_iid),
         project_path,
         app,
@@ -61,7 +61,7 @@ fn selected_mr(app: &mut App, build: fn(u64) -> ConfirmAction) {
         return;
     };
     let project_path = app.scope.project_of(&mr.project_path).to_string();
-    app.submit_dialog = Some(SubmitDialog::build_with_project(
+    app.open_submit_dialog(SubmitDialog::build_with_project(
         build(mr.iid),
         project_path,
         app,
@@ -92,7 +92,7 @@ fn cancel_pipeline(app: &mut App) {
         return;
     };
     let project_path = app.project_path_for_pipeline(pipe_id);
-    app.submit_dialog = Some(SubmitDialog::build_with_project(
+    app.open_submit_dialog(SubmitDialog::build_with_project(
         ConfirmAction::CancelPipeline(pipe_id),
         project_path,
         app,
@@ -115,7 +115,7 @@ fn cancel_jobs(app: &mut App) {
         ids.sort_unstable();
         ids
     };
-    app.submit_dialog = Some(SubmitDialog::build_with_project(
+    app.open_submit_dialog(SubmitDialog::build_with_project(
         ConfirmAction::CancelJobs {
             pipeline_id: pipe_id,
             job_ids,
@@ -129,7 +129,7 @@ fn delete_release(app: &mut App) {
     let Some(release) = app.releases.cursor_row() else {
         return;
     };
-    app.submit_dialog = Some(SubmitDialog::build_with_project(
+    app.open_submit_dialog(SubmitDialog::build_with_project(
         ConfirmAction::DeleteRelease(release.tag_name.clone()),
         release.project_or(&app.scope).to_string(),
         app,
@@ -146,7 +146,7 @@ fn selected_milestone(app: &mut App, build: fn(Milestone) -> ConfirmAction) {
     };
     let milestone = (*milestone).clone();
     let project_path = app.scope.project_of(&milestone.project_path).to_string();
-    app.submit_dialog = Some(SubmitDialog::build_with_project(
+    app.open_submit_dialog(SubmitDialog::build_with_project(
         build(milestone),
         project_path,
         app,
@@ -169,18 +169,18 @@ fn delete_branch(app: &mut App) {
             .collect();
         names.sort();
         if names.len() == 1 {
-            app.submit_dialog = Some(SubmitDialog::build(
+            app.open_submit_dialog(SubmitDialog::build(
                 ConfirmAction::DeleteBranch(names.remove(0)),
                 app,
             ));
         } else if !names.is_empty() {
-            app.submit_dialog = Some(SubmitDialog::build(
+            app.open_submit_dialog(SubmitDialog::build(
                 ConfirmAction::BulkDeleteBranches(names),
                 app,
             ));
         }
     } else if let Some(branch) = app.branches.cursor_row() {
-        app.submit_dialog = Some(SubmitDialog::build(
+        app.open_submit_dialog(SubmitDialog::build(
             ConfirmAction::DeleteBranch(branch.name.clone()),
             app,
         ));
@@ -191,7 +191,7 @@ fn stop_environment(app: &mut App) {
     let Some(environment) = app.environments.cursor_row().cloned() else {
         return;
     };
-    app.submit_dialog = Some(SubmitDialog::build(
+    app.open_submit_dialog(SubmitDialog::build(
         ConfirmAction::StopEnvironment(Box::new(environment)),
         app,
     ));
@@ -207,7 +207,7 @@ fn rollback_deployment(app: &mut App) {
             app.show_error(format!("Deployment #{iid} has no deploy job to re-run"));
         }
         Some(deployment) => {
-            app.submit_dialog = Some(SubmitDialog::build(
+            app.open_submit_dialog(SubmitDialog::build(
                 ConfirmAction::RollbackDeployment {
                     environment: environment.name,
                     deployment: Box::new(deployment),
@@ -240,8 +240,7 @@ mod tests {
             dispatch(&mut app, &KeyEvent::from(KeyCode::F(9)));
 
             let dialog = app
-                .submit_dialog
-                .as_ref()
+                .submit_dialog()
                 .unwrap_or_else(|| panic!("{action:?} opened no dialog"));
             assert!(
                 dialog.action.is_destructive(),

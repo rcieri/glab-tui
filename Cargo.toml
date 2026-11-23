@@ -2,6 +2,7 @@
 name = "glab-tui-crate"
 version = "0.9.5"
 edition = "2024"
+# Edition 2024 needs 1.85, the dependencies need 1.88.
 rust-version = "1.88"
 description = "A terminal user interface for GitLab and GitHub"
 license = "MIT"
@@ -46,6 +47,7 @@ libc = "0.2.186"
 
 [dev-dependencies]
 libc = "0.2.186"
+graphql-parser = "0.4"
 
 [[test]]
 name = "e2e"

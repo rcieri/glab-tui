@@ -169,7 +169,7 @@ impl CustomCommand {
     }
 }
 
-/// A keybinding entry in the config that is ignored or only partly usable.
+/// A config entry that is ignored or only partly usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigProblem {
     /// Which entry: its table, position and key.
@@ -1001,11 +1001,9 @@ command = "true"
         let mut app = crate::app::App::default();
         // An empty diff stops a diff command at "the cursor is not on a file",
         // which logs it without starting a shell.
-        app.diff_view = Some(crate::app::DiffView::new(
-            1,
-            "owner/repo".to_string(),
-            String::new(),
-        ));
+        app.push_modal(crate::app::Modal::Diff(Box::new(
+            crate::app::DiffView::new(1, "owner/repo".to_string(), String::new()),
+        )));
         app.custom_commands = CustomCommands {
             commands: vec![CustomCommand {
                 pane: CommandPane::Diff,

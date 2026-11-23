@@ -23,13 +23,13 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
                 current.push(c);
             }
             ',' if in_parens == 0 => {
-                if !current.trim().is_empty() {
-                    if let Some(pos) = current.find(':').or_else(|| current.find('=')) {
-                        let k = current[..pos].trim().to_string();
-                        let v = current[pos + 1..].trim().to_string();
-                        if !k.is_empty() {
-                            pairs.push((k, v));
-                        }
+                if !current.trim().is_empty()
+                    && let Some(pos) = current.find(':').or_else(|| current.find('='))
+                {
+                    let k = current[..pos].trim().to_string();
+                    let v = current[pos + 1..].trim().to_string();
+                    if !k.is_empty() {
+                        pairs.push((k, v));
                     }
                 }
                 current.clear();
@@ -39,13 +39,13 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
             }
         }
     }
-    if !current.trim().is_empty() {
-        if let Some(pos) = current.find(':').or_else(|| current.find('=')) {
-            let k = current[..pos].trim().to_string();
-            let v = current[pos + 1..].trim().to_string();
-            if !k.is_empty() {
-                pairs.push((k, v));
-            }
+    if !current.trim().is_empty()
+        && let Some(pos) = current.find(':').or_else(|| current.find('='))
+    {
+        let k = current[..pos].trim().to_string();
+        let v = current[pos + 1..].trim().to_string();
+        if !k.is_empty() {
+            pairs.push((k, v));
         }
     }
     pairs
@@ -85,7 +85,7 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(mut menu) = app.edit_menu.take() else {
+    let Some(mut menu) = app.pop_edit_menu() else {
         return;
     };
     let is_submit_edit = app
@@ -97,40 +97,38 @@ pub fn handle_key(
         match key_event.code {
             KeyCode::Esc | KeyCode::Enter => {
                 menu.editing = false;
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Left => {
                 if menu.selected_idx < menu.fields.len()
                     && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text
+                    && let Some(f) = menu.fields.get(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get(menu.selected_idx) {
-                        if let Some((byte_idx, _)) =
-                            f.value[..menu.cursor_pos].char_indices().next_back()
-                        {
-                            menu.cursor_pos = byte_idx;
-                        } else {
-                            menu.cursor_pos = 0;
-                        }
+                    if let Some((byte_idx, _)) =
+                        f.value[..menu.cursor_pos].char_indices().next_back()
+                    {
+                        menu.cursor_pos = byte_idx;
+                    } else {
+                        menu.cursor_pos = 0;
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Right => {
                 if menu.selected_idx < menu.fields.len()
                     && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text
+                    && let Some(f) = menu.fields.get(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get(menu.selected_idx) {
-                        let char_len = f.value[menu.cursor_pos..]
-                            .chars()
-                            .next()
-                            .map(|c| c.len_utf8())
-                            .unwrap_or(0);
-                        if char_len > 0 && menu.cursor_pos + char_len <= f.value.len() {
-                            menu.cursor_pos += char_len;
-                        }
+                    let char_len = f.value[menu.cursor_pos..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    if char_len > 0 && menu.cursor_pos + char_len <= f.value.len() {
+                        menu.cursor_pos += char_len;
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Home => {
                 if menu.selected_idx < menu.fields.len()
@@ -138,7 +136,7 @@ pub fn handle_key(
                 {
                     menu.cursor_pos = 0;
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::End => {
                 if menu.selected_idx < menu.fields.len()
@@ -146,7 +144,7 @@ pub fn handle_key(
                 {
                     menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Backspace => {
                 if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
@@ -158,7 +156,7 @@ pub fn handle_key(
                         menu.cursor_pos = byte_idx;
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Delete => {
                 if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
@@ -167,7 +165,7 @@ pub fn handle_key(
                         f.value.remove(menu.cursor_pos);
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             KeyCode::Char(c) if key_event.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' => {
                 let field_name = if menu.selected_idx < menu.fields.len() {
@@ -184,30 +182,29 @@ pub fn handle_key(
                     } else {
                         String::new()
                     };
-                    app.edit_menu = Some(menu);
+                    app.push_modal(crate::app::Modal::EditMenu(menu));
                     fx.suspend(ForegroundJob::Edit {
                         text: desc,
                         file_suffix: ".md".to_string(),
                         purpose: EditPurpose::MenuDescription,
                     });
                 } else {
-                    app.edit_menu = Some(menu);
+                    app.push_modal(crate::app::Modal::EditMenu(menu));
                 }
             }
             KeyCode::Char(c) => {
                 if menu.selected_idx < menu.fields.len()
                     && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text
+                    && let Some(f) = menu.fields.get_mut(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                        f.value.insert(menu.cursor_pos, c);
-                        menu.cursor_pos += c.len_utf8();
-                    }
+                    f.value.insert(menu.cursor_pos, c);
+                    menu.cursor_pos += c.len_utf8();
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
             _ => {
                 // Disable all navigation buttons in edit mode
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
         }
         return;
@@ -250,16 +247,16 @@ pub fn handle_key(
             if menu.selected_idx < menu.fields.len() {
                 menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         // J/K: scroll description pane
         KeyCode::Char('J') => {
             menu.desc_scroll = menu.desc_scroll.saturating_add(1);
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         KeyCode::Char('K') => {
             menu.desc_scroll = menu.desc_scroll.saturating_sub(1);
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
             let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
@@ -290,7 +287,7 @@ pub fn handle_key(
             if menu.selected_idx < menu.fields.len() {
                 menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         _ if is_submit_edit || key_event.code == KeyCode::Enter => {
             if is_submit_edit {
@@ -306,7 +303,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -356,7 +353,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -396,7 +393,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -459,7 +456,7 @@ pub fn handle_key(
                     };
                     let source_on_forge = menu.source_on_forge;
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -577,13 +574,13 @@ pub fn handle_key(
                     };
 
                     if update.is_empty() {
-                        app.edit_menu = None;
+                        app.close_edit_menu();
                         return;
                     }
 
                     let selected: Vec<(String, u64)> =
                         app.selected_issues.iter().cloned().collect();
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     app.selected_issues.clear();
                     let client = app.gitlab_client.clone().unwrap();
                     let project = app.scope.as_str().to_string();
@@ -667,12 +664,12 @@ pub fn handle_key(
                     };
 
                     if update.is_empty() {
-                        app.edit_menu = None;
+                        app.close_edit_menu();
                         return;
                     }
 
                     let selected: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     app.selected_mrs.clear();
                     let client = app.gitlab_client.clone().unwrap();
                     let project = app.scope.as_str().to_string();
@@ -701,7 +698,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -733,7 +730,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -773,7 +770,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -831,7 +828,7 @@ pub fn handle_key(
                     };
                     let mr_flag = mr.to_lowercase() == "yes";
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -866,7 +863,7 @@ pub fn handle_key(
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -891,39 +888,41 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    if !tag.is_empty() {
-                        app.edit_menu = None;
-                        let Some(client) = app.gitlab_client.clone() else {
-                            app.show_error("Backend not initialized".to_string());
-                            return;
-                        };
-                        let tx = tx.clone();
-                        let tab = app.active_tab;
-                        fx.spawn(async move {
-                            match client
-                                .create_release(&project, &tag, &name, &description)
-                                .await
-                            {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        tab,
-                                        Ok(CommandOutcome::Mutated),
-                                    ));
-                                }
-                                Err(e) => {
-                                    let _ =
-                                        tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
-                                }
-                            }
-                        });
+                    if tag.is_empty() {
+                        app.show_error("A release needs a tag".to_string());
+                        app.push_modal(crate::app::Modal::EditMenu(menu));
+                        return;
                     }
+                    app.close_edit_menu();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        app.show_error("Backend not initialized".to_string());
+                        return;
+                    };
+                    let tx = tx.clone();
+                    let tab = app.active_tab;
+                    fx.spawn(async move {
+                        match client
+                            .create_release(&project, &tag, &name, &description)
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = tx.send(Event::CommandCompleted(
+                                    tab,
+                                    Ok(CommandOutcome::Mutated),
+                                ));
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
+                            }
+                        }
+                    });
                     return;
                 } else if entity_type == "new_branch" {
                     let project = match resolve_target_project(&menu, &app.scope) {
                         Ok(p) => p,
                         Err(e) => {
                             app.show_error(e);
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -940,7 +939,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let Some(client) = app.gitlab_client.clone() else {
                         app.show_error("Backend not initialized".to_string());
                         return;
@@ -1007,51 +1006,53 @@ pub fn handle_key(
                         .map(|s| s.trim())
                         .unwrap_or_default();
 
-                    if !tag.is_empty() {
-                        app.edit_menu = None;
-                        if !menu.initial_fields.is_empty()
-                            && tag == initial_tag
-                            && name == initial_name
-                            && description == initial_desc
-                        {
-                            return;
-                        }
-                        let Some(client) = app.gitlab_client.clone() else {
-                            app.show_error("Backend not initialized".to_string());
-                            return;
-                        };
-                        let project = if !menu.entity_project.is_empty() {
-                            menu.entity_project.clone()
-                        } else {
-                            app.scope.as_str().to_string()
-                        };
-                        let tx = tx.clone();
-                        let tab = app.active_tab;
-                        let _ = tx.send(Event::CommandStarted(format!("Updating Release: {tag}")));
-                        fx.spawn(async move {
-                            match crate::domain::releases::update_release(
-                                &client,
-                                &project,
-                                &tag,
-                                &name,
-                                &description,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        tab,
-                                        Ok(CommandOutcome::Mutated),
-                                    ));
-                                    let _ = tx.send(Event::ReleaseUpdated);
-                                }
-                                Err(e) => {
-                                    let _ =
-                                        tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
-                                }
-                            }
-                        });
+                    if tag.is_empty() {
+                        app.show_error("A release needs a tag".to_string());
+                        app.push_modal(crate::app::Modal::EditMenu(menu));
+                        return;
                     }
+                    app.close_edit_menu();
+                    if !menu.initial_fields.is_empty()
+                        && tag == initial_tag
+                        && name == initial_name
+                        && description == initial_desc
+                    {
+                        return;
+                    }
+                    let Some(client) = app.gitlab_client.clone() else {
+                        app.show_error("Backend not initialized".to_string());
+                        return;
+                    };
+                    let project = if !menu.entity_project.is_empty() {
+                        menu.entity_project.clone()
+                    } else {
+                        app.scope.as_str().to_string()
+                    };
+                    let tx = tx.clone();
+                    let tab = app.active_tab;
+                    let _ = tx.send(Event::CommandStarted(format!("Updating Release: {tag}")));
+                    fx.spawn(async move {
+                        match crate::domain::releases::update_release(
+                            &client,
+                            &project,
+                            &tag,
+                            &name,
+                            &description,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                let _ = tx.send(Event::CommandCompleted(
+                                    tab,
+                                    Ok(CommandOutcome::Mutated),
+                                ));
+                                let _ = tx.send(Event::ReleaseUpdated);
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
+                            }
+                        }
+                    });
                     return;
                 } else if crate::entity_editor::entity_is_issue(&entity_type) {
                     let title = menu
@@ -1106,7 +1107,7 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let new_milestone = if milestone.is_empty() || milestone == "--" {
                         None
                     } else {
@@ -1249,7 +1250,7 @@ pub fn handle_key(
                         },
                     };
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let new_milestone = if milestone.is_empty() || milestone == "--" {
                         None
                     } else {
@@ -1475,7 +1476,7 @@ pub fn handle_key(
                         },
                     };
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     let new_milestone = if milestone.is_empty() || milestone == "--" {
                         None
                     } else {
@@ -1561,7 +1562,7 @@ pub fn handle_key(
                         .map(|s| s.trim())
                         .unwrap_or_default();
 
-                    app.edit_menu = None;
+                    app.close_edit_menu();
                     if !menu.initial_fields.is_empty()
                         && title == initial_title
                         && description == initial_desc
@@ -1581,7 +1582,7 @@ pub fn handle_key(
                         Ok(milestone) => milestone,
                         Err(e) => {
                             app.show_error(e.to_string());
-                            app.edit_menu = Some(menu);
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
                             return;
                         }
                     };
@@ -1632,12 +1633,12 @@ pub fn handle_key(
                 if f.kind == crate::app::FieldType::ReadOnly
                     || f.kind == crate::app::FieldType::Section
                 {
-                    app.edit_menu = Some(menu);
+                    app.push_modal(crate::app::Modal::EditMenu(menu));
                     return;
                 }
             } else if menu.selected_idx != menu.fields.len() + 1 {
                 // Spacer row between fields and submit.
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 return;
             }
 
@@ -1659,7 +1660,7 @@ pub fn handle_key(
                         menu.cursor_pos = f.value.len();
                     }
                 }
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 return;
             }
 
@@ -1781,16 +1782,16 @@ pub fn handle_key(
                         is_loading = false;
                     }
                 } else if field_type == "milestone" {
-                    if let Some(ref tc) = target_cache {
-                        if !tc.milestones.is_empty() {
-                            all_items = tc
-                                .milestones
-                                .iter()
-                                .map(|m| m.title.clone())
-                                .filter(|t| t != "--")
-                                .collect();
-                            is_loading = false;
-                        }
+                    if let Some(ref tc) = target_cache
+                        && !tc.milestones.is_empty()
+                    {
+                        all_items = tc
+                            .milestones
+                            .iter()
+                            .map(|m| m.title.clone())
+                            .filter(|t| t != "--")
+                            .collect();
+                        is_loading = false;
                     }
                     if all_items.is_empty() {
                         all_items = app
@@ -1823,24 +1824,23 @@ pub fn handle_key(
                             .map(|b| b.name.clone())
                             .collect()
                     };
-                    if branch_names.is_empty() && !app.scope.is_group() && target_project.is_empty()
-                    {
-                        if let Ok(output) = std::process::Command::new("git")
+                    if branch_names.is_empty()
+                        && !app.scope.is_group()
+                        && target_project.is_empty()
+                        && let Ok(output) = std::process::Command::new("git")
                             .args(["branch", "-a", "--format=%(refname:short)"])
                             .output()
-                        {
-                            if output.status.success() {
-                                for line in String::from_utf8_lossy(&output.stdout).lines() {
-                                    let b = line.trim();
-                                    let b = b.strip_prefix("origin/").unwrap_or(b);
-                                    if !b.is_empty()
-                                        && b != "HEAD"
-                                        && !b.starts_with("origin/")
-                                        && !branch_names.contains(&b.to_string())
-                                    {
-                                        branch_names.push(b.to_string());
-                                    }
-                                }
+                        && output.status.success()
+                    {
+                        for line in String::from_utf8_lossy(&output.stdout).lines() {
+                            let b = line.trim();
+                            let b = b.strip_prefix("origin/").unwrap_or(b);
+                            if !b.is_empty()
+                                && b != "HEAD"
+                                && !b.starts_with("origin/")
+                                && !branch_names.contains(&b.to_string())
+                            {
+                                branch_names.push(b.to_string());
                             }
                         }
                     }
@@ -1899,13 +1899,12 @@ pub fn handle_key(
                     if let Ok(output) =
                         // Safe on the UI thread: pure local ref read.
                         std::process::Command::new("git").args(["tag"]).output()
+                        && output.status.success()
                     {
-                        if output.status.success() {
-                            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                                let t = line.trim().to_string();
-                                if !t.is_empty() && !tags.contains(&t) {
-                                    tags.push(t);
-                                }
+                        for line in String::from_utf8_lossy(&output.stdout).lines() {
+                            let t = line.trim().to_string();
+                            if !t.is_empty() && !tags.contains(&t) {
+                                tags.push(t);
                             }
                         }
                     }
@@ -2011,34 +2010,34 @@ pub fn handle_key(
                             _ => {}
                         }
                     }
-                } else if entity_type == "mr" {
-                    if let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid) {
-                        match field_type {
-                            "labels" => {
-                                for l in &mr.labels {
-                                    current_set.insert(l.clone());
-                                }
+                } else if entity_type == "mr"
+                    && let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid)
+                {
+                    match field_type {
+                        "labels" => {
+                            for l in &mr.labels {
+                                current_set.insert(l.clone());
                             }
-                            "assignees" => {
-                                for a in &mr.assignees {
-                                    current_set.insert(format!("@{}", a.username));
-                                }
-                            }
-                            "reviewers" => {
-                                for r in &mr.reviewers {
-                                    current_set.insert(format!("@{}", r.username));
-                                }
-                            }
-                            "milestone" => {
-                                if let Some(m) = &mr.milestone {
-                                    current_set.insert(m.title.clone());
-                                }
-                            }
-                            "target_branch" => {
-                                current_set.insert(mr.target_branch.clone());
-                            }
-                            _ => {}
                         }
+                        "assignees" => {
+                            for a in &mr.assignees {
+                                current_set.insert(format!("@{}", a.username));
+                            }
+                        }
+                        "reviewers" => {
+                            for r in &mr.reviewers {
+                                current_set.insert(format!("@{}", r.username));
+                            }
+                        }
+                        "milestone" => {
+                            if let Some(m) = &mr.milestone {
+                                current_set.insert(m.title.clone());
+                            }
+                        }
+                        "target_branch" => {
+                            current_set.insert(mr.target_branch.clone());
+                        }
+                        _ => {}
                     }
                 }
 
@@ -2054,7 +2053,7 @@ pub fn handle_key(
 
                 let request =
                     (is_loading && app.gitlab_client.is_some()).then(|| app.next_request_tag());
-                app.selector = Some(crate::app::Selector {
+                let sel = crate::app::Selector {
                     title: format!("Select {field_name}"),
                     all_items,
                     selected_items: current_set,
@@ -2076,9 +2075,10 @@ pub fn handle_key(
                         s
                     },
                     request,
-                });
+                };
 
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
+                app.open_selector(sel);
 
                 if let (Some(request), Some(client)) = (request, &app.gitlab_client) {
                     let client = client.clone();
@@ -2135,7 +2135,7 @@ pub fn handle_key(
                             } else {
                                 "issue_template_selector"
                             };
-                            app.selector = Some(crate::app::Selector {
+                            let sel = crate::app::Selector {
                                 title: format!(
                                     " Select {} Template ",
                                     if template_type == "mr" {
@@ -2164,14 +2164,15 @@ pub fn handle_key(
                                     s
                                 },
                                 request: None,
-                            });
-                            app.edit_menu = Some(menu);
+                            };
+                            app.push_modal(crate::app::Modal::EditMenu(menu));
+                            app.open_selector(sel);
                             return;
                         }
                     }
                 }
                 // Otherwise inline editing handles Description — Enter does nothing
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 return;
             }
 
@@ -2211,12 +2212,13 @@ pub fn handle_key(
                         field_idx: menu.selected_idx,
                     }
                 };
-                app.date_picker = Some(crate::app::DatePicker::new(
+                let dp = crate::app::DatePicker::new(
                     format!(" Select {field_name}"),
                     &current_val,
                     action,
-                ));
-                app.edit_menu = Some(menu);
+                );
+                app.push_modal(crate::app::Modal::EditMenu(menu));
+                app.open_date_picker(dp);
                 return;
             }
 
@@ -2275,13 +2277,11 @@ pub fn handle_key(
                     field_idx: menu.selected_idx,
                 };
 
-                app.text_input = Some(crate::app::TextInput::new(
-                    format!("Edit {field_name}"),
-                    current_val,
-                    action,
-                ));
+                let ti =
+                    crate::app::TextInput::new(format!("Edit {field_name}"), current_val, action);
 
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
+                app.open_text_input(ti);
             }
         }
         KeyCode::Backspace => {
@@ -2291,24 +2291,21 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                if field_name == "Title"
+                if (field_name == "Title"
                     || field_name == "Name"
                     || field_name == "Release Name"
                     || field_name == "Branch Name"
                     || field_name == "Description"
-                    || field_name == "Release Notes"
+                    || field_name == "Release Notes")
+                    && let Some(f) = menu.fields.get_mut(menu.selected_idx)
+                    && let Some((byte_idx, _)) =
+                        f.value[..menu.cursor_pos].char_indices().next_back()
                 {
-                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                        if let Some((byte_idx, _)) =
-                            f.value[..menu.cursor_pos].char_indices().next_back()
-                        {
-                            f.value.remove(byte_idx);
-                            menu.cursor_pos = byte_idx;
-                        }
-                    }
+                    f.value.remove(byte_idx);
+                    menu.cursor_pos = byte_idx;
                 }
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         KeyCode::Char(c) if key_event.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' => {
             let field_name = if menu.selected_idx < menu.fields.len() {
@@ -2325,14 +2322,14 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
                 fx.suspend(ForegroundJob::Edit {
                     text: desc,
                     file_suffix: ".md".to_string(),
                     purpose: EditPurpose::MenuDescription,
                 });
             } else {
-                app.edit_menu = Some(menu);
+                app.push_modal(crate::app::Modal::EditMenu(menu));
             }
         }
         KeyCode::Char(c) => {
@@ -2342,23 +2339,22 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                if field_name == "Title"
+                if (field_name == "Title"
                     || field_name == "Name"
                     || field_name == "Release Name"
                     || field_name == "Branch Name"
                     || field_name == "Description"
-                    || field_name == "Release Notes"
+                    || field_name == "Release Notes")
+                    && let Some(f) = menu.fields.get_mut(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                        f.value.insert(menu.cursor_pos, c);
-                        menu.cursor_pos += c.len_utf8();
-                    }
+                    f.value.insert(menu.cursor_pos, c);
+                    menu.cursor_pos += c.len_utf8();
                 }
             }
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
         _ => {
-            app.edit_menu = Some(menu);
+            app.push_modal(crate::app::Modal::EditMenu(menu));
         }
     }
 }
@@ -2394,24 +2390,26 @@ mod tests {
             show_read_notifications: false,
             opened_pipeline: None,
         });
-        app.edit_menu = Some(crate::app::EditMenu {
-            title: "Edit Milestone %3".to_string(),
-            entity_project: "acme/alpha".to_string(),
-            fields: vec![
-                crate::app::Field::text("Title", "Typed title".to_string()),
-                crate::app::Field::text("Description", "Typed description".to_string()),
-            ],
-            initial_fields: std::collections::HashMap::new(),
-            selected_idx: 0,
-            entity_iid: 3,
-            entity_kind: crate::app::EditEntityKind::EditMilestone,
-            state: ratatui::widgets::ListState::default(),
-            workflow_inputs: vec![],
-            cursor_pos: 0,
-            editing: false,
-            desc_scroll: 0,
-            source_on_forge: false,
-        });
+        app.push_modal(crate::app::Modal::EditMenu(Box::new(
+            crate::app::EditMenu {
+                title: "Edit Milestone %3".to_string(),
+                entity_project: "acme/alpha".to_string(),
+                fields: vec![
+                    crate::app::Field::text("Title", "Typed title".to_string()),
+                    crate::app::Field::text("Description", "Typed description".to_string()),
+                ],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 3,
+                entity_kind: crate::app::EditEntityKind::EditMilestone,
+                state: ratatui::widgets::ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            },
+        )));
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut fx = Effects::default();
         let ctrl_x = KeyPress::from(crossterm::event::KeyEvent::new(
@@ -2421,7 +2419,7 @@ mod tests {
 
         handle_key(&mut app, &ctrl_x, &tx, &mut fx);
 
-        let menu = app.edit_menu.as_ref().expect("edit menu still open");
+        let menu = app.edit_menu().expect("edit menu still open");
         let values: Vec<&str> = menu.fields.iter().map(|f| f.value.as_str()).collect();
         assert_eq!(values, vec!["Typed title", "Typed description"]);
         assert_eq!(
@@ -2429,5 +2427,45 @@ mod tests {
             Some("Milestone 3 is not listed; refresh the Milestones tab")
         );
         assert!(fx.into_vec().is_empty(), "no update may be sent");
+    }
+
+    #[test]
+    fn submitting_release_with_empty_tag_keeps_menu_open_and_shows_error() {
+        let mut app = App::default();
+        app.push_modal(crate::app::Modal::EditMenu(Box::new(
+            crate::app::EditMenu {
+                title: "New Release".to_string(),
+                entity_project: "acme/alpha".to_string(),
+                fields: vec![
+                    crate::app::Field::text("Tag", "".to_string()),
+                    crate::app::Field::text("Release Name", "v1.0".to_string()),
+                    crate::app::Field::text("Release Notes", "Notes".to_string()),
+                ],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 0,
+                entity_kind: crate::app::EditEntityKind::CreateRelease,
+                state: ratatui::widgets::ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            },
+        )));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+        let ctrl_x = KeyPress::from(crossterm::event::KeyEvent::new(
+            KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+
+        handle_key(&mut app, &ctrl_x, &tx, &mut fx);
+
+        assert!(app.edit_menu().is_some(), "edit menu must remain open");
+        assert_eq!(
+            app.toast_notice().map(|n| n.text()),
+            Some("A release needs a tag")
+        );
     }
 }

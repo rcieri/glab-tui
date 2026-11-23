@@ -15,7 +15,7 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(mut text_input) = app.text_input.take() else {
+    let Some(mut text_input) = app.pop_text_input() else {
         return;
     };
     if key_event
@@ -28,7 +28,7 @@ pub fn handle_key(
             file_suffix: ".md".to_string(),
             purpose: EditPurpose::TextInput,
         });
-        app.text_input = Some(text_input);
+        app.push_modal(crate::app::Modal::Text(text_input));
         return;
     }
     match key_event.code {
@@ -37,47 +37,47 @@ pub fn handle_key(
         }
         KeyCode::Backspace => {
             text_input.buffer.delete_char_before_cursor();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Delete => {
             text_input.buffer.delete_char_at_cursor();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Left => {
             text_input.buffer.move_cursor_left();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Right => {
             text_input.buffer.move_cursor_right();
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Char(c) => {
             text_input.buffer.insert_char(c);
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
         KeyCode::Enter => {
             let value = text_input.buffer.value().to_string();
             match text_input.action {
                 crate::app::TextInputAction::EditPageSize => {
-                    if let Ok(new_size) = value.trim().parse::<usize>() {
-                        if new_size > 0 {
-                            app.config.page_size = new_size;
-                            app.page_size = new_size;
-                            if let Some(ref mut client) = app.gitlab_client {
-                                client.page_size = new_size;
-                            }
-                            app.refreshed_tabs.clear();
-                            if let Some(client) = app.gitlab_client.clone() {
-                                app.start_loading_tab(app.active_tab);
-                                let tx = app.scoped_sender(tx.clone());
-                                crate::fetch::spawn_refresh_shown_tab(
-                                    fx,
-                                    &client,
-                                    app,
-                                    crate::dashboard::DashboardRefresh::Full,
-                                    tx,
-                                );
-                            }
+                    if let Ok(new_size) = value.trim().parse::<usize>()
+                        && new_size > 0
+                    {
+                        app.config.page_size = new_size;
+                        app.page_size = new_size;
+                        if let Some(ref mut client) = app.gitlab_client {
+                            client.page_size = new_size;
+                        }
+                        app.refreshed_tabs.clear();
+                        if let Some(client) = app.gitlab_client.clone() {
+                            app.start_loading_tab(app.active_tab);
+                            let tx = app.scoped_sender(tx.clone());
+                            crate::fetch::spawn_refresh_shown_tab(
+                                fx,
+                                &client,
+                                app,
+                                crate::dashboard::DashboardRefresh::Full,
+                                tx,
+                            );
                         }
                     }
                 }
@@ -255,36 +255,36 @@ pub fn handle_key(
                     comment_id,
                     ref discussion_id,
                 } => {
-                    if !value.trim().is_empty() {
-                        if let Some(client) = app.gitlab_client.clone() {
-                            let project = app.project_path_for_open_mr(mr_iid);
-                            let thread_id = discussion_id.clone();
-                            let body = value.clone();
-                            let tx = tx.clone();
-                            let _ = tx.send(Event::CommandStarted(format!(
-                                "Replying to comment ID {comment_id} in MR #{mr_iid}"
-                            )));
-                            handlers::diff_view::spawn_mr_review_task(fx, &tx, async move {
-                                client
-                                    .reply_to_thread(&project, mr_iid, &thread_id, &body)
-                                    .await
-                            });
-                        }
+                    if !value.trim().is_empty()
+                        && let Some(client) = app.gitlab_client.clone()
+                    {
+                        let project = app.project_path_for_open_mr(mr_iid);
+                        let thread_id = discussion_id.clone();
+                        let body = value.clone();
+                        let tx = tx.clone();
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Replying to comment ID {comment_id} in MR #{mr_iid}"
+                        )));
+                        handlers::diff_view::spawn_mr_review_task(fx, &tx, async move {
+                            client
+                                .reply_to_thread(&project, mr_iid, &thread_id, &body)
+                                .await
+                        });
                     }
                 }
                 crate::app::TextInputAction::EditNewField { field_idx } => {
                     // Write the value directly into the edit_menu fields
                     // (no CLI call — iid==0 means this entity is not yet created)
-                    if let Some(ref mut menu) = app.edit_menu {
-                        if let Some(field) = menu.fields.get_mut(field_idx) {
-                            field.value = value.clone();
-                        }
+                    if let Some(ref mut menu) = app.edit_menu_mut()
+                        && let Some(field) = menu.fields.get_mut(field_idx)
+                    {
+                        field.value = value.clone();
                     }
                 }
             }
         }
         _ => {
-            app.text_input = Some(text_input);
+            app.push_modal(crate::app::Modal::Text(text_input));
         }
     }
 }

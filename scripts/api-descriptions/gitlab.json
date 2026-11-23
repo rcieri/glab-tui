@@ -1,0 +1,600 @@
+{
+  "host_rule": "all_nullable",
+  "corrections": [
+    {
+      "schema": "APIEntitiesMilestone",
+      "field": "group_id",
+      "type": "integer",
+      "upstream": "gitlab-org/gitlab#604896",
+      "entity": "API::Entities::Milestone"
+    }
+  ],
+  "operations": [
+    {
+      "method": "get",
+      "path": "/api/v4/groups/{id}/issues",
+      "code": [
+        "GlabBackend::list_issues, domain::issues::Issue"
+      ],
+      "read": {
+        "iid": {},
+        "title": {},
+        "state": {},
+        "labels": {},
+        "updated_at": {},
+        "created_at": {},
+        "closed_at": {},
+        "author": {
+          "username": {}
+        },
+        "milestone": {
+          "title": {},
+          "iid": {},
+          "id": {},
+          "state": {}
+        },
+        "assignees": {
+          "username": {}
+        },
+        "description": {},
+        "due_date": {},
+        "web_url": {},
+        "project_path": {},
+        "related_mrs": {}
+      },
+      "absent_ok": {
+        "project_path": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API",
+        "related_mrs": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/groups/{id}/labels",
+      "code": [
+        "GlabBackend::fetch_labels, GiLabel"
+      ],
+      "read": {
+        "name": {},
+        "color": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/groups/{id}/members/all",
+      "code": [
+        "GlabBackend::fetch_members, GiMember"
+      ],
+      "read": {
+        "username": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/groups/{id}/merge_requests",
+      "code": [
+        "GlabBackend::list_mrs, domain::mr::MergeRequest"
+      ],
+      "read": {
+        "iid": {},
+        "title": {},
+        "state": {},
+        "labels": {},
+        "updated_at": {},
+        "author": {
+          "username": {}
+        },
+        "milestone": {
+          "title": {}
+        },
+        "assignees": {
+          "username": {}
+        },
+        "reviewers": {
+          "username": {}
+        },
+        "target_branch": {},
+        "source_branch": {},
+        "sha": {},
+        "draft": {},
+        "description": {},
+        "head_pipeline": {
+          "id": {},
+          "status": {},
+          "ref": {},
+          "updated_at": {},
+          "name": {},
+          "display_title": {},
+          "event": {},
+          "head_sha": {},
+          "actor_login": {},
+          "duration_seconds": {},
+          "created_at": {},
+          "source": {},
+          "project_path": {},
+          "web_url": {},
+          "commit": {
+            "title": {},
+            "author_name": {}
+          }
+        },
+        "blocking_discussions_resolved": {},
+        "approval": {},
+        "mergeability": {},
+        "project_path": {},
+        "web_url": {},
+        "related_issues": {},
+        "stack": {},
+        "stack_entries": {}
+      },
+      "absent_ok": {
+        "project_path": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API",
+        "related_issues": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API",
+        "stack": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API",
+        "stack_entries": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API",
+        "approval": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API (filled from GraphQL after the list)",
+        "mergeability": "cache-only field: the domain struct doubles as the offline-cache record (serde default), never sent by the API (filled from GraphQL after the list)",
+        "head_pipeline": "MergeRequestBasic (list entity) has no head_pipeline, only the single-MR entity does: group-scope MRs never get a head pipeline from this call (possible production gap)"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/groups/{id}/milestones",
+      "code": [
+        "GlabBackend::list_milestones, GiMs"
+      ],
+      "read": {
+        "id": {},
+        "iid": {},
+        "title": {},
+        "description": {},
+        "state": {},
+        "start_date": {},
+        "due_date": {},
+        "created_at": {},
+        "web_url": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/groups/{id}/projects",
+      "code": [
+        "GlabBackend::list_group_projects, GiProject, parse_group_projects"
+      ],
+      "read": {
+        "path_with_namespace": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}",
+      "code": [
+        "GlabBackend::list_branches, GiProj"
+      ],
+      "read": {
+        "default_branch": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/deployments",
+      "code": [
+        "GlabBackend::list_deployments, GiDeploy, also via GlabBackend::list_environments"
+      ],
+      "read": {
+        "id": {},
+        "iid": {},
+        "ref": {},
+        "sha": {},
+        "status": {},
+        "created_at": {},
+        "updated_at": {},
+        "environment": {
+          "name": {},
+          "external_url": {}
+        },
+        "deployable": {
+          "id": {},
+          "name": {},
+          "status": {},
+          "tag": {}
+        },
+        "description": {},
+        "user": {
+          "username": {}
+        }
+      },
+      "absent_ok": {
+        "description": "APIEntitiesDeployment has no description (research note G26): the Description column stays empty on GitLab (possible production bug)"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/environments",
+      "code": [
+        "GlabBackend::list_environments, GiEnv"
+      ],
+      "read": {
+        "id": {},
+        "name": {},
+        "state": {},
+        "external_url": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/environments/{environment_id}/stop",
+      "code": [
+        "GlabBackend::stop_environment (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/events",
+      "code": [
+        "GlabBackend::list_contribution_page, domain::contributions::parse_gitlab_events"
+      ],
+      "read": {
+        "id": {},
+        "action_name": {},
+        "author_username": {},
+        "created_at": {},
+        "target_type": {},
+        "target_iid": {},
+        "target_title": {},
+        "push_data": {
+          "commit_count": {},
+          "ref": {},
+          "ref_type": {},
+          "commit_to": {},
+          "commit_title": {}
+        },
+        "note": {
+          "body": {},
+          "noteable_type": {},
+          "noteable_iid": {},
+          "position": {
+            "new_path": {}
+          }
+        }
+      },
+      "absent_ok": {
+        "note.position.new_path": "the spec does not describe a note's position, but a DiffNote event carries it: new_path names the file a thread comment was made on"
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/issues/{issue_iid}/closed_by",
+      "code": [
+        "GlabBackend::list_issue_related_mrs, GiClosedBy"
+      ],
+      "read": {
+        "iid": {},
+        "title": {},
+        "state": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/jobs/{job_id}/play",
+      "code": [
+        "GlabBackend::start_job (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/jobs/{job_id}/trace",
+      "code": [
+        "GlabBackend::read_job_trace, GlabBackend::read_job_trace_ranges (plain text, read as bytes)"
+      ],
+      "read": {},
+      "response_content_type": "text/plain"
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/members/all",
+      "code": [
+        "GlabBackend::fetch_members, GiMember"
+      ],
+      "read": {
+        "username": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/closes_issues",
+      "code": [
+        "GlabBackend::list_mr_related_issues, GiClosesIssue"
+      ],
+      "read": {
+        "iid": {},
+        "title": {},
+        "state": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/draft_notes",
+      "code": [
+        "GlabBackend::publish_draft_notes, GiDraftNote, endpoint built in GlabBackend::submit_review"
+      ],
+      "read": {
+        "id": {}
+      }
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/draft_notes/bulk_publish",
+      "code": [
+        "GlabBackend::publish_draft_notes (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/api/v4/projects/{id}/merge_requests/{merge_request_iid}/draft_notes/{draft_note_id}",
+      "code": [
+        "GlabBackend::delete_draft_notes (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/api/v4/projects/{id}/merge_requests/{noteable_id}/notes/{note_id}",
+      "code": [
+        "overlays::selector::handle_key (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "put",
+      "path": "/api/v4/projects/{id}/merge_requests/{noteable_id}/notes/{note_id}",
+      "code": [
+        "editor_result::spawn_comment_edit (glab api -X PUT --input -, response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/milestones",
+      "code": [
+        "GlabBackend::create_milestone (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/pipelines",
+      "code": [
+        "GlabBackend::list_pipelines, GiPipe"
+      ],
+      "read": {
+        "id": {},
+        "status": {},
+        "ref": {},
+        "updated_at": {},
+        "created_at": {},
+        "source": {},
+        "sha": {},
+        "web_url": {}
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/pipelines/{pipeline_id}/bridges",
+      "code": [
+        "GlabBackend::list_pipeline_bridges, domain::pipelines::Bridge"
+      ],
+      "read": {
+        "id": {},
+        "status": {},
+        "name": {},
+        "downstream_pipeline": {
+          "id": {},
+          "status": {},
+          "ref": {},
+          "sha": {},
+          "created_at": {},
+          "updated_at": {}
+        }
+      }
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/pipelines/{pipeline_id}/jobs",
+      "code": [
+        "GlabBackend::list_pipeline_jobs, GiJob",
+        "GlabBackend::retry_failed_jobs, FailedJob, scope[]=failed, reads id only"
+      ],
+      "read": {
+        "id": {},
+        "status": {},
+        "stage": {},
+        "name": {},
+        "duration": {},
+        "queued_duration": {},
+        "runner": {
+          "description": {}
+        },
+        "web_url": {},
+        "failure_reason": {},
+        "artifacts": {
+          "file_type": {}
+        },
+        "commit": {
+          "title": {},
+          "author_name": {}
+        }
+      }
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/pipelines/{pipeline_id}/retry",
+      "code": [
+        "GlabBackend::retry_pipeline (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/repository/branches",
+      "code": [
+        "GlabBackend::list_branches, GiBr"
+      ],
+      "read": {
+        "name": {},
+        "default": {},
+        "protected": {},
+        "web_url": {},
+        "can_push": {},
+        "commit": {
+          "id": {},
+          "title": {},
+          "message": {},
+          "author_name": {},
+          "author_email": {},
+          "authored_date": {},
+          "committed_date": {}
+        }
+      }
+    },
+    {
+      "method": "post",
+      "path": "/api/v4/projects/{id}/repository/branches",
+      "code": [
+        "GlabBackend::create_branch (response not parsed; branch and ref as query string)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "delete",
+      "path": "/api/v4/projects/{id}/repository/branches/{branch}",
+      "code": [
+        "GlabBackend::delete_branch (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/projects/{id}/repository/branches/{branch}",
+      "code": [
+        "GlabBackend::list_branches, GiBr"
+      ],
+      "read": {
+        "name": {},
+        "default": {},
+        "protected": {},
+        "web_url": {},
+        "can_push": {},
+        "commit": {
+          "id": {},
+          "title": {},
+          "message": {},
+          "author_name": {},
+          "author_email": {},
+          "authored_date": {},
+          "committed_date": {}
+        }
+      }
+    },
+    {
+      "method": "put",
+      "path": "/api/v4/runners/{id}",
+      "code": [
+        "GlabBackend::update_runner_description (response not parsed)"
+      ],
+      "read": {}
+    },
+    {
+      "method": "get",
+      "path": "/api/v4/todos",
+      "code": [
+        "GlabBackend::list_notifications, GiTodo, parse_gitlab_todos"
+      ],
+      "read": {
+        "id": {},
+        "project": {
+          "path_with_namespace": {}
+        },
+        "target": {
+          "title": {},
+          "iid": {},
+          "description": {}
+        },
+        "target_type": {},
+        "state": {},
+        "updated_at": {},
+        "author": {
+          "username": {}
+        },
+        "action_name": {},
+        "target_url": {},
+        "body": {}
+      },
+      "absent_ok": {
+        "target.title": "APIEntitiesTodo.target is a bare {type: object} (polymorphic Issue/MergeRequest/...): the spec cannot describe its fields",
+        "target.iid": "APIEntitiesTodo.target is a bare {type: object} (polymorphic Issue/MergeRequest/...): the spec cannot describe its fields",
+        "target.description": "APIEntitiesTodo.target is a bare {type: object} (polymorphic Issue/MergeRequest/...): the spec cannot describe its fields"
+      }
+    }
+  ],
+  "graphql": {
+    "currentUser": {
+      "username": {}
+    },
+    "project": {
+      "mergeRequests": {
+        "nodes": {
+          "iid": {},
+          "approved": {},
+          "approvalsLeft": {},
+          "approvalsRequired": {},
+          "conflicts": {},
+          "shouldBeRebased": {},
+          "detailedMergeStatus": {},
+          "userPermissions": {
+            "canApprove": {}
+          },
+          "approvedBy": {
+            "nodes": {
+              "username": {}
+            }
+          },
+          "reviewers": {
+            "nodes": {
+              "username": {},
+              "mergeRequestInteraction": {
+                "reviewState": {}
+              }
+            }
+          }
+        }
+      },
+      "pipelines": {
+        "nodes": {
+          "id": {},
+          "duration": {},
+          "user": {
+            "username": {},
+            "name": {}
+          }
+        }
+      },
+      "runners": {
+        "nodes": {
+          "id": {},
+          "tagList": {},
+          "contactedAt": {},
+          "managers": {
+            "nodes": {
+              "version": {},
+              "ipAddress": {},
+              "contactedAt": {}
+            }
+          }
+        }
+      }
+    }
+  }
+}

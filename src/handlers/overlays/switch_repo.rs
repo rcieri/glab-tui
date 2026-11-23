@@ -9,14 +9,13 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
         .keybindings
         .matches(Action::GlobalSwitchRepo, key_event);
 
-    if is_switch_repo
-        && app.text_input.is_none()
-        && app.edit_menu.is_none()
-        && app.selector.is_none()
-        && !app.is_typing_search
-        && !app.job_trace_searching
-        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
-    {
+    let can_switch = match app.top_modal() {
+        None => true,
+        Some(crate::app::Modal::Diff(d)) => !d.search_active,
+        _ => false,
+    };
+
+    if is_switch_repo && can_switch && !app.is_typing_search && !app.job_trace_searching {
         let mut items = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut switch_repo_paths = std::collections::HashMap::new();
@@ -29,11 +28,12 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
             crate::scope::Scope::Group(g) => Some(g.clone()),
             crate::scope::Scope::Repository(r) => r.rsplit_once('/').map(|(g, _)| g.to_string()),
         };
-        if let Some(g) = current_group {
-            if !g.trim().is_empty() && seen.insert(g.clone()) {
-                switch_repo_groups.insert(g.clone());
-                items.push(g);
-            }
+        if let Some(g) = current_group
+            && !g.trim().is_empty()
+            && seen.insert(g.clone())
+        {
+            switch_repo_groups.insert(g.clone());
+            items.push(g);
         }
 
         // Then every group the user can reach — recently switched groups
@@ -70,7 +70,7 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
         app.switch_repo_paths = switch_repo_paths;
         app.switch_repo_groups = switch_repo_groups;
 
-        app.selector = Some(crate::app::Selector {
+        app.open_selector(crate::app::Selector {
             title: " Switch Repository / Group ".to_string(),
             all_items: items,
             selected_items: {
@@ -80,10 +80,10 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyPress) -> bool {
                         s.insert(g.clone());
                     }
                     crate::scope::Scope::Repository(_) => {
-                        if let Ok(cwd) = std::env::current_dir() {
-                            if let Some(name) = cwd.file_name().and_then(|n| n.to_str()) {
-                                s.insert(name.to_string());
-                            }
+                        if let Ok(cwd) = std::env::current_dir()
+                            && let Some(name) = cwd.file_name().and_then(|n| n.to_str())
+                        {
+                            s.insert(name.to_string());
                         }
                     }
                 }

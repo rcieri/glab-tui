@@ -64,10 +64,10 @@ pub(crate) fn get_label_color(
 ) -> Color {
     // Prefer the label's real color from the API when it is dark enough to
     // read as foreground text on the active theme background.
-    if let Some(&c) = label_colors.get(label) {
-        if !is_light_color(c) {
-            return c;
-        }
+    if let Some(&c) = label_colors.get(label)
+        && !is_light_color(c)
+    {
+        return c;
     }
     let mut hash: u32 = 5381;
     for c in label.bytes() {
@@ -302,11 +302,7 @@ pub(crate) fn get_stages_summary(jobs: &[crate::domain::pipelines::Job]) -> Vec<
                 .iter()
                 .filter(|s| *s == "success" || *s == "skipped")
                 .count();
-            let percent = if total > 0 {
-                (success * 100) / total
-            } else {
-                0
-            };
+            let percent = (success * 100).checked_div(total).unwrap_or(0);
 
             let stage_status = if statuses.iter().any(|s| s == "failed") {
                 "failed".to_string()

@@ -294,7 +294,7 @@ mod tests {
             }),
             false,
         );
-        app.sync_viewed_state(&mut diff_view);
+        app.reload_viewed_sync(&mut diff_view);
         app.open_diff_view(diff_view);
 
         // Project A's #42 marked README.md and was closed before it landed.

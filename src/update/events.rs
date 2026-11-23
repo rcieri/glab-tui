@@ -734,7 +734,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 server_state,
                 app.hide_reviewed_files,
             );
-            app.sync_viewed_state(&mut diff_view);
+            app.reload_viewed_sync(&mut diff_view);
             app.store_review_marks(&diff_view.project_path, mr_iid, diff_view.review_marks());
             let changed = diff_view.changed_since_review.len();
             if reopened && changed > 0 {

@@ -1862,6 +1862,7 @@ fn github_review_payload(
         "comments": comments.iter().map(github_review_comment).collect::<Vec<_>>(),
     })
 }
+
 #[async_trait]
 impl Backend for GhBackend {
     fn kind(&self) -> super::BackendKind {

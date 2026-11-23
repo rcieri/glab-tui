@@ -71,7 +71,10 @@ pub enum Event {
         comments: Result<Vec<crate::domain::mr::DiscussionNote>, String>,
         /// GitHub's viewed state of the PR's files; `None` when sync is off or
         /// on GitLab, `Err` when the fetch failed (local marks apply instead).
-        viewed_files: Option<Result<crate::domain::viewed_files::PrViewedFiles, String>>,
+        viewed_files: Option<Result<Box<crate::domain::viewed_files::PrViewedFiles>, String>>,
+        /// `App::viewed_settles` when the fetch started. A viewed-sync request
+        /// settled since is newer than `viewed_files`, however late it arrives.
+        fetched_at: crate::domain::viewed_files::SettleCount,
     },
     DiffFetchFailed(String),
     /// The debounce window of the GitHub "Viewed" sync of this pull request,

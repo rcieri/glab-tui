@@ -27,6 +27,7 @@ fn spawn_open_diff(
     };
     app.diff_loading = true;
     let sync_viewed = app.syncs_viewed_files();
+    let fetched_at = app.viewed_settles;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
         let event =
@@ -37,6 +38,7 @@ fn spawn_open_diff(
                     diff_view,
                     comments,
                     viewed_files,
+                    fetched_at,
                 },
                 Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {err}")),
             };

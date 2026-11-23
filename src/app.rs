@@ -6,7 +6,9 @@ use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::state_query::{StateQueries, StateQuery};
-use crate::domain::viewed_files::{FileViewedState, Fingerprint, PrViewedFiles, ViewedSync};
+use crate::domain::viewed_files::{
+    FileViewedState, Fingerprint, PrViewedFiles, SettleCount, ViewedSync,
+};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::form::{
     Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel,
@@ -4415,6 +4417,9 @@ pub struct App {
     /// closing still go out, and a reopened diff waits for the request the
     /// closed one sent.
     pub viewed_syncs: HashMap<String, ViewedSync>,
+    /// Viewed-sync requests settled this session, across pull requests. A
+    /// diff fetch carries the count it started at back on `DiffFetched`.
+    pub viewed_settles: SettleCount,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4587,6 +4592,7 @@ impl App {
             hide_reviewed_files: false,
             diff_layout: DiffLayout::Auto,
             viewed_syncs: HashMap::new(),
+            viewed_settles: SettleCount::default(),
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             page_size: config.page_size,
@@ -7016,16 +7022,19 @@ impl App {
     }
 
     /// Hooks a freshly fetched diff up to its pull request's sync: the server
-    /// state it loaded becomes the confirmed state, and what the user asked
-    /// for that the server may not show yet is laid on top of it.
-    pub fn reload_viewed_sync(&mut self, diff_view: &mut DiffView) {
+    /// state it loaded becomes the confirmed state, and what the server may
+    /// not have shown the fetch, started at `fetched_at`, is laid on top of
+    /// it: the requests settled since, then what the user asked for that is
+    /// still on its way.
+    pub fn reload_viewed_sync(&mut self, diff_view: &mut DiffView, fetched_at: SettleCount) {
         let Some(pull_request_id) = diff_view.pull_request_id.clone() else {
             return;
         };
         let confirmed = diff_view.reviewed_files.clone();
         let sync = self.viewed_syncs.entry(pull_request_id).or_default();
-        sync.reload(confirmed);
-        diff_view.apply_review_corrections(&sync.unsettled());
+        let mut corrections = sync.reload(confirmed, fetched_at);
+        corrections.extend(sync.unsettled());
+        diff_view.apply_review_corrections(&corrections);
     }
 
     /// Queues a reviewed-state change for a pull request's GitHub sync.
@@ -13874,7 +13883,7 @@ index 123456..789012 100644
         let mut app = App::default();
         let mut before = review_fixture();
         before.restore_review_state(&HashMap::new(), Some(server()), false);
-        app.reload_viewed_sync(&mut before);
+        app.reload_viewed_sync(&mut before, SettleCount::default());
         select_file(&mut before, "README.md");
         before.toggle_reviewed();
         assert!(app.queue_viewed_sync("PR_1", &["README.md".to_string()], true));
@@ -13883,7 +13892,7 @@ index 123456..789012 100644
         // Reopened before the flush: the server does not have the mark yet.
         let mut after = review_fixture();
         after.restore_review_state(&HashMap::new(), Some(server()), false);
-        app.reload_viewed_sync(&mut after);
+        app.reload_viewed_sync(&mut after, SettleCount::default());
 
         assert!(after.reviewed_files.contains("README.md"));
         let sync = app.viewed_syncs.get_mut("PR_1").unwrap();
@@ -13899,7 +13908,7 @@ index 123456..789012 100644
         let mut app = App::default();
         let mut before = review_fixture();
         before.restore_review_state(&HashMap::new(), Some(server()), false);
-        app.reload_viewed_sync(&mut before);
+        app.reload_viewed_sync(&mut before, SettleCount::default());
         select_file(&mut before, "README.md");
         before.toggle_reviewed();
         app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
@@ -13907,7 +13916,7 @@ index 123456..789012 100644
         // A mutation refetches the diff before the flush.
         let mut after = review_fixture();
         after.restore_review_state(&HashMap::new(), Some(server()), false);
-        app.reload_viewed_sync(&mut after);
+        app.reload_viewed_sync(&mut after, SettleCount::default());
 
         assert_eq!(
             after.reviewed_files,

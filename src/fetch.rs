@@ -20,7 +20,7 @@ pub async fn fetch_diff_view(
 ) -> anyhow::Result<(
     Box<app::DiffView>,
     Result<Vec<domain::mr::DiscussionNote>, String>,
-    Option<Result<domain::viewed_files::PrViewedFiles, String>>,
+    Option<Result<Box<domain::viewed_files::PrViewedFiles>, String>>,
 )> {
     let viewed_files = async {
         if sync_viewed {
@@ -43,7 +43,7 @@ pub async fn fetch_diff_view(
     Ok((
         diff_view,
         comments_res.map_err(|err| format!("{err:#}")),
-        viewed_files.map(|result| result.map_err(|err| format!("{err:#}"))),
+        viewed_files.map(|result| result.map(Box::new).map_err(|err| format!("{err:#}"))),
     ))
 }
 

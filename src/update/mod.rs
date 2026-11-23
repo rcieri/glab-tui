@@ -92,12 +92,13 @@ mod tests {
     }
 
     fn diff_fetched(
-        viewed_files: Option<Result<crate::domain::viewed_files::PrViewedFiles, String>>,
+        viewed_files: Option<Result<Box<crate::domain::viewed_files::PrViewedFiles>, String>>,
     ) -> Event {
         Event::DiffFetched {
             diff_view: Box::new(readme_diff()),
             comments: Ok(vec![]),
             viewed_files,
+            fetched_at: crate::domain::viewed_files::SettleCount::default(),
         }
     }
 
@@ -113,10 +114,11 @@ mod tests {
                 raw_diff.to_string(),
             )),
             comments: Ok(vec![]),
-            viewed_files: Some(Ok(crate::domain::viewed_files::PrViewedFiles {
+            viewed_files: Some(Ok(Box::new(crate::domain::viewed_files::PrViewedFiles {
                 pull_request_id: pull_request_id.to_string(),
                 files: std::collections::HashMap::new(),
-            })),
+            }))),
+            fetched_at: crate::domain::viewed_files::SettleCount::default(),
         }
     }
 
@@ -251,6 +253,38 @@ mod tests {
     }
 
     #[test]
+    fn a_diff_fetched_before_a_viewed_request_settled_keeps_the_mark_it_left() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        // A refetch reads GitHub before the mark lands and arrives after it.
+        let fetched_before_the_mark = github_diff_fetched("PR_1");
+        update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: vec![("README.md".to_string(), true)],
+                result: Ok(vec![]),
+            },
+        );
+
+        update(&mut app, fetched_before_the_mark);
+
+        assert_eq!(
+            app.diff_view().expect("diff stays open").reviewed_files,
+            std::collections::HashSet::from(["README.md".to_string()])
+        );
+        assert_eq!(
+            app.review_marks_for_mr("org/project", 42),
+            readme_diff().marks_on_this_diff(&["README.md"])
+        );
+    }
+
+    #[test]
     fn a_partly_refused_viewed_sync_reverts_only_the_refused_marks() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
@@ -344,7 +378,10 @@ mod tests {
             }),
             false,
         );
-        app.reload_viewed_sync(&mut diff_view);
+        app.reload_viewed_sync(
+            &mut diff_view,
+            crate::domain::viewed_files::SettleCount::default(),
+        );
         app.open_diff_view(diff_view);
 
         // Project A's #42 marked README.md and was closed before it landed.
@@ -394,6 +431,7 @@ mod tests {
                 )),
                 comments: Ok(vec![]),
                 viewed_files: None,
+                fetched_at: crate::domain::viewed_files::SettleCount::default(),
             },
         );
 
@@ -424,6 +462,7 @@ mod tests {
                 diff_view: Box::new(updated_diff),
                 comments: Ok(vec![]),
                 viewed_files: None,
+                fetched_at: crate::domain::viewed_files::SettleCount::default(),
             },
         );
 
@@ -455,6 +494,7 @@ mod tests {
                 diff_view: Box::new(diff),
                 comments: Ok(vec![]),
                 viewed_files: None,
+                fetched_at: crate::domain::viewed_files::SettleCount::default(),
             },
         );
 

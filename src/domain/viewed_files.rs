@@ -62,6 +62,18 @@ impl Fingerprint {
 /// caps a command line at 32 KiB.
 pub const VIEWED_SYNC_BATCH: usize = 50;
 
+/// Counts the viewed-state requests settled in the session. A diff fetch
+/// takes the count when it starts: a request settled later may have landed
+/// on GitHub after the fetch read the state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SettleCount(u64);
+
+impl SettleCount {
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
 /// Pushes local reviewed-mark changes to GitHub's "Viewed" state.
 ///
 /// Toggles are queued and flushed after a short debounce, so rapid toggles of
@@ -81,6 +93,9 @@ pub struct ViewedSync {
     /// meanwhile can only be told apart from a no-op once the request ahead
     /// of it has landed.
     in_flight: Vec<(String, bool)>,
+    /// The state each applied change left on the server and the count it
+    /// settled at, for `reload` to lay back over a state fetched before it.
+    settled: HashMap<String, (SettleCount, bool)>,
 }
 
 impl ViewedSync {
@@ -125,27 +140,34 @@ impl ViewedSync {
     /// Settles a finished request and returns the local state each of its
     /// paths must show: the server's. GitHub applied every change but the
     /// `rejected` paths. Paths toggled again since are left out; their newer
-    /// intent is still on its way.
+    /// intent is still on its way. `settled_at` is the session's count with
+    /// this request in it.
     pub fn settle(
         &mut self,
         changes: &[(String, bool)],
         rejected: &HashSet<&str>,
+        settled_at: SettleCount,
     ) -> Vec<(String, bool)> {
         self.in_flight.clear();
         changes
             .iter()
             .filter_map(|(path, viewed)| {
                 if !rejected.contains(path.as_str()) {
-                    if *viewed {
-                        self.confirmed.insert(path.clone());
-                    } else {
-                        self.confirmed.remove(path);
-                    }
+                    self.confirm(path, *viewed);
+                    self.settled.insert(path.clone(), (settled_at, *viewed));
                 }
                 (!self.pending.contains_key(path))
                     .then(|| (path.clone(), self.confirmed.contains(path)))
             })
             .collect()
+    }
+
+    fn confirm(&mut self, path: &str, viewed: bool) {
+        if viewed {
+            self.confirmed.insert(path.to_string());
+        } else {
+            self.confirmed.remove(path);
+        }
     }
 
     /// Returns true when intents left over by the settled request (queued
@@ -155,10 +177,27 @@ impl ViewedSync {
         !self.pending.is_empty() && !std::mem::replace(&mut self.flush_scheduled, true)
     }
 
-    /// Replaces the server state with a freshly fetched one; queued intents
-    /// and the request in flight are kept.
-    pub fn reload(&mut self, confirmed: HashSet<String>) {
+    /// Replaces the server state with one whose fetch started at
+    /// `fetched_at`. Queued intents and the request in flight are kept.
+    /// Changes settled after that are laid back over it and returned, sorted:
+    /// the fetch may have read the state they replaced.
+    pub fn reload(
+        &mut self,
+        confirmed: HashSet<String>,
+        fetched_at: SettleCount,
+    ) -> Vec<(String, bool)> {
         self.confirmed = confirmed;
+        let mut settled_since: Vec<(String, bool)> = self
+            .settled
+            .iter()
+            .filter(|(_, (settled_at, _))| *settled_at > fetched_at)
+            .map(|(path, (_, viewed))| (path.clone(), *viewed))
+            .collect();
+        settled_since.sort();
+        for (path, viewed) in &settled_since {
+            self.confirm(path, *viewed);
+        }
+        settled_since
     }
 
     /// The state the user asked for and the server may not show yet: the
@@ -193,7 +232,7 @@ mod tests {
 
     fn sync_with_viewed(names: &[&str]) -> ViewedSync {
         let mut sync = ViewedSync::default();
-        sync.reload(paths(names).into_iter().collect());
+        sync.reload(paths(names).into_iter().collect(), SettleCount::default());
         sync
     }
 
@@ -203,6 +242,10 @@ mod tests {
 
     fn every_path(changes: &[(String, bool)]) -> HashSet<&str> {
         changes.iter().map(|(path, _)| path.as_str()).collect()
+    }
+
+    fn first_settle() -> SettleCount {
+        SettleCount::default().next()
     }
 
     #[test]
@@ -261,7 +304,7 @@ mod tests {
         // b.rs is toggled again while the request is in flight.
         sync.queue(&paths(&["b.rs"]), false);
 
-        let corrections = sync.settle(&changes, &every_path(&changes));
+        let corrections = sync.settle(&changes, &every_path(&changes), first_settle());
         assert_eq!(
             corrections,
             vec![("a.rs".to_string(), false), ("old.rs".to_string(), true)]
@@ -274,7 +317,7 @@ mod tests {
         sync.queue(&paths(&["a.rs"]), true);
         let changes = sync.take_changes();
         assert_eq!(
-            sync.settle(&changes, &applied()),
+            sync.settle(&changes, &applied(), first_settle()),
             vec![("a.rs".to_string(), true)]
         );
         // The server now holds it, so toggling it twice sends nothing.
@@ -294,12 +337,12 @@ mod tests {
         assert!(sync.queue(&paths(&["a.rs"]), false));
         assert!(sync.take_changes().is_empty());
 
-        assert!(sync.settle(&marked, &applied()).is_empty());
+        assert!(sync.settle(&marked, &applied(), first_settle()).is_empty());
         assert!(sync.claim_follow_up_flush());
         let unmarked = sync.take_changes();
         assert_eq!(unmarked, vec![("a.rs".to_string(), false)]);
         assert_eq!(
-            sync.settle(&unmarked, &applied()),
+            sync.settle(&unmarked, &applied(), first_settle().next()),
             vec![("a.rs".to_string(), false)]
         );
         assert!(!sync.claim_follow_up_flush());
@@ -321,7 +364,7 @@ mod tests {
         assert_eq!(first, expected);
         assert!(sync.take_changes().is_empty(), "one request at a time");
 
-        sync.settle(&first, &applied());
+        sync.settle(&first, &applied(), first_settle());
         assert!(sync.claim_follow_up_flush());
         assert_eq!(
             sync.take_changes(),
@@ -352,11 +395,11 @@ mod tests {
         let in_flight = sync.take_changes();
 
         // Viewed in the browser meanwhile: unmarking it is a real change now.
-        sync.reload(HashSet::from(["b.rs".to_string()]));
+        sync.reload(HashSet::from(["b.rs".to_string()]), SettleCount::default());
         sync.queue(&paths(&["b.rs"]), false);
         assert!(sync.take_changes().is_empty(), "one request at a time");
 
-        sync.settle(&in_flight, &applied());
+        sync.settle(&in_flight, &applied(), first_settle());
         assert!(sync.claim_follow_up_flush());
         assert_eq!(sync.take_changes(), vec![("b.rs".to_string(), false)]);
     }
@@ -368,7 +411,7 @@ mod tests {
         sync.queue(&paths(&["old.rs"]), false);
         let changes = sync.take_changes();
 
-        let corrections = sync.settle(&changes, &HashSet::from(["gone.rs"]));
+        let corrections = sync.settle(&changes, &HashSet::from(["gone.rs"]), first_settle());
         assert_eq!(
             corrections,
             vec![
@@ -381,5 +424,43 @@ mod tests {
         sync.queue(&paths(&["a.rs"]), false);
         sync.queue(&paths(&["a.rs"]), true);
         assert!(sync.take_changes().is_empty());
+    }
+
+    #[test]
+    fn a_state_fetched_before_a_request_settled_does_not_undo_it() {
+        let mut sync = sync_with_viewed(&["old.rs"]);
+        let fetched_at = SettleCount::default();
+        sync.queue(&paths(&["a.rs", "gone.rs"]), true);
+        sync.queue(&paths(&["old.rs"]), false);
+        let changes = sync.take_changes();
+        sync.settle(&changes, &HashSet::from(["gone.rs"]), fetched_at.next());
+
+        // The fetch read GitHub before the request landed there.
+        let settled_since = sync.reload(HashSet::from(["old.rs".to_string()]), fetched_at);
+
+        assert_eq!(
+            settled_since,
+            vec![("a.rs".to_string(), true), ("old.rs".to_string(), false)]
+        );
+        // The server state holds both again: toggling them back sends nothing.
+        sync.queue(&paths(&["a.rs"]), false);
+        sync.queue(&paths(&["a.rs"]), true);
+        sync.queue(&paths(&["old.rs"]), true);
+        sync.queue(&paths(&["old.rs"]), false);
+        assert!(sync.take_changes().is_empty());
+    }
+
+    #[test]
+    fn a_state_fetched_after_a_request_settled_replaces_what_it_left() {
+        let mut sync = sync_with_viewed(&[]);
+        sync.queue(&paths(&["a.rs"]), true);
+        let changes = sync.take_changes();
+        sync.settle(&changes, &applied(), first_settle());
+
+        // Unviewed in the browser since, then fetched.
+        assert!(sync.reload(HashSet::new(), first_settle()).is_empty());
+
+        sync.queue(&paths(&["a.rs"]), true);
+        assert_eq!(sync.take_changes(), vec![("a.rs".to_string(), true)]);
     }
 }

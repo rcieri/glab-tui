@@ -718,6 +718,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             diff_view,
             comments,
             viewed_files,
+            fetched_at,
         } => {
             app.diff_loading = false;
             let mut diff_view = *diff_view;
@@ -725,7 +726,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             let held_back = app.restore_draft_comments(&diff_view);
             let reopened = app.diff_view().is_none_or(|v| v.mr_iid != mr_iid);
             let (server_state, viewed_error) = match viewed_files {
-                Some(Ok(server_state)) => (Some(server_state), None),
+                Some(Ok(server_state)) => (Some(*server_state), None),
                 Some(Err(err)) => (None, Some(err)),
                 None => (None, None),
             };
@@ -734,7 +735,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 server_state,
                 app.hide_reviewed_files,
             );
-            app.reload_viewed_sync(&mut diff_view);
+            app.reload_viewed_sync(&mut diff_view, fetched_at);
             app.store_review_marks(&diff_view.project_path, mr_iid, diff_view.review_marks());
             let changed = diff_view.changed_since_review.len();
             if reopened && changed > 0 {
@@ -835,9 +836,11 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 Ok(refused) => refused.iter().map(|r| r.path.as_str()).collect(),
                 Err(_) => changes.iter().map(|(path, _)| path.as_str()).collect(),
             };
+            app.viewed_settles = app.viewed_settles.next();
+            let settled_at = app.viewed_settles;
             let mut corrections = Vec::new();
             if let Some(sync) = app.viewed_syncs.get_mut(&pull_request_id) {
-                corrections = sync.settle(&changes, &rejected);
+                corrections = sync.settle(&changes, &rejected, settled_at);
                 if sync.claim_follow_up_flush() {
                     crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), sender);
                 }
@@ -974,6 +977,7 @@ fn refetch_after_mutation(
         return;
     };
     let sync_viewed = app.syncs_viewed_files();
+    let fetched_at = app.viewed_settles;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
         if let Ok((diff_view, comments, viewed_files)) =
@@ -983,6 +987,7 @@ fn refetch_after_mutation(
                 diff_view,
                 comments,
                 viewed_files,
+                fetched_at,
             });
         }
     });

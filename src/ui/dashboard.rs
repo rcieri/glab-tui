@@ -10,7 +10,9 @@ use ratatui::{
     },
 };
 
-use super::helpers::{badge_style_for, progress_bar, sort_header_label, status_dot};
+use super::helpers::{
+    PROGRESS_BAR_WIDTH, badge_style_for, progress_bar, sort_header_label, status_dot,
+};
 use crate::app::{App, StaleData, Tab};
 use crate::backend::BackendKind;
 use crate::config::{Icons, Theme};
@@ -49,8 +51,6 @@ const QUEUE_LABEL_INDENT: usize = 2 + COUNT_WIDTH + 4;
 const CARD_MIN_WIDTH: u16 = (QUEUE_LABEL_INDENT + BLOCKED_QUEUE_LABEL.len() + 2) as u16;
 /// Each milestone takes a title line and a progress line.
 const MILESTONES_SHOWN: usize = CARD_BODY_LINES / 2;
-/// Width of `[██████████] 100%`, the widest progress bar.
-const PROGRESS_BAR_CHARS: usize = 17;
 /// Width of one number column of the Contributors card.
 const CONTRIBUTOR_COLUMN_CHARS: usize = 5;
 const LIST_REF_WIDTH: u16 = 7;
@@ -924,7 +924,7 @@ fn milestone_lines(
         ),
         Line::from(vec![
             Span::styled(
-                format!("{bar:<PROGRESS_BAR_CHARS$}"),
+                format!("{bar:<PROGRESS_BAR_WIDTH$}"),
                 Style::default().fg(bar_color),
             ),
             Span::styled(due, Style::default().fg(due_color)),

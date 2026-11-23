@@ -355,6 +355,8 @@ pub(crate) fn status_dot<'a>(status: &str, icons: &'a Icons) -> &'a str {
 }
 
 const PROGRESS_BAR_SEGMENTS: usize = 10;
+/// Width of `[██████████] 100%`, the widest progress bar.
+pub(crate) const PROGRESS_BAR_WIDTH: usize = PROGRESS_BAR_SEGMENTS + "[] 100%".len();
 
 /// `[████░░░░░░] 40%` for `closed` of `total` (non-zero) items, colored red up
 /// to a third done, yellow up to two thirds, green above.

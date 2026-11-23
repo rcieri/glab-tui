@@ -842,10 +842,7 @@ fn run_line_label(pipeline: &Pipeline, scope: &Scope) -> String {
     label
 }
 
-/// The newest runs that fit in `max_width` cells, oldest to newest left to
-/// right: `recent` is newest first, and a dot's display width varies with the
-/// icon set (the nerd font's dots are double-width emoji, ascii's are single
-/// cells), so a fixed dot count can overflow or waste space.
+/// The newest runs whose dots fit in `max_width` cells, oldest on the left.
 fn fitted_pipeline_dots(
     recent: &[Pipeline],
     icons: &Icons,

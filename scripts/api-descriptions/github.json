@@ -301,7 +301,38 @@
           "login": {}
         },
         "created_at": {},
-        "payload": {}
+        "payload": {
+          "action": {},
+          "ref": {},
+          "head": {},
+          "size": {},
+          "distinct_size": {},
+          "commits": {
+            "sha": {},
+            "message": {}
+          },
+          "issue": {
+            "number": {},
+            "title": {},
+            "pull_request": {}
+          },
+          "comment": {
+            "body": {},
+            "path": {}
+          },
+          "review": {
+            "state": {},
+            "body": {}
+          },
+          "pull_request": {
+            "number": {}
+          }
+        }
+      },
+      "absent_ok": {
+        "payload.size": "PushEvent: the spec's push-event lists only repository_id, push_id, ref, head and before. parse_github_events reads the push's commit count where a server still sends it",
+        "payload.distinct_size": "PushEvent: not in the spec's push-event. parse_github_events reads the count without commits already known from a force-push where a server still sends it",
+        "payload.commits": "PushEvent: not in the spec's push-event, and github.com stopped sending it in October 2025. parse_github_events lists the pushed commits where a server still sends them, else the push shows as one \"pushed to <branch>\" entry"
       }
     },
     {

@@ -663,5 +663,13 @@
         }
       }
     }
+  },
+  "graphql_mutation": {
+    "markFileAsViewed": {
+      "clientMutationId": {}
+    },
+    "unmarkFileAsViewed": {
+      "clientMutationId": {}
+    }
   }
 }

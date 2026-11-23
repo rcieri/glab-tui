@@ -13,7 +13,8 @@ and the pinned GraphQL schema:
 
 What to keep comes from scripts/api-descriptions/<host>.json: the operations
 with the fields read from each response, the host rule, the corrections for
-known errors in the upstream description, and the GraphQL fields. The e2e
+known errors in the upstream description, and the GraphQL fields (graphql
+from the query root, graphql_mutation from the mutation root). The e2e
 suite reads only the generated files.
 
 Every download is checked against the SHA-256 pinned here, so a moved commit
@@ -888,7 +889,8 @@ def build_graphql(
         license_: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """The table cut to the fields listed in cfg["graphql"] (a nested dict
-    from the query root, like an operation's read set)."""
+    from the query root, like an operation's read set) and in
+    cfg["graphql_mutation"] (the same, from the mutation root)."""
     types = table["types"]
     problems: list[str] = []
     used: dict[str, dict[str, Any]] = {}  # type name -> {field: definition}
@@ -912,6 +914,12 @@ def build_graphql(
                     problems.append(f"{host}: {here}: fields are listed below {target}, of kind {kinds[target]}")
 
     walk(table["query"], cfg.get("graphql", {}), [])
+    mutation_read = cfg.get("graphql_mutation", {})
+    if mutation_read:
+        if table["mutation"] is None:
+            problems.append(f"{host}: graphql_mutation is listed, but the schema has no mutation root")
+        else:
+            walk(table["mutation"], mutation_read, ["mutation"])
     if problems:
         raise Problems(sorted(set(problems)))
     out_types: dict[str, Any] = {}

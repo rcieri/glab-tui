@@ -89,6 +89,31 @@
     "IssueState": {
       "kind": "enum"
     },
+    "MarkFileAsViewedPayload": {
+      "fields": {
+        "clientMutationId": {
+          "type": "String"
+        }
+      },
+      "kind": "object"
+    },
+    "Mutation": {
+      "fields": {
+        "markFileAsViewed": {
+          "args": [
+            "input"
+          ],
+          "type": "MarkFileAsViewedPayload"
+        },
+        "unmarkFileAsViewed": {
+          "args": [
+            "input"
+          ],
+          "type": "UnmarkFileAsViewedPayload"
+        }
+      },
+      "kind": "object"
+    },
     "PageInfo": {
       "fields": {
         "endCursor": {
@@ -317,6 +342,14 @@
     },
     "String": {
       "kind": "scalar"
+    },
+    "UnmarkFileAsViewedPayload": {
+      "fields": {
+        "clientMutationId": {
+          "type": "String"
+        }
+      },
+      "kind": "object"
     }
   }
 }

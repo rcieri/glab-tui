@@ -153,7 +153,8 @@ if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
 fi
 
 # "Viewed" checkboxes of the diff view: no file is viewed yet, and every
-# mark/unmark mutation succeeds.
+# mark/unmark mutation succeeds. The reply check refuses keys the mutation
+# does not select, so answer exactly the `f<i>` aliases sent.
 if [[ "$*" == "api graphql"*"viewerViewedState"* ]]; then
     echo '{"data":{"repository":{"pullRequest":{"id":"PR_mock","files":{
         "pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
@@ -161,7 +162,11 @@ if [[ "$*" == "api graphql"*"viewerViewedState"* ]]; then
 fi
 
 if [[ "$*" == "api graphql"*"markFileAsViewed"* ]]; then
-    echo '{"data":{}}'
+    entries=()
+    for alias in $(grep -oE 'f[0-9]+:(un)?markFileAsViewed' <<<"$*"); do
+        entries+=("\"${alias%%:*}\":{\"clientMutationId\":null}")
+    done
+    (IFS=,; echo "{\"data\":{${entries[*]}}}")
     exit 0
 fi
 

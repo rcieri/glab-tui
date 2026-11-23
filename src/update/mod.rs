@@ -65,7 +65,7 @@ mod tests {
     }
 
     fn with_open_diff(mut app: App) -> App {
-        app.diff_view = Some(crate::app::DiffView::new(
+        app.open_diff_view(crate::app::DiffView::new(
             4,
             "group/project".to_string(),
             String::new(),
@@ -131,7 +131,7 @@ mod tests {
             }),
             false,
         );
-        app.diff_view = Some(diff_view);
+        app.open_diff_view(diff_view);
 
         // Project A's #42 marked README.md and was closed before it landed.
         update(
@@ -143,7 +143,7 @@ mod tests {
             },
         );
 
-        let diff_view = app.diff_view.as_mut().expect("diff stays open");
+        let diff_view = app.diff_view_mut().expect("diff stays open");
         assert!(diff_view.reviewed_files.is_empty());
         let sync = diff_view.viewed_sync.as_mut().expect("GitHub sync");
         sync.queue(&["README.md".to_string()], true);
@@ -152,6 +152,133 @@ mod tests {
             vec![("README.md".to_string(), true)],
             "project B's own mark still reaches GitHub"
         );
+    }
+
+    #[test]
+    fn diff_fetched_updates_diff_in_place_without_lifting_it_above_review_threads() {
+        let mut app = with_open_diff(app_with_client());
+        let overview = crate::app::ReviewThreadsOverview::new(&[], app.diff_view().unwrap());
+        app.open_review_threads(overview);
+        assert!(matches!(
+            app.top_modal(),
+            Some(crate::app::Modal::ReviewThreads(_))
+        ));
+
+        let updated_diff = crate::app::DiffView::new(
+            4,
+            "group/project".to_string(),
+            "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+        );
+        update(
+            &mut app,
+            Event::DiffFetched {
+                diff_view: Box::new(updated_diff),
+                comments: Ok(vec![]),
+                viewed_files: None,
+            },
+        );
+
+        assert!(
+            matches!(app.top_modal(), Some(crate::app::Modal::ReviewThreads(_))),
+            "top modal must remain ReviewThreads, not Diff"
+        );
+        assert_eq!(
+            app.diff_view().map(|d| d.lines.len()),
+            Some(6),
+            "diff view content was updated in place"
+        );
+    }
+
+    #[test]
+    fn diff_fetched_when_help_open_inserts_diff_at_bottom_preserving_help_on_top() {
+        let mut app = App::default();
+        app.open_help();
+        assert!(matches!(app.top_modal(), Some(crate::app::Modal::Help)));
+
+        let diff = crate::app::DiffView::new(
+            4,
+            "group/project".to_string(),
+            "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+        );
+        update(
+            &mut app,
+            Event::DiffFetched {
+                diff_view: Box::new(diff),
+                comments: Ok(vec![]),
+                viewed_files: None,
+            },
+        );
+
+        assert!(
+            matches!(app.top_modal(), Some(crate::app::Modal::Help)),
+            "top modal must remain Help after a newly fetched diff arrives"
+        );
+        assert!(app.diff_view().is_some());
+    }
+
+    #[test]
+    fn pr_stack_fetched_does_not_open_dialog_when_modal_open() {
+        let mut app = App::default();
+        let pr = ("group/project".to_string(), 42);
+        app.pending_stack_action = Some((pr.clone(), crate::app::StackAction::Merge));
+        app.open_help();
+        assert!(matches!(app.top_modal(), Some(crate::app::Modal::Help)));
+
+        update(
+            &mut app,
+            Event::PrStackFetched {
+                project_path: pr.0,
+                pr_number: pr.1,
+                result: Ok(None),
+            },
+        );
+
+        assert!(
+            matches!(app.top_modal(), Some(crate::app::Modal::Help)),
+            "Help must remain on top without merge dialog being pushed"
+        );
+        assert!(app.submit_dialog().is_none());
+    }
+
+    #[test]
+    fn diff_search_enter_keeps_query_and_clears_active() {
+        let mut app = App::default();
+        let mut view = crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1,2 @@\n-old\n+new\n".to_string(),
+        );
+        view.focus_on_files = false;
+        view.search_active = true;
+        app.open_diff_view(view);
+
+        update(&mut app, press(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert_eq!(app.diff_view().unwrap().search_query, "n");
+        assert!(app.diff_view().unwrap().search_active);
+
+        update(&mut app, press(KeyCode::Enter, KeyModifiers::NONE));
+        let diff = app.diff_view().expect("diff view open");
+        assert_eq!(diff.search_query, "n");
+        assert!(!diff.search_active);
+    }
+
+    #[test]
+    fn diff_search_ctrl_key_does_not_append_to_query() {
+        let mut app = App::default();
+        let mut view = crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1,2 @@\n-old\n+new\n".to_string(),
+        );
+        view.focus_on_files = false;
+        view.search_active = true;
+        app.open_diff_view(view);
+
+        update(&mut app, press(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert_eq!(app.diff_view().unwrap().search_query, "n");
+
+        update(&mut app, press(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert_eq!(app.diff_view().unwrap().search_query, "n");
     }
 
     #[test]
@@ -253,7 +380,7 @@ mod tests {
     #[test]
     fn ctrl_e_in_a_text_input_hands_its_value_to_the_editor_and_takes_the_result_back() {
         let mut app = App::default();
-        app.text_input = Some(TextInput::new(
+        app.open_text_input(TextInput::new(
             " Page Size ",
             "30".to_string(),
             TextInputAction::EditPageSize,
@@ -277,10 +404,7 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            app.text_input.as_ref().map(|ti| ti.buffer.value()),
-            Some("50")
-        );
+        assert_eq!(app.text_input().map(|ti| ti.buffer.value()), Some("50"));
     }
 
     #[test]
@@ -310,7 +434,7 @@ mod tests {
                 Button::new("Cancel", ButtonTone::Neutral),
             ),
         );
-        app.submit_dialog = Some(dialog);
+        app.open_submit_dialog(dialog);
         update(&mut app, press(KeyCode::Tab, KeyModifiers::NONE));
         assert!(app.is_capturing_text());
 
@@ -318,8 +442,8 @@ mod tests {
         update(&mut app, press(KeyCode::Char('?'), KeyModifiers::NONE));
 
         assert!(quit.is_empty(), "{quit:?}");
-        assert!(!app.show_help);
-        let typed = app.submit_dialog.as_ref().and_then(|dialog| {
+        assert!(!app.show_help());
+        let typed = app.submit_dialog().and_then(|dialog| {
             dialog
                 .form
                 .groups()
@@ -339,13 +463,13 @@ mod tests {
         let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
 
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Quit)));
-        assert!(app.diff_view.is_none());
+        assert!(app.diff_view().is_none());
     }
 
     #[test]
     fn q_on_a_confirmation_dialog_keeps_it_open_instead_of_quitting() {
         let mut app = App::default();
-        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+        app.open_submit_dialog(crate::app::SubmitDialog::build(
             crate::app::ConfirmAction::MarkAllTodosRead,
             &app,
         ));
@@ -353,7 +477,7 @@ mod tests {
         let effects = update(&mut app, press(KeyCode::Char('q'), KeyModifiers::NONE));
 
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Quit)));
-        assert!(app.submit_dialog.is_some());
+        assert!(app.submit_dialog().is_some());
     }
 
     #[test]
@@ -542,7 +666,7 @@ mod tests {
                 parents: Vec::new(),
             }));
         }
-        app.selector = Some(crate::app::Selector {
+        app.open_selector(crate::app::Selector {
             title: " Select Pipeline ".to_string(),
             all_items: vec!["#9 — main".to_string()],
             selected_items: Default::default(),
@@ -919,5 +1043,82 @@ mod tests {
 
         assert!(app.job_trace.is_none());
         assert!(!app.job_trace_follow, "the next log opens unfollowed");
+    }
+
+    #[test]
+    fn ctrl_s_while_review_threads_is_open_does_not_open_repo_switcher() {
+        let mut app = app_with_client();
+        app.open_review_threads(crate::app::ReviewThreadsOverview::new(
+            &[],
+            &crate::app::DiffView::new(1, "p".to_string(), String::new()),
+        ));
+        assert!(app.review_threads().is_some());
+
+        let effects = update(&mut app, press(KeyCode::Char('s'), KeyModifiers::CONTROL));
+
+        assert!(effects.is_empty());
+        assert!(app.selector().is_none());
+        assert!(app.review_threads().is_some());
+    }
+
+    #[test]
+    fn mouse_click_outside_modal_rect_does_not_fall_through_to_table() {
+        use crossterm::event::MouseEventKind;
+        let mut app = app_with_client();
+        app.active_tab = Tab::Issues;
+        app.issues.items = vec![
+            serde_json::from_str(r#"{"iid": 1, "title": "Test Issue", "state": "opened", "updated_at": "2026-01-01T00:00:00Z", "author": {"username": "user"}}"#).unwrap(),
+        ];
+        app.issues.state.select(Some(0));
+        let content_area = ratatui::layout::Rect::new(0, 5, 80, 20);
+        app.content_rect = Some(content_area);
+        app.layout = Some(crate::ui::layout::LayoutPlan {
+            content_area,
+            ..Default::default()
+        });
+
+        app.open_configure();
+        assert!(app.has_modal());
+
+        let click_event = Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        update(&mut app, click_event);
+
+        assert_eq!(app.issues.state.selected(), Some(0));
+    }
+
+    #[test]
+    fn sidebar_clicks_switch_tabs_inside_the_border_only() {
+        use crossterm::event::MouseEventKind;
+        let click = |row: u16, column: u16| {
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let mut app = app_with_client();
+        app.active_tab = Tab::Issues;
+        let sidebar_rect = ratatui::layout::Rect::new(0, 0, 22, 12);
+        app.layout = Some(crate::ui::layout::LayoutPlan {
+            sidebar_rect,
+            ..Default::default()
+        });
+
+        update(&mut app, click(0, 5));
+        assert_eq!(app.active_tab, Tab::Issues, "top border row");
+        update(&mut app, click(11, 5));
+        assert_eq!(app.active_tab, Tab::Issues, "bottom border row");
+        update(&mut app, click(2, 0));
+        assert_eq!(app.active_tab, Tab::Issues, "left border column");
+
+        update(&mut app, click(2, 5));
+        assert_eq!(app.active_tab, Tab::MergeRequests);
     }
 }

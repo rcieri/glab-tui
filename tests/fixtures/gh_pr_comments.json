@@ -7,8 +7,7 @@
     "path": "src/lib.rs",
     "line": 3,
     "side": "RIGHT",
-    "start_line": null,
-    "in_reply_to_id": null
+    "start_line": null
   },
   {
     "id": 202,
@@ -29,8 +28,7 @@
     "path": "src/lib.rs",
     "line": 2,
     "side": "LEFT",
-    "start_line": null,
-    "in_reply_to_id": null
+    "start_line": null
   },
   {
     "id": 204,
@@ -40,8 +38,7 @@
     "path": "src/lib.rs",
     "line": 90,
     "side": "RIGHT",
-    "start_line": null,
-    "in_reply_to_id": null
+    "start_line": null
   },
   {
     "id": 101,
@@ -51,7 +48,6 @@
     "path": "src/app.rs",
     "line": 2,
     "side": "RIGHT",
-    "start_line": null,
-    "in_reply_to_id": null
+    "start_line": null
   }
 ]

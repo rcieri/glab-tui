@@ -1,0 +1,14 @@
+[
+  {
+    "id": 54322,
+    "status": "failed",
+    "stage": "test",
+    "name": "rubocop"
+  },
+  {
+    "id": 54323,
+    "status": "failed",
+    "stage": "test",
+    "name": "eslint"
+  }
+]

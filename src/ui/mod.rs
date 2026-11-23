@@ -4,6 +4,7 @@ mod form;
 mod helpers;
 pub(crate) mod inspector;
 pub mod job_trace;
+pub mod layout;
 pub mod list_tab;
 pub(crate) mod modal;
 mod overlays;
@@ -21,7 +22,6 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-use self::compaction::PreviewPlacement;
 use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestions};
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
@@ -36,117 +36,6 @@ use std::sync::Arc;
 /// Rows a modal gives to a notice about its own request, below its content.
 pub const MODAL_NOTICE_ROWS: u16 = 1;
 
-/// The panes of the main workspace below the header bar.
-struct Workspace {
-    sidebar: Rect,
-    list: Rect,
-    /// The compact terminal log under the list, or under the list and the stacked preview.
-    terminal: Rect,
-    detail: Rect,
-}
-
-/// Terminal columns below which the sidebar is left out, giving its columns to
-/// the list.
-const MIN_SIDEBAR_TERMINAL_COLUMNS: u16 = 80;
-
-/// Terminal columns above which the preview asks for `WIDE_PREVIEW_PERCENT` of
-/// the width.
-const WIDE_TERMINAL_COLUMNS: u16 = 150;
-const WIDE_PREVIEW_PERCENT: u32 = 35;
-
-/// Terminal columns above which the preview asks for `MEDIUM_PREVIEW_COLUMNS`.
-const MEDIUM_TERMINAL_COLUMNS: u16 = 100;
-const MEDIUM_PREVIEW_COLUMNS: u16 = 45;
-
-impl Workspace {
-    /// Lays out the sidebar (left out on a terminal narrower than
-    /// `MIN_SIDEBAR_TERMINAL_COLUMNS`), the list with the terminal log under
-    /// it, and, when `preview_columns` is set, the preview where
-    /// `compaction::place_preview` puts it: beside the list at that width or
-    /// narrowed, below the list (giving up the terminal log when both do not
-    /// fit), or hidden when neither fits.
-    fn split(
-        area: Rect,
-        sidebar_width: u16,
-        terminal_height: u16,
-        preview_columns: Option<u16>,
-    ) -> Self {
-        let shown_sidebar_width = if area.width >= MIN_SIDEBAR_TERMINAL_COLUMNS {
-            sidebar_width
-        } else {
-            0
-        };
-        let [sidebar, main] =
-            Layout::horizontal([Constraint::Length(shown_sidebar_width), Constraint::Min(0)])
-                .areas(area);
-        let placement = match preview_columns {
-            Some(preferred_columns) => {
-                // Measured as if the sidebar were shown, so leaving it out on a
-                // narrow terminal never moves the preview back beside the list.
-                compaction::place_preview(
-                    Rect {
-                        width: area.width.saturating_sub(sidebar_width),
-                        ..main
-                    },
-                    preferred_columns,
-                    terminal_height,
-                )
-            }
-            None => PreviewPlacement::Hidden,
-        };
-        let split_terminal = |column: Rect, terminal_rows: u16| -> [Rect; 2] {
-            Layout::vertical([Constraint::Min(0), Constraint::Length(terminal_rows)]).areas(column)
-        };
-        match placement {
-            PreviewPlacement::Beside { columns } => {
-                let [column, detail] =
-                    Layout::horizontal([Constraint::Min(0), Constraint::Length(columns)])
-                        .areas(main);
-                let [list, terminal] = split_terminal(column, terminal_height);
-                Self {
-                    sidebar,
-                    list,
-                    terminal,
-                    detail,
-                }
-            }
-            PreviewPlacement::Below { terminal_log } => {
-                let terminal_rows = if terminal_log { terminal_height } else { 0 };
-                let [column, terminal] = split_terminal(main, terminal_rows);
-                let [list, detail] =
-                    Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(column);
-                Self {
-                    sidebar,
-                    list,
-                    terminal,
-                    detail,
-                }
-            }
-            PreviewPlacement::Hidden => {
-                let [list, terminal] = split_terminal(main, terminal_height);
-                Self {
-                    sidebar,
-                    list,
-                    terminal,
-                    detail: Rect::default(),
-                }
-            }
-        }
-    }
-}
-
-/// Columns the preview asks for beside the list in a terminal `width` wide,
-/// before `compaction::place_preview` narrows it to keep the list readable.
-fn preview_columns(width: u16) -> u16 {
-    if width > WIDE_TERMINAL_COLUMNS {
-        (u32::from(width) * WIDE_PREVIEW_PERCENT / 100) as u16
-    } else if width > MEDIUM_TERMINAL_COLUMNS {
-        MEDIUM_PREVIEW_COLUMNS
-    } else {
-        compaction::MIN_PREVIEW_COLUMNS
-    }
-}
-
 /// Render the active edit/create menu as an interactive inspector into the
 /// (full-zoom) detail pane — the same pane the read-only preview uses. Returns
 /// true if a menu was rendered, in which case the caller should skip its normal
@@ -157,19 +46,28 @@ pub(crate) fn render_edit_menu_if_active(
     app: &mut App,
     detail_rect: Rect,
 ) -> bool {
-    let Some(mut menu) = app.edit_menu.take() else {
+    if app.edit_menu().is_none() {
         return false;
-    };
+    }
     let label_colors = app.label_colors.clone();
 
-    let is_bulk_edit = matches!(
-        menu.entity_kind,
-        crate::app::EditEntityKind::BulkEditIssues | crate::app::EditEntityKind::BulkEditMrs
-    );
+    let is_bulk_edit = app.edit_menu().is_some_and(|m| {
+        matches!(
+            m.entity_kind,
+            crate::app::EditEntityKind::BulkEditIssues | crate::app::EditEntityKind::BulkEditMrs
+        )
+    });
     let content = if is_bulk_edit {
         crate::app::InspectorContent::Custom(bulk_selection_lines(app, &ctx.theme))
     } else {
-        crate::app::InspectorContent::Markdown(menu.get_description_value())
+        crate::app::InspectorContent::Markdown(
+            app.edit_menu()
+                .map_or(String::new(), |m| m.get_description_value()),
+        )
+    };
+
+    let Some(menu) = app.edit_menu_mut() else {
+        return false;
     };
 
     let doc = crate::app::EntityDocument {
@@ -183,11 +81,10 @@ pub(crate) fn render_edit_menu_if_active(
         ctx,
         &doc,
         detail_rect,
-        inspector::InspectorMode::Interactive { menu: &mut menu },
+        inspector::InspectorMode::Interactive { menu },
         &label_colors,
     );
 
-    app.edit_menu = Some(menu);
     true
 }
 
@@ -217,7 +114,7 @@ fn bulk_selection_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
 fn render_mode_indicator(f: &mut Frame, ctx: &RenderCtx<'_>, app: &App, area: Rect) {
     let theme = &ctx.theme;
 
-    let (label, bg, fg) = if let Some(menu) = app.edit_menu.as_ref() {
+    let (label, bg, fg) = if let Some(menu) = app.edit_menu() {
         if menu.entity_kind.is_create() {
             // CREATE — distinct palette so the user knows they're filling
             // out a new entity, not editing an existing one.
@@ -459,9 +356,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
         size,
     );
 
+    let plan = app.compute_layout(size);
+    app.layout = Some(plan);
+    app.content_rect = Some(plan.content_area);
+    app.detail_rect = plan.detail_rect_opt();
+
     // Minimum terminal size guard
-    if size.width < 54 || size.height < 10 {
-        let msg = format!("Terminal too small — resize to at least {}×{}", 54, 10);
+    if plan.is_too_small {
+        let msg = format!(
+            "Terminal too small — resize to at least {}×{}",
+            layout::MIN_TERMINAL_WIDTH,
+            layout::MIN_TERMINAL_HEIGHT
+        );
         f.render_widget(
             Paragraph::new(msg)
                 .alignment(Alignment::Center)
@@ -470,17 +376,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         );
         return;
     }
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // Top header bar
-            Constraint::Min(0),    // Main workspace
-            Constraint::Length(0), // Reserved
-        ])
-        .split(size);
-
-    let title_area = chunks[0];
 
     // Top: Title & Context
     let icons = ctx.icons;
@@ -566,12 +461,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     }
 
-    // Top banner split into left content and a right-aligned mode indicator.
-    let banner = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(12)])
-        .split(title_area);
-
     let title = Paragraph::new(Line::from(title_spans))
         .style(Style::default().bg(ctx.theme.bg))
         .block(
@@ -579,57 +468,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .borders(Borders::BOTTOM)
                 .border_style(Style::default().fg(ctx.theme.border)),
         );
-    f.render_widget(title, banner[0]);
-    render_mode_indicator(f, ctx, app, banner[1]);
+    f.render_widget(title, plan.banner_title);
+    render_mode_indicator(f, ctx, app, plan.banner_mode);
 
-    // Middle: Sidebar | Main Area | Preview Area
-    let can_zoom = app.active_tab != Tab::Pipelines;
-
-    let sidebar_width = if app.config.ui.sidebar_visible {
-        app.config.ui.sidebar_width
-    } else {
-        0
-    };
-
-    // When an edit/create menu is active, force the detail pane to full-zoom
-    // (exactly like the preview's zoomed state) so the form fills the workspace.
-    let edit_zoomed = app.edit_menu.is_some();
-
-    let term_height = if app.active_tab != Tab::Terminal
-        && size.height >= 18
-        && app.config.ui.terminal_pane_visible
-    {
-        6
-    } else {
-        0
-    };
-
-    let workspace = if (app.details_zoomed && can_zoom) || edit_zoomed {
-        Workspace {
-            sidebar: Rect::default(),
-            list: Rect::default(),
-            terminal: Rect::default(),
-            detail: chunks[1],
-        }
-    } else {
-        let show_preview = app.detail_visible && app.active_tab != Tab::Terminal;
-        let preview_columns = show_preview.then(|| preview_columns(chunks[1].width));
-        Workspace::split(chunks[1], sidebar_width, term_height, preview_columns)
-    };
-    let Workspace {
-        sidebar: sidebar_rect,
-        list: content_area,
-        terminal: term_area,
-        detail: detail_rect,
-    } = workspace;
-
-    app.sidebar_rect = Some(sidebar_rect);
-    app.content_rect = Some(content_area);
-    app.detail_rect = if detail_rect.width > 0 {
-        Some(detail_rect)
-    } else {
-        None
-    };
+    let sidebar_rect = plan.sidebar_rect;
+    let content_area = plan.content_area;
+    let detail_rect = plan.detail_rect;
 
     // Sidebar: Tabs
     let kind = ctx.kind;
@@ -686,7 +530,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     };
     let main_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app.focus_column_checklist {
+        .border_style(Style::default().fg(if app.focus_column_checklist() {
             ctx.theme.border
         } else {
             ctx.theme.border_focused
@@ -743,7 +587,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     // Compact terminal pane at bottom of the middle column
-    if term_area.height > 0 {
+    if let Some(term_area) = plan.terminal_area_opt() {
         let bottom_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(ctx.theme.border))
@@ -818,8 +662,39 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(paragraph, area);
     }
 
-    if app.edit_menu.is_none() {
-        if let Some(mut diff_view) = app.diff_view.take() {
+    if app.edit_menu().is_none() && app.diff_view().is_some() {
+        let diff_layout = app.diff_layout;
+        let unresolved_count = app.unresolved_threads_count();
+        let unresolved_suffix = if unresolved_count > 0 {
+            format!(
+                " [{} Unresolved Threads: {}] ",
+                &ctx.icons.thread_unresolved, unresolved_count
+            )
+        } else {
+            String::new()
+        };
+
+        let in_review_mode = app.in_review_mode;
+        let draft_comments_len = app.draft_comments.len();
+        let title_suffix = if in_review_mode {
+            format!(" [REVIEW MODE: ON ({draft_comments_len} pending)] ")
+        } else {
+            String::new()
+        };
+
+        let App {
+            modal_stack,
+            draft_comments,
+            current_comments,
+            ..
+        } = app;
+
+        if let Some(crate::app::Modal::Diff(diff_view)) = modal_stack
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m, crate::app::Modal::Diff(_)))
+        {
+            let diff_view = &mut **diff_view;
             let area = centered_rect_min(95, 95, 30, 6, size);
 
             let outer_block = Block::default()
@@ -847,25 +722,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
             // it, and the layout catches up once it ends.
             let diff_columns = main_chunks[1].width.saturating_sub(2);
             if diff_view.selection_start.is_none() {
-                diff_view.set_side_by_side(app.diff_layout.is_side_by_side(diff_columns));
+                diff_view.set_side_by_side(diff_layout.is_side_by_side(diff_columns));
             }
-
-            let unresolved_count = app.unresolved_threads_count();
-            let unresolved_suffix = if unresolved_count > 0 {
-                format!(
-                    " [{} Unresolved Threads: {}] ",
-                    &ctx.icons.thread_unresolved, unresolved_count
-                )
-            } else {
-                String::new()
-            };
-
-            let title_suffix = if app.in_review_mode {
-                format!(" [REVIEW MODE: ON ({} pending)] ", app.draft_comments.len())
-            } else {
-                String::new()
-            };
-
             let pr_label = if ctx.kind.is_github() {
                 "Pull Request"
             } else {
@@ -1022,7 +880,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         None
                     };
 
-                    let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
+                    let unresolved_count = App::unresolved_threads_count_for_path_slice(
+                        current_comments,
+                        &node.path_id,
+                    );
                     let count_suffix = if unresolved_count > 0 {
                         format!(" ({} {})", &ctx.icons.thread_unresolved, unresolved_count)
                     } else {
@@ -1161,7 +1022,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let list_height = (main_chunks[1].height as usize).saturating_sub(2);
 
-            let mut updated_diff_view = diff_view;
+            let updated_diff_view = diff_view;
             // When tree is hidden, force focus to diff content
             if !file_tree_visible {
                 updated_diff_view.focus_on_files = false;
@@ -1495,8 +1356,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     right_list_lines.push(Line::from(right_spans));
 
                     // COMMENTS OVERLAY
-                    let matching_comments: Vec<_> = app
-                        .draft_comments
+                    let matching_comments: Vec<_> = draft_comments
                         .iter()
                         .filter(|c| {
                             let path_matches = sline
@@ -1582,8 +1442,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     }
 
-                    let matching_current: Vec<_> = app
-                        .current_comments
+                    let matching_current: Vec<_> = current_comments
                         .iter()
                         .filter(|c| {
                             !c.system
@@ -1840,8 +1699,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     list_lines.push(Line::from(line_spans));
 
                     // COMMENTS OVERLAY (unified)
-                    let matching_comments: Vec<_> = app
-                        .draft_comments
+                    let matching_comments: Vec<_> = draft_comments
                         .iter()
                         .filter(|c| {
                             c.file_path == line.file_path
@@ -1900,8 +1758,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     }
 
-                    let matching_current: Vec<_> = app
-                        .current_comments
+                    let matching_current: Vec<_> = current_comments
                         .iter()
                         .filter(|c| {
                             !c.system
@@ -2006,8 +1863,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let diff_para = Paragraph::new(list_lines).block(diff_block);
                 f.render_widget(diff_para, main_chunks[1]);
             }
-
-            app.diff_view = Some(updated_diff_view);
         }
     }
 
@@ -2316,7 +2171,7 @@ diff --git a/a.rs b/a.rs
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(labels_selector(request));
+        app.open_selector(labels_selector(request));
         app.push_notice(
             crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
         );
@@ -2369,11 +2224,11 @@ diff --git a/a.rs b/a.rs
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut app = App::default();
         let request = app.next_request_tag();
-        app.selector = Some(labels_selector(request));
+        app.open_selector(labels_selector(request));
         app.push_notice(
             crate::notice::Notice::error("Failed to load options: HTTP 502").from_request(request),
         );
-        app.selector = None;
+        app.close_selector();
 
         terminal.draw(|f| render(f, &mut app)).unwrap();
 
@@ -2457,13 +2312,13 @@ diff --git a/a.rs b/a.rs
         let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
         let mut app = App::default();
         app.diff_layout = layout;
-        app.diff_view = Some(crate::app::DiffView::new(
+        app.open_diff_view(crate::app::DiffView::new(
             1,
             "o/r".to_string(),
             ONE_LINE_DIFF.to_string(),
         ));
         terminal.draw(|f| render(f, &mut app)).unwrap();
-        app.diff_view.is_some_and(|view| view.side_by_side)
+        app.diff_view().is_some_and(|view| view.side_by_side)
     }
 
     #[test]
@@ -2487,10 +2342,10 @@ diff --git a/a.rs b/a.rs
         let mut view = crate::app::DiffView::new(1, "o/r".to_string(), ONE_LINE_DIFF.to_string());
         view.selection_start = Some(4);
         view.selection_end = Some(5);
-        app.diff_view = Some(view);
+        app.open_diff_view(view);
 
         terminal.draw(|f| render(f, &mut app)).unwrap();
-        let view = app.diff_view.as_mut().expect("diff view open");
+        let view = app.diff_view_mut().expect("diff view open");
         assert_eq!(
             (view.side_by_side, view.selection_start, view.selection_end),
             (false, Some(4), Some(5))
@@ -2499,7 +2354,7 @@ diff --git a/a.rs b/a.rs
         view.selection_start = None;
         view.selection_end = None;
         terminal.draw(|f| render(f, &mut app)).unwrap();
-        assert!(app.diff_view.is_some_and(|view| view.side_by_side));
+        assert!(app.diff_view().is_some_and(|view| view.side_by_side));
     }
 
     #[test]
@@ -2514,7 +2369,7 @@ diff --git a/a.rs b/a.rs
         );
         view.search("foo");
         assert_eq!(view.search_matches.len(), 2, "unified counts both lines");
-        app.diff_view = Some(view);
+        app.open_diff_view(view);
 
         terminal.draw(|f| render(f, &mut app)).unwrap();
         let title = rendered_rows(&terminal)

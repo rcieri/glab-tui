@@ -40,7 +40,7 @@ pub fn handle_mouse_event(
                 }
                 match kind {
                     OverlayKind::Selector | OverlayKind::ColumnFilter => {
-                        if let Some(ref mut sel) = app.selector {
+                        if let Some(sel) = app.selector_mut() {
                             let delta: i32 = if scroll_down { 1 } else { -1 };
                             let new_idx = (sel.cursor_idx as i32 + delta).max(0) as usize;
                             if new_idx < sel.get_filtered_items().len() {
@@ -51,7 +51,7 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::EditMenu => {
-                        if let Some(ref mut menu) = app.edit_menu {
+                        if let Some(menu) = app.edit_menu_mut() {
                             let is_new = menu.is_new();
                             let max = if is_new {
                                 menu.fields.len()
@@ -86,16 +86,20 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::Configure => {
-                        let new = if scroll_down {
-                            app.column_checklist_idx.saturating_add(1)
-                        } else {
-                            app.column_checklist_idx.saturating_sub(1)
-                        };
-                        app.column_checklist_idx = new;
+                        let last = crate::configure_view::configure_rows(app)
+                            .len()
+                            .saturating_sub(1);
+                        if let Some(c) = app.configure_mut() {
+                            c.focused_row = if scroll_down {
+                                c.focused_row.saturating_add(1).min(last)
+                            } else {
+                                c.focused_row.saturating_sub(1)
+                            };
+                        }
                         return;
                     }
                     OverlayKind::DatePicker => {
-                        if let Some(ref mut dp) = app.date_picker {
+                        if let Some(dp) = app.date_picker_mut() {
                             if scroll_down {
                                 dp.day =
                                     (dp.day + 1).min(crate::app::days_in_month(dp.year, dp.month));
@@ -106,7 +110,7 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::ReviewThreads => {
-                        if let Some(overview) = &mut app.review_threads {
+                        if let Some(overview) = app.review_threads_mut() {
                             let over_list = overview
                                 .list_rect
                                 .is_some_and(|r| rect_contains(r, row, col));
@@ -142,14 +146,21 @@ pub fn handle_mouse_event(
                 }
             }
 
+            // A modal without a recorded rect, like the diff, still owns the screen
+            if app.has_modal() {
+                return;
+            }
+
             // Fallback: content area scrolling
-            if let Some(content_rect) = app.content_rect {
+            let content_rect = app.layout.map(|l| l.content_area);
+            if let Some(content_rect) = content_rect {
                 if rect_contains(content_rect, row, col) {
                     app.scroll_active_table(scroll_down);
                     return;
                 }
             }
-            if let Some(detail_rect) = app.detail_rect {
+            let detail_rect = app.layout.and_then(|l| l.detail_rect_opt());
+            if let Some(detail_rect) = detail_rect {
                 if rect_contains(detail_rect, row, col) {
                     if scroll_down {
                         app.detail_scroll = app.detail_scroll.saturating_add(1);
@@ -183,7 +194,7 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::Configure => {
-                        handle_configure_mouse(app, *rect, row);
+                        handle_configure_mouse(app, row, tx, fx);
                         return;
                     }
                     OverlayKind::DatePicker => {
@@ -191,9 +202,7 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::Selector => {
-                        let has_search = app.selector.as_ref().is_some_and(|s| {
-                            s.field_type != "comment_action_select" && s.field_type != "related_mrs"
-                        });
+                        let has_search = app.selector().is_some_and(|s| s.has_filter_bar());
                         let sr = if has_search { 3 } else { 0 };
                         let notice_rows = if app.modal_notice().is_some() {
                             crate::ui::MODAL_NOTICE_ROWS
@@ -201,6 +210,9 @@ pub fn handle_mouse_event(
                             0
                         };
                         handle_selector_mouse(app, inner, row, sr, 1 + notice_rows);
+                        return;
+                    }
+                    OverlayKind::TextInput => {
                         return;
                     }
                     OverlayKind::ReviewSubmit => {
@@ -212,7 +224,7 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::ReviewThreads => {
-                        if let Some(overview) = &mut app.review_threads {
+                        if let Some(overview) = app.review_threads_mut() {
                             if let Some(list) =
                                 overview.list_rect.filter(|r| rect_contains(*r, row, col))
                             {
@@ -233,19 +245,30 @@ pub fn handle_mouse_event(
                 }
             }
 
+            // A modal without a recorded rect, like the diff, still owns the screen
+            if app.has_modal() {
+                return;
+            }
+
             // Fallback: sidebar / content clicks
-            if let Some(sidebar_rect) = app.sidebar_rect {
+            let sidebar_rect = app.layout.and_then(|l| l.sidebar_rect_opt());
+            if let Some(sidebar_rect) = sidebar_rect {
                 if rect_contains(sidebar_rect, row, col) {
-                    let tab_idx = (row - sidebar_rect.y - 1) as usize;
                     let tabs = app.available_tabs();
-                    if tab_idx < tabs.len() {
-                        app.active_tab = tabs[tab_idx];
+                    let inner = border_inner(sidebar_rect);
+                    let clicked = rect_contains(inner, row, col)
+                        .then(|| tabs.get(usize::from(row - inner.y)).copied())
+                        .flatten();
+                    if let Some(tab) = clicked.filter(|tab| *tab != app.active_tab) {
+                        app.switch_to_tab(tab);
+                        crate::handlers::tabs::load_entered_tab(app, tx, fx);
                     }
                     return;
                 }
             }
 
-            if let Some(content_rect) = app.content_rect {
+            let content_rect = app.layout.map(|l| l.content_area);
+            if let Some(content_rect) = content_rect {
                 if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
                     let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
                     app.click_active_table_row(row_idx);
@@ -264,7 +287,7 @@ fn handle_selector_mouse(
     search_rows: u16,
     footer_rows: u16,
 ) {
-    let sel = match &mut app.selector {
+    let sel = match app.selector_mut() {
         Some(s) => s,
         None => return,
     };
@@ -315,7 +338,7 @@ fn handle_selector_mouse(
 
 /// Mouse click on edit menu field list area.
 fn handle_edit_menu_mouse(app: &mut App, inner: ratatui::layout::Rect, row: u16, _col: u16) {
-    let menu = match &mut app.edit_menu {
+    let menu = match app.edit_menu_mut() {
         Some(m) => m,
         None => return,
     };
@@ -340,7 +363,10 @@ fn handle_edit_menu_mouse(app: &mut App, inner: ratatui::layout::Rect, row: u16,
 
 /// Mouse click on save submenu.
 fn handle_save_menu_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, _col: u16) {
-    if !app.save_menu_open {
+    let Some(c) = app.configure_mut() else {
+        return;
+    };
+    if !c.save_menu_open {
         return;
     }
     let inner = border_inner(rect);
@@ -349,9 +375,9 @@ fn handle_save_menu_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
     }
     let idx = (row - inner.y) as usize;
     match idx {
-        0 => app.save_menu_selection = Some(SaveMenu::Local),
-        1 => app.save_menu_selection = Some(SaveMenu::Global),
-        2 => app.save_menu_selection = Some(SaveMenu::Cancel),
+        0 => c.save_menu_selection = Some(SaveMenu::Local),
+        1 => c.save_menu_selection = Some(SaveMenu::Global),
+        2 => c.save_menu_selection = Some(SaveMenu::Cancel),
         _ => {}
     }
 }
@@ -359,7 +385,7 @@ fn handle_save_menu_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
 /// Mouse click on date picker.
 fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
     use chrono::Datelike;
-    let dp = match &mut app.date_picker {
+    let dp = match app.date_picker_mut() {
         Some(d) => d,
         None => return,
     };
@@ -418,79 +444,27 @@ fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16
     }
 }
 
-/// Mouse click on column configure overlay.
-fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16) {
-    let tab = app.active_tab;
-    let kind = app.kind();
-    let cols = tab.columns(kind, app.scope.is_group());
-    let group_cols: Vec<&str> = cols.to_vec();
-    let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
-
-    // Build layout same as rendering
-    let inner = border_inner(rect);
-    let mut y_off = inner.y;
-
-    // Skip COLUMNS header
-    y_off += 1;
-    // Each column item
-    let col_start = y_off;
-    let col_end = col_start + columns_list.len() as u16;
-    y_off = col_end;
-    y_off += 1; // spacer
-    // GROUP BY header
-    y_off += 1;
-    let group_start = y_off;
-    let group_end = group_start + group_cols.len() as u16;
-    y_off = group_end;
-    y_off += 1; // spacer
-    // ORDER header
-    y_off += 1;
-    let order_start = y_off;
-    let order_end = order_start + 2;
-    y_off = order_end;
-    y_off += 1; // spacer
-    // PAGE SIZE
-    y_off += 1; // header
-    let page_size_start = y_off;
-    y_off += 1; // value
-    y_off += 1; // spacer
-    // SAVE
-    y_off += 1;
-    let save_y = y_off;
-
-    if row >= col_start && row < col_end {
-        let idx = (row - col_start) as usize;
-        if idx < columns_list.len() {
-            let (orig_idx, col_name) = columns_list[idx];
-            let col_str = col_name.to_string();
-            if let Some(set) = app.enabled_columns.get_mut(&tab) {
-                if set.contains(&col_str) {
-                    set.remove(&col_str);
-                } else {
-                    set.insert(col_str);
-                }
-                app.update_filter_selection();
-            }
-            app.column_checklist_idx = orig_idx;
-        }
-    } else if row >= group_start && row < group_end {
-        let idx = (row - group_start) as usize;
-        if idx < group_cols.len() {
-            let col = group_cols[idx];
-            app.group_by_column.insert(tab, Some(col.to_string()));
-            app.column_checklist_idx = cols.len() + idx;
-        }
-    } else if row >= order_start && row < order_end {
-        let idx = (row - order_start) as usize;
-        if idx == 0 {
-            app.group_ascending.insert(tab, true);
-        } else {
-            app.group_ascending.insert(tab, false);
-        }
-        app.column_checklist_idx = group_end as usize + idx;
-    } else if row == page_size_start {
-        app.editing_page_size = true;
-    } else if row == save_y {
-        app.save_menu_open = true;
+/// Mouse click on a Configure View row: focus it and act on it like `Space`.
+/// Ignored while the save menu is open or the page size is being typed, as
+/// keys are.
+fn handle_configure_mouse(app: &mut App, row: u16, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    if app
+        .configure()
+        .is_none_or(|c| c.save_menu_open || c.editing_page_size)
+    {
+        return;
     }
+    let Some(idx) = app.configure().and_then(|c| {
+        c.row_hits
+            .iter()
+            .find(|hit| hit.screen_row == row)
+            .map(|hit| hit.row)
+    }) else {
+        return;
+    };
+    let Some(clicked) = crate::configure_view::configure_rows(app).get(idx).copied() else {
+        return;
+    };
+    crate::handlers::overlays::configure::focus(app, idx);
+    crate::handlers::overlays::configure::activate_row(app, clicked, tx, fx);
 }

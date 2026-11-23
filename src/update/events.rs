@@ -256,10 +256,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.record_pr_stack(&pr.0, pr.1, stack);
                     app.update_filter_selection();
                     if let Some(action) = awaited {
-                        if app.selector.is_none()
-                            && app.submit_dialog.is_none()
-                            && app.selected_mr_ref().as_ref() == Some(&pr)
-                        {
+                        if !app.has_modal() && app.selected_mr_ref().as_ref() == Some(&pr) {
                             crate::handlers::tabs::run_stack_action(app, &pr.0, pr.1, action);
                         }
                     }
@@ -623,7 +620,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 crate::utils::cache::save_cache(&project, &proj_cache);
             }
 
-            if let Some(mut sel) = app.selector.take() {
+            if let Some(sel) = app.selector_mut() {
                 let updated = match sel.field_type.as_str() {
                     "labels" if !labels.is_empty() => {
                         sel.all_items = labels.into_iter().map(|l| l.name).collect();
@@ -648,7 +645,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 if updated {
                     sel.is_loading = false;
                 }
-                app.selector = Some(sel);
             }
         }
         Event::DeploymentsFetched {
@@ -726,14 +722,17 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             let mut diff_view = *diff_view;
             let mr_iid = diff_view.mr_iid;
             let held_back = app.restore_draft_comments(&diff_view);
-            let previous = app.diff_view.take().filter(|v| v.mr_iid == mr_iid);
-            let reopened = previous.is_none();
+            let previous_sync = app
+                .diff_view_mut()
+                .filter(|v| v.mr_iid == mr_iid)
+                .map(|v| v.viewed_sync.take());
+            let reopened = previous_sync.is_none();
             diff_view.restore_review_state(
                 &app.review_marks_for_mr(mr_iid),
                 viewed_files,
                 app.hide_reviewed_files,
             );
-            diff_view.adopt_viewed_sync(previous.and_then(|v| v.viewed_sync));
+            diff_view.adopt_viewed_sync(previous_sync.flatten());
             app.store_review_marks(mr_iid, diff_view.review_marks());
             let changed = diff_view.changed_since_review.len();
             if reopened && changed > 0 {
@@ -741,7 +740,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     "{changed} reviewed file(s) changed since you reviewed them"
                 ));
             }
-            app.diff_view = Some(diff_view);
+            app.open_diff_view(diff_view);
             if held_back > 0 {
                 app.raise_error_toast(if held_back == 1 {
                     "1 draft comment no longer matches the diff and was set aside".to_string()
@@ -758,9 +757,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.show_cli_error(format!("Failed to load review comments: {err}"));
                 }
             }
-            if let (Some(overview), Some(diff_view)) =
-                (app.review_threads.as_mut(), app.diff_view.as_ref())
-            {
+            let mut diff_ref: Option<&crate::app::DiffView> = None;
+            let mut overview_mut: Option<&mut crate::app::ReviewThreadsOverview> = None;
+            for m in &mut app.modal_stack {
+                match m {
+                    crate::app::Modal::Diff(d) => diff_ref = Some(&**d),
+                    crate::app::Modal::ReviewThreads(r) => overview_mut = Some(&mut **r),
+                    _ => {}
+                }
+            }
+            if let (Some(overview), Some(diff_view)) = (overview_mut, diff_ref) {
                 overview.refresh(&app.current_comments, diff_view);
             }
             app.last_fetched_mr_iid = Some(mr_iid);
@@ -781,10 +787,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         }
         Event::ViewedSyncFlush(mr_iid) => {
             let sender = app.scoped_sender(tx.clone());
-            let (Some(diff_view), Some(client)) = (
-                app.diff_view.as_mut().filter(|v| v.mr_iid == mr_iid),
-                app.gitlab_client.as_ref(),
-            ) else {
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let Some(diff_view) = app.diff_view_mut().filter(|v| v.mr_iid == mr_iid) else {
                 return;
             };
             let Some(sync) = diff_view.viewed_sync.as_mut() else {
@@ -793,7 +799,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             let changes = sync.take_changes();
             if !changes.is_empty() {
                 let pull_request_id = sync.pull_request_id().to_string();
-                crate::fetch::spawn_viewed_files_sync(fx, client, pull_request_id, changes, sender);
+                crate::fetch::spawn_viewed_files_sync(
+                    fx,
+                    &client,
+                    pull_request_id,
+                    changes,
+                    sender,
+                );
             }
         }
         Event::ViewedFilesSynced {
@@ -803,7 +815,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         } => {
             let sender = app.scoped_sender(tx.clone());
             let mut reverted_marks = None;
-            if let Some(diff_view) = app.diff_view.as_mut()
+            if let Some(diff_view) = app.diff_view_mut()
                 && let Some(sync) = diff_view
                     .viewed_sync
                     .as_mut()
@@ -918,11 +930,12 @@ fn refetch_after_mutation(
             app.scoped_sender(tx.clone()),
         );
     }
-    let (Some(diff_view), Some(client)) = (&app.diff_view, app.gitlab_client.clone()) else {
+    let (Some((project_context, mr_iid)), Some(client)) = (
+        app.diff_view().map(|d| (d.project_path.clone(), d.mr_iid)),
+        app.gitlab_client.clone(),
+    ) else {
         return;
     };
-    let project_context = diff_view.project_path.clone();
-    let mr_iid = diff_view.mr_iid;
     let sync_viewed = app.config.sync_viewed_files;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {

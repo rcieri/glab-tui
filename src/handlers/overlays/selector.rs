@@ -56,29 +56,29 @@ pub fn handle_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let Some(mut selector) = app.selector.take() else {
+    let Some(mut selector) = app.pop_selector() else {
         return;
     };
     if selector.is_filtering {
         match key_event.code {
             KeyCode::Enter | KeyCode::Esc => {
                 selector.is_filtering = false;
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             KeyCode::Backspace => {
                 selector.search_query.pop();
                 selector.cursor_idx = 0;
                 selector.state.select(Some(0));
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             KeyCode::Char(c) => {
                 selector.search_query.push(c);
                 selector.cursor_idx = 0;
                 selector.state.select(Some(0));
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             _ => {
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
         }
     } else {
@@ -96,26 +96,23 @@ pub fn handle_key(
                     selector.search_query.clear();
                     selector.cursor_idx = 0;
                     selector.state.select(Some(0));
-                    app.selector = Some(selector);
+                    app.push_modal(crate::app::Modal::Selector(selector));
                 }
                 // else: leave the selector taken out so the
                 // caller closes it (EditMenu stays open).
             }
             Some(Action::SelectorFilter) => {
-                let has_filter = selector.field_type != "comment_action_select"
-                    && selector.field_type != "related_mrs"
-                    && selector.field_type != "linked_issues";
-                if has_filter {
+                if selector.has_filter_bar() {
                     selector.is_filtering = true;
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorNext) => {
                 if !filtered_items.is_empty() {
                     selector.cursor_idx = (selector.cursor_idx + 1) % filtered_items.len();
                     selector.state.select(Some(selector.cursor_idx));
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorPrevious) => {
                 if !filtered_items.is_empty() {
@@ -126,7 +123,7 @@ pub fn handle_key(
                     }
                     selector.state.select(Some(selector.cursor_idx));
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             // The selector does not store its list height, so a
             // half page is a fixed number of rows.
@@ -136,7 +133,7 @@ pub fn handle_key(
                 .matches(Action::GlobalScrollHalfPageDown, key_event) =>
             {
                 selector.move_by(true, SELECTOR_HALF_PAGE_ROWS);
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             _ if app
                 .config
@@ -144,7 +141,7 @@ pub fn handle_key(
                 .matches(Action::GlobalScrollHalfPageUp, key_event) =>
             {
                 selector.move_by(false, SELECTOR_HALF_PAGE_ROWS);
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorToggle) => {
                 if !filtered_items.is_empty() {
@@ -176,7 +173,7 @@ pub fn handle_key(
                         selector.selected_items.insert(item.clone());
                     }
                 }
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
             Some(Action::SelectorConfirm) => {
                 let field_type = selector.field_type.clone();
@@ -325,7 +322,9 @@ pub fn handle_key(
                                 crate::utils::cache::add_recent_repo(&target_path_str);
                                 app.config = crate::config::Config::load();
                                 app.apply_config();
-                                app.load_keybindings();
+                                app.land_on_available_tab();
+                                let problems = app.load_keybindings();
+                                app.report_config_problems(problems);
                                 crate::config::reload_command_timeout();
 
                                 if let Ok(context) = domain::client::get_project_context() {
@@ -346,7 +345,7 @@ pub fn handle_key(
                                 app.milestones.items.clear();
                                 app.pipeline_jobs.clear();
                                 app.fetching_pipelines.clear();
-                                app.edit_menu = None;
+                                app.close_edit_menu();
                                 app.selected_milestone_issues = None;
                                 app.selected_milestone_iid = None;
 
@@ -452,7 +451,7 @@ pub fn handle_key(
                             desc_val = content.clone();
                         }
                     }
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         if let Some(f) = menu.fields.iter_mut().find(|f| {
                             (f.label == "Description" || f.label == "Release Notes")
                                 && f.kind == crate::app::FieldType::Text
@@ -505,10 +504,10 @@ pub fn handle_key(
 
                 if field_type == crate::app::THEME_PICKER_FIELD_TYPE {
                     let picked = selector.highlighted_theme();
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(name) = picked {
                         app.config.theme_preset = Some(name);
-                        app.apply_config();
+                        app.apply_theme();
                     }
                     return;
                 }
@@ -525,7 +524,7 @@ pub fn handle_key(
                         .next()
                         .cloned()
                         .or_else(|| filtered_items.get(selector.cursor_idx).cloned());
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(item) = picked {
                         if let Some(iid_str) = item
                             .strip_prefix('!')
@@ -562,7 +561,7 @@ pub fn handle_key(
                         .next()
                         .cloned()
                         .or_else(|| filtered_items.get(selector.cursor_idx).cloned());
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(item) = picked {
                         let iid_str = item.split_whitespace().find_map(|tok| {
                             tok.strip_prefix('#')
@@ -606,7 +605,7 @@ pub fn handle_key(
                         .next()
                         .cloned()
                         .or_else(|| filtered_items.get(selector.cursor_idx).cloned());
-                    app.selector = None;
+                    app.close_selector();
                     if let Some(item) = picked {
                         if let Some(iid_str) = item
                             .strip_prefix('#')
@@ -710,8 +709,9 @@ pub fn handle_key(
                             if let Ok(n) = idx_str.trim().parse::<usize>() {
                                 let draft_idx = n.saturating_sub(1);
                                 if draft_idx < app.draft_comments.len() {
-                                    app.selector =
-                                        Some(crate::app::Selector::draft_actions(draft_idx));
+                                    app.open_selector(crate::app::Selector::draft_actions(
+                                        draft_idx,
+                                    ));
                                     return;
                                 }
                             }
@@ -725,20 +725,22 @@ pub fn handle_key(
                                     .find(|c| c.id == Some(comment_id))
                                     .cloned()
                                 {
-                                    app.selector = crate::app::Selector::comment_actions(
+                                    if let Some(actions) = crate::app::Selector::comment_actions(
                                         &comment,
                                         selector.entity_iid,
                                         app.is_github(),
-                                    );
-                                    return;
+                                    ) {
+                                        app.open_selector(actions);
+                                        return;
+                                    }
                                 }
                                 // Edit entity: close menu, writes happen on field-level handlers
-                                app.edit_menu = None;
+                                app.close_edit_menu();
                                 return;
                             }
                         }
                     }
-                    app.selector = None;
+                    app.close_selector();
                     return;
                 }
 
@@ -749,7 +751,7 @@ pub fn handle_key(
                         selected_val = Some(filtered_items[selector.cursor_idx].clone());
                     }
 
-                    app.selector = None;
+                    app.close_selector();
 
                     if let Some(action_str) = selected_val {
                         // The single-match `a` path and
@@ -775,8 +777,7 @@ pub fn handle_key(
                                     "Delete Draft" => {
                                         app.draft_comments.remove(draft_idx);
                                         if let Some((project, mr_iid)) = app
-                                            .diff_view
-                                            .as_ref()
+                                            .diff_view()
                                             .map(|d| (d.project_path.clone(), d.mr_iid))
                                         {
                                             app.persist_draft_comments(&project, mr_iid);
@@ -804,7 +805,7 @@ pub fn handle_key(
                                         .discussion_id
                                         .clone()
                                         .unwrap_or_else(|| comment_id.to_string());
-                                    app.text_input = Some(crate::app::TextInput::new(
+                                    app.open_text_input(crate::app::TextInput::new(
                                         format!(" Reply to @{} ", comment.author.username),
                                         String::new(),
                                         crate::app::TextInputAction::ReplyToComment {
@@ -966,7 +967,7 @@ pub fn handle_key(
                             desc_val = content.clone();
                         }
                     }
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         if let Some(f) = menu
                             .fields
                             .iter_mut()
@@ -986,7 +987,7 @@ pub fn handle_key(
                             };
                         }
                     }
-                    app.selector = None;
+                    app.close_selector();
                     return;
                 }
 
@@ -998,15 +999,14 @@ pub fn handle_key(
                     }
                     if let Some(val) = selected_val {
                         let current_val = app
-                            .edit_menu
-                            .as_ref()
+                            .edit_menu()
                             .and_then(|m| m.fields.iter().find(|f| f.label == "Create from Issue"))
                             .map(|f| f.value.clone())
                             .unwrap_or_default();
 
                         if val == current_val {
                             // Deselect if it's already selected
-                            if let Some(ref mut menu) = app.edit_menu {
+                            if let Some(ref mut menu) = app.edit_menu_mut() {
                                 for label in [
                                     "Title",
                                     "Source Branch",
@@ -1028,9 +1028,8 @@ pub fn handle_key(
                                 .strip_prefix('#')
                                 .and_then(|s| s.split(|c: char| !c.is_numeric()).next())
                                 .and_then(|s| s.parse::<u64>().ok());
-                            if let Some(iid) = parsed_iid {
-                                if let Some(issue) = app.issues.items.iter().find(|i| i.iid == iid)
-                                {
+                            let issue_details = parsed_iid.and_then(|iid| {
+                                app.issues.items.iter().find(|i| i.iid == iid).map(|issue| {
                                     let title = issue.title.clone();
                                     let source_branch =
                                         format!("{}-{}", issue.iid, slugify(&issue.title));
@@ -1054,34 +1053,52 @@ pub fn handle_key(
                                         .as_ref()
                                         .map(|m| m.title.clone())
                                         .unwrap_or_default();
-                                    if let Some(ref mut menu) = app.edit_menu {
-                                        for (label, value) in [
-                                            ("Title", title.clone()),
-                                            ("Source Branch", source_branch),
-                                            ("Assignees", assignees.clone()),
-                                            ("Milestone", milestone),
-                                            ("Labels", labels.clone()),
-                                        ] {
-                                            if let Some(f) =
-                                                menu.fields.iter_mut().find(|f| f.label == label)
-                                            {
-                                                f.value = value;
-                                            }
-                                        }
-                                        if let Some(f) = menu
-                                            .fields
-                                            .iter_mut()
-                                            .find(|f| f.label == "Create from Issue")
+                                    (
+                                        issue.iid,
+                                        title,
+                                        source_branch,
+                                        labels,
+                                        assignees,
+                                        milestone,
+                                    )
+                                })
+                            });
+                            if let Some((
+                                issue_iid,
+                                title,
+                                source_branch,
+                                labels,
+                                assignees,
+                                milestone,
+                            )) = issue_details
+                            {
+                                if let Some(ref mut menu) = app.edit_menu_mut() {
+                                    for (label, value) in [
+                                        ("Title", title),
+                                        ("Source Branch", source_branch),
+                                        ("Assignees", assignees),
+                                        ("Milestone", milestone),
+                                        ("Labels", labels),
+                                    ] {
+                                        if let Some(f) =
+                                            menu.fields.iter_mut().find(|f| f.label == label)
                                         {
-                                            f.value = val.clone();
+                                            f.value = value;
                                         }
-                                        menu.entity_iid = issue.iid;
                                     }
+                                    if let Some(f) = menu
+                                        .fields
+                                        .iter_mut()
+                                        .find(|f| f.label == "Create from Issue")
+                                    {
+                                        f.value = val.clone();
+                                    }
+                                    menu.entity_iid = issue_iid;
                                 }
                             }
                         }
                     }
-                    app.selector = None;
+                    app.close_selector();
                     return;
                 }
 
@@ -1113,9 +1130,10 @@ pub fn handle_key(
                     }
                 }
 
-                if app.edit_menu.is_some() {
+                if app.edit_menu().is_some() {
+                    let mut project_fetch_val = None;
                     // Write the values directly to the active field of app.edit_menu
-                    if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(ref mut menu) = app.edit_menu_mut() {
                         let target_field_name = match field_type.as_str() {
                             "labels" => "Labels",
                             "assignees" => "Assignees",
@@ -1170,87 +1188,7 @@ pub fn handle_key(
                                         && crate::backend::glab::validate_project_path(&display_val)
                                             .is_ok()
                                     {
-                                        if let Some(client) = &app.gitlab_client {
-                                            let client = client.clone();
-                                            let proj_scope = crate::scope::Scope::Repository(
-                                                display_val.clone(),
-                                            );
-                                            let tx = crate::event::ScopedSender::new(
-                                                tx.clone(),
-                                                app.scope_generation,
-                                            );
-                                            let (c1, c2, c3, c4) = (
-                                                client.clone(),
-                                                client.clone(),
-                                                client.clone(),
-                                                client.clone(),
-                                            );
-                                            let (p1, p2, p3, p4) = (
-                                                proj_scope.clone(),
-                                                proj_scope.clone(),
-                                                proj_scope.clone(),
-                                                proj_scope.clone(),
-                                            );
-                                            let (d1, d2, d3, d4) = (
-                                                display_val.clone(),
-                                                display_val.clone(),
-                                                display_val.clone(),
-                                                display_val.clone(),
-                                            );
-                                            let (tx1, tx2, tx3, tx4) =
-                                                (tx.clone(), tx.clone(), tx.clone(), tx.clone());
-
-                                            fx.spawn(async move {
-                                                if let Ok(labels) = c1.fetch_labels(&p1).await {
-                                                    let _ =
-                                                        tx1.send(Event::ProjectAttributesFetched {
-                                                            project: d1,
-                                                            labels,
-                                                            members: Vec::new(),
-                                                            milestones: Vec::new(),
-                                                            branches: Vec::new(),
-                                                        });
-                                                }
-                                            });
-                                            fx.spawn(async move {
-                                                if let Ok(members) = c2.fetch_members(&p2).await {
-                                                    let _ =
-                                                        tx2.send(Event::ProjectAttributesFetched {
-                                                            project: d2,
-                                                            labels: Vec::new(),
-                                                            members,
-                                                            milestones: Vec::new(),
-                                                            branches: Vec::new(),
-                                                        });
-                                                }
-                                            });
-                                            fx.spawn(async move {
-                                                if let Ok(milestones) =
-                                                    c3.fetch_milestones(&p3).await
-                                                {
-                                                    let _ =
-                                                        tx3.send(Event::ProjectAttributesFetched {
-                                                            project: d3,
-                                                            labels: Vec::new(),
-                                                            members: Vec::new(),
-                                                            milestones,
-                                                            branches: Vec::new(),
-                                                        });
-                                                }
-                                            });
-                                            fx.spawn(async move {
-                                                if let Ok(branches) = c4.fetch_branches(&p4).await {
-                                                    let _ =
-                                                        tx4.send(Event::ProjectAttributesFetched {
-                                                            project: d4,
-                                                            labels: Vec::new(),
-                                                            members: Vec::new(),
-                                                            milestones: Vec::new(),
-                                                            branches,
-                                                        });
-                                                }
-                                            });
-                                        }
+                                        project_fetch_val = Some(display_val.clone());
                                     }
                                 }
 
@@ -1299,6 +1237,80 @@ pub fn handle_key(
                             }
                         }
                     }
+
+                    if let Some(display_val) = project_fetch_val {
+                        if let Some(client) = &app.gitlab_client {
+                            let client = client.clone();
+                            let proj_scope = crate::scope::Scope::Repository(display_val.clone());
+                            let tx =
+                                crate::event::ScopedSender::new(tx.clone(), app.scope_generation);
+                            let (c1, c2, c3, c4) = (
+                                client.clone(),
+                                client.clone(),
+                                client.clone(),
+                                client.clone(),
+                            );
+                            let (p1, p2, p3, p4) = (
+                                proj_scope.clone(),
+                                proj_scope.clone(),
+                                proj_scope.clone(),
+                                proj_scope.clone(),
+                            );
+                            let (d1, d2, d3, d4) = (
+                                display_val.clone(),
+                                display_val.clone(),
+                                display_val.clone(),
+                                display_val.clone(),
+                            );
+                            let (tx1, tx2, tx3, tx4) =
+                                (tx.clone(), tx.clone(), tx.clone(), tx.clone());
+
+                            fx.spawn(async move {
+                                if let Ok(labels) = c1.fetch_labels(&p1).await {
+                                    let _ = tx1.send(Event::ProjectAttributesFetched {
+                                        project: d1,
+                                        labels,
+                                        members: Vec::new(),
+                                        milestones: Vec::new(),
+                                        branches: Vec::new(),
+                                    });
+                                }
+                            });
+                            fx.spawn(async move {
+                                if let Ok(members) = c2.fetch_members(&p2).await {
+                                    let _ = tx2.send(Event::ProjectAttributesFetched {
+                                        project: d2,
+                                        labels: Vec::new(),
+                                        members,
+                                        milestones: Vec::new(),
+                                        branches: Vec::new(),
+                                    });
+                                }
+                            });
+                            fx.spawn(async move {
+                                if let Ok(milestones) = c3.fetch_milestones(&p3).await {
+                                    let _ = tx3.send(Event::ProjectAttributesFetched {
+                                        project: d3,
+                                        labels: Vec::new(),
+                                        members: Vec::new(),
+                                        milestones,
+                                        branches: Vec::new(),
+                                    });
+                                }
+                            });
+                            fx.spawn(async move {
+                                if let Ok(branches) = c4.fetch_branches(&p4).await {
+                                    let _ = tx4.send(Event::ProjectAttributesFetched {
+                                        project: d4,
+                                        labels: Vec::new(),
+                                        members: Vec::new(),
+                                        milestones: Vec::new(),
+                                        branches,
+                                    });
+                                }
+                            });
+                        }
+                    }
                 } else {
                     apply_selector_changes(
                         app,
@@ -1314,7 +1326,7 @@ pub fn handle_key(
                 }
             }
             _ => {
-                app.selector = Some(selector);
+                app.push_modal(crate::app::Modal::Selector(selector));
             }
         }
     }

@@ -3,8 +3,8 @@
 //! Both mocks serve `mr_diff.txt` as the diff. `glab` serves `mr_notes.json`
 //! as the MR notes and `mr_view.json` (which carries the diff refs) as the MR;
 //! `gh` serves `gh_pr_comments.json`, `gh_review_threads.json` and
-//! `gh_pr_conversation.json` (conversation comments and reviews). Request
-//! bodies piped to `glab api`/`gh api` are appended to `<log>.stdin`.
+//! `gh_pr_conversation.json` (conversation comments and reviews). The mocks
+//! record each request body piped to `glab api`/`gh api` with its call.
 
 use crate::{Sandbox, find_glab_tui_binary};
 use serde_json::Value;
@@ -52,12 +52,10 @@ fn cli_calls(sandbox: &Sandbox) -> Vec<String> {
 }
 
 fn request_bodies(sandbox: &Sandbox) -> Vec<Value> {
-    let path = format!("{}.stdin", sandbox.log_path.display());
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("request body should be JSON"))
+    sandbox
+        .request_bodies()
+        .iter()
+        .map(|body| serde_json::from_str(body).expect("request body should be JSON"))
         .collect()
 }
 

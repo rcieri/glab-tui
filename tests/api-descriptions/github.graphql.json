@@ -26,7 +26,7 @@
     "DeploymentConnection": {
       "fields": {
         "nodes": {
-          "type": "Deployment"
+          "type": "[Deployment]"
         }
       },
       "kind": "object"
@@ -34,7 +34,7 @@
     "DeploymentStatus": {
       "fields": {
         "state": {
-          "type": "DeploymentStatusState"
+          "type": "DeploymentStatusState!"
         }
       },
       "kind": "object"
@@ -67,13 +67,13 @@
           "type": "PullRequestConnection"
         },
         "number": {
-          "type": "Int"
+          "type": "Int!"
         },
         "state": {
-          "type": "IssueState"
+          "type": "IssueState!"
         },
         "title": {
-          "type": "String"
+          "type": "String!"
         }
       },
       "kind": "object"
@@ -81,7 +81,7 @@
     "IssueConnection": {
       "fields": {
         "nodes": {
-          "type": "Issue"
+          "type": "[Issue]"
         }
       },
       "kind": "object"
@@ -95,7 +95,7 @@
           "type": "String"
         },
         "hasNextPage": {
-          "type": "Boolean"
+          "type": "Boolean!"
         }
       },
       "kind": "object"
@@ -124,13 +124,13 @@
           "type": "PullRequestChangedFileConnection"
         },
         "id": {
-          "type": "ID"
+          "type": "ID!"
         },
         "isDraft": {
-          "type": "Boolean"
+          "type": "Boolean!"
         },
         "number": {
-          "type": "Int"
+          "type": "Int!"
         },
         "reviewThreads": {
           "args": [
@@ -139,7 +139,7 @@
             "first",
             "last"
           ],
-          "type": "PullRequestReviewThreadConnection"
+          "type": "PullRequestReviewThreadConnection!"
         },
         "stack": {
           "type": "PullRequestStack"
@@ -148,10 +148,10 @@
           "type": "PullRequestStackEntry"
         },
         "state": {
-          "type": "PullRequestState"
+          "type": "PullRequestState!"
         },
         "title": {
-          "type": "String"
+          "type": "String!"
         }
       },
       "kind": "object"
@@ -159,10 +159,10 @@
     "PullRequestChangedFile": {
       "fields": {
         "path": {
-          "type": "String"
+          "type": "String!"
         },
         "viewerViewedState": {
-          "type": "FileViewedState"
+          "type": "FileViewedState!"
         }
       },
       "kind": "object"
@@ -170,10 +170,10 @@
     "PullRequestChangedFileConnection": {
       "fields": {
         "nodes": {
-          "type": "PullRequestChangedFile"
+          "type": "[PullRequestChangedFile]"
         },
         "pageInfo": {
-          "type": "PageInfo"
+          "type": "PageInfo!"
         }
       },
       "kind": "object"
@@ -181,7 +181,7 @@
     "PullRequestConnection": {
       "fields": {
         "nodes": {
-          "type": "PullRequest"
+          "type": "[PullRequest]"
         }
       },
       "kind": "object"
@@ -198,7 +198,7 @@
     "PullRequestReviewCommentConnection": {
       "fields": {
         "nodes": {
-          "type": "PullRequestReviewComment"
+          "type": "[PullRequestReviewComment]"
         }
       },
       "kind": "object"
@@ -213,10 +213,10 @@
             "last",
             "skip"
           ],
-          "type": "PullRequestReviewCommentConnection"
+          "type": "PullRequestReviewCommentConnection!"
         },
         "isResolved": {
-          "type": "Boolean"
+          "type": "Boolean!"
         }
       },
       "kind": "object"
@@ -224,10 +224,10 @@
     "PullRequestReviewThreadConnection": {
       "fields": {
         "nodes": {
-          "type": "PullRequestReviewThread"
+          "type": "[PullRequestReviewThread]"
         },
         "pageInfo": {
-          "type": "PageInfo"
+          "type": "PageInfo!"
         }
       },
       "kind": "object"
@@ -241,13 +241,13 @@
             "first",
             "last"
           ],
-          "type": "PullRequestStackEntryConnection"
+          "type": "PullRequestStackEntryConnection!"
         },
         "number": {
-          "type": "Int"
+          "type": "Int!"
         },
         "size": {
-          "type": "Int"
+          "type": "Int!"
         }
       },
       "kind": "object"
@@ -255,7 +255,7 @@
     "PullRequestStackEntry": {
       "fields": {
         "position": {
-          "type": "Int"
+          "type": "Int!"
         },
         "pullRequest": {
           "type": "PullRequest"
@@ -266,7 +266,7 @@
     "PullRequestStackEntryConnection": {
       "fields": {
         "nodes": {
-          "type": "PullRequestStackEntry"
+          "type": "[PullRequestStackEntry]"
         }
       },
       "kind": "object"
@@ -298,7 +298,7 @@
             "last",
             "orderBy"
           ],
-          "type": "DeploymentConnection"
+          "type": "DeploymentConnection!"
         },
         "issue": {
           "args": [

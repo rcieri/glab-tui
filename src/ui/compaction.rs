@@ -27,11 +27,11 @@ pub fn compact<L: Copy, R: Copy>(
 }
 
 /// Columns the list keeps when the preview sits beside it.
-const MIN_LIST_COLUMNS: u16 = 38;
+pub(crate) const MIN_LIST_COLUMNS: u16 = 38;
 
 /// Rows each of the list and the preview keeps when they are stacked: borders,
 /// a table header and a few rows.
-const MIN_STACKED_PANE_ROWS: u16 = 6;
+pub(crate) const MIN_STACKED_PANE_ROWS: u16 = 6;
 
 /// Columns the preview narrows to before it gives up its place beside the list.
 pub(crate) const MIN_PREVIEW_COLUMNS: u16 = 30;
@@ -68,11 +68,53 @@ const PREVIEW_RULES: &[PreviewRule] = &[
 /// preview and the `terminal_rows` high terminal log under the list, when the
 /// preview wants `preview_columns` beside the list.
 pub fn place_preview(area: Rect, preview_columns: u16, terminal_rows: u16) -> PreviewPlacement {
-    compact(
+    place_preview_from(
+        area,
         PreviewPlacement::Beside {
             columns: preview_columns,
         },
         PREVIEW_RULES,
+        terminal_rows,
+    )
+}
+
+/// Like [`place_preview`], for a preview that never leaves the side of the
+/// list: it narrows, then hides.
+pub fn place_preview_beside(
+    area: Rect,
+    preview_columns: u16,
+    terminal_rows: u16,
+) -> PreviewPlacement {
+    place_preview_from(
+        area,
+        PreviewPlacement::Beside {
+            columns: preview_columns,
+        },
+        &[PreviewRule::Narrow, PreviewRule::Hide],
+        terminal_rows,
+    )
+}
+
+/// Like [`place_preview`], for a preview stacked under the list from the
+/// start: the terminal log gives way, then the preview hides.
+pub fn place_preview_below(area: Rect, terminal_rows: u16) -> PreviewPlacement {
+    place_preview_from(
+        area,
+        PreviewPlacement::Below { terminal_log: true },
+        &[PreviewRule::DropTerminalLog, PreviewRule::Hide],
+        terminal_rows,
+    )
+}
+
+fn place_preview_from(
+    area: Rect,
+    full: PreviewPlacement,
+    rules: &[PreviewRule],
+    terminal_rows: u16,
+) -> PreviewPlacement {
+    compact(
+        full,
+        rules,
         |placement| match placement {
             PreviewPlacement::Beside { columns } => {
                 area.width >= columns.saturating_add(MIN_LIST_COLUMNS)

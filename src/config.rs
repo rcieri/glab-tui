@@ -1,3 +1,7 @@
+pub(crate) mod layout;
+
+pub use layout::{DEFAULT_PREVIEW_MIN_WIDTH, LayoutConfig, PaneSize, PreviewPlacement};
+
 use crate::utils::private_fs;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
@@ -966,6 +970,119 @@ fn merge_toml_values(base: &mut toml::Value, overrides: toml::Value) {
     }
 }
 
+/// The checkout holding the working directory: the nearest ancestor with a
+/// `.git` entry.
+fn find_git_root() -> Option<PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+/// The repo-local config files of the checkout holding the working
+/// directory, in the order `Config::load` merges them.
+fn repo_local_config_paths() -> Vec<PathBuf> {
+    let global = Config::config_path();
+    let global_canonical = std::fs::canonicalize(&global).ok();
+    find_git_root()
+        .map(|root| {
+            [
+                root.join(".glab-tui").join("config.toml"),
+                root.join(".config").join("glab-tui").join("config.toml"),
+            ]
+            .into_iter()
+            .filter(|path| {
+                if *path == global {
+                    return false;
+                }
+                if let (Some(c1), Some(c2)) = (std::fs::canonicalize(path).ok(), &global_canonical)
+                {
+                    if c1 == *c2 {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The pane names serialized in `save_layout`.
+pub const PANE_KEYS: [&str; 10] = [
+    "issues",
+    "mrs",
+    "pipelines",
+    "jobs",
+    "runners",
+    "releases",
+    "todos",
+    "milestones",
+    "branches",
+    "environments",
+];
+
+/// The top-level keys `save_layout` writes.
+const SAVED_KEYS: [&str; 14] = [
+    "theme_preset",
+    "page_size",
+    "prefetch_tabs",
+    "layout",
+    PANE_KEYS[0],
+    PANE_KEYS[1],
+    PANE_KEYS[2],
+    PANE_KEYS[3],
+    PANE_KEYS[4],
+    PANE_KEYS[5],
+    PANE_KEYS[6],
+    PANE_KEYS[7],
+    PANE_KEYS[8],
+    PANE_KEYS[9],
+];
+
+/// For each value `repo_local` sets, puts back in `written` what `global`
+/// (the global file before the save) held there, or removes it. The loaded
+/// config merges the repo-local files over the global one, so without this
+/// a Global save would copy their values into every repository's config.
+fn mask_repo_local_values(
+    written: &mut toml::Table,
+    global: Option<&toml::Table>,
+    repo_local: &toml::Table,
+) {
+    for (key, set) in repo_local {
+        let kept = global.and_then(|global| global.get(key));
+        if let toml::Value::Table(nested) = set
+            && written.get(key).is_none_or(toml::Value::is_table)
+        {
+            let mut inner = match written.remove(key) {
+                Some(toml::Value::Table(inner)) => inner,
+                _ => toml::Table::new(),
+            };
+            mask_repo_local_values(&mut inner, kept.and_then(toml::Value::as_table), nested);
+            if !inner.is_empty() {
+                written.insert(key.clone(), toml::Value::Table(inner));
+            }
+            continue;
+        }
+        match kept {
+            Some(value) => written.insert(key.clone(), value.clone()),
+            None => written.remove(key),
+        };
+    }
+}
+
+/// Rewrites one parsed config file into the shape `Config` reads, before it
+/// is merged with the others.
+fn normalize_config_file(file: &mut toml::Value) {
+    normalize_custom_keybindings(file);
+    layout::migrate_legacy_keys(file);
+}
+
 /// Renames gh-dash's `custom_keybindings.prs` table to `mrs` in one parsed
 /// file, appending to `mrs` when the file has both. Done per file before
 /// merging, because a merged value holding both keys is a duplicate field for
@@ -1327,24 +1444,6 @@ fn def_command_timeout_seconds() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct UiConfig {
-    pub sidebar_width: u16,
-    pub sidebar_visible: bool,
-    pub terminal_pane_visible: bool,
-}
-
-impl Default for UiConfig {
-    fn default() -> Self {
-        Self {
-            sidebar_width: 22,
-            sidebar_visible: true,
-            terminal_pane_visible: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Config {
     pub backend: Option<crate::backend::BackendKind>,
     /// A preset name, or `auto` to pick `theme_dark` or `theme_light` from
@@ -1387,8 +1486,7 @@ pub struct Config {
     pub command_timeout_seconds: u64,
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
-    pub disabled_tabs: Option<Vec<String>>,
-    pub ui: UiConfig,
+    pub layout: LayoutConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1422,8 +1520,7 @@ impl Default for Config {
             sync_viewed_files: def_sync_viewed_files(),
             command_timeout_seconds: def_command_timeout_seconds(),
             icons: IconSet::default(),
-            disabled_tabs: None,
-            ui: UiConfig::default(),
+            layout: LayoutConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -1545,9 +1642,31 @@ page_size = 100
 # purple_bg = "{purple_bg}"
 
 
-# Tabs to disable/hide from the sidebar.
-# Uncomment to disable specific tabs:
-# disabled_tabs = ["Runners", "Terminal"]
+# Tabs, panes and their sizes. The Configure View (`Tab`) edits all of these
+# except the *_min_* thresholds, and its Save View button writes them here.
+# [layout]
+# Tabs to show, in order. A tab left out is hidden; unset or empty shows every
+# tab, and a name that is no tab is skipped (reported in the Terminal tab). A
+# [layout] value its key cannot hold keeps the default and is reported too.
+# Names: issues, mrs, pipelines, jobs, runners, releases, todos, milestones,
+# branches, environments, terminal.
+# tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
+# nav_visible = true            # navigation sidebar (toggle_nav, Alt+n)
+# nav_width = 22
+# nav_min_width = 80            # the sidebar hides on narrower terminals
+# preview = "auto"              # auto (below the list when narrow) | right | bottom | off
+# preview_width = "auto"        # "auto", cells (40) or a percentage ("35%")
+# preview_height = "auto"       # height of a bottom preview; auto is half
+# preview_min_width = 68        # columns beside the sidebar; narrower: an auto preview goes below, a right one hides
+# terminal_pane_visible = true  # compact terminal pane (toggle_terminal_pane, Alt+t)
+# terminal_pane_height = 6
+# terminal_pane_min_height = 18 # the terminal pane hides on shorter terminals
+#
+# `disabled_tabs = [...]` and the `[ui]` keys sidebar_visible, sidebar_width and
+# terminal_pane_visible are deprecated and will be removed in the next minor
+# release. Until then they are read from a file whose [layout] does not set the
+# same thing: disabled_tabs becomes `tabs` without those tabs. Saving from the
+# Configure View writes [layout] and removes them from the file it saves to.
 
 # Per-pane column config (unset = show all columns)
 # [issues]
@@ -1602,55 +1721,33 @@ page_size = 100
         let default_toml = Self::generate_default_toml();
         let mut merged_value: toml::Value = toml::from_str(&default_toml)
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+        let mut layout_problems = Vec::new();
 
         let path = Self::config_path();
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_custom_keybindings(&mut global_val);
+                normalize_config_file(&mut global_val);
+                layout_problems.extend(layout::drop_invalid_values(&mut global_val));
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
 
-        fn find_git_root() -> Option<PathBuf> {
-            let mut current = std::env::current_dir().ok()?;
-            loop {
-                let git_dir = current.join(".git");
-                if git_dir.exists() {
-                    return Some(current);
-                }
-                if !current.pop() {
-                    break;
-                }
-            }
-            None
-        }
-
-        if let Some(root) = find_git_root() {
-            let paths = [
-                root.join(".glab-tui").join("config.toml"),
-                root.join(".config").join("glab-tui").join("config.toml"),
-            ];
-            for p in &paths {
-                if p.exists() {
-                    if let Ok(workspace_contents) = std::fs::read_to_string(p) {
-                        if let Ok(mut workspace_val) =
-                            toml::from_str::<toml::Value>(&workspace_contents)
-                        {
-                            normalize_custom_keybindings(&mut workspace_val);
-                            merge_toml_values(&mut merged_value, workspace_val);
-                        }
-                    }
+        for p in repo_local_config_paths() {
+            if let Ok(workspace_contents) = std::fs::read_to_string(&p) {
+                if let Ok(mut workspace_val) = toml::from_str::<toml::Value>(&workspace_contents) {
+                    normalize_config_file(&mut workspace_val);
+                    layout_problems.extend(layout::drop_invalid_values(&mut workspace_val));
+                    merge_toml_values(&mut merged_value, workspace_val);
                 }
             }
         }
 
-        match Config::deserialize(merged_value) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!("Error deserializing merged config: {e}. Using defaults.");
-                Config::default()
-            }
-        }
+        let mut config = Config::deserialize(merged_value).unwrap_or_else(|e| {
+            eprintln!("Error deserializing merged config: {e}. Using defaults.");
+            Config::default()
+        });
+        config.layout.problems = layout_problems;
+        config
     }
 
     pub fn save(&self) {
@@ -1757,7 +1854,8 @@ impl Config {
         let path = Self::config_path();
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(mut global_val) = toml::from_str::<toml::Value>(&global_contents) {
-                normalize_custom_keybindings(&mut global_val);
+                normalize_config_file(&mut global_val);
+                layout::drop_invalid_values(&mut global_val);
                 merge_toml_values(&mut merged_value, global_val);
             }
         }
@@ -1765,25 +1863,13 @@ impl Config {
         Config::deserialize(merged_value).unwrap_or_default()
     }
 
-    /// Save layout state (columns, grouping, filters) back to config.toml.
-    /// If inside a git repo, saves to repo-level config, otherwise global.
+    /// Writes the view settings (theme, page size, prefetch, `[layout]`,
+    /// each pane's columns, filters and grouping) that differ from what the
+    /// `target` file sits on top of. A Global save leaves out the values a
+    /// repo-local file sets, keeping the global file's own value there.
     pub fn save_layout(&self, target: SaveMenu) -> anyhow::Result<()> {
         if target == SaveMenu::Cancel {
             return Ok(());
-        }
-
-        fn find_git_root() -> Option<std::path::PathBuf> {
-            let mut current = std::env::current_dir().ok()?;
-            loop {
-                let git_dir = current.join(".git");
-                if git_dir.exists() {
-                    return Some(current);
-                }
-                if !current.pop() {
-                    break;
-                }
-            }
-            None
         }
 
         // Determine target path
@@ -1822,6 +1908,11 @@ impl Config {
         if !merged_value.is_table() {
             merged_value = toml::Value::Table(toml::Table::new());
         }
+        let global_before = (actual_target == SaveMenu::Global).then(|| {
+            let mut file = merged_value.clone();
+            layout::migrate_legacy_keys(&mut file);
+            file
+        });
 
         let table = merged_value.as_table_mut().unwrap();
 
@@ -1855,6 +1946,14 @@ impl Config {
         } else {
             table.remove("prefetch_tabs");
         }
+
+        let layout_diff = self.layout.diff_from(&base_config.layout);
+        if layout_diff.is_empty() {
+            table.remove("layout");
+        } else {
+            table.insert("layout".to_string(), toml::Value::Table(layout_diff));
+        }
+        layout::remove_legacy_keys(table);
 
         fn pane_to_value(pane: &PaneConfig) -> toml::Value {
             let mut table = toml::Table::new();
@@ -1895,31 +1994,47 @@ impl Config {
         }
 
         // Serialize panes
-        for (tab_name, pane, base_pane) in &[
-            ("issues", &self.issues, &base_config.issues),
-            ("mrs", &self.mrs, &base_config.mrs),
-            ("pipelines", &self.pipelines, &base_config.pipelines),
-            ("jobs", &self.jobs, &base_config.jobs),
-            ("runners", &self.runners, &base_config.runners),
-            ("releases", &self.releases, &base_config.releases),
-            ("todos", &self.todos, &base_config.todos),
-            ("milestones", &self.milestones, &base_config.milestones),
-            ("branches", &self.branches, &base_config.branches),
-            (
-                "environments",
-                &self.environments,
-                &base_config.environments,
-            ),
+        for (tab_name, pane, base_pane) in [
+            (PANE_KEYS[0], &self.issues, &base_config.issues),
+            (PANE_KEYS[1], &self.mrs, &base_config.mrs),
+            (PANE_KEYS[2], &self.pipelines, &base_config.pipelines),
+            (PANE_KEYS[3], &self.jobs, &base_config.jobs),
+            (PANE_KEYS[4], &self.runners, &base_config.runners),
+            (PANE_KEYS[5], &self.releases, &base_config.releases),
+            (PANE_KEYS[6], &self.todos, &base_config.todos),
+            (PANE_KEYS[7], &self.milestones, &base_config.milestones),
+            (PANE_KEYS[8], &self.branches, &base_config.branches),
+            (PANE_KEYS[9], &self.environments, &base_config.environments),
         ] {
             if pane != base_pane {
                 let val = pane_to_value(pane);
                 if val.as_table().is_some_and(|t| !t.is_empty()) {
                     table.insert(tab_name.to_string(), val);
                 } else {
-                    table.remove(*tab_name);
+                    table.remove(tab_name);
                 }
             } else {
-                table.remove(*tab_name);
+                table.remove(tab_name);
+            }
+        }
+
+        if let Some(global_before) = &global_before {
+            for path in repo_local_config_paths() {
+                let Ok(contents) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(mut repo_local) = toml::from_str::<toml::Value>(&contents) else {
+                    continue;
+                };
+                layout::migrate_legacy_keys(&mut repo_local);
+                let saved: toml::Table = repo_local
+                    .as_table()
+                    .into_iter()
+                    .flatten()
+                    .filter(|(key, _)| SAVED_KEYS.contains(&key.as_str()))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+                mask_repo_local_values(table, global_before.as_table(), &saved);
             }
         }
 
@@ -2230,6 +2345,100 @@ page_size = 250
         "#;
         let config_false: Config = toml::from_str(toml_false).unwrap();
         assert!(!config_false.prefetch_tabs);
+    }
+
+    #[test]
+    fn save_layout_writes_layout_and_drops_deprecated_keys() {
+        let _config = isolate_config();
+        let path = Config::config_path();
+        private_fs::write(
+            &path,
+            "disabled_tabs = [\"Runners\"]\n[ui]\nsidebar_visible = false\n",
+        )
+        .unwrap();
+
+        let mut config = Config::load();
+        assert!(!config.layout.nav_visible);
+        assert!(
+            !config
+                .layout
+                .tabs
+                .as_ref()
+                .unwrap()
+                .contains(&crate::app::Tab::Runners)
+        );
+
+        config.layout.tabs = Some(vec![
+            crate::app::Tab::MergeRequests,
+            crate::app::Tab::Issues,
+        ]);
+        config.layout.preview = PreviewPlacement::Bottom;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let written: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(!written.contains_key("disabled_tabs"));
+        assert!(!written.contains_key("ui"));
+        let reloaded = Config::load();
+        assert_eq!(reloaded.layout, config.layout);
+    }
+
+    #[test]
+    fn a_bad_layout_value_or_tab_name_is_left_out_without_resetting_the_config() {
+        let _config = isolate_config();
+        private_fs::write(
+            &Config::config_path(),
+            "theme_preset = \"nord\"\n[layout]\ntabs = [\"mrs\", \"pipeline\"]\npreview = \"left\"\nnav_width = 30\n",
+        )
+        .unwrap();
+
+        let config = Config::load();
+        assert_eq!(config.theme_preset.as_deref(), Some("nord"));
+        assert_eq!(
+            config.layout.tabs,
+            Some(vec![crate::app::Tab::MergeRequests])
+        );
+        assert_eq!(config.layout.preview, PreviewPlacement::Auto);
+        assert_eq!(config.layout.nav_width, 30);
+        let reported: Vec<&str> = config
+            .layout
+            .problems
+            .iter()
+            .map(|problem| problem.binding.as_str())
+            .collect();
+        assert_eq!(reported, ["preview", "tabs: \"pipeline\""]);
+    }
+
+    #[test]
+    fn saving_globally_leaves_out_repo_local_values() {
+        let _config = isolate_config();
+        let repo = std::env::current_dir().unwrap().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir(repo.join(".glab-tui")).unwrap();
+        let _cwd = CurrentDirGuard::enter(&repo);
+        private_fs::write(
+            &repo.join(".glab-tui").join("config.toml"),
+            "page_size = 77\ndisabled_tabs = [\"Runners\", \"Releases\"]\n[issues]\ngroup_by_column = \"State\"\n",
+        )
+        .unwrap();
+        private_fs::write(
+            &Config::config_path(),
+            "page_size = 50\n[layout]\npreview = \"bottom\"\n",
+        )
+        .unwrap();
+
+        let mut config = Config::load();
+        assert_eq!(config.page_size, 77);
+        config.prefetch_tabs = true;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let written: toml::Table =
+            toml::from_str(&std::fs::read_to_string(Config::config_path()).unwrap()).unwrap();
+        let expected: toml::Table = toml::from_str(
+            "page_size = 50\nprefetch_tabs = true\n[layout]\npreview = \"bottom\"\n",
+        )
+        .unwrap();
+        assert_eq!(written, expected);
     }
 
     #[test]

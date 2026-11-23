@@ -31,7 +31,7 @@ mod tests {
     #[test]
     fn help_ctrl_d_u_move_half_a_page_without_typing_into_the_search() {
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         let ctrl = |c| KeyPress::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 
         handle_help_overlay(&mut app, &ctrl('d'));
@@ -46,7 +46,7 @@ mod tests {
     fn help_arrows_move_the_selection_and_typing_filters_from_the_top() {
         use crossterm::event::KeyModifiers;
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         let press = |code| KeyPress::Key(KeyEvent::new(code, KeyModifiers::NONE));
 
         handle_help_overlay(&mut app, &press(KeyCode::Down));
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn help_search_consumes_q_instead_of_closing_or_quitting() {
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
 
         let handled = handle_help_overlay(
             &mut app,
@@ -72,7 +72,7 @@ mod tests {
 
         assert!(handled);
         assert_eq!(app.help_search_query, "q");
-        assert!(app.show_help);
+        assert!(app.show_help());
     }
 
     #[test]
@@ -105,18 +105,18 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
+        assert!(app.show_help());
+        app.close_help();
 
         assert!(handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
+        assert!(app.show_help());
+        app.close_help();
 
         // 2. Edit menu (Inspector / Form) - not actively editing text
-        app.edit_menu = Some(EditMenu {
+        app.open_edit_menu(EditMenu {
             entity_project: String::new(),
             entity_iid: 1,
             entity_kind: EditEntityKind::EditIssue,
@@ -135,28 +135,28 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
+        assert!(app.show_help());
+        app.close_help();
 
         // Edit menu - actively editing text: '?' types into field, but F1 opens help
-        if let Some(ref mut menu) = app.edit_menu {
+        if let Some(ref mut menu) = app.edit_menu_mut() {
             menu.editing = true;
         }
         assert!(!handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(!app.show_help);
+        assert!(!app.show_help());
         assert!(handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
-        app.edit_menu = None;
+        assert!(app.show_help());
+        app.close_help();
+        app.close_edit_menu();
 
         // 3. Diff View - not searching
-        app.diff_view = Some(DiffView::new(
+        app.open_diff_view(DiffView::new(
             1,
             String::new(),
             "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
@@ -165,28 +165,28 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
+        assert!(app.show_help());
+        app.close_help();
 
         // Diff View - searching: '?' types into search, F1 opens help
-        if let Some(ref mut diff_view) = app.diff_view {
+        if let Some(ref mut diff_view) = app.diff_view_mut() {
             diff_view.search_active = true;
         }
         assert!(!handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(!app.show_help);
+        assert!(!app.show_help());
         assert!(handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
-        app.diff_view = None;
+        assert!(app.show_help());
+        app.close_help();
+        app.close_diff_view();
 
         // 4. Selector overlay
-        app.selector = Some(Selector {
+        app.open_selector(Selector {
             title: "Select Label".to_string(),
             all_items: vec!["bug".to_string()],
             selected_items: std::collections::HashSet::new(),
@@ -205,22 +205,22 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
-        app.selector = None;
+        assert!(app.show_help());
+        app.close_help();
+        app.close_selector();
 
         // 5. Column checklist
-        app.focus_column_checklist = true;
+        app.open_configure();
         assert!(handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
-        app.focus_column_checklist = false;
+        assert!(app.show_help());
+        app.close_help();
+        app.close_configure();
 
         // 6. Date picker
-        app.date_picker = Some(crate::app::DatePicker::new(
+        app.open_date_picker(crate::app::DatePicker::new(
             "Select Date".to_string(),
             "2026-08-23",
             crate::app::DatePickerAction::EditNewField { field_idx: 0 },
@@ -229,9 +229,9 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
-        app.show_help = false;
-        app.date_picker = None;
+        assert!(app.show_help());
+        app.close_help();
+        app.close_date_picker();
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
         app.config
             .keybindings
             .set(crate::keymap::Action::GlobalHelp, &["Enter", "F2"]);
-        app.text_input = Some(crate::app::TextInput::new(
+        app.open_text_input(crate::app::TextInput::new(
             " Page Size ",
             "30".to_string(),
             crate::app::TextInputAction::EditPageSize,
@@ -250,12 +250,12 @@ mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE).into(),
         ));
-        assert!(!app.show_help);
+        assert!(!app.show_help());
         assert!(handle_help_keybinding(
             &mut app,
             &KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE).into(),
         ));
-        assert!(app.show_help);
+        assert!(app.show_help());
     }
 
     const REVIEW_DIFF: &str = "\
@@ -304,8 +304,8 @@ diff --git a/src/lib.rs b/src/lib.rs
     fn app_with_review_threads(notes: Vec<crate::domain::mr::DiscussionNote>) -> App {
         let mut app = App::default();
         let diff_view = DiffView::new(7, "acme/widget".to_string(), REVIEW_DIFF.to_string());
-        app.review_threads = Some(crate::app::ReviewThreadsOverview::new(&notes, &diff_view));
-        app.diff_view = Some(diff_view);
+        app.open_diff_view(diff_view.clone());
+        app.open_review_threads(crate::app::ReviewThreadsOverview::new(&notes, &diff_view));
         app.current_comments = notes;
         app
     }
@@ -315,8 +315,7 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     fn selected_root_id(app: &App) -> Option<u64> {
-        app.review_threads
-            .as_ref()
+        app.review_threads()
             .and_then(|o| o.selected_thread())
             .and_then(|t| t.root().id)
     }
@@ -329,8 +328,7 @@ diff --git a/src/lib.rs b/src/lib.rs
                 .collect(),
         );
         // 4 visible rows, so half a page is 2.
-        app.review_threads.as_mut().unwrap().list_rect =
-            Some(ratatui::layout::Rect::new(0, 0, 40, 4));
+        app.review_threads_mut().unwrap().list_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 4));
         let ctrl = |c| KeyPress::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 
         handle_review_threads(&mut app, &ctrl('d'));
@@ -340,7 +338,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(selected_root_id(&app), Some(6), "stops on the last thread");
         handle_review_threads(&mut app, &ctrl('u'));
         assert_eq!(selected_root_id(&app), Some(4));
-        assert!(!app.review_threads.as_ref().unwrap().unresolved_only);
+        assert!(!app.review_threads().unwrap().unresolved_only);
     }
 
     #[test]
@@ -372,7 +370,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press(&mut app, KeyCode::Char('T'));
         assert!(
-            app.review_threads.is_some(),
+            app.review_threads().is_some(),
             "the old default key closed it"
         );
 
@@ -381,7 +379,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             &KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT).into(),
         );
         assert!(
-            app.review_threads.is_none(),
+            app.review_threads().is_none(),
             "the remapped key left it open"
         );
     }
@@ -426,7 +424,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             Some(line_position("src/lib.rs", 2)),
         )]);
         app.hide_reviewed_files = true;
-        if let Some(diff_view) = &mut app.diff_view {
+        if let Some(diff_view) = app.diff_view_mut() {
             diff_view.restore_review_state(
                 &diff_view.marks_on_this_diff(&["src/lib.rs"]),
                 None,
@@ -437,14 +435,14 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(press(&mut app, KeyCode::Enter));
 
         assert!(
-            app.review_threads.is_none(),
+            app.review_threads().is_none(),
             "a successful jump closes the overlay"
         );
         assert!(
             !app.hide_reviewed_files,
             "the session filter must follow, or the next re-fetch hides the file again"
         );
-        let diff_view = app.diff_view.as_ref().unwrap();
+        let diff_view = app.diff_view().unwrap();
         let line = &diff_view.lines[diff_view.cursor_idx];
         assert_eq!(
             (line.file_path.as_str(), line.new_line_num),
@@ -458,7 +456,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         assert!(press(&mut app, KeyCode::Enter));
 
-        assert!(app.review_threads.is_some());
+        assert!(app.review_threads().is_some());
         assert!(app.toast_notice().is_some());
     }
 
@@ -469,16 +467,29 @@ diff --git a/src/lib.rs b/src/lib.rs
             review_note(2, "thread", Some(line_position("src/lib.rs", 2))),
         ]);
 
-        assert!(press(&mut app, KeyCode::Char('a')));
+        crate::update::update(
+            &mut app,
+            crate::event::Event::KeyPress(KeyPress::from(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::NONE,
+            ))),
+        );
 
-        let selector = app.selector.as_ref().expect("a opens the comment picker");
+        let selector = app.selector().expect("a opens the comment picker");
         assert_eq!(selector.field_type, "comment_select");
         assert_eq!(selector.all_items.len(), 2);
-        assert!(
-            !press(&mut app, KeyCode::Char('j')),
-            "keys belong to the selector on top"
+        assert_eq!(selector.cursor_idx, 0);
+
+        crate::update::update(
+            &mut app,
+            crate::event::Event::KeyPress(KeyPress::from(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::NONE,
+            ))),
         );
-        assert!(app.review_threads.is_some());
+        let selector = app.selector().expect("selector is still open");
+        assert_eq!(selector.cursor_idx, 1, "j moved selector cursor");
+        assert!(app.review_threads().is_some());
     }
 
     /// Holds the env lock and points the cache dir at a tempdir, because the
@@ -523,7 +534,7 @@ diff --git a/src/lib.rs b/src/lib.rs
     /// submit-review dialog that leaving it raises.
     fn app_leaving_the_diff_with_drafts() -> App {
         let mut app = App::default();
-        app.diff_view = Some(DiffView::new(
+        app.open_diff_view(DiffView::new(
             7,
             PROJECT.to_string(),
             REVIEW_DIFF.to_string(),
@@ -531,7 +542,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.in_review_mode = true;
         app.draft_comments = vec![draft("nit"), draft("typo")];
         app.persist_draft_comments(PROJECT, 7);
-        app.submit_dialog = Some(SubmitDialog::build_with_project(
+        app.open_submit_dialog(SubmitDialog::build_with_project(
             ConfirmAction::SubmitReview(7),
             PROJECT.to_string(),
             &app,
@@ -567,8 +578,8 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press_in_dialog(&mut app, &[KeyCode::Esc]);
 
-        assert!(app.submit_dialog.is_none());
-        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert!(app.submit_dialog().is_none());
+        assert_eq!(app.diff_view().map(|d| d.mr_iid), Some(7));
         assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
         assert!(app.in_review_mode);
         assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
@@ -580,11 +591,11 @@ diff --git a/src/lib.rs b/src/lib.rs
         let mut app = app_leaving_the_diff_with_drafts();
 
         press_in_dialog(&mut app, &[KeyCode::Right; 3]);
-        assert!(app.submit_dialog.as_ref().is_some_and(|d| d.is_on_cancel()));
+        assert!(app.submit_dialog().is_some_and(|d| d.is_on_cancel()));
         press_in_dialog(&mut app, &[KeyCode::Enter]);
 
-        assert!(app.submit_dialog.is_none());
-        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert!(app.submit_dialog().is_none());
+        assert_eq!(app.diff_view().map(|d| d.mr_iid), Some(7));
         assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
         assert!(app.in_review_mode);
     }
@@ -596,14 +607,11 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press_in_dialog(&mut app, &[KeyCode::Enter]);
 
-        assert!(app.submit_dialog.is_none());
-        let overlay = app
-            .review_submit
-            .as_ref()
-            .expect("Submit opens the overlay");
+        assert!(app.submit_dialog().is_none());
+        let overlay = app.review_submit().expect("Submit opens the overlay");
         assert_eq!(overlay.mr_iid, 7);
         assert_eq!(overlay.project_path, PROJECT);
-        assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
+        assert_eq!(app.diff_view().map(|d| d.mr_iid), Some(7));
         assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
         assert!(app.in_review_mode);
         assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
@@ -616,8 +624,8 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Enter]);
 
-        assert!(app.submit_dialog.is_none());
-        assert!(app.diff_view.is_none());
+        assert!(app.submit_dialog().is_none());
+        assert!(app.diff_view().is_none());
         assert_eq!(
             app.header_notice().map(Notice::text),
             Some("Kept 2 draft comments for later")
@@ -636,8 +644,8 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
 
-        assert!(app.submit_dialog.is_none());
-        assert!(app.diff_view.is_none());
+        assert!(app.submit_dialog().is_none());
+        assert!(app.diff_view().is_none());
         assert!(app.draft_comments.is_empty());
         assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
@@ -684,9 +692,9 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.draft_comments = vec![draft("nit"), moved, range_end_moved];
         app.persist_draft_comments(PROJECT, 7);
 
-        let diff_view = app.diff_view.take().expect("fixture opens a diff");
+        let diff_view = app.pop_diff_view().expect("fixture opens a diff");
         assert_eq!(app.restore_draft_comments(&diff_view), 2);
-        app.diff_view = Some(diff_view);
+        app.open_diff_view(*diff_view);
         assert_eq!(bodies(&app.draft_comments), ["nit"]);
 
         app.draft_comments.push(draft("new"));
@@ -721,7 +729,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.active_pipeline_id = Some(7);
         app.jobs.items = vec![job(1), job(2), job(3)];
         app.selected_jobs.extend([1, 3]);
-        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+        app.open_submit_dialog(crate::app::SubmitDialog::build(
             crate::app::ConfirmAction::CancelJobs {
                 pipeline_id: 7,
                 job_ids: vec![1, 3],
@@ -747,7 +755,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press_in_submit_dialog(&mut app, KeyCode::Esc);
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert!(app.jobs.items.iter().all(|j| j.status == "running"));
         assert_eq!(app.selected_jobs.len(), 2);
     }
@@ -761,13 +769,13 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         press_in_submit_dialog(&mut app, KeyCode::Esc);
         assert!(
-            app.submit_dialog.is_some(),
+            app.submit_dialog().is_some(),
             "the old default key must no longer cancel the dialog"
         );
 
         press_in_submit_dialog(&mut app, KeyCode::Char('x'));
         assert!(
-            app.submit_dialog.is_none(),
+            app.submit_dialog().is_none(),
             "the new key must cancel the dialog"
         );
     }

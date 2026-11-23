@@ -1,0 +1,10 @@
+{
+  "status": "pending",
+  "details": {
+    "message": "Merge request accepted",
+    "uuid": "mock-merge-uuid",
+    "merge_method": "squash",
+    "merge_action": "default",
+    "expected_head_sha": "0000000000000000000000000000000000000000"
+  }
+}

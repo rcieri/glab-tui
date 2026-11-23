@@ -46,6 +46,7 @@ def mini_spec() -> dict[str, Any]:
                 },
                 "post": {
                     "operationId": "items/create",
+                    "requestBody": json_body({"$ref": "#/components/schemas/NewItem"}),
                     "responses": {
                         "201": json_body({"$ref": "#/components/schemas/Item"}),
                         "202": {"description": "accepted"},
@@ -98,6 +99,18 @@ def mini_spec() -> dict[str, Any]:
                         "note": {"type": "string", "nullable": True},
                         "extra": {"type": "string"},
                     },
+                },
+                "NewItem": {
+                    "required": ["name"],
+                    "allOf": [
+                        {"type": "object", "properties": {"name": {"type": "string", "description": "Its name."}}},
+                        {"type": "object", "properties": {
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "owner": {"$ref": "#/components/schemas/Owner"},
+                            "note": {"type": "string", "nullable": True},
+                            "meta": {"type": "object", "additionalProperties": {"type": "string"}},
+                        }},
+                    ],
                 },
                 "Owner": {
                     "type": "object",
@@ -381,6 +394,62 @@ class RestTests(unittest.TestCase):
         target = build(cfg, spec)["components"]["schemas"]["Item"]["properties"]["target"]
         self.assertEqual(target, {"type": "object", "properties": {}, "additionalProperties": False})
 
+    def test_a_request_body_is_kept_whole_and_inline(self) -> None:
+        body = build()["paths"]["/items"]["post"]["requestBody"]
+        self.assertEqual(body, json_body({
+            "type": "object",
+            "properties": {
+                "meta": {"type": "object", "additionalProperties": {"type": "string"}},
+                "name": {"type": "string"},
+                "note": {"type": ["string", "null"]},
+                "owner": {"type": "object", "properties": {
+                    "group_id": {"type": "string"}, "login": {"type": "string"}},
+                    "additionalProperties": False},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        }))
+
+    def test_a_request_body_branch_carries_the_properties_beside_it(self) -> None:
+        spec = mini_spec()
+        spec["paths"]["/items"]["post"]["requestBody"] = json_body({
+            "type": "object",
+            "properties": {"reviewers": {"type": "array", "items": {"type": "string"}}},
+            "anyOf": [{"required": ["reviewers"]}, {"required": ["team_reviewers"]}],
+        })
+        body = build(spec=spec)["paths"]["/items"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        branch = {"type": "object", "properties": {"reviewers": {"type": "array", "items": {"type": "string"}}},
+                  "additionalProperties": False}
+        self.assertEqual(body["anyOf"], [branch, branch])
+
+    def test_a_request_body_branch_that_refers_to_itself_stops_at_the_loop(self) -> None:
+        spec = mini_spec()
+        spec["components"]["schemas"]["Body"] = {
+            "properties": {"a": {"type": "string"}}, "oneOf": [{"$ref": "#/components/schemas/Body"}]}
+        spec["paths"]["/items"]["post"]["requestBody"] = json_body({"$ref": "#/components/schemas/Body"})
+        body = gen.request_body(spec, spec["paths"]["/items"]["post"])
+        self.assertEqual(body["content"]["application/json"]["schema"]["oneOf"], [{}])
+
+    def test_a_request_body_merge_leaves_the_description_untouched(self) -> None:
+        spec = mini_spec()
+        spec["components"]["schemas"]["Base"] = {"properties": {"a": {"type": "string"}}}
+        spec["components"]["schemas"]["Body"] = {
+            "properties": {"b": {"type": "string"}}, "allOf": [{"$ref": "#/components/schemas/Base"}]}
+        spec["paths"]["/items"]["post"]["requestBody"] = json_body({"$ref": "#/components/schemas/Body"})
+        gen.request_body(spec, spec["paths"]["/items"]["post"])
+        self.assertEqual(spec["components"]["schemas"]["Body"]["properties"], {"b": {"type": "string"}})
+
+    def test_an_operation_without_a_request_body_gets_none(self) -> None:
+        self.assertNotIn("requestBody", build()["paths"]["/items/{id}"]["delete"])
+
+    def test_a_request_body_that_refers_to_itself_stops_at_the_loop(self) -> None:
+        spec = mini_spec()
+        spec["components"]["schemas"]["Owner"]["properties"]["parent"] = {"$ref": "#/components/schemas/Owner"}
+        owner = build(spec=spec)["paths"]["/items"]["post"]["requestBody"]["content"]["application/json"][
+            "schema"]["properties"]["owner"]
+        self.assertEqual(owner["properties"]["parent"], {})
+
+
 
 SDL = '''
 """The schema."""
@@ -424,13 +493,19 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(t["types"]["URI"]["kind"], "scalar")
         f = t["types"]["Repository"]["fields"]
         self.assertEqual(f["deployments"]["args"], ["first", "environments", "orderBy"])
-        self.assertEqual(f["deployments"]["type"], "DeploymentConnection")
+        self.assertEqual(f["deployments"]["type"], "DeploymentConnection!")
+        self.assertEqual(t["types"]["DeploymentConnection"]["fields"]["nodes"]["type"], "[Deployment]")
+        self.assertEqual(t["types"]["Query"]["fields"]["repository"]["type"], "Repository")
         self.assertEqual(f["number"]["deprecated"], "Use fullNumber.")
         self.assertEqual(f["deployments"]["deprecated_args"],
                          {"environments": "Use envs.", "orderBy": "No longer supported"})
         self.assertEqual(f["state"]["deprecated"], "No longer supported")
         self.assertNotIn("deprecated_args", t["types"]["Query"]["fields"]["repository"])
         self.assertEqual(t["types"]["Query"]["fields"]["repository"]["args"], ["owner", "name"])
+
+    def test_sdl_keeps_nested_list_wrappers(self) -> None:
+        t = gen.table_from_sdl("type Query { grid: [[String!]]! }")
+        self.assertEqual(t["types"]["Query"]["fields"]["grid"]["type"], "[[String!]]!")
 
     def test_introspection_gives_the_same_table_as_sdl(self) -> None:
         def named(n: str, kind: str = "OBJECT") -> dict[str, Any]:
@@ -465,7 +540,7 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(t["types"]["State"], {"kind": "enum"})
         self.assertEqual(t["types"]["Order"], {"kind": "input"})
         tags = t["types"]["Repository"]["fields"]["tags"]
-        self.assertEqual(tags, {"type": "String", "deprecated": "old", "args": ["first", "active"],
+        self.assertEqual(tags, {"type": "[String!]!", "deprecated": "old", "args": ["first", "active"],
                                 "deprecated_args": {"active": "No longer supported"}})
 
     def test_pruned_table_keeps_only_listed_fields_and_the_types_they_name(self) -> None:
@@ -478,6 +553,7 @@ class GraphqlTests(unittest.TestCase):
                          ["first", "environments", "orderBy"])
         self.assertEqual(types["Repository"]["fields"]["number"]["deprecated"], "Use fullNumber.")
         self.assertEqual(types["State"], {"kind": "enum"})
+        self.assertEqual(types["DeploymentConnection"]["fields"]["nodes"]["type"], "[Deployment]")
         self.assertNotIn("viewer", types["Query"]["fields"])
         self.assertEqual(doc["query"], "Query")
 

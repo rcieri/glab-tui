@@ -3,7 +3,7 @@ use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::highlight_fuzzy_match;
 use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
-use crate::app::{App, Tab};
+use crate::app::{App, ConfigureRowHit, Tab};
 use crate::config::Icons;
 use crate::keymap::{Action, KeyContext};
 use crate::notice::{Notice, NoticeLevel};
@@ -79,7 +79,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
-    if app.edit_menu.is_some() {
+    if app.edit_menu().is_some() {
         if let Some(rect) = app.detail_rect {
             app.overlay_stack
                 .push((crate::app::OverlayKind::EditMenu, rect));
@@ -93,14 +93,23 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
     let selector_notice = app.modal_notice().cloned();
     if app.column_filter_context.is_none() {
-        if let Some(selector) = &mut app.selector {
+        let App {
+            modal_stack,
+            overlay_stack,
+            switch_repo_groups,
+            switch_repo_paths,
+            ..
+        } = app;
+        if let Some(crate::app::Modal::Selector(selector)) = modal_stack
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m, crate::app::Modal::Selector(_)))
+        {
             let selector_area = centered_rect_min(70, 70, 60, 8, size);
             let body = modal_area(f, ctx, &selector.title, selector_area);
-            app.overlay_stack
-                .push((crate::app::OverlayKind::Selector, selector_area));
+            overlay_stack.push((crate::app::OverlayKind::Selector, selector_area));
 
-            let has_filter = selector.field_type != "comment_action_select"
-                && selector.field_type != "related_mrs";
+            let has_filter = selector.has_filter_bar();
 
             let mut constraints = Vec::with_capacity(3);
             if has_filter {
@@ -250,7 +259,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                             // a group icon; repo rows keep their basename plus
                             // a muted absolute path.
                             let is_group = selector.field_type == "switch_repo"
-                                && app.switch_repo_groups.contains(item);
+                                && switch_repo_groups.contains(item);
 
                             if is_group {
                                 line_spans.push(Span::styled(
@@ -275,7 +284,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                             // (display name) in muted text so users can
                             // distinguish repos that share a basename.
                             if selector.field_type == "switch_repo" && !is_group {
-                                if let Some(abs_path) = app.switch_repo_paths.get(item) {
+                                if let Some(abs_path) = switch_repo_paths.get(item) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(
                                             format!(" {abs_path}"),
@@ -299,7 +308,12 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
     }
 
-    if let Some(text_input) = &app.text_input {
+    let area = centered_rect_min(60, 60, 36, 6, size);
+    if app.text_input().is_some() {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::TextInput, area));
+    }
+    if let Some(text_input) = app.text_input() {
         let block = Block::default()
             .title(format!(" {} ", text_input.title))
             .title_style(
@@ -311,7 +325,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             .border_style(Style::default().fg(ctx.theme.border_focused))
             .style(Style::default().bg(ctx.theme.bg));
 
-        let area = centered_rect_min(60, 60, 36, 6, size);
         clear_area(f, ctx, area);
         f.render_widget(block, area);
 
@@ -333,7 +346,13 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_widget(value_p, chunks[0]);
     }
 
-    if let Some(date_picker) = &app.date_picker {
+    // 36 columns wide, 11 rows high
+    let area = centered_rect_fixed(36, 11, size);
+    if app.date_picker().is_some() {
+        app.overlay_stack
+            .push((crate::app::OverlayKind::DatePicker, area));
+    }
+    if let Some(date_picker) = app.date_picker() {
         let block = Block::default()
             .title(format!(" {} ", date_picker.title))
             .title_style(
@@ -345,10 +364,6 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             .border_style(Style::default().fg(ctx.theme.border_focused))
             .style(Style::default().bg(ctx.theme.bg));
 
-        // 36 columns wide, 11 rows high
-        let area = centered_rect_fixed(36, 11, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::DatePicker, area));
         let inner_area = block.inner(area);
 
         let chunks = Layout::default()
@@ -451,300 +466,46 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         f.render_widget(table, chunks[1]);
     }
 
-    if app.focus_column_checklist && app.selector.is_none() {
+    if app.focus_column_checklist() && app.selector().is_none() {
+        let (active_idx, editing_page_size, save_menu_open, save_menu_selection) =
+            match app.configure() {
+                Some(cfg) => (
+                    cfg.focused_row,
+                    cfg.editing_page_size,
+                    cfg.save_menu_open,
+                    cfg.save_menu_selection,
+                ),
+                None => (0, false, false, None),
+            };
         let tab = app.active_tab;
         let kind = ctx.kind;
-        let cols = tab.columns(kind, app.scope.is_group());
-        let active_idx = app.column_checklist_idx;
+        let rows = crate::configure_view::configure_rows(app);
+        let active_idx = active_idx.min(rows.len().saturating_sub(1));
+        let width: u16 = 64;
+        let inner_w = width.saturating_sub(2) as usize;
 
-        let group_cols: Vec<&str> = cols.to_vec();
-
-        let cols_end = cols.len();
-        let group_end = cols_end + group_cols.len();
-        let order_end = group_end + 2;
-        let page_size_idx = order_end;
-        let prefetch_idx = page_size_idx + 1;
-        let theme_idx = prefetch_idx + 1;
-        let save_end = theme_idx + 1;
-
-        // Build the entire Configure view as one flat, scrollable list so the
-        // section headers scroll together with their items.
+        // One flat, scrollable list so the section headings scroll with
+        // their rows.
         let mut lines: Vec<(Option<usize>, ListItem)> = Vec::new();
         let mut active_line: Option<usize> = None;
-
-        let t = &ctx.theme;
-
-        // COLUMNS header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} COLUMNS", icons.label_columns)).style(
-                Style::default()
-                    .fg(t.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ));
-
-        for (i, col) in cols.iter().enumerate() {
-            let logical = i;
-            let checked = app.is_column_visible(tab, col);
-            let filter_count = app
-                .get_column_filter(tab, col)
-                .map(|s| s.len())
-                .filter(|&n| n > 0);
-            let text = if let Some(count) = filter_count {
-                format!(
-                    "  [{}] {} ({})",
-                    if checked { "x" } else { " " },
-                    col,
-                    count
-                )
-            } else {
-                format!("  [{}] {}", if checked { "x" } else { " " }, col)
-            };
-            let is_active = logical == active_idx;
+        let mut section = None;
+        for (idx, row) in rows.iter().copied().enumerate() {
+            if section != Some(row.section()) {
+                if section.is_some() {
+                    lines.push((None, ListItem::new("")));
+                }
+                section = Some(row.section());
+                if let Some(heading) = configure_heading(ctx, row.section()) {
+                    lines.push((None, heading));
+                }
+            }
+            let is_active = idx == active_idx;
             if is_active {
                 active_line = Some(lines.len());
             }
-            let style = if is_active {
-                Style::default()
-                    .fg(t.highlight_bg)
-                    .bg(t.border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else if checked {
-                Style::default().fg(t.text_normal)
-            } else {
-                Style::default().fg(t.text_muted)
-            };
-            lines.push((Some(logical), ListItem::new(text).style(style)));
+            let item = configure_row_item(app, ctx, row, is_active, editing_page_size, inner_w);
+            lines.push((Some(idx), item));
         }
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // GROUP BY header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} GROUP BY", icons.label_group))
-                .style(Style::default().fg(t.green).add_modifier(Modifier::BOLD)),
-        ));
-
-        for (j, col) in group_cols.iter().enumerate() {
-            let logical = cols_end + j;
-            let is_selected =
-                app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
-            let text = format!(
-                "  {} {}",
-                if is_selected {
-                    &icons.radio_on
-                } else {
-                    &icons.radio_off
-                },
-                col
-            );
-            let is_active = logical == active_idx;
-            if is_active {
-                active_line = Some(lines.len());
-            }
-            let style = if is_active {
-                Style::default()
-                    .fg(t.highlight_bg)
-                    .bg(t.border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(t.green)
-            } else {
-                Style::default().fg(t.text_normal)
-            };
-            lines.push((Some(logical), ListItem::new(text).style(style)));
-        }
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // ORDER header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} ORDER", icons.label_order))
-                .style(Style::default().fg(t.yellow).add_modifier(Modifier::BOLD)),
-        ));
-
-        for (i, label) in ["Ascending", "Descending"].iter().enumerate() {
-            let logical = group_end + i;
-            let is_selected = app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
-            let text = format!(
-                " {} {}",
-                if is_selected {
-                    &icons.radio_on
-                } else {
-                    &icons.radio_off
-                },
-                label
-            );
-            let is_active = logical == active_idx;
-            if is_active {
-                active_line = Some(lines.len());
-            }
-            let style = if is_active {
-                Style::default()
-                    .fg(t.highlight_bg)
-                    .bg(t.border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(t.yellow)
-            } else {
-                Style::default().fg(t.text_normal)
-            };
-            lines.push((Some(logical), ListItem::new(text).style(style)));
-        }
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // Page Size — inline row (icon + label in header_fg, value in text_normal)
-        let is_page_size_active = active_idx == page_size_idx;
-        let page_size_value = if app.editing_page_size {
-            format!("[ {}| ]", app.page_size_input)
-        } else {
-            format!("[ {} ]", app.page_size)
-        };
-        let page_size_style = if app.editing_page_size {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.green)
-                .add_modifier(Modifier::BOLD)
-        } else if is_page_size_active {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_normal)
-        };
-        let page_size_line = if is_page_size_active || app.editing_page_size {
-            Line::from(Span::styled(
-                format!(
-                    " {} Page Size      {} ",
-                    icons.label_page_size, page_size_value
-                ),
-                page_size_style,
-            ))
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} Page Size      ", icons.label_page_size),
-                    Style::default()
-                        .fg(t.header_fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(page_size_value, Style::default().fg(t.text_normal)),
-            ])
-        };
-        if is_page_size_active {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(page_size_idx),
-            ListItem::new(page_size_line).style(page_size_style),
-        ));
-
-        // Prefetch Tabs — inline row (icon + label in header_fg, value in text_normal)
-        let is_prefetch_active = active_idx == prefetch_idx;
-        let prefetch_value = format!("[ {} ]", app.config.prefetch_tabs);
-        let prefetch_style = if is_prefetch_active {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_normal)
-        };
-        let prefetch_line = if is_prefetch_active {
-            Line::from(Span::styled(
-                format!(
-                    " {} Prefetch Tabs  {} ",
-                    icons.label_fetching, prefetch_value
-                ),
-                prefetch_style,
-            ))
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} Prefetch Tabs  ", icons.label_fetching),
-                    Style::default()
-                        .fg(t.header_fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(prefetch_value, Style::default().fg(t.text_normal)),
-            ])
-        };
-        if is_prefetch_active {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(prefetch_idx),
-            ListItem::new(prefetch_line).style(prefetch_style),
-        ));
-
-        // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
-        let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
-        let is_theme_active = active_idx == theme_idx;
-        let theme_value = format!("[ {current_theme_name} ]");
-        let theme_style = if is_theme_active {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_normal)
-        };
-        let theme_line = if is_theme_active {
-            Line::from(Span::styled(
-                format!(" {} Theme          {} ", icons.label_theme, theme_value),
-                theme_style,
-            ))
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} Theme          ", icons.label_theme),
-                    Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(theme_value, Style::default().fg(t.text_normal)),
-            ])
-        };
-        if is_theme_active {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(theme_idx),
-            ListItem::new(theme_line).style(theme_style),
-        ));
-
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // Save button — no header, centered in the inner area
-        let is_save_selected = active_idx == save_end;
-        let width: u16 = 64;
-        let inner_w = width.saturating_sub(2) as usize; // -2 for borders
-        let save_label = format!("{} Save View", icons.label_save);
-        let save_visible_width = save_label.chars().count();
-        let save_left_pad = (inner_w.saturating_sub(save_visible_width)) / 2;
-        let save_button_text = format!("{:pad$}{}", "", save_label, pad = save_left_pad);
-        let save_button_style = if is_save_selected {
-            Style::default()
-                .fg(t.highlight_bg)
-                .bg(t.border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text_muted)
-        };
-        if is_save_selected {
-            active_line = Some(lines.len());
-        }
-        lines.push((
-            Some(save_end),
-            ListItem::new(save_button_text).style(save_button_style),
-        ));
 
         // Grow the popup with content, but cap it so the whole list scrolls
         // within the available terminal height (headers included).
@@ -772,6 +533,11 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 Style::default()
                     .fg(ctx.theme.border_focused)
                     .add_modifier(Modifier::BOLD),
+            )
+            .title_bottom(
+                Line::from(" Space toggle | J/K move | h/l change | Tab next section ")
+                    .centered()
+                    .style(Style::default().fg(ctx.theme.text_muted)),
             );
 
         clear_area(f, ctx, area);
@@ -779,13 +545,31 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
         let inner_area = checklist_block.inner(area);
 
+        let line_rows: Vec<Option<usize>> = lines.iter().map(|(row, _)| *row).collect();
         let items: Vec<ListItem> = lines.into_iter().map(|(_, li)| li).collect();
         let mut state = ListState::default();
         state.select(active_line);
         f.render_stateful_widget(List::new(items), inner_area, &mut state);
 
+        let offset = state.offset();
+        let row_hits: Vec<ConfigureRowHit> = line_rows
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(inner_area.height as usize)
+            .filter_map(|(line, row)| {
+                Some(ConfigureRowHit {
+                    screen_row: inner_area.y + (line - offset) as u16,
+                    row: (*row)?,
+                })
+            })
+            .collect();
+        if let Some(configure) = app.configure_mut() {
+            configure.row_hits = row_hits;
+        }
+
         // Save submenu
-        if app.save_menu_open {
+        if save_menu_open {
             let submenu_height = 7;
             let submenu_width = 30;
             let submenu_area = centered_rect_fixed(submenu_width, submenu_height, size);
@@ -809,7 +593,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 .iter()
                 .enumerate()
                 .map(|(i, &label)| {
-                    let is_active = match app.save_menu_selection {
+                    let is_active = match save_menu_selection {
                         Some(SaveMenu::Local) => i == 0,
                         Some(SaveMenu::Global) => i == 1,
                         Some(SaveMenu::Cancel) => i == 2,
@@ -828,7 +612,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
                 .collect();
 
             let mut submenu_state = ListState::default();
-            submenu_state.select(Some(match app.save_menu_selection {
+            submenu_state.select(Some(match save_menu_selection {
                 Some(SaveMenu::Local) => 0,
                 Some(SaveMenu::Global) => 1,
                 Some(SaveMenu::Cancel) => 2,
@@ -845,12 +629,20 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
     }
 
     // Render value-based column filter selector as overlay on configure view
-    if app.focus_column_checklist && app.column_filter_context.is_some() {
-        if let Some(selector) = &mut app.selector {
+    if app.focus_column_checklist() && app.column_filter_context.is_some() {
+        let App {
+            modal_stack,
+            overlay_stack,
+            ..
+        } = app;
+        if let Some(crate::app::Modal::Selector(selector)) = modal_stack
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m, crate::app::Modal::Selector(_)))
+        {
             let selector_area = centered_rect_min(70, 70, 60, 8, size);
             let body = modal_area(f, ctx, &selector.title, selector_area);
-            app.overlay_stack
-                .push((crate::app::OverlayKind::ColumnFilter, selector_area));
+            overlay_stack.push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
@@ -975,7 +767,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
         }
     }
 
-    if let Some(dialog) = &mut app.submit_dialog {
+    if let Some(dialog) = app.submit_dialog_mut() {
         let icon = submit_dialog_icon(&dialog.action, icons);
         let title = format!("{icon} {}", dialog.form.title);
         let area = super::form::render_form(f, ctx, &mut dialog.form, &title, size);
@@ -985,6 +777,187 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
 
     super::review_submit::render_review_submit(f, ctx, app, size);
     render_help(f, ctx, app, size);
+}
+
+fn configure_heading(
+    ctx: &RenderCtx<'_>,
+    section: crate::configure_view::ConfigureSection,
+) -> Option<ListItem<'static>> {
+    use crate::configure_view::ConfigureSection;
+    let t = &ctx.theme;
+    let icons = ctx.icons;
+    let (icon, color) = match section {
+        ConfigureSection::Columns => (&icons.label_columns, t.header_fg),
+        ConfigureSection::GroupBy => (&icons.label_group, t.green),
+        ConfigureSection::Order => (&icons.label_order, t.yellow),
+        ConfigureSection::Tabs => (&icons.label_navigation, t.header_fg),
+        ConfigureSection::Layout => (&icons.label_configure, t.purple),
+        ConfigureSection::View | ConfigureSection::Save => return None,
+    };
+    let heading = section.heading()?;
+    Some(
+        ListItem::new(format!("  {icon} {heading}"))
+            .style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
+    )
+}
+
+/// One Configure View row: a checkbox, radio, value or the Save button.
+fn configure_row_item(
+    app: &App,
+    ctx: &RenderCtx<'_>,
+    row: crate::configure_view::ConfigureRow,
+    is_active: bool,
+    editing_page_size: bool,
+    inner_width: usize,
+) -> ListItem<'static> {
+    use crate::configure_view::ConfigureRow;
+    let t = &ctx.theme;
+    let icons = ctx.icons;
+    let tab = app.active_tab;
+    let active_style = Style::default()
+        .fg(t.highlight_bg)
+        .bg(t.border_focused)
+        .add_modifier(Modifier::BOLD);
+    let checkbox = |checked: bool| if checked { "x" } else { " " };
+    let radio = |selected: bool| {
+        if selected {
+            icons.radio_on.clone()
+        } else {
+            icons.radio_off.clone()
+        }
+    };
+    let setting_row = |label: String, value: String, label_color, style: Style| {
+        let line = if is_active {
+            Line::from(Span::styled(format!("{label}{value} "), style))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    label,
+                    Style::default()
+                        .fg(label_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(value, Style::default().fg(t.text_normal)),
+            ])
+        };
+        ListItem::new(line).style(style)
+    };
+    let plain_style = if is_active {
+        active_style
+    } else {
+        Style::default().fg(t.text_normal)
+    };
+
+    match row {
+        ConfigureRow::Column(col) => {
+            let checked = app.is_column_visible(tab, col);
+            let filter_count = app
+                .get_column_filter(tab, col)
+                .map(|s| s.len())
+                .filter(|&n| n > 0);
+            let text = match filter_count {
+                Some(count) => format!("  [{}] {col} ({count})", checkbox(checked)),
+                None => format!("  [{}] {col}", checkbox(checked)),
+            };
+            let style = match (is_active, checked) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.text_normal),
+                (false, false) => Style::default().fg(t.text_muted),
+            };
+            ListItem::new(text).style(style)
+        }
+        ConfigureRow::GroupBy(col) => {
+            let is_selected =
+                app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
+            let style = match (is_active, is_selected) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.green),
+                (false, false) => Style::default().fg(t.text_normal),
+            };
+            ListItem::new(format!("  {} {col}", radio(is_selected))).style(style)
+        }
+        ConfigureRow::Order { ascending } => {
+            let is_selected = app.group_ascending.get(&tab).copied().unwrap_or(true) == ascending;
+            let label = if ascending { "Ascending" } else { "Descending" };
+            let style = match (is_active, is_selected) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.yellow),
+                (false, false) => Style::default().fg(t.text_normal),
+            };
+            ListItem::new(format!(" {} {label}", radio(is_selected))).style(style)
+        }
+        ConfigureRow::PageSize => {
+            let value = if editing_page_size {
+                format!("[ {}| ]", app.page_size_input)
+            } else {
+                format!("[ {} ]", app.page_size)
+            };
+            let style = if editing_page_size {
+                Style::default()
+                    .fg(t.highlight_bg)
+                    .bg(t.green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                plain_style
+            };
+            let label = format!(" {} Page Size      ", icons.label_page_size);
+            if editing_page_size && !is_active {
+                ListItem::new(Line::from(Span::styled(format!("{label}{value} "), style)))
+                    .style(style)
+            } else {
+                setting_row(label, value, t.header_fg, style)
+            }
+        }
+        ConfigureRow::PrefetchTabs => setting_row(
+            format!(" {} Prefetch Tabs  ", icons.label_fetching),
+            format!("[ {} ]", app.config.prefetch_tabs),
+            t.header_fg,
+            plain_style,
+        ),
+        ConfigureRow::Theme => setting_row(
+            format!(" {} Theme          ", icons.label_theme),
+            format!(
+                "[ {} ]",
+                app.config.theme_preset.as_deref().unwrap_or("default")
+            ),
+            t.purple,
+            plain_style,
+        ),
+        ConfigureRow::Tab(shown_tab) => {
+            let shown = app.config.layout.tab_order().contains(&(shown_tab, true));
+            let style = match (is_active, shown) {
+                (true, _) => active_style,
+                (false, true) => Style::default().fg(t.text_normal),
+                (false, false) => Style::default().fg(t.text_muted),
+            };
+            ListItem::new(format!(
+                "  [{}] {}",
+                checkbox(shown),
+                shown_tab.title(ctx.kind, icons)
+            ))
+            .style(style)
+        }
+        ConfigureRow::Layout(layout_setting) => setting_row(
+            format!(
+                "  {:<width$} ",
+                layout_setting.label(),
+                width = crate::configure_view::LayoutSetting::label_width()
+            ),
+            format!("[ {} ]", layout_setting.value(&app.config.layout)),
+            t.header_fg,
+            plain_style,
+        ),
+        ConfigureRow::Save => {
+            let label = format!("{} Save View", icons.label_save);
+            let left_pad = inner_width.saturating_sub(label.chars().count()) / 2;
+            let style = if is_active {
+                active_style
+            } else {
+                Style::default().fg(t.text_muted)
+            };
+            ListItem::new(format!("{:left_pad$}{label}", "")).style(style)
+        }
+    }
 }
 
 fn submit_dialog_icon<'a>(action: &crate::app::ConfirmAction, icons: &'a Icons) -> &'a str {
@@ -1044,7 +1017,7 @@ fn help_category(context: KeyContext, is_github: bool) -> &'static str {
 }
 
 pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect) {
-    if !app.show_help {
+    if !app.show_help() {
         return;
     }
 
@@ -1060,7 +1033,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
     let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
     let d = |k: String| std::borrow::Cow::Owned(k);
 
-    let custom_commands: Vec<crate::custom_commands::CustomCommand> = if app.diff_view.is_some() {
+    let custom_commands: Vec<crate::custom_commands::CustomCommand> = if app.diff_view().is_some() {
         app.custom_commands.in_diff().cloned().collect()
     } else {
         app.custom_commands
@@ -1121,7 +1094,22 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         Shortcut {
             category: "Column Config",
             key: s("j / k / ↓ / ↑"),
-            action: "Navigate columns & group-by options".to_string(),
+            action: "Navigate rows".to_string(),
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("Tab / Shift+Tab"),
+            action: "Jump to the next / previous section".to_string(),
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("J / K"),
+            action: "Move the focused column or tab".to_string(),
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("h / l"),
+            action: "Step a LAYOUT setting".to_string(),
         },
         Shortcut {
             category: "Column Config",
@@ -1170,17 +1158,17 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         }),
     );
 
-    let active_categories: &[&str] = if app.submit_dialog.is_some() {
+    let active_categories: &[&str] = if app.submit_dialog().is_some() {
         &["Confirm Dialog"]
-    } else if app.diff_view.is_some() {
+    } else if app.diff_view().is_some() {
         &["Diff View", CUSTOM_COMMANDS_CATEGORY]
-    } else if app.edit_menu.is_some() {
+    } else if app.edit_menu().is_some() {
         &["Global & Nav", "Inspector / Editor"]
-    } else if app.focus_column_checklist {
+    } else if app.focus_column_checklist() {
         &["Global & Nav", "Column Config"]
-    } else if app.date_picker.is_some() {
+    } else if app.date_picker().is_some() {
         &["Global & Nav", "Date Picker"]
-    } else if app.selector.is_some() {
+    } else if app.selector().is_some() {
         &["Global & Nav", "Selector / Filter"]
     } else {
         match app.active_tab {
@@ -1419,7 +1407,7 @@ mod tests {
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::MergeRequests;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1461,7 +1449,7 @@ mod tests {
             show_read_notifications: false,
             opened_pipeline: None,
         });
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::MergeRequests;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1503,7 +1491,7 @@ mod tests {
             show_read_notifications: false,
             opened_pipeline: None,
         });
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Jobs;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1545,7 +1533,7 @@ command = "true"
         )
         .unwrap();
         app.custom_commands = crate::custom_commands::CustomCommands::load(&app.config).0;
-        app.show_help = true;
+        app.open_help();
 
         app.active_tab = Tab::MergeRequests;
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1573,7 +1561,7 @@ command = "true"
         let backend = TestBackend::new(160, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Issues;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1615,7 +1603,7 @@ command = "true"
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Issues;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1652,7 +1640,7 @@ command = "true"
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Jobs;
 
         let icons = std::sync::Arc::clone(&app.icons);
@@ -1674,7 +1662,7 @@ command = "true"
         let backend = TestBackend::new(160, 80);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::default();
-        app.show_help = true;
+        app.open_help();
         app.active_tab = Tab::Issues;
         app.config
             .keybindings
@@ -1728,7 +1716,7 @@ command = "true"
         let mut app = App::default();
         app.mrs.items =
             serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
-        app.submit_dialog = Some(crate::app::SubmitDialog::build(action, &app));
+        app.open_submit_dialog(crate::app::SubmitDialog::build(action, &app));
         let ascii = crate::config::Icons::ascii();
         let ctx = &crate::ui::render_ctx::RenderCtx {
             theme: crate::config::Theme::default(),

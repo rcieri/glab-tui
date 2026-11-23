@@ -15,8 +15,7 @@ const JOBS_FETCH: &str = "run view 12345 --json jobs";
 
 /// The request bodies `gh api --input -` received, one per line.
 fn request_bodies(session: &TestSession) -> String {
-    std::fs::read_to_string(format!("{}.stdin", session.sandbox.log_path.display()))
-        .unwrap_or_default()
+    session.sandbox.request_bodies().join("\n")
 }
 
 fn assert_job_shows_success(session: &TestSession, what: &str) {

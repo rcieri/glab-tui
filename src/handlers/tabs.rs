@@ -473,6 +473,35 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
         });
     });
 }
+
+/// After the user moved to another tab: fetch it unless it is loading or
+/// fresh, and the related items its highlighted row previews.
+pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    if let Some(client) = &app.gitlab_client {
+        if !app.loading_tabs.contains(&app.active_tab)
+            && !app.refreshed_tabs.contains(&app.active_tab)
+        {
+            if !app.loaded_tabs.contains(&app.active_tab) {
+                app.loading_tabs.insert(app.active_tab);
+            }
+            spawn_refresh_active_tab(
+                fx,
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
+    }
+    if app.active_tab == Tab::Issues {
+        maybe_fetch_related_mrs(app, tx);
+    }
+    if app.active_tab == Tab::MergeRequests {
+        maybe_fetch_mr_related_issues(app, tx);
+    }
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -588,7 +617,7 @@ fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
         }
         _ => crate::app::ConfirmAction::MergeMr(pr_number),
     };
-    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+    app.open_submit_dialog(crate::app::SubmitDialog::build_with_project(
         action,
         project.to_string(),
         app,
@@ -653,7 +682,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
         },
         request: None,
     };
-    app.selector = Some(selector);
+    app.open_selector(selector);
 }
 
 /// Scrolls the detail pane by a full or half page for the
@@ -966,7 +995,7 @@ pub fn handle_active_tab_key(
                             let client = app.gitlab_client.clone();
                             jump_to_mr_tab(app, items[0].iid, client, tx.clone(), fx);
                         } else {
-                            app.selector = Some(crate::app::Selector {
+                            app.open_selector(crate::app::Selector {
                                 title: format!(
                                     " Related {} for Issue #{} ",
                                     if is_github {
@@ -1269,8 +1298,7 @@ pub fn handle_active_tab_key(
                     if let Some(mr) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let pr_suffix = if is_github { "PR" } else { "MR" };
-                        let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid)
-                        {
+                        let unresolved = if app.diff_view().map(|d| d.mr_iid) == Some(mr.iid) {
                             Some(app.unresolved_threads_count())
                         } else {
                             None
@@ -1316,7 +1344,7 @@ pub fn handle_active_tab_key(
             {
                 let mut items: Vec<(String, u64)> = app.selected_mrs.iter().cloned().collect();
                 items.sort_unstable();
-                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                app.open_submit_dialog(crate::app::SubmitDialog::build(
                     crate::app::ConfirmAction::BulkMergeMrs(items),
                     app,
                 ));
@@ -1351,12 +1379,13 @@ pub fn handle_active_tab_key(
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
                                 RebaseGate::Allowed => {
-                                    app.submit_dialog =
-                                        Some(crate::app::SubmitDialog::build_with_project(
+                                    app.open_submit_dialog(
+                                        crate::app::SubmitDialog::build_with_project(
                                             crate::app::ConfirmAction::RebaseMr(mr_iid),
                                             app.scope.project_of(&mr.project_path).to_string(),
                                             app,
-                                        ));
+                                        ),
+                                    );
                                 }
                                 RebaseGate::ResolveLocally => {
                                     app.show_error(
@@ -1400,7 +1429,7 @@ pub fn handle_active_tab_key(
                                     .find(|p| p.ref_branch() == mr.source_branch)
                                     .map(|p| p.id())
                             });
-                            app.active_tab = crate::app::Tab::Pipelines;
+                            app.set_active_tab_keeping_preview(crate::app::Tab::Pipelines);
                             app.pending_pipeline_select = pipe_id;
                             if let Some(client) = &app.gitlab_client {
                                 crate::fetch::spawn_refresh_active_tab(
@@ -1534,7 +1563,7 @@ pub fn handle_active_tab_key(
                                     } else {
                                         let is_github = app.is_github();
                                         let pr_term = if is_github { "PR" } else { "MR" };
-                                        app.selector = Some(crate::app::Selector {
+                                        app.open_selector(crate::app::Selector {
                                             title: format!(
                                                 " Linked Issues for {pr_term} #{mr_iid} "
                                             ),
@@ -1870,7 +1899,7 @@ pub fn handle_active_tab_key(
                     .next()
                     .and_then(|sel| pipelines.iter().position(|p| p == sel))
                     .unwrap_or(0);
-                app.selector = Some(crate::app::Selector {
+                app.open_selector(crate::app::Selector {
                     title: " Select Pipeline ".to_string(),
                     all_items: pipelines,
                     selected_items: pre_selected,
@@ -2267,7 +2296,7 @@ pub fn handle_active_tab_key(
                         .matches(Action::RunnersEditDescription, key_event) =>
                     {
                         let current_desc = item.description.clone().unwrap_or_default();
-                        app.text_input = Some(crate::app::TextInput::new(
+                        app.open_text_input(crate::app::TextInput::new(
                             " Edit Runner Description ",
                             current_desc,
                             crate::app::TextInputAction::EditField {
@@ -2841,7 +2870,7 @@ pub fn handle_active_tab_key(
                         app.close_job_trace();
                     } else {
                         app.close_opened_pipeline();
-                        app.active_tab = crate::app::Tab::Pipelines;
+                        app.set_active_tab(crate::app::Tab::Pipelines);
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
                     app.ascend();
@@ -2937,14 +2966,13 @@ pub fn handle_active_tab_key(
                                         if let Some(mr) = filtered.get(selected_idx) {
                                             let is_github = app.is_github();
                                             let pr_suffix = if is_github { "PR" } else { "MR" };
-                                            let unresolved =
-                                                if app.diff_view.as_ref().map(|d| d.mr_iid)
-                                                    == Some(mr.iid)
-                                                {
-                                                    Some(app.unresolved_threads_count())
-                                                } else {
-                                                    None
-                                                };
+                                            let unresolved = if app.diff_view().map(|d| d.mr_iid)
+                                                == Some(mr.iid)
+                                            {
+                                                Some(app.unresolved_threads_count())
+                                            } else {
+                                                None
+                                            };
                                             let is_fetching_issues =
                                                 app.fetching_mr_related_issues.contains(&mr.iid);
                                             let mut doc = crate::entity_editor::build_mr_document(
@@ -3038,29 +3066,7 @@ pub fn handle_active_tab_key(
                 .matches(Action::GlobalNextTab, key_event) =>
             {
                 app.next_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            fx,
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, tx);
-                }
+                load_entered_tab(app, tx, fx);
             }
             _ if app
                 .config
@@ -3068,29 +3074,7 @@ pub fn handle_active_tab_key(
                 .matches(Action::GlobalPrevTab, key_event) =>
             {
                 app.previous_tab();
-                if let Some(client) = &app.gitlab_client {
-                    if !app.loading_tabs.contains(&app.active_tab)
-                        && !app.refreshed_tabs.contains(&app.active_tab)
-                    {
-                        if !app.loaded_tabs.contains(&app.active_tab) {
-                            app.loading_tabs.insert(app.active_tab);
-                        }
-                        spawn_refresh_active_tab(
-                            fx,
-                            client,
-                            &app.scope,
-                            app.requested_state_queries(),
-                            app.active_tab,
-                            app.scoped_sender(tx.clone()),
-                        );
-                    }
-                }
-                if app.active_tab == crate::app::Tab::Issues {
-                    maybe_fetch_related_mrs(app, tx);
-                }
-                if app.active_tab == crate::app::Tab::MergeRequests {
-                    maybe_fetch_mr_related_issues(app, tx);
-                }
+                load_entered_tab(app, tx, fx);
             }
             _ if app
                 .config
@@ -3463,7 +3447,7 @@ pub fn apply_opened_pipeline(
                 app.jobs.state.select(Some(0));
                 app.detail_scroll = 0;
                 app.close_job_trace();
-                app.active_tab = crate::app::Tab::Jobs;
+                app.set_active_tab_keeping_preview(crate::app::Tab::Jobs);
             } else {
                 app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }
@@ -3937,7 +3921,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         assert!(matches!(
             dialog.action,
             crate::app::ConfirmAction::CancelPipeline(42)
@@ -4007,7 +3991,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         match &dialog.action {
             crate::app::ConfirmAction::CancelJobs {
                 pipeline_id,
@@ -4528,7 +4512,10 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
         );
 
-        let dialog = app.submit_dialog.expect("close opens a confirm dialog");
+        let dialog = app
+            .submit_dialog()
+            .cloned()
+            .expect("close opens a confirm dialog");
         assert!(matches!(
             dialog.action,
             crate::app::ConfirmAction::CloseMilestone(ref milestone) if milestone.id == 20
@@ -4548,6 +4535,23 @@ pub(crate) mod tests {
             "project_path": project,
         }))
         .expect("merge request fixture")
+    }
+
+    #[tokio::test]
+    async fn following_an_mr_pipeline_from_an_open_preview_keeps_the_preview_open() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::MergeRequests;
+        app.detail_visible = true;
+        app.mrs.items = vec![mr_in("acme/app", 3, "alice")];
+        app.mrs.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Pipelines);
+        assert!(app.detail_visible);
     }
 
     fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {
@@ -4575,7 +4579,7 @@ pub(crate) mod tests {
             &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
         );
 
-        let menu = app.edit_menu.expect("create milestone menu");
+        let menu = app.edit_menu().cloned().expect("create milestone menu");
         assert_eq!(menu.entity_project, "grp/b");
     }
 
@@ -4690,6 +4694,24 @@ pub(crate) mod tests {
         assert_eq!(app.project_path_for_jobs(), "acme");
     }
 
+    #[test]
+    fn opening_a_pipeline_from_an_open_inspector_keeps_the_preview_open_on_jobs() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.detail_visible = true;
+        app.pipelines.items = vec![listed_pipeline(7)];
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Jobs);
+        assert!(app.detail_visible);
+    }
+
     /// Enter pressed twice before the first reply: the first reply descends,
     /// so the second finds its pipeline no longer listed and must not push a
     /// second level.
@@ -4725,7 +4747,7 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
         );
-        let menu = app.edit_menu.as_ref().expect("MR creation form opened");
+        let menu = app.edit_menu().expect("MR creation form opened");
         let source_field = menu.fields.iter().find(|f| f.label == "Source Branch");
         assert_eq!(source_field.map(|f| f.value.as_str()), Some("branch-00"));
     }
@@ -4761,7 +4783,7 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
-        let dialog = app.submit_dialog.as_ref().expect("Delete dialog shown");
+        let dialog = app.submit_dialog().expect("Delete dialog shown");
         assert_eq!(dialog.form.title, "Delete Branch 'branch-00'");
         if let crate::app::ConfirmAction::DeleteBranch(name) = &dialog.action {
             assert_eq!(name, "branch-00");
@@ -4791,15 +4813,12 @@ pub(crate) mod tests {
             &mut app,
             &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         );
-        let dialog = app
-            .submit_dialog
-            .as_ref()
-            .expect("Bulk delete dialog shown");
+        let dialog = app.submit_dialog().expect("Bulk delete dialog shown");
         assert_eq!(dialog.form.title, "Delete 2 Branches");
         if let crate::app::ConfirmAction::BulkDeleteBranches(names) = &dialog.action {
             assert_eq!(
-                names,
-                &vec!["branch-00".to_string(), "branch-01".to_string()]
+                names.as_slice(),
+                &["branch-00".to_string(), "branch-01".to_string()]
             );
         } else {
             panic!("Expected ConfirmAction::BulkDeleteBranches");
@@ -4945,7 +4964,7 @@ pub(crate) mod tests {
         dispatch(&mut app, &key(KeyCode::Char('j')));
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         let crate::app::ConfirmAction::RollbackDeployment {
             environment,
             deployment,
@@ -4963,7 +4982,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert_eq!(
             app.toast_notice().map(Notice::text),
             Some(NO_DEPLOYMENT_SELECTED)
@@ -4977,7 +4996,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('R')));
 
-        assert!(app.submit_dialog.is_none());
+        assert!(app.submit_dialog().is_none());
         assert_eq!(
             app.toast_notice().map(Notice::text),
             Some("Deployment #1 has no deploy job to re-run")
@@ -4990,7 +5009,7 @@ pub(crate) mod tests {
 
         dispatch(&mut app, &key(KeyCode::Char('d')));
 
-        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        let dialog = app.submit_dialog().expect("a confirmation opens");
         assert!(matches!(
             &dialog.action,
             crate::app::ConfirmAction::StopEnvironment(env) if env.id == 1

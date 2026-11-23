@@ -277,14 +277,16 @@ fn handle_selector_mouse(app: &mut App, row: u16, col: u16) {
     let Some(layout) = app.selector_layout.as_ref() else {
         return;
     };
-    let filter = (layout.groups.len() > 1).then(|| layout.groups[0]);
+    let Some(&first) = layout.groups.first() else {
+        return;
+    };
     let Some(&list) = layout.groups.last() else {
         return;
     };
     let Some(sel) = app.selector_mut() else {
         return;
     };
-    if filter.is_some_and(|filter| rect_contains(filter, row, col)) {
+    if sel.purpose.has_filter_bar() && rect_contains(first, row, col) {
         sel.is_filtering = true;
         return;
     }

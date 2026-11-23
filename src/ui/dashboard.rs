@@ -1383,7 +1383,10 @@ fn activity_row(ctx: &Context, item: &Activity, columns: &ListColumns) -> Row<'s
             sanitize_untrusted(&issue.title).into_owned(),
             &issue.author.username,
             people_cell(
-                issue.assignees.iter().map(|a| a.username.as_str()),
+                issue
+                    .assignees
+                    .iter()
+                    .map(|a| Participant::User(&a.username)),
                 "unassigned",
             ),
             issue_note(ctx, issue),
@@ -1395,7 +1398,13 @@ fn activity_row(ctx: &Context, item: &Activity, columns: &ListColumns) -> Row<'s
             sanitize_untrusted(&mr.title).into_owned(),
             &mr.author.username,
             people_cell(
-                mr.reviewers.iter().map(|r| r.username.as_str()),
+                mr.reviewers.iter().map(|r| {
+                    if r.is_team {
+                        Participant::Team(&r.username)
+                    } else {
+                        Participant::User(&r.username)
+                    }
+                }),
                 "no reviewer",
             ),
             mr_note(ctx, mr),
@@ -1491,10 +1500,20 @@ fn fit(text: &str, width: usize) -> String {
     }
 }
 
-/// `@a, @b`, or `nobody` when there is no one.
-fn people_cell<'a>(logins: impl Iterator<Item = &'a str>, nobody: &str) -> String {
-    let listed: Vec<String> = logins
-        .map(|login| format!("@{}", sanitize_untrusted(login)))
+/// Someone an item is assigned to or waits on.
+enum Participant<'a> {
+    User(&'a str),
+    /// A GitHub team review request, which has a name but no login.
+    Team(&'a str),
+}
+
+/// `@a, @b, Team`, or `nobody` when there is no one.
+fn people_cell<'a>(people: impl Iterator<Item = Participant<'a>>, nobody: &str) -> String {
+    let listed: Vec<String> = people
+        .map(|person| match person {
+            Participant::User(login) => format!("@{}", sanitize_untrusted(login)),
+            Participant::Team(name) => sanitize_untrusted(name).into_owned(),
+        })
         .collect();
     if listed.is_empty() {
         nobody.to_string()
@@ -1831,5 +1850,16 @@ mod tests {
             "nit · on Add a cache"
         );
         assert_eq!(contribution_title(&app, &review_comment(10, None)), "nit");
+    }
+
+    #[test]
+    fn a_requested_team_is_listed_by_its_name_without_an_at() {
+        assert_eq!(
+            people_cell(
+                [Participant::User("dee"), Participant::Team("Dev Team")].into_iter(),
+                "no reviewer"
+            ),
+            "@dee, Dev Team"
+        );
     }
 }

@@ -61,7 +61,7 @@ const LIST_PEOPLE_WIDTH: u16 = 20;
 const LIST_NOTE_WIDTH: u16 = 24;
 const LIST_UPDATED_WIDTH: u16 = 14;
 const LIST_ICON_WIDTH: u16 = 2;
-/// Ratatui's default `Table` column gap.
+/// The item list's column gap.
 const LIST_COLUMN_SPACING: u16 = 1;
 /// The title keeps at least this many cells. To protect it, `updated`,
 /// `note`, `people` and `author` are dropped, least useful first.
@@ -1069,17 +1069,33 @@ fn render_item_list(f: &mut Frame, ctx: &Context, area: Rect) {
         return;
     }
 
-    let content_width = block.inner(area).width;
-    let columns = ListColumns::fit(content_width, reference_width(&items));
+    let highlight_symbol = format!("{} ", ctx.icons.highlight_arrow);
+    let columns = item_list_columns(
+        block.inner(area).width,
+        &highlight_symbol,
+        reference_width(&items),
+    );
     let rows = items.iter().map(|item| item_row(ctx, item, &columns));
     let table = Table::new(rows, columns.constraints())
         .block(block)
+        .column_spacing(LIST_COLUMN_SPACING)
         .row_highlight_style(Style::default().bg(theme.highlight_bg))
-        .highlight_symbol(format!("{} ", ctx.icons.highlight_arrow))
+        .highlight_symbol(highlight_symbol)
         .highlight_spacing(HighlightSpacing::Always);
     let mut state = TableState::default()
         .with_selected(is_focused.then(|| app.dashboard.list_cursor.min(items.len() - 1)));
     f.render_stateful_widget(table, area, &mut state);
+}
+
+/// With `HighlightSpacing::Always` the table reserves the highlight symbol's
+/// width before it lays out the columns, so they fit in what is left.
+fn item_list_columns(
+    inner_width: u16,
+    highlight_symbol: &str,
+    reference_width: u16,
+) -> ListColumns {
+    let selection_width = u16::try_from(Span::raw(highlight_symbol).width()).unwrap_or(u16::MAX);
+    ListColumns::fit(inner_width.saturating_sub(selection_width), reference_width)
 }
 
 /// The reference column fits the longest pipeline id or release tag listed.
@@ -1757,6 +1773,22 @@ mod tests {
                 ..every_column
             }
         );
+    }
+
+    #[test]
+    fn the_item_list_columns_leave_room_for_the_highlight_symbol() {
+        let reference_width = 7;
+        let all_columns = LIST_ICON_WIDTH
+            + reference_width
+            + LIST_AUTHOR_WIDTH
+            + LIST_PEOPLE_WIDTH
+            + LIST_NOTE_WIDTH
+            + LIST_UPDATED_WIDTH
+            + 6 * LIST_COLUMN_SPACING
+            + LIST_TITLE_MIN_WIDTH;
+
+        assert!(item_list_columns(all_columns + 2, "> ", reference_width).show_updated);
+        assert!(!item_list_columns(all_columns, "> ", reference_width).show_updated);
     }
 
     #[test]

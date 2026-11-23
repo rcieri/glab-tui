@@ -6521,6 +6521,14 @@ impl App {
             .collect()
     }
 
+    /// The tabs the config turns on, shown or not, in built-in order.
+    pub fn enabled_tabs(&self) -> Vec<Tab> {
+        Tab::ALL
+            .into_iter()
+            .filter(|tab| tab.is_enabled_in(&self.config))
+            .collect()
+    }
+
     pub fn get_column_filter(
         &self,
         tab: Tab,

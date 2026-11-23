@@ -127,7 +127,12 @@ pub fn handle_key(
                     let tab = app.active_tab;
                     app.move_column(tab, column, towards_end)
                 }
-                ConfigureRow::Tab(tab) => move_tab(&mut app.config.layout, tab, towards_end),
+                ConfigureRow::Tab(tab) => {
+                    let enabled = app.enabled_tabs();
+                    move_tab(&mut app.config.layout, tab, towards_end, |t| {
+                        enabled.contains(&t)
+                    })
+                }
                 _ => false,
             };
             if moved {
@@ -194,7 +199,8 @@ pub(crate) fn activate_row(
         }
         ConfigureRow::Theme => app.open_theme_picker(),
         ConfigureRow::Tab(shown_tab) => {
-            if !toggle_tab(&mut app.config.layout, shown_tab) {
+            let enabled = app.enabled_tabs();
+            if !toggle_tab(&mut app.config.layout, shown_tab, |t| enabled.contains(&t)) {
                 app.show_notice("The last shown tab cannot be hidden".to_string());
                 return;
             }

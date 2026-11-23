@@ -12,6 +12,7 @@ use crate::form::{
     NoteLevel, Radio, Toggle, Toggles,
 };
 use crate::syntax::{DiffHighlighter, DiffSide, SyntaxToken, styled_tokens};
+use crate::templates::TemplateKind;
 use crate::ui::list_tab::branches::BranchColumn;
 use crate::ui::list_tab::environments::EnvironmentColumn;
 use crate::ui::list_tab::releases::ReleaseColumn;
@@ -373,6 +374,14 @@ pub enum EditEntityKind {
 }
 
 impl EditEntityKind {
+    /// Which description templates this form's template pickers list.
+    pub fn template_kind(&self) -> TemplateKind {
+        match self {
+            Self::CreateMr | Self::EditMr | Self::BulkEditMrs => TemplateKind::Mr,
+            _ => TemplateKind::Issue,
+        }
+    }
+
     pub fn is_create(&self) -> bool {
         matches!(
             self,
@@ -641,39 +650,6 @@ impl SelectorPurpose {
                 | SelectorPurpose::RelatedMrs
                 | SelectorPurpose::LinkedIssues
         )
-    }
-}
-
-/// Which description templates a template picker lists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TemplateKind {
-    Issue,
-    Mr,
-}
-
-impl TemplateKind {
-    pub fn of(kind: &EditEntityKind) -> Self {
-        match kind {
-            EditEntityKind::CreateMr | EditEntityKind::EditMr | EditEntityKind::BulkEditMrs => {
-                Self::Mr
-            }
-            _ => Self::Issue,
-        }
-    }
-
-    /// The template type `templates::list_templates` reads.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Issue => "issue",
-            Self::Mr => "mr",
-        }
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Issue => "Issue",
-            Self::Mr => "Merge Request",
-        }
     }
 }
 

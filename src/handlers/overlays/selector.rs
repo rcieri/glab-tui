@@ -870,7 +870,7 @@ pub fn handle_key(
                         let choice = selected_val.unwrap_or_default();
                         let mut desc_val = String::new();
                         if choice != BLANK_TEMPLATE_CHOICE
-                            && let Some(content) = list_templates(kind.as_str())
+                            && let Some(content) = list_templates(kind)
                                 .iter()
                                 .find(|(n, _)| n == &choice)
                                 .map(|(_, c)| c)
@@ -1228,7 +1228,7 @@ pub fn handle_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{EditEntityKind, EditMenu, Field, Selector, SelectorPurpose, TemplateKind};
+    use crate::app::{EditEntityKind, EditMenu, Field, Selector, SelectorPurpose};
     use ratatui::widgets::ListState;
 
     fn new_mr_menu() -> EditMenu {
@@ -1277,7 +1277,7 @@ mod tests {
             entity_iid: 0,
             entity_type: String::new(),
             purpose: SelectorPurpose::DescriptionTemplate {
-                kind: TemplateKind::of(&EditEntityKind::CreateMr),
+                kind: EditEntityKind::CreateMr.template_kind(),
             },
             multi_select: false,
             state: ListState::default(),
@@ -1316,7 +1316,7 @@ mod tests {
             entity_iid: 0,
             entity_type: String::new(),
             purpose: SelectorPurpose::DescriptionTemplate {
-                kind: TemplateKind::of(&EditEntityKind::CreateMr),
+                kind: EditEntityKind::CreateMr.template_kind(),
             },
             multi_select: false,
             state: ListState::default(),

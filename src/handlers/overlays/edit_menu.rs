@@ -1671,7 +1671,7 @@ pub fn handle_key(
             let purpose = match field_name.as_str() {
                 "Create from Issue" => Some(crate::app::SelectorPurpose::CreateMrFromIssue),
                 "Description Template" => Some(crate::app::SelectorPurpose::DescriptionTemplate {
-                    kind: crate::app::TemplateKind::of(&menu.entity_kind),
+                    kind: menu.entity_kind.template_kind(),
                 }),
                 "Project" if !is_ref_row => None,
                 _ => crate::app::SelectorField::from_label(&field_name)
@@ -1915,7 +1915,7 @@ pub fn handle_key(
                     all_items = issues;
                     is_loading = false;
                 } else if let crate::app::SelectorPurpose::DescriptionTemplate { kind } = &purpose {
-                    let templates = list_templates(kind.as_str());
+                    let templates = list_templates(*kind);
                     let template_names: Vec<String> =
                         std::iter::once(BLANK_TEMPLATE_CHOICE.to_string())
                             .chain(templates.iter().map(|(n, _)| n.clone()))
@@ -2116,8 +2116,8 @@ pub fn handle_key(
                 if entity_iid == 0 || entity_type.starts_with("new_") {
                     let raw_val = menu.fields[menu.selected_idx].value.clone();
                     if raw_val.trim().is_empty() {
-                        let kind = crate::app::TemplateKind::of(&menu.entity_kind);
-                        let templates = list_templates(kind.as_str());
+                        let kind = menu.entity_kind.template_kind();
+                        let templates = list_templates(kind);
                         if !templates.is_empty() {
                             let template_names: Vec<String> =
                                 std::iter::once(BLANK_TEMPLATE_CHOICE.to_string())

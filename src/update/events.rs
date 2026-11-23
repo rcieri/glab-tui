@@ -823,9 +823,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             result,
         } => {
             let sender = app.scoped_sender(tx.clone());
+            let rejected: std::collections::HashSet<&str> = match &result {
+                Ok(refused) => refused.iter().map(|r| r.path.as_str()).collect(),
+                Err(_) => changes.iter().map(|(path, _)| path.as_str()).collect(),
+            };
             let mut corrections = Vec::new();
             if let Some(sync) = app.viewed_syncs.get_mut(&pull_request_id) {
-                corrections = sync.settle(&changes, result.is_ok());
+                corrections = sync.settle(&changes, &rejected);
                 if sync.claim_follow_up_flush() {
                     crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), sender);
                 }
@@ -845,11 +849,23 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if let Some((project_path, mr_iid, marks)) = reverted_marks {
                 app.store_review_marks(&project_path, mr_iid, marks);
             }
-            if let Err(err) = result {
-                app.show_cli_error(format!(
+            match result {
+                Err(err) => app.show_cli_error(format!(
                     "Could not sync the viewed state of {} file(s) with GitHub; reverted: {err}",
                     changes.len()
-                ));
+                )),
+                Ok(refused) => {
+                    if let Some(first) = refused.first() {
+                        app.show_cli_error(format!(
+                            "GitHub refused the viewed state of {} of {} file(s), reverted: \
+                             {}: {}",
+                            refused.len(),
+                            changes.len(),
+                            first.path,
+                            first.reason
+                        ));
+                    }
+                }
             }
         }
         Event::ReviewSubmitted { mr_iid, result } => {

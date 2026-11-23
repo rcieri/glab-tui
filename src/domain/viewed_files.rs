@@ -19,6 +19,15 @@ pub struct PrViewedFiles {
     pub files: HashMap<String, FileViewedState>,
 }
 
+/// A change of a viewed-state batch GitHub did not apply, and why.
+/// GraphQL runs aliased mutations independently, so one refused path leaves
+/// the rest of its batch applied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectedViewedPath {
+    pub path: String,
+    pub reason: String,
+}
+
 /// Digest of a file's diff text, persisted next to each reviewed mark.
 ///
 /// FNV-1a rather than `std::hash::DefaultHasher`: the value outlives the
@@ -129,14 +138,19 @@ impl ViewedSync {
     }
 
     /// Settles a finished request and returns the local state each of its
-    /// paths must show: the server's. Paths toggled again since are left out;
-    /// their newer intent is still on its way.
-    pub fn settle(&mut self, changes: &[(String, bool)], succeeded: bool) -> Vec<(String, bool)> {
+    /// paths must show: the server's. GitHub applied every change but the
+    /// `rejected` paths. Paths toggled again since are left out; their newer
+    /// intent is still on its way.
+    pub fn settle(
+        &mut self,
+        changes: &[(String, bool)],
+        rejected: &HashSet<&str>,
+    ) -> Vec<(String, bool)> {
         self.in_flight.clear();
         changes
             .iter()
             .filter_map(|(path, viewed)| {
-                if succeeded {
+                if !rejected.contains(path.as_str()) {
                     if *viewed {
                         self.confirmed.insert(path.clone());
                     } else {
@@ -196,6 +210,14 @@ mod tests {
         ViewedSync::new("PR_1".to_string(), paths(names).into_iter().collect())
     }
 
+    fn applied() -> HashSet<&'static str> {
+        HashSet::new()
+    }
+
+    fn every_path(changes: &[(String, bool)]) -> HashSet<&str> {
+        changes.iter().map(|(path, _)| path.as_str()).collect()
+    }
+
     #[test]
     fn fingerprint_depends_on_line_boundaries_and_content() {
         let digest = |lines: &[&str]| {
@@ -252,7 +274,7 @@ mod tests {
         // b.rs is toggled again while the request is in flight.
         sync.queue(&paths(&["b.rs"]), false);
 
-        let corrections = sync.settle(&changes, false);
+        let corrections = sync.settle(&changes, &every_path(&changes));
         assert_eq!(
             corrections,
             vec![("a.rs".to_string(), false), ("old.rs".to_string(), true)]
@@ -265,7 +287,7 @@ mod tests {
         sync.queue(&paths(&["a.rs"]), true);
         let changes = sync.take_changes();
         assert_eq!(
-            sync.settle(&changes, true),
+            sync.settle(&changes, &applied()),
             vec![("a.rs".to_string(), true)]
         );
         // The server now holds it, so toggling it twice sends nothing.
@@ -285,12 +307,12 @@ mod tests {
         assert!(sync.queue(&paths(&["a.rs"]), false));
         assert!(sync.take_changes().is_empty());
 
-        assert!(sync.settle(&marked, true).is_empty());
+        assert!(sync.settle(&marked, &applied()).is_empty());
         assert!(sync.claim_follow_up_flush());
         let unmarked = sync.take_changes();
         assert_eq!(unmarked, vec![("a.rs".to_string(), false)]);
         assert_eq!(
-            sync.settle(&unmarked, true),
+            sync.settle(&unmarked, &applied()),
             vec![("a.rs".to_string(), false)]
         );
         assert!(!sync.claim_follow_up_flush());
@@ -312,7 +334,7 @@ mod tests {
         assert_eq!(first, expected);
         assert!(sync.take_changes().is_empty(), "one request at a time");
 
-        sync.settle(&first, true);
+        sync.settle(&first, &applied());
         assert!(sync.claim_follow_up_flush());
         assert_eq!(
             sync.take_changes(),
@@ -347,8 +369,30 @@ mod tests {
         sync.queue(&paths(&["b.rs"]), false);
         assert!(sync.take_changes().is_empty(), "one request at a time");
 
-        sync.settle(&in_flight, true);
+        sync.settle(&in_flight, &applied());
         assert!(sync.claim_follow_up_flush());
         assert_eq!(sync.take_changes(), vec![("b.rs".to_string(), false)]);
+    }
+
+    #[test]
+    fn a_partly_rejected_batch_confirms_what_github_applied_and_reverts_the_rest() {
+        let mut sync = sync_with_viewed(&["old.rs"]);
+        sync.queue(&paths(&["a.rs", "gone.rs"]), true);
+        sync.queue(&paths(&["old.rs"]), false);
+        let changes = sync.take_changes();
+
+        let corrections = sync.settle(&changes, &HashSet::from(["gone.rs"]));
+        assert_eq!(
+            corrections,
+            vec![
+                ("a.rs".to_string(), true),
+                ("gone.rs".to_string(), false),
+                ("old.rs".to_string(), false),
+            ]
+        );
+        // a.rs is confirmed now: toggling it back and forth sends nothing.
+        sync.queue(&paths(&["a.rs"]), false);
+        sync.queue(&paths(&["a.rs"]), true);
+        assert!(sync.take_changes().is_empty());
     }
 }

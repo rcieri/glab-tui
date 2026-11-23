@@ -252,7 +252,7 @@ impl GitlabClient {
         &self,
         pull_request_id: &str,
         changes: &[(String, bool)],
-    ) -> Result<()> {
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
         self.backend
             .set_files_viewed(pull_request_id, changes)
             .await

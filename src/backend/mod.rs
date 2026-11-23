@@ -348,12 +348,13 @@ pub trait Backend: Send + Sync {
         project: &str,
         iid: u64,
     ) -> Result<crate::domain::viewed_files::PrViewedFiles>;
-    /// Marks (`true`) or unmarks files as viewed in one request. GitHub only.
+    /// Marks (`true`) or unmarks files as viewed in one request and returns
+    /// the changes GitHub refused; `Err` when it applied none. GitHub only.
     async fn set_files_viewed(
         &self,
         pull_request_id: &str,
         changes: &[(String, bool)],
-    ) -> Result<()>;
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>>;
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;

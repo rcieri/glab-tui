@@ -78,12 +78,13 @@ pub enum Event {
     /// named by its GraphQL node id, closed.
     ViewedSyncFlush(String),
     /// One GitHub "Viewed" sync request finished. `changes` maps paths to the
-    /// viewed state that was sent. The pull request is named by its GraphQL
+    /// viewed state that was sent, and `result` holds the ones GitHub refused,
+    /// or `Err` when it applied none. The pull request is named by its GraphQL
     /// node id, since its number recurs across the projects of a group.
     ViewedFilesSynced {
         pull_request_id: String,
         changes: Vec<(String, bool)>,
-        result: Result<(), String>,
+        result: Result<Vec<crate::domain::viewed_files::RejectedViewedPath>, String>,
     },
     /// `show_read` is the filter the list was requested with. A result for a
     /// filter the user has since toggled away from is stale.

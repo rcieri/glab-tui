@@ -1950,7 +1950,7 @@ impl Backend for GlabBackend {
         &self,
         _pull_request_id: &str,
         _changes: &[(String, bool)],
-    ) -> Result<()> {
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
         anyhow::bail!("GitLab has no server-side viewed-file state")
     }
 

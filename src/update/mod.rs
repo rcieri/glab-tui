@@ -84,14 +84,11 @@ mod tests {
         Event::KeyPress(KeyPress::from(KeyEvent::new(code, modifiers)))
     }
 
+    const README_DIFF: &str = "diff --git a/README.md b/README.md\n--- a/README.md\n\
+                               +++ b/README.md\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+
     fn readme_diff() -> crate::app::DiffView {
-        crate::app::DiffView::new(
-            42,
-            "org/project".to_string(),
-            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
-             @@ -1,1 +1,1 @@\n-old\n+new\n"
-                .to_string(),
-        )
+        crate::app::DiffView::new(42, "org/project".to_string(), README_DIFF.to_string())
     }
 
     fn diff_fetched(
@@ -105,10 +102,22 @@ mod tests {
     }
 
     fn github_diff_fetched(pull_request_id: &str) -> Event {
-        diff_fetched(Some(Ok(crate::domain::viewed_files::PrViewedFiles {
-            pull_request_id: pull_request_id.to_string(),
-            files: std::collections::HashMap::new(),
-        })))
+        diff_fetched_with(README_DIFF, pull_request_id)
+    }
+
+    fn diff_fetched_with(raw_diff: &str, pull_request_id: &str) -> Event {
+        Event::DiffFetched {
+            diff_view: Box::new(crate::app::DiffView::new(
+                42,
+                "org/project".to_string(),
+                raw_diff.to_string(),
+            )),
+            comments: Ok(vec![]),
+            viewed_files: Some(Ok(crate::domain::viewed_files::PrViewedFiles {
+                pull_request_id: pull_request_id.to_string(),
+                files: std::collections::HashMap::new(),
+            })),
+        }
     }
 
     #[test]
@@ -184,11 +193,58 @@ mod tests {
             Event::ViewedFilesSynced {
                 pull_request_id: "PR_1".to_string(),
                 changes: vec![("README.md".to_string(), true)],
-                result: Ok(()),
+                result: Ok(vec![]),
             },
         );
         assert_eq!(spawned(&effects), 1, "the follow-up flush");
         assert_eq!(flush(&mut app, "PR_1"), 1);
+    }
+
+    #[test]
+    fn a_partly_refused_viewed_sync_reverts_only_the_refused_marks() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(
+            &mut app,
+            diff_fetched_with(
+                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n\
+                 diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+                "PR_1",
+            ),
+        );
+        let both = vec!["a.rs".to_string(), "b.rs".to_string()];
+        app.queue_viewed_sync("PR_1", &both, true);
+        app.diff_view_mut()
+            .expect("diff opens")
+            .apply_review_corrections(&[("a.rs".to_string(), true), ("b.rs".to_string(), true)]);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+
+        update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: vec![("a.rs".to_string(), true), ("b.rs".to_string(), true)],
+                result: Ok(vec![crate::domain::viewed_files::RejectedViewedPath {
+                    path: "b.rs".to_string(),
+                    reason: "Path is not part of the pull request".to_string(),
+                }]),
+            },
+        );
+
+        let diff_view = app.diff_view().expect("diff stays open");
+        assert_eq!(
+            diff_view.reviewed_files,
+            std::collections::HashSet::from(["a.rs".to_string()])
+        );
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some(
+                "GitHub refused the viewed state of 1 of 2 file(s), reverted: b.rs: Path is not \
+                 part of the pull request"
+            )
+        );
     }
 
     #[test]
@@ -247,7 +303,7 @@ mod tests {
             Event::ViewedFilesSynced {
                 pull_request_id: "PR_A".to_string(),
                 changes: vec![("README.md".to_string(), true)],
-                result: Ok(()),
+                result: Ok(vec![]),
             },
         );
 

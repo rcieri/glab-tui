@@ -103,6 +103,7 @@ pub struct NewMr<'a> {
 /// that require it for the merge API. GitLab-only: `GhBackend` ignores it.
 /// `None` skips the flag and lets `glab` fall back to its own heuristic on
 /// legacy installs (older GitLab returns 400 otherwise).
+/// `sha` is never sent with `Rebase`, which replaces the head commit.
 /// `squashes_every_merge` says the project squashes whatever is asked, so a
 /// GitLab merge leaves the MR's squash flag alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

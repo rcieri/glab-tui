@@ -7144,8 +7144,7 @@ impl App {
         self.detail_visible |= preview_was_open;
     }
 
-    /// `(closed, total)` issues of a milestone, from the aggregate over the
-    /// listed issues, else from the milestone's own issue list.
+    /// `(closed, total)` issues of a milestone, `None` until any are known.
     pub fn milestone_progress(&self, iid: u64) -> Option<(usize, usize)> {
         self.milestone_progress_cache
             .get(&iid)

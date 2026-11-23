@@ -441,15 +441,15 @@ impl<'a> MarkdownRenderer<'a> {
                 }
             }
             TagEnd::Link => {
-                if let Some(link) = self.links.pop() {
-                    if link.label != link.destination {
-                        self.push_span(
-                            format!(" ({})", truncate_url(&link.destination)),
-                            Style::default()
-                                .fg(self.theme.blue)
-                                .add_modifier(Modifier::UNDERLINED),
-                        );
-                    }
+                if let Some(link) = self.links.pop()
+                    && link.label != link.destination
+                {
+                    self.push_span(
+                        format!(" ({})", truncate_url(&link.destination)),
+                        Style::default()
+                            .fg(self.theme.blue)
+                            .add_modifier(Modifier::UNDERLINED),
+                    );
                 }
             }
             _ => {}

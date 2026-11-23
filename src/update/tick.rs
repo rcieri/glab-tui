@@ -82,18 +82,19 @@ fn refresh_periodically(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Eff
     let is_form_open =
         app.text_input().is_some() || app.edit_menu().is_some() || app.selector().is_some();
     if app.last_list_refresh.elapsed() >= LIST_REFRESH_INTERVAL && app.active_tab.is_high_churn() {
-        if !is_form_open && !app.loading_tabs.contains(&app.active_tab) {
-            if let Some(client) = app.gitlab_client.clone() {
-                app.start_loading_tab(app.active_tab);
-                fetch::spawn_refresh_active_tab(
-                    fx,
-                    &client.muted(),
-                    &app.scope,
-                    app.requested_state_queries(),
-                    app.active_tab,
-                    app.scoped_sender(tx.clone()),
-                );
-            }
+        if !is_form_open
+            && !app.loading_tabs.contains(&app.active_tab)
+            && let Some(client) = app.gitlab_client.clone()
+        {
+            app.start_loading_tab(app.active_tab);
+            fetch::spawn_refresh_active_tab(
+                fx,
+                &client.muted(),
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
         }
         app.last_list_refresh = Instant::now();
     }

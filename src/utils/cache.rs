@@ -64,10 +64,10 @@ fn get_cache_file_path(project_context: &str) -> PathBuf {
 
 pub fn load_cache(project_context: &str) -> ProjectCache {
     let path = get_cache_file_path(project_context);
-    if let Ok(content) = fs::read_to_string(path) {
-        if let Ok(cache) = serde_json::from_str(&content) {
-            return cache;
-        }
+    if let Ok(content) = fs::read_to_string(path)
+        && let Ok(cache) = serde_json::from_str(&content)
+    {
+        return cache;
     }
     ProjectCache::default()
 }
@@ -87,13 +87,13 @@ fn get_recent_repos_file_path() -> PathBuf {
 
 pub fn get_recent_repos() -> Vec<String> {
     let path = get_recent_repos_file_path();
-    if let Ok(content) = fs::read_to_string(&path) {
-        if let Ok(repos) = serde_json::from_str::<Vec<String>>(&content) {
-            return repos
-                .into_iter()
-                .filter(|r| std::path::Path::new(r).is_absolute())
-                .collect();
-        }
+    if let Ok(content) = fs::read_to_string(&path)
+        && let Ok(repos) = serde_json::from_str::<Vec<String>>(&content)
+    {
+        return repos
+            .into_iter()
+            .filter(|r| std::path::Path::new(r).is_absolute())
+            .collect();
     }
     Vec::new()
 }
@@ -129,10 +129,10 @@ fn get_recent_groups_file_path() -> PathBuf {
 
 pub fn get_recent_groups() -> Vec<String> {
     let path = get_recent_groups_file_path();
-    if let Ok(content) = fs::read_to_string(&path) {
-        if let Ok(groups) = serde_json::from_str::<Vec<String>>(&content) {
-            return groups;
-        }
+    if let Ok(content) = fs::read_to_string(&path)
+        && let Ok(groups) = serde_json::from_str::<Vec<String>>(&content)
+    {
+        return groups;
     }
     Vec::new()
 }
@@ -281,10 +281,11 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
     result.kept_repos = live_repos.clone();
     result.removed_repos = dead_repos.clone();
 
-    if !dry_run && !dead_repos.is_empty() {
-        if let Ok(content) = serde_json::to_string(&live_repos) {
-            let _ = private_fs::write(&recent_path, content);
-        }
+    if !dry_run
+        && !dead_repos.is_empty()
+        && let Ok(content) = serde_json::to_string(&live_repos)
+    {
+        let _ = private_fs::write(&recent_path, content);
     }
 
     // ── Prune orphaned cache files ──
@@ -350,20 +351,19 @@ pub fn is_git_repo(path: &str) -> bool {
 
 pub fn get_sibling_repos(current_dir: &str) -> Vec<String> {
     let mut sibling_repos = Vec::new();
-    if let Ok(path) = PathBuf::from(current_dir).canonicalize() {
-        if let Some(parent) = path.parent() {
-            if let Ok(entries) = fs::read_dir(parent) {
-                for entry in entries.flatten() {
-                    let entry_path = entry.path();
-                    if entry_path.is_dir() {
-                        let mut git_path = entry_path.clone();
-                        git_path.push(".git");
-                        if git_path.exists() {
-                            if let Some(p_str) = entry_path.to_str() {
-                                sibling_repos.push(p_str.to_string());
-                            }
-                        }
-                    }
+    if let Ok(path) = PathBuf::from(current_dir).canonicalize()
+        && let Some(parent) = path.parent()
+        && let Ok(entries) = fs::read_dir(parent)
+    {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                let mut git_path = entry_path.clone();
+                git_path.push(".git");
+                if git_path.exists()
+                    && let Some(p_str) = entry_path.to_str()
+                {
+                    sibling_repos.push(p_str.to_string());
                 }
             }
         }

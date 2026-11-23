@@ -77,15 +77,15 @@ pub fn handle_key(
                 app.page_size_input.pop();
             }
             KeyCode::Enter => {
-                if let Ok(new_size) = app.page_size_input.trim().parse::<usize>() {
-                    if new_size > 0 {
-                        app.page_size = new_size;
-                        app.config.page_size = new_size;
-                        if let Some(ref mut client) = app.gitlab_client {
-                            client.page_size = new_size;
-                        }
-                        refresh_active_tab(app, tx, fx);
+                if let Ok(new_size) = app.page_size_input.trim().parse::<usize>()
+                    && new_size > 0
+                {
+                    app.page_size = new_size;
+                    app.config.page_size = new_size;
+                    if let Some(ref mut client) = app.gitlab_client {
+                        client.page_size = new_size;
                     }
+                    refresh_active_tab(app, tx, fx);
                 }
                 if let Some(c) = app.configure_mut() {
                     c.editing_page_size = false;

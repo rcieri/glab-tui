@@ -27,9 +27,12 @@ pub struct PrViewedFiles {
 #[derive(Clone, Copy, Debug)]
 pub struct Fingerprint(u64);
 
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
 impl Default for Fingerprint {
     fn default() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
+        Self(FNV_OFFSET_BASIS)
     }
 }
 
@@ -37,7 +40,7 @@ impl Fingerprint {
     pub fn update(&mut self, line: &str) {
         for byte in line.bytes().chain(std::iter::once(b'\n')) {
             self.0 ^= u64::from(byte);
-            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+            self.0 = self.0.wrapping_mul(FNV_PRIME);
         }
     }
 
@@ -193,6 +196,7 @@ mod tests {
         assert_ne!(digest(&["+ab"]), digest(&["+a", "b"]));
         // Persisted in the cache: the value must not drift between builds.
         assert_eq!(digest(&[]), "cbf29ce484222325");
+        assert_eq!(digest(&[""]), "af63c74c8601c8dd");
     }
 
     #[test]

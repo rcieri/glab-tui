@@ -58,8 +58,12 @@ if [[ -n "$TEST_GLAB_FAIL_MATCH" && "$*" == *"$TEST_GLAB_FAIL_MATCH"* ]]; then
 fi
 
 # A second pattern, for two calls that must both fail in one run.
+# TEST_GLAB_FAIL_DETAIL_2 adds a second stderr line to that failure.
 if [[ -n "$TEST_GLAB_FAIL_MATCH_2" && "$*" == *"$TEST_GLAB_FAIL_MATCH_2"* ]]; then
     echo "mock: 500 Internal Server Error" >&2
+    if [[ -n "$TEST_GLAB_FAIL_DETAIL_2" ]]; then
+        echo "$TEST_GLAB_FAIL_DETAIL_2" >&2
+    fi
     exit 1
 fi
 

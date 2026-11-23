@@ -2210,7 +2210,7 @@ impl Backend for GlabBackend {
                     .await
             {
                 return Err(anyhow::anyhow!(
-                    "{merge_error:#} (restoring the squash flag of !{iid} also failed: {restore_error:#})"
+                    "restoring the squash flag of !{iid} failed ({restore_error:#}), so it stays cleared. The merge failed: {merge_error:#}"
                 ));
             }
             return Err(merge_error);

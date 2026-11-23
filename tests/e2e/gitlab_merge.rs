@@ -154,9 +154,10 @@ fn a_failed_merge_sets_the_cleared_squash_flag_again() {
 }
 
 /// The second `mr update` is the restore, so only it fails with 404, while
-/// every `mr merge` fails with 500.
+/// every `mr merge` fails with a two-line 500. The toast keeps only the first
+/// line of the error, so the squash flag left cleared has to come first.
 #[test]
-fn a_failed_restore_still_reports_why_the_merge_failed() {
+fn a_failed_restore_leads_the_toast_with_the_cleared_squash_flag() {
     let mut session = merge_the_listed_mr(
         &[
             ("TEST_GLAB_SQUASH_OPTION", "default_off"),
@@ -164,15 +165,19 @@ fn a_failed_restore_still_reports_why_the_merge_failed() {
             ("TEST_GLAB_FAIL_MATCH", "mr update"),
             ("TEST_GLAB_FAIL_NTH", "2"),
             ("TEST_GLAB_FAIL_MATCH_2", "mr merge"),
+            (
+                "TEST_GLAB_FAIL_DETAIL_2",
+                "mock: merge request is not mergeable",
+            ),
         ],
         Pick::MergeCommit,
     );
     session
         .wait_for_screen_contains(
-            "mock: 500 Internal Server Error (restoring the squash flag of !2 also failed: glab command failed: mock: 404 Not Found)",
+            "restoring the squash flag of !2 failed (glab command failed: mock: 404 Not Found), so it stays cleared. The merge failed:",
             15000,
         )
-        .expect("the toast should give the merge's reason, then the restore's");
+        .expect("the toast should say the squash flag stays cleared, then why the merge failed");
     assert_eq!(
         merge_calls(&session),
         [

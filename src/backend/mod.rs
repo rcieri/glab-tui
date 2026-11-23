@@ -712,8 +712,8 @@ pub trait Backend: Send + Sync {
 
     // ── Contributions ──
     /// Page `page` (from 1) of a repository's activity feed, newest first,
-    /// `EVENTS_PER_PAGE` events a page. GitLab leaves out events before
-    /// `since`, GitHub has no date filter. Repository scope only.
+    /// `EVENTS_PER_PAGE` events a page. It may hold events older than
+    /// `since`, which callers drop. Repository scope only.
     async fn list_contribution_page(
         &self,
         scope: &Scope,

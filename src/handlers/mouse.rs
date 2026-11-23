@@ -271,8 +271,8 @@ pub fn handle_mouse_event(
     }
 }
 
-/// A click in the filter box starts filtering; a click on a row moves the
-/// cursor there and selects it.
+/// A click in the filter box starts filtering. A click on a row moves the
+/// cursor there and toggles it, or picks it in a single-select list.
 fn handle_selector_mouse(app: &mut App, row: u16, col: u16) {
     let Some(layout) = app.selector_layout.as_ref() else {
         return;

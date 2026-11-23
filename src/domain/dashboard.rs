@@ -186,12 +186,15 @@ pub enum MrQueue {
     /// Changes requested, a person's only on the ones they authored.
     ChangesRequested,
     /// Approved, not a draft, no change requested, no conflict and no rebase
-    /// needed.
+    /// needed, a person's among the ones they authored or are assigned.
     ReadyToMerge,
-    /// A conflict or a needed rebase.
+    /// A conflict or a needed rebase, a person's among the ones they authored
+    /// or are assigned.
     Blocked,
-    /// Not updated for `IdleDays::mrs`.
+    /// Not updated for `IdleDays::mrs`, a person's among the ones they
+    /// authored, are assigned or review.
     Idle,
+    /// Drafts, a person's among the ones they authored.
     Drafts,
 }
 

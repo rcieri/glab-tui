@@ -2076,7 +2076,6 @@ pub fn handle_key(
                     } else {
                         app.scope.clone()
                     };
-                    let field = field.clone();
                     let tx = app.scoped_sender(tx.clone());
                     fx.spawn(async move {
                         let res = match field {

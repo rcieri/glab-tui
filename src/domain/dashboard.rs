@@ -489,7 +489,12 @@ pub fn contributor_logins<'a>(
     for mr in mrs.iter().filter(|mr| is_open_mr(mr)) {
         logins.insert(&mr.author.username);
         logins.extend(mr.assignees.iter().map(|a| a.username.as_str()));
-        logins.extend(mr.reviewers.iter().map(|r| r.username.as_str()));
+        logins.extend(
+            mr.reviewers
+                .iter()
+                .filter(|reviewer| !reviewer.is_team)
+                .map(|reviewer| reviewer.username.as_str()),
+        );
     }
     for issue in issues.iter().filter(|issue| is_open_issue(issue)) {
         logins.insert(&issue.author.username);
@@ -1003,7 +1008,10 @@ mod tests {
         let mrs = [
             mr(
                 1,
-                json!({ "author": { "username": "ada" }, "reviewers": [{ "username": "dee" }] }),
+                json!({
+                    "author": { "username": "ada" },
+                    "reviewers": [{ "username": "dee" }, { "username": "Dev Team", "is_team": true }],
+                }),
             ),
             mr(
                 2,

@@ -1715,6 +1715,7 @@ impl Backend for GlabBackend {
                                 .into_iter()
                                 .map(|r| crate::domain::mr::Reviewer {
                                     username: r.username,
+                                    is_team: false,
                                 })
                                 .collect(),
                             target_branch: m.target_branch,
@@ -1892,6 +1893,7 @@ impl Backend for GlabBackend {
                 .into_iter()
                 .map(|r| crate::domain::mr::Reviewer {
                     username: r.username,
+                    is_team: false,
                 })
                 .collect(),
             target_branch: m.target_branch,

@@ -367,6 +367,22 @@ pub struct LatestReviews {
     pub has_changes_requested: bool,
 }
 
+/// One entry of `gh pr list --json reviewRequests`: a user by login, a team
+/// by its name, since a team has none.
+fn requested_reviewer(request: &serde_json::Value) -> Option<crate::domain::mr::Reviewer> {
+    let name = request
+        .get("login")
+        .or_else(|| request.get("name"))?
+        .as_str()?;
+    Some(crate::domain::mr::Reviewer {
+        username: name.to_string(),
+        is_team: request
+            .get("__typename")
+            .and_then(serde_json::Value::as_str)
+            == Some("Team"),
+    })
+}
+
 /// Summarizes PR reviews into unique reviewers, current approvers, and
 /// whether any reviewer currently requests changes.
 ///
@@ -2188,13 +2204,7 @@ impl Backend for GhBackend {
                         let reviewers: Vec<crate::domain::mr::Reviewer> = gp
                             .review_requests
                             .iter()
-                            .filter_map(|r| {
-                                r.get("login").or_else(|| r.get("name"))?.as_str().map(|s| {
-                                    crate::domain::mr::Reviewer {
-                                        username: s.to_string(),
-                                    }
-                                })
-                            })
+                            .filter_map(requested_reviewer)
                             .collect();
                         let related_issues = gp.closing_issues_references.map(|refs| {
                             if refs.is_empty() {
@@ -4470,6 +4480,23 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_requested_team_keeps_its_name_and_is_marked_a_team() {
+        let reviewers: Vec<(String, bool)> = [
+            serde_json::json!({ "__typename": "User", "login": "dee" }),
+            serde_json::json!({ "__typename": "Team", "name": "Dev Team", "slug": "org/dev-team" }),
+        ]
+        .iter()
+        .filter_map(requested_reviewer)
+        .map(|reviewer| (reviewer.username, reviewer.is_team))
+        .collect();
+
+        assert_eq!(
+            reviewers,
+            vec![("dee".to_string(), false), ("Dev Team".to_string(), true)]
+        );
+    }
 
     #[test]
     fn a_github_notification_links_its_page_and_its_latest_comment() {

@@ -1570,6 +1570,10 @@ pub fn apply_selector_changes(
                         .iter()
                         .map(|username| crate::domain::mr::Reviewer {
                             username: username.clone(),
+                            is_team: item
+                                .reviewers
+                                .iter()
+                                .any(|kept| kept.is_team && kept.username == *username),
                         })
                         .collect();
                 }

@@ -360,7 +360,6 @@ pub struct Icons {
     pub folder_expanded: String,
     pub folder_collapsed: String,
     pub file_reviewed: String,
-    /// A file reviewed in an earlier version that has changed since.
     pub file_changed_since_review: String,
     pub user: String,
     pub tag: String,

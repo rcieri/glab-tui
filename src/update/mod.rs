@@ -146,6 +146,97 @@ mod tests {
     }
 
     #[test]
+    fn diff_fetched_when_help_open_inserts_diff_at_bottom_preserving_help_on_top() {
+        let mut app = App::default();
+        app.open_help();
+        assert!(matches!(app.top_modal(), Some(crate::app::Modal::Help)));
+
+        let diff = crate::app::DiffView::new(
+            4,
+            "group/project".to_string(),
+            "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+        );
+        update(
+            &mut app,
+            Event::DiffFetched {
+                diff_view: Box::new(diff),
+                comments: Ok(vec![]),
+            },
+        );
+
+        assert!(
+            matches!(app.top_modal(), Some(crate::app::Modal::Help)),
+            "top modal must remain Help after a newly fetched diff arrives"
+        );
+        assert!(app.diff_view().is_some());
+    }
+
+    #[test]
+    fn pr_stack_fetched_does_not_open_dialog_when_modal_open() {
+        let mut app = App::default();
+        let pr = ("group/project".to_string(), 42);
+        app.pending_stack_action = Some((pr.clone(), crate::app::StackAction::Merge));
+        app.open_help();
+        assert!(matches!(app.top_modal(), Some(crate::app::Modal::Help)));
+
+        update(
+            &mut app,
+            Event::PrStackFetched {
+                project_path: pr.0,
+                pr_number: pr.1,
+                result: Ok(None),
+            },
+        );
+
+        assert!(
+            matches!(app.top_modal(), Some(crate::app::Modal::Help)),
+            "Help must remain on top without merge dialog being pushed"
+        );
+        assert!(app.submit_dialog().is_none());
+    }
+
+    #[test]
+    fn diff_search_enter_keeps_query_and_clears_active() {
+        let mut app = App::default();
+        let mut view = crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1,2 @@\n-old\n+new\n".to_string(),
+        );
+        view.focus_on_files = false;
+        view.search_active = true;
+        app.open_diff_view(view);
+
+        update(&mut app, press(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert_eq!(app.diff_view().unwrap().search_query, "n");
+        assert!(app.diff_view().unwrap().search_active);
+
+        update(&mut app, press(KeyCode::Enter, KeyModifiers::NONE));
+        let diff = app.diff_view().expect("diff view open");
+        assert_eq!(diff.search_query, "n");
+        assert!(!diff.search_active);
+    }
+
+    #[test]
+    fn diff_search_ctrl_key_does_not_append_to_query() {
+        let mut app = App::default();
+        let mut view = crate::app::DiffView::new(
+            1,
+            "owner/repo".to_string(),
+            "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1,2 @@\n-old\n+new\n".to_string(),
+        );
+        view.focus_on_files = false;
+        view.search_active = true;
+        app.open_diff_view(view);
+
+        update(&mut app, press(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert_eq!(app.diff_view().unwrap().search_query, "n");
+
+        update(&mut app, press(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert_eq!(app.diff_view().unwrap().search_query, "n");
+    }
+
+    #[test]
     fn a_tick_does_not_fetch_the_highlighted_pipelines_jobs_but_a_new_list_does() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();

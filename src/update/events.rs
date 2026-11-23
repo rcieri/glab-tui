@@ -259,10 +259,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.record_pr_stack(&pr.0, pr.1, stack);
                     app.update_filter_selection();
                     if let Some(action) = awaited {
-                        if app.selector().is_none()
-                            && app.submit_dialog().is_none()
-                            && app.selected_mr_ref().as_ref() == Some(&pr)
-                        {
+                        if !app.has_modal() && app.selected_mr_ref().as_ref() == Some(&pr) {
                             crate::handlers::tabs::run_stack_action(app, &pr.0, pr.1, action);
                         }
                     }

@@ -4918,16 +4918,8 @@ impl App {
         self.modal_stack.push(modal);
     }
 
-    pub fn pop_modal(&mut self) -> Option<Modal> {
-        self.modal_stack.pop()
-    }
-
     pub fn top_modal(&self) -> Option<&Modal> {
         self.modal_stack.last()
-    }
-
-    pub fn top_modal_mut(&mut self) -> Option<&mut Modal> {
-        self.modal_stack.last_mut()
     }
 
     pub fn close_modal_kind(&mut self, kind: ModalKind) {
@@ -5100,7 +5092,7 @@ impl App {
     pub fn open_diff_view(&mut self, diff: DiffView) {
         match self.diff_view_mut() {
             Some(open) => *open = diff,
-            None => self.push_modal(Modal::Diff(Box::new(diff))),
+            None => self.modal_stack.insert(0, Modal::Diff(Box::new(diff))),
         }
     }
 
@@ -13268,7 +13260,7 @@ scroll_page_up = "Ctrl+b"
     #[test]
     fn test_app_inline_page_size_defaults() {
         let app = App::default();
-        assert!(!app.configure().is_some_and(|c| c.editing_page_size));
+        assert!(app.configure().is_none());
         assert_eq!(app.page_size_input, "");
     }
 

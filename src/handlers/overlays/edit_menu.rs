@@ -891,32 +891,34 @@ pub fn handle_key(
                         .map(|f| f.value.trim().to_string())
                         .unwrap_or_default();
 
-                    if !tag.is_empty() {
-                        app.close_edit_menu();
-                        let Some(client) = app.gitlab_client.clone() else {
-                            app.show_error("Backend not initialized".to_string());
-                            return;
-                        };
-                        let tx = tx.clone();
-                        let tab = app.active_tab;
-                        fx.spawn(async move {
-                            match client
-                                .create_release(&project, &tag, &name, &description)
-                                .await
-                            {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        tab,
-                                        Ok(CommandOutcome::Mutated),
-                                    ));
-                                }
-                                Err(e) => {
-                                    let _ =
-                                        tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
-                                }
-                            }
-                        });
+                    if tag.is_empty() {
+                        app.show_error("A release needs a tag".to_string());
+                        app.push_modal(crate::app::Modal::EditMenu(menu));
+                        return;
                     }
+                    app.close_edit_menu();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        app.show_error("Backend not initialized".to_string());
+                        return;
+                    };
+                    let tx = tx.clone();
+                    let tab = app.active_tab;
+                    fx.spawn(async move {
+                        match client
+                            .create_release(&project, &tag, &name, &description)
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = tx.send(Event::CommandCompleted(
+                                    tab,
+                                    Ok(CommandOutcome::Mutated),
+                                ));
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
+                            }
+                        }
+                    });
                     return;
                 } else if entity_type == "new_branch" {
                     let project = match resolve_target_project(&menu, &app.scope) {
@@ -1007,51 +1009,53 @@ pub fn handle_key(
                         .map(|s| s.trim())
                         .unwrap_or_default();
 
-                    if !tag.is_empty() {
-                        app.close_edit_menu();
-                        if !menu.initial_fields.is_empty()
-                            && tag == initial_tag
-                            && name == initial_name
-                            && description == initial_desc
-                        {
-                            return;
-                        }
-                        let Some(client) = app.gitlab_client.clone() else {
-                            app.show_error("Backend not initialized".to_string());
-                            return;
-                        };
-                        let project = if !menu.entity_project.is_empty() {
-                            menu.entity_project.clone()
-                        } else {
-                            app.scope.as_str().to_string()
-                        };
-                        let tx = tx.clone();
-                        let tab = app.active_tab;
-                        let _ = tx.send(Event::CommandStarted(format!("Updating Release: {tag}")));
-                        fx.spawn(async move {
-                            match crate::domain::releases::update_release(
-                                &client,
-                                &project,
-                                &tag,
-                                &name,
-                                &description,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        tab,
-                                        Ok(CommandOutcome::Mutated),
-                                    ));
-                                    let _ = tx.send(Event::ReleaseUpdated);
-                                }
-                                Err(e) => {
-                                    let _ =
-                                        tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
-                                }
-                            }
-                        });
+                    if tag.is_empty() {
+                        app.show_error("A release needs a tag".to_string());
+                        app.push_modal(crate::app::Modal::EditMenu(menu));
+                        return;
                     }
+                    app.close_edit_menu();
+                    if !menu.initial_fields.is_empty()
+                        && tag == initial_tag
+                        && name == initial_name
+                        && description == initial_desc
+                    {
+                        return;
+                    }
+                    let Some(client) = app.gitlab_client.clone() else {
+                        app.show_error("Backend not initialized".to_string());
+                        return;
+                    };
+                    let project = if !menu.entity_project.is_empty() {
+                        menu.entity_project.clone()
+                    } else {
+                        app.scope.as_str().to_string()
+                    };
+                    let tx = tx.clone();
+                    let tab = app.active_tab;
+                    let _ = tx.send(Event::CommandStarted(format!("Updating Release: {tag}")));
+                    fx.spawn(async move {
+                        match crate::domain::releases::update_release(
+                            &client,
+                            &project,
+                            &tag,
+                            &name,
+                            &description,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                let _ = tx.send(Event::CommandCompleted(
+                                    tab,
+                                    Ok(CommandOutcome::Mutated),
+                                ));
+                                let _ = tx.send(Event::ReleaseUpdated);
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Event::CommandCompleted(tab, Err(e.to_string())));
+                            }
+                        }
+                    });
                     return;
                 } else if crate::entity_editor::entity_is_issue(&entity_type) {
                     let title = menu
@@ -2456,5 +2460,45 @@ mod tests {
             Some("Milestone 3 is not listed; refresh the Milestones tab")
         );
         assert!(fx.into_vec().is_empty(), "no update may be sent");
+    }
+
+    #[test]
+    fn submitting_release_with_empty_tag_keeps_menu_open_and_shows_error() {
+        let mut app = App::default();
+        app.push_modal(crate::app::Modal::EditMenu(Box::new(
+            crate::app::EditMenu {
+                title: "New Release".to_string(),
+                entity_project: "acme/alpha".to_string(),
+                fields: vec![
+                    crate::app::Field::text("Tag", "".to_string()),
+                    crate::app::Field::text("Release Name", "v1.0".to_string()),
+                    crate::app::Field::text("Release Notes", "Notes".to_string()),
+                ],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 0,
+                entity_kind: crate::app::EditEntityKind::CreateRelease,
+                state: ratatui::widgets::ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            },
+        )));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+        let ctrl_x = KeyPress::from(crossterm::event::KeyEvent::new(
+            KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+
+        handle_key(&mut app, &ctrl_x, &tx, &mut fx);
+
+        assert!(app.edit_menu().is_some(), "edit menu must remain open");
+        assert_eq!(
+            app.toast_notice().map(|n| n.text()),
+            Some("A release needs a tag")
+        );
     }
 }

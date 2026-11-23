@@ -475,10 +475,10 @@ diff --git a/src/lib.rs b/src/lib.rs
         );
 
         let selector = app.selector().expect("a opens the comment picker");
-        assert!(matches!(
+        assert_eq!(
             selector.purpose,
-            crate::app::SelectorPurpose::CommentChoice { .. }
-        ));
+            crate::app::SelectorPurpose::CommentChoice { mr_iid: 7 }
+        );
         assert_eq!(selector.all_items.len(), 2);
         assert_eq!(selector.cursor_idx, 0);
 

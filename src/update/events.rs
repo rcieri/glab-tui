@@ -743,33 +743,40 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 ));
             }
             app.open_diff_view(diff_view);
-            if held_back > 0 {
-                app.raise_error_toast(if held_back == 1 {
-                    "1 draft comment no longer matches the diff and was set aside".to_string()
-                } else {
-                    format!(
-                        "{held_back} draft comments no longer match the diff and were set aside"
-                    )
-                });
-            }
-            // One toast for both: a second would replace the first unseen.
-            let mut errors = Vec::new();
+            let set_aside = match held_back {
+                0 => None,
+                1 => {
+                    Some("1 draft comment no longer matches the diff and was set aside".to_string())
+                }
+                _ => Some(format!(
+                    "{held_back} draft comments no longer match the diff and were set aside"
+                )),
+            };
+            let mut failures = Vec::new();
             match comments {
                 Ok(comments) => app.current_comments = comments,
                 Err(err) => {
                     app.current_comments.clear();
-                    errors.push(format!("Failed to load review comments: {err}"));
+                    failures.push(format!("Failed to load review comments: {err}"));
                 }
             }
             if let Some(err) = viewed_error {
-                errors.push(format!(
+                failures.push(format!(
                     "Failed to load GitHub viewed state, so marks stay local until the next \
                      open replaces them with GitHub's (sync_viewed_files = false keeps them \
                      local): {err}"
                 ));
             }
-            if !errors.is_empty() {
-                app.show_cli_error(errors.join(". "));
+            // One toast for all of them: a second would replace the first
+            // unseen. Drafts set aside ran no CLI call, so alone they neither
+            // point at the terminal log nor mark an entry failed.
+            if failures.is_empty() {
+                if let Some(set_aside) = set_aside {
+                    app.raise_error_toast(set_aside);
+                }
+            } else {
+                let messages: Vec<String> = set_aside.into_iter().chain(failures).collect();
+                app.show_cli_error(messages.join(". "));
             }
             let mut diff_ref: Option<&crate::app::DiffView> = None;
             let mut overview_mut: Option<&mut crate::app::ReviewThreadsOverview> = None;

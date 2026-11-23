@@ -145,6 +145,56 @@ mod tests {
         );
     }
 
+    fn app_with_a_draft_off_the_readme_diff() -> App {
+        let mut app = App::default();
+        app.draft_comments = vec![crate::domain::review::DraftComment {
+            file_path: "README.md".to_string(),
+            line_num: Some(9),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "nit".to_string(),
+        }];
+        app.persist_draft_comments("org/project", 42);
+        app
+    }
+
+    #[test]
+    fn a_failed_viewed_state_fetch_keeps_the_held_back_drafts_in_its_toast() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_draft_off_the_readme_diff();
+
+        update(&mut app, diff_fetched(Some(Err("HTTP 403".to_string()))));
+
+        let toast = app.toast_notice().expect("an error toast");
+        assert_eq!(
+            toast.text(),
+            "1 draft comment no longer matches the diff and was set aside. Failed to load \
+             GitHub viewed state, so marks stay local until the next open replaces them with \
+             GitHub's (sync_viewed_files = false keeps them local): HTTP 403"
+        );
+        assert_eq!(toast.detail(), Some(crate::notice::CLI_LOG_HINT));
+    }
+
+    #[test]
+    fn held_back_drafts_alone_do_not_point_at_the_terminal_log() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_draft_off_the_readme_diff();
+
+        update(&mut app, diff_fetched(None));
+
+        let toast = app.toast_notice().expect("an error toast");
+        assert_eq!(
+            toast.text(),
+            "1 draft comment no longer matches the diff and was set aside"
+        );
+        assert_eq!(toast.detail(), None);
+    }
+
     fn flush(app: &mut App, pull_request_id: &str) -> usize {
         spawned(&update(
             app,

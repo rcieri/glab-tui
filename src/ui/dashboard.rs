@@ -607,9 +607,12 @@ fn issue_queue_style<'a>(queue: IssueQueue, ctx: &Context<'a>) -> (&'a str, Colo
 
 fn issues_body(ctx: &Context) -> Vec<Line<'static>> {
     let issues = &ctx.app.issues.items;
-    IssueQueue::ALL
-        .into_iter()
-        .filter(|queue| ctx.kind.is_gitlab() || !queue.needs_due_dates())
+    ctx.rows
+        .iter()
+        .filter_map(|row| match row {
+            DashboardRow::Issue(queue) => Some(*queue),
+            _ => None,
+        })
         .map(|queue| {
             let (icon, color) = issue_queue_style(queue, ctx);
             queue_line(

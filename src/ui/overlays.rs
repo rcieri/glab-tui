@@ -1742,7 +1742,7 @@ command = "true"
                 .enumerate()
                 .find(|(_, line)| line.contains("beta"))
                 .expect("beta is drawn");
-            let beta_column = beta_line.find("beta").unwrap();
+            let beta_column = beta_line[..beta_line.find("beta").unwrap()].chars().count();
 
             click(&mut app, beta_column as u16, beta_row as u16);
 

@@ -393,7 +393,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" {} {} ", &ctx.icons.separator, app.scope_label()),
+            format!(" {} {} ", ctx.icons.separator, app.scope_label()),
             Style::default()
                 .fg(ctx.theme.text_normal)
                 .add_modifier(Modifier::BOLD),
@@ -668,7 +668,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let unresolved_suffix = if unresolved_count > 0 {
             format!(
                 " [{} Unresolved Threads: {}] ",
-                &ctx.icons.thread_unresolved, unresolved_count
+                ctx.icons.thread_unresolved, unresolved_count
             )
         } else {
             String::new()
@@ -742,7 +742,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ];
             if diff_view.search_active {
                 title_spans.push(Span::styled(
-                    format!(" {} SEARCHING ", &ctx.icons.label_searching),
+                    format!(" {} SEARCHING ", ctx.icons.label_searching),
                     Style::default()
                         .bg(ctx.theme.yellow)
                         .fg(ctx.theme.highlight_bg)
@@ -763,7 +763,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     diff_view.search_matches.len()
                 );
                 title_spans.push(Span::styled(
-                    format!(" {} FILTERED ", &ctx.icons.label_filtered),
+                    format!(" {} FILTERED ", ctx.icons.label_filtered),
                     Style::default()
                         .bg(ctx.theme.yellow)
                         .fg(ctx.theme.highlight_bg)
@@ -812,7 +812,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     format!(
                         " {} {} {}/{}{}{} ",
                         icons.label_files,
-                        &ctx.icons.file_reviewed,
+                        ctx.icons.file_reviewed,
                         reviewed_count,
                         total_files,
                         changed_suffix,
@@ -845,18 +845,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let indent = "  ".repeat(node.depth);
                     let indicator = if node.is_dir {
                         if node.is_expanded {
-                            format!("{} ", &ctx.icons.folder_expanded)
+                            format!("{} ", ctx.icons.folder_expanded)
                         } else {
-                            format!("{} ", &ctx.icons.folder_collapsed)
+                            format!("{} ", ctx.icons.folder_collapsed)
                         }
                     } else if node.is_reviewed {
-                        format!("{} ", &ctx.icons.file_reviewed)
+                        format!("{} ", ctx.icons.file_reviewed)
                     } else if node
                         .file_path
                         .as_ref()
                         .is_some_and(|p| diff_view.changed_since_review.contains(p))
                     {
-                        format!("{} ", icons.file_changed_since_review)
+                        format!("{} ", ctx.icons.file_changed_since_review)
                     } else {
                         "  ".to_string()
                     };
@@ -885,7 +885,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         &node.path_id,
                     );
                     let count_suffix = if unresolved_count > 0 {
-                        format!(" ({} {})", &ctx.icons.thread_unresolved, unresolved_count)
+                        format!(" ({} {})", ctx.icons.thread_unresolved, unresolved_count)
                     } else {
                         String::new()
                     };

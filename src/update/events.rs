@@ -182,16 +182,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.select_visible_mr(None, target_iid);
             }
             app.update_filter_selection();
-            if app.is_stack_column_needed() {
-                if let Some(client) = &app.gitlab_client {
-                    crate::fetch::spawn_fetch_pr_stack_summaries(
-                        fx,
-                        client,
-                        app.scope.as_str(),
-                        app.mrs.items.iter().map(|mr| mr.iid).collect(),
-                        app.scoped_sender(tx.clone()),
-                    );
-                }
+            if app.is_stack_column_needed()
+                && let Some(client) = &app.gitlab_client
+            {
+                crate::fetch::spawn_fetch_pr_stack_summaries(
+                    fx,
+                    client,
+                    app.scope.as_str(),
+                    app.mrs.items.iter().map(|mr| mr.iid).collect(),
+                    app.scoped_sender(tx.clone()),
+                );
             }
             crate::handlers::tabs::maybe_fetch_mr_related_issues(app, tx);
             app.project_cache.mrs = app.mrs.items.clone();
@@ -255,10 +255,11 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 Ok(stack) => {
                     app.record_pr_stack(&pr.0, pr.1, stack);
                     app.update_filter_selection();
-                    if let Some(action) = awaited {
-                        if !app.has_modal() && app.selected_mr_ref().as_ref() == Some(&pr) {
-                            crate::handlers::tabs::run_stack_action(app, &pr.0, pr.1, action);
-                        }
+                    if let Some(action) = awaited
+                        && !app.has_modal()
+                        && app.selected_mr_ref().as_ref() == Some(&pr)
+                    {
+                        crate::handlers::tabs::run_stack_action(app, &pr.0, pr.1, action);
                     }
                 }
                 // The inspector simply keeps showing no stack; only an
@@ -291,10 +292,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.replace_root_level(pipelines);
             } else {
                 app.pipelines.items = pipelines;
-                if let Some(pipe_id) = app.pending_pipeline_select.take() {
-                    if let Some(idx) = app.pipelines.items.iter().position(|p| p.id() == pipe_id) {
-                        app.pipelines.state.select(Some(idx));
-                    }
+                if let Some(pipe_id) = app.pending_pipeline_select.take()
+                    && let Some(idx) = app.pipelines.items.iter().position(|p| p.id() == pipe_id)
+                {
+                    app.pipelines.state.select(Some(idx));
                 }
             }
             app.update_filter_selection();

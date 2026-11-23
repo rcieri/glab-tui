@@ -277,10 +277,10 @@ pub async fn perform_self_update() -> Result<bool> {
                 let path = entry.path();
                 if path.is_file() && path.file_name().is_some_and(|n| n == target_name) {
                     return Some(path);
-                } else if path.is_dir() {
-                    if let Some(found) = find_file_recursive(&path, target_name) {
-                        return Some(found);
-                    }
+                } else if path.is_dir()
+                    && let Some(found) = find_file_recursive(&path, target_name)
+                {
+                    return Some(found);
                 }
             }
         }

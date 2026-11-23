@@ -23,13 +23,13 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
                 current.push(c);
             }
             ',' if in_parens == 0 => {
-                if !current.trim().is_empty() {
-                    if let Some(pos) = current.find(':').or_else(|| current.find('=')) {
-                        let k = current[..pos].trim().to_string();
-                        let v = current[pos + 1..].trim().to_string();
-                        if !k.is_empty() {
-                            pairs.push((k, v));
-                        }
+                if !current.trim().is_empty()
+                    && let Some(pos) = current.find(':').or_else(|| current.find('='))
+                {
+                    let k = current[..pos].trim().to_string();
+                    let v = current[pos + 1..].trim().to_string();
+                    if !k.is_empty() {
+                        pairs.push((k, v));
                     }
                 }
                 current.clear();
@@ -39,13 +39,13 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
             }
         }
     }
-    if !current.trim().is_empty() {
-        if let Some(pos) = current.find(':').or_else(|| current.find('=')) {
-            let k = current[..pos].trim().to_string();
-            let v = current[pos + 1..].trim().to_string();
-            if !k.is_empty() {
-                pairs.push((k, v));
-            }
+    if !current.trim().is_empty()
+        && let Some(pos) = current.find(':').or_else(|| current.find('='))
+    {
+        let k = current[..pos].trim().to_string();
+        let v = current[pos + 1..].trim().to_string();
+        if !k.is_empty() {
+            pairs.push((k, v));
         }
     }
     pairs
@@ -102,15 +102,14 @@ pub fn handle_key(
             KeyCode::Left => {
                 if menu.selected_idx < menu.fields.len()
                     && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text
+                    && let Some(f) = menu.fields.get(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get(menu.selected_idx) {
-                        if let Some((byte_idx, _)) =
-                            f.value[..menu.cursor_pos].char_indices().next_back()
-                        {
-                            menu.cursor_pos = byte_idx;
-                        } else {
-                            menu.cursor_pos = 0;
-                        }
+                    if let Some((byte_idx, _)) =
+                        f.value[..menu.cursor_pos].char_indices().next_back()
+                    {
+                        menu.cursor_pos = byte_idx;
+                    } else {
+                        menu.cursor_pos = 0;
                     }
                 }
                 app.push_modal(crate::app::Modal::EditMenu(menu));
@@ -118,16 +117,15 @@ pub fn handle_key(
             KeyCode::Right => {
                 if menu.selected_idx < menu.fields.len()
                     && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text
+                    && let Some(f) = menu.fields.get(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get(menu.selected_idx) {
-                        let char_len = f.value[menu.cursor_pos..]
-                            .chars()
-                            .next()
-                            .map(|c| c.len_utf8())
-                            .unwrap_or(0);
-                        if char_len > 0 && menu.cursor_pos + char_len <= f.value.len() {
-                            menu.cursor_pos += char_len;
-                        }
+                    let char_len = f.value[menu.cursor_pos..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    if char_len > 0 && menu.cursor_pos + char_len <= f.value.len() {
+                        menu.cursor_pos += char_len;
                     }
                 }
                 app.push_modal(crate::app::Modal::EditMenu(menu));
@@ -197,11 +195,10 @@ pub fn handle_key(
             KeyCode::Char(c) => {
                 if menu.selected_idx < menu.fields.len()
                     && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text
+                    && let Some(f) = menu.fields.get_mut(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                        f.value.insert(menu.cursor_pos, c);
-                        menu.cursor_pos += c.len_utf8();
-                    }
+                    f.value.insert(menu.cursor_pos, c);
+                    menu.cursor_pos += c.len_utf8();
                 }
                 app.push_modal(crate::app::Modal::EditMenu(menu));
             }
@@ -1785,16 +1782,16 @@ pub fn handle_key(
                         is_loading = false;
                     }
                 } else if field_type == "milestone" {
-                    if let Some(ref tc) = target_cache {
-                        if !tc.milestones.is_empty() {
-                            all_items = tc
-                                .milestones
-                                .iter()
-                                .map(|m| m.title.clone())
-                                .filter(|t| t != "--")
-                                .collect();
-                            is_loading = false;
-                        }
+                    if let Some(ref tc) = target_cache
+                        && !tc.milestones.is_empty()
+                    {
+                        all_items = tc
+                            .milestones
+                            .iter()
+                            .map(|m| m.title.clone())
+                            .filter(|t| t != "--")
+                            .collect();
+                        is_loading = false;
                     }
                     if all_items.is_empty() {
                         all_items = app
@@ -1827,24 +1824,23 @@ pub fn handle_key(
                             .map(|b| b.name.clone())
                             .collect()
                     };
-                    if branch_names.is_empty() && !app.scope.is_group() && target_project.is_empty()
-                    {
-                        if let Ok(output) = std::process::Command::new("git")
+                    if branch_names.is_empty()
+                        && !app.scope.is_group()
+                        && target_project.is_empty()
+                        && let Ok(output) = std::process::Command::new("git")
                             .args(["branch", "-a", "--format=%(refname:short)"])
                             .output()
-                        {
-                            if output.status.success() {
-                                for line in String::from_utf8_lossy(&output.stdout).lines() {
-                                    let b = line.trim();
-                                    let b = b.strip_prefix("origin/").unwrap_or(b);
-                                    if !b.is_empty()
-                                        && b != "HEAD"
-                                        && !b.starts_with("origin/")
-                                        && !branch_names.contains(&b.to_string())
-                                    {
-                                        branch_names.push(b.to_string());
-                                    }
-                                }
+                        && output.status.success()
+                    {
+                        for line in String::from_utf8_lossy(&output.stdout).lines() {
+                            let b = line.trim();
+                            let b = b.strip_prefix("origin/").unwrap_or(b);
+                            if !b.is_empty()
+                                && b != "HEAD"
+                                && !b.starts_with("origin/")
+                                && !branch_names.contains(&b.to_string())
+                            {
+                                branch_names.push(b.to_string());
                             }
                         }
                     }
@@ -1903,13 +1899,12 @@ pub fn handle_key(
                     if let Ok(output) =
                         // Safe on the UI thread: pure local ref read.
                         std::process::Command::new("git").args(["tag"]).output()
+                        && output.status.success()
                     {
-                        if output.status.success() {
-                            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                                let t = line.trim().to_string();
-                                if !t.is_empty() && !tags.contains(&t) {
-                                    tags.push(t);
-                                }
+                        for line in String::from_utf8_lossy(&output.stdout).lines() {
+                            let t = line.trim().to_string();
+                            if !t.is_empty() && !tags.contains(&t) {
+                                tags.push(t);
                             }
                         }
                     }
@@ -2015,34 +2010,34 @@ pub fn handle_key(
                             _ => {}
                         }
                     }
-                } else if entity_type == "mr" {
-                    if let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid) {
-                        match field_type {
-                            "labels" => {
-                                for l in &mr.labels {
-                                    current_set.insert(l.clone());
-                                }
+                } else if entity_type == "mr"
+                    && let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid)
+                {
+                    match field_type {
+                        "labels" => {
+                            for l in &mr.labels {
+                                current_set.insert(l.clone());
                             }
-                            "assignees" => {
-                                for a in &mr.assignees {
-                                    current_set.insert(format!("@{}", a.username));
-                                }
-                            }
-                            "reviewers" => {
-                                for r in &mr.reviewers {
-                                    current_set.insert(format!("@{}", r.username));
-                                }
-                            }
-                            "milestone" => {
-                                if let Some(m) = &mr.milestone {
-                                    current_set.insert(m.title.clone());
-                                }
-                            }
-                            "target_branch" => {
-                                current_set.insert(mr.target_branch.clone());
-                            }
-                            _ => {}
                         }
+                        "assignees" => {
+                            for a in &mr.assignees {
+                                current_set.insert(format!("@{}", a.username));
+                            }
+                        }
+                        "reviewers" => {
+                            for r in &mr.reviewers {
+                                current_set.insert(format!("@{}", r.username));
+                            }
+                        }
+                        "milestone" => {
+                            if let Some(m) = &mr.milestone {
+                                current_set.insert(m.title.clone());
+                            }
+                        }
+                        "target_branch" => {
+                            current_set.insert(mr.target_branch.clone());
+                        }
+                        _ => {}
                     }
                 }
 
@@ -2296,21 +2291,18 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                if field_name == "Title"
+                if (field_name == "Title"
                     || field_name == "Name"
                     || field_name == "Release Name"
                     || field_name == "Branch Name"
                     || field_name == "Description"
-                    || field_name == "Release Notes"
+                    || field_name == "Release Notes")
+                    && let Some(f) = menu.fields.get_mut(menu.selected_idx)
+                    && let Some((byte_idx, _)) =
+                        f.value[..menu.cursor_pos].char_indices().next_back()
                 {
-                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                        if let Some((byte_idx, _)) =
-                            f.value[..menu.cursor_pos].char_indices().next_back()
-                        {
-                            f.value.remove(byte_idx);
-                            menu.cursor_pos = byte_idx;
-                        }
-                    }
+                    f.value.remove(byte_idx);
+                    menu.cursor_pos = byte_idx;
                 }
             }
             app.push_modal(crate::app::Modal::EditMenu(menu));
@@ -2347,17 +2339,16 @@ pub fn handle_key(
                 } else {
                     String::new()
                 };
-                if field_name == "Title"
+                if (field_name == "Title"
                     || field_name == "Name"
                     || field_name == "Release Name"
                     || field_name == "Branch Name"
                     || field_name == "Description"
-                    || field_name == "Release Notes"
+                    || field_name == "Release Notes")
+                    && let Some(f) = menu.fields.get_mut(menu.selected_idx)
                 {
-                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                        f.value.insert(menu.cursor_pos, c);
-                        menu.cursor_pos += c.len_utf8();
-                    }
+                    f.value.insert(menu.cursor_pos, c);
+                    menu.cursor_pos += c.len_utf8();
                 }
             }
             app.push_modal(crate::app::Modal::EditMenu(menu));

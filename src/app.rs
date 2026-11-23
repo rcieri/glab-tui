@@ -637,7 +637,7 @@ impl Selector {
                     .map(|(score, indices)| (score, item.clone(), Some(indices)))
             })
             .collect();
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|a| std::cmp::Reverse(a.0));
 
         let mut items: Vec<(String, Option<Vec<usize>>)> = scored
             .into_iter()
@@ -1682,17 +1682,17 @@ impl DiffView {
                         detected_file = Some(cleaned_path);
                     }
                 }
-            } else if let Some(rest) = line.strip_prefix("+++ ") {
-                if let Some(cleaned_path) = parse_patch_header_path(rest, "b/") {
-                    detected_file = Some(cleaned_path.clone());
-                    // Grow chunk_meta new_path if we don't have it yet
-                    if chunk_meta.as_ref().is_none_or(|m| m.new_path.is_none()) {
-                        chunk_meta = Some(DiffChunkMeta {
-                            new_path: Some(cleaned_path),
-                            is_new_file: chunk_meta.as_ref().is_some_and(|m| m.is_new_file),
-                            is_deleted_file: chunk_meta.as_ref().is_some_and(|m| m.is_deleted_file),
-                        });
-                    }
+            } else if let Some(rest) = line.strip_prefix("+++ ")
+                && let Some(cleaned_path) = parse_patch_header_path(rest, "b/")
+            {
+                detected_file = Some(cleaned_path.clone());
+                // Grow chunk_meta new_path if we don't have it yet
+                if chunk_meta.as_ref().is_none_or(|m| m.new_path.is_none()) {
+                    chunk_meta = Some(DiffChunkMeta {
+                        new_path: Some(cleaned_path),
+                        is_new_file: chunk_meta.as_ref().is_some_and(|m| m.is_new_file),
+                        is_deleted_file: chunk_meta.as_ref().is_some_and(|m| m.is_deleted_file),
+                    });
                 }
             }
 
@@ -2471,15 +2471,15 @@ impl DiffView {
         Self::copy_dir_counts_to_flat(&self.root_node, &mut visible);
         self.visible_nodes = visible;
 
-        if let Some(ref old_path) = old_file_path {
-            if let Some(pos) = self.visible_nodes.iter().position(|n| {
+        if let Some(ref old_path) = old_file_path
+            && let Some(pos) = self.visible_nodes.iter().position(|n| {
                 n.file_path.as_deref() == Some(old_path.as_str()) || n.path_id == *old_path
-            }) {
-                // Same file/dir still selected — keep scroll offset, try keep cursor
-                self.selected_visible_idx = pos;
-                self.update_active_lines();
-                return;
-            }
+            })
+        {
+            // Same file/dir still selected — keep scroll offset, try keep cursor
+            self.selected_visible_idx = pos;
+            self.update_active_lines();
+            return;
         }
         // Selected node disappeared (e.g. collapsed directory) — reset
         self.selected_visible_idx = 0;
@@ -2496,12 +2496,11 @@ impl DiffView {
                 children,
                 ..
             } = node
+                && *is_expanded
             {
-                if *is_expanded {
-                    *is_expanded = false;
-                    for child in children {
-                        collapse_recursive(child);
-                    }
+                *is_expanded = false;
+                for child in children {
+                    collapse_recursive(child);
                 }
             }
         }
@@ -2611,112 +2610,110 @@ impl DiffView {
     pub fn get_comment_range(&self) -> Option<CommentRange> {
         let selection = self.selection_start.zip(self.selection_end);
 
-        if let Some((s, e)) = selection {
-            if s != e {
-                let min_idx = s.min(e);
-                let max_idx = s.max(e);
-                if self.side_by_side {
-                    if min_idx >= self.side_by_side_lines.len()
-                        || max_idx >= self.side_by_side_lines.len()
-                    {
-                        return None;
-                    }
-                    let has_any_right =
-                        self.side_by_side_lines[min_idx..=max_idx]
-                            .iter()
-                            .any(|sline| {
-                                sline
-                                    .right
-                                    .as_ref()
-                                    .is_some_and(|r| r.new_line_num.is_some())
-                            });
-
-                    if has_any_right {
-                        // Gather only right side lines (new file)
-                        let right_lines: Vec<DiffLine> = self.side_by_side_lines[min_idx..=max_idx]
-                            .iter()
-                            .filter_map(|sline| sline.right.clone())
-                            .collect();
-
-                        let start_line = right_lines.first()?;
-                        let end_line = right_lines.last()?;
-
-                        return Some(CommentRange {
-                            file_path: start_line.file_path.clone(),
-                            line_num: start_line.new_line_num,
-                            old_line_num: None,
-                            end_line_num: end_line.new_line_num,
-                            end_old_line_num: None,
-                            lines: right_lines,
+        if let Some((s, e)) = selection
+            && s != e
+        {
+            let min_idx = s.min(e);
+            let max_idx = s.max(e);
+            if self.side_by_side {
+                if min_idx >= self.side_by_side_lines.len()
+                    || max_idx >= self.side_by_side_lines.len()
+                {
+                    return None;
+                }
+                let has_any_right =
+                    self.side_by_side_lines[min_idx..=max_idx]
+                        .iter()
+                        .any(|sline| {
+                            sline
+                                .right
+                                .as_ref()
+                                .is_some_and(|r| r.new_line_num.is_some())
                         });
-                    } else {
-                        // Gather only left side lines (old file / deletions)
-                        let left_lines: Vec<DiffLine> = self.side_by_side_lines[min_idx..=max_idx]
-                            .iter()
-                            .filter_map(|sline| sline.left.clone())
-                            .collect();
 
-                        let start_line = left_lines.first()?;
-                        let end_line = left_lines.last()?;
+                if has_any_right {
+                    // Gather only right side lines (new file)
+                    let right_lines: Vec<DiffLine> = self.side_by_side_lines[min_idx..=max_idx]
+                        .iter()
+                        .filter_map(|sline| sline.right.clone())
+                        .collect();
 
-                        return Some(CommentRange {
-                            file_path: start_line.file_path.clone(),
-                            line_num: None,
-                            old_line_num: start_line.old_line_num,
-                            end_line_num: None,
-                            end_old_line_num: end_line.old_line_num,
-                            lines: left_lines,
-                        });
-                    }
-                } else {
-                    // Unified view range
-                    if min_idx >= self.lines.len() || max_idx >= self.lines.len() {
-                        return None;
-                    }
-                    let lines = &self.lines[min_idx..=max_idx];
-                    let has_any_addition_or_normal = lines.iter().any(|line| {
-                        line.line_type != DiffLineType::Deletion && line.new_line_num.is_some()
+                    let start_line = right_lines.first()?;
+                    let end_line = right_lines.last()?;
+
+                    return Some(CommentRange {
+                        file_path: start_line.file_path.clone(),
+                        line_num: start_line.new_line_num,
+                        old_line_num: None,
+                        end_line_num: end_line.new_line_num,
+                        end_old_line_num: None,
+                        lines: right_lines,
                     });
+                } else {
+                    // Gather only left side lines (old file / deletions)
+                    let left_lines: Vec<DiffLine> = self.side_by_side_lines[min_idx..=max_idx]
+                        .iter()
+                        .filter_map(|sline| sline.left.clone())
+                        .collect();
 
-                    if has_any_addition_or_normal {
-                        let filtered_lines: Vec<DiffLine> = lines
-                            .iter()
-                            .filter(|line| {
-                                line.line_type != DiffLineType::Deletion
-                                    && line.new_line_num.is_some()
-                            })
-                            .cloned()
-                            .collect();
-                        let start_line = filtered_lines.first()?;
-                        let end_line = filtered_lines.last()?;
-                        return Some(CommentRange {
-                            file_path: start_line.file_path.clone(),
-                            line_num: start_line.new_line_num,
-                            old_line_num: None,
-                            end_line_num: end_line.new_line_num,
-                            end_old_line_num: None,
-                            lines: filtered_lines,
-                        });
-                    } else {
-                        let filtered_lines: Vec<DiffLine> = lines
-                            .iter()
-                            .filter(|line| {
-                                line.line_type == DiffLineType::Deletion
-                                    && line.old_line_num.is_some()
-                            })
-                            .cloned()
-                            .collect();
-                        let start_line = filtered_lines.first()?;
-                        let end_line = filtered_lines.last()?;
-                        return Some(CommentRange {
-                            file_path: start_line.file_path.clone(),
-                            line_num: None,
-                            old_line_num: start_line.old_line_num,
-                            end_line_num: None,
-                            end_old_line_num: end_line.old_line_num,
-                            lines: filtered_lines,
-                        });
-                    }
+                    let start_line = left_lines.first()?;
+                    let end_line = left_lines.last()?;
+
+                    return Some(CommentRange {
+                        file_path: start_line.file_path.clone(),
+                        line_num: None,
+                        old_line_num: start_line.old_line_num,
+                        end_line_num: None,
+                        end_old_line_num: end_line.old_line_num,
+                        lines: left_lines,
+                    });
+                }
+            } else {
+                // Unified view range
+                if min_idx >= self.lines.len() || max_idx >= self.lines.len() {
+                    return None;
+                }
+                let lines = &self.lines[min_idx..=max_idx];
+                let has_any_addition_or_normal = lines.iter().any(|line| {
+                    line.line_type != DiffLineType::Deletion && line.new_line_num.is_some()
+                });
+
+                if has_any_addition_or_normal {
+                    let filtered_lines: Vec<DiffLine> = lines
+                        .iter()
+                        .filter(|line| {
+                            line.line_type != DiffLineType::Deletion && line.new_line_num.is_some()
+                        })
+                        .cloned()
+                        .collect();
+                    let start_line = filtered_lines.first()?;
+                    let end_line = filtered_lines.last()?;
+                    return Some(CommentRange {
+                        file_path: start_line.file_path.clone(),
+                        line_num: start_line.new_line_num,
+                        old_line_num: None,
+                        end_line_num: end_line.new_line_num,
+                        end_old_line_num: None,
+                        lines: filtered_lines,
+                    });
+                } else {
+                    let filtered_lines: Vec<DiffLine> = lines
+                        .iter()
+                        .filter(|line| {
+                            line.line_type == DiffLineType::Deletion && line.old_line_num.is_some()
+                        })
+                        .cloned()
+                        .collect();
+                    let start_line = filtered_lines.first()?;
+                    let end_line = filtered_lines.last()?;
+                    return Some(CommentRange {
+                        file_path: start_line.file_path.clone(),
+                        line_num: None,
+                        old_line_num: start_line.old_line_num,
+                        end_line_num: None,
+                        end_old_line_num: end_line.old_line_num,
+                        lines: filtered_lines,
+                    });
                 }
             }
         }
@@ -4710,16 +4707,15 @@ fn milestone_progress_sort_key(
     progress_cache: &std::collections::HashMap<u64, (usize, usize)>,
     issues_cache: &std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
 ) -> String {
-    if let Some((closed, total)) = progress_cache.get(&iid) {
-        if *total > 0 {
-            return format!("{:03}%", (closed * 100) / total);
-        }
+    if let Some((closed, total)) = progress_cache.get(&iid)
+        && *total > 0
+    {
+        return format!("{:03}%", (closed * 100) / total);
     }
     if let Some(issues) = issues_cache.get(&iid) {
-        let total = issues.len();
-        if total > 0 {
-            let closed = issues.iter().filter(|i| i.state == "closed").count();
-            return format!("{:03}%", (closed * 100) / total);
+        let closed = issues.iter().filter(|i| i.state == "closed").count();
+        if let Some(percent) = (closed * 100).checked_div(issues.len()) {
+            return format!("{percent:03}%");
         }
     }
     "000%".to_string()
@@ -6850,10 +6846,10 @@ impl App {
 
     pub fn new() -> Self {
         let mut app = Self::with_config(Config::load());
-        if let Some(ref active_tab_str) = app.config.active_tab {
-            if let Some(tab) = Tab::from_str(active_tab_str) {
-                app.active_tab = tab;
-            }
+        if let Some(ref active_tab_str) = app.config.active_tab
+            && let Some(tab) = Tab::from_str(active_tab_str)
+        {
+            app.active_tab = tab;
         }
         app.apply_config();
         app.land_on_available_tab();
@@ -6966,13 +6962,13 @@ impl App {
             if c.system {
                 continue;
             }
-            if c.resolvable.unwrap_or(false) {
-                if let Some(ref disc_id) = c.discussion_id {
-                    let is_resolved = c.resolved.unwrap_or(false);
-                    let entry = thread_resolved.entry(disc_id.clone()).or_insert(true);
-                    if !is_resolved {
-                        *entry = false;
-                    }
+            if c.resolvable.unwrap_or(false)
+                && let Some(ref disc_id) = c.discussion_id
+            {
+                let is_resolved = c.resolved.unwrap_or(false);
+                let entry = thread_resolved.entry(disc_id.clone()).or_insert(true);
+                if !is_resolved {
+                    *entry = false;
                 }
             }
         }
@@ -7143,24 +7139,22 @@ impl App {
             if c.system {
                 continue;
             }
-            if c.resolvable.unwrap_or(false) {
-                if let Some(ref pos) = c.position {
-                    let matches_path = |file_path: &str| {
-                        file_path == path
-                            || file_path.starts_with(&format!("{path}/"))
-                            || path == "root"
-                            || path.is_empty()
-                    };
-                    let path_matches = pos.old_path.as_deref().is_some_and(matches_path)
-                        || pos.new_path.as_deref().is_some_and(matches_path);
-                    if path_matches {
-                        if let Some(ref disc_id) = c.discussion_id {
-                            let is_resolved = c.resolved.unwrap_or(false);
-                            let entry = thread_resolved.entry(disc_id.clone()).or_insert(true);
-                            if !is_resolved {
-                                *entry = false;
-                            }
-                        }
+            if c.resolvable.unwrap_or(false)
+                && let Some(ref pos) = c.position
+            {
+                let matches_path = |file_path: &str| {
+                    file_path == path
+                        || file_path.starts_with(&format!("{path}/"))
+                        || path == "root"
+                        || path.is_empty()
+                };
+                let path_matches = pos.old_path.as_deref().is_some_and(matches_path)
+                    || pos.new_path.as_deref().is_some_and(matches_path);
+                if path_matches && let Some(ref disc_id) = c.discussion_id {
+                    let is_resolved = c.resolved.unwrap_or(false);
+                    let entry = thread_resolved.entry(disc_id.clone()).or_insert(true);
+                    if !is_resolved {
+                        *entry = false;
                     }
                 }
             }
@@ -7289,10 +7283,10 @@ impl App {
                     check_match(&item.author.username);
                     check_match(&format!("@{}", item.author.username));
                 }
-                if enabled_cols.contains("Milestone") {
-                    if let Some(m) = &item.milestone {
-                        check_match(&m.title);
-                    }
+                if enabled_cols.contains("Milestone")
+                    && let Some(m) = &item.milestone
+                {
+                    check_match(&m.title);
                 }
                 if enabled_cols.contains("Labels") {
                     for label in &item.labels {
@@ -7474,10 +7468,10 @@ impl App {
             let mut best_score = None;
 
             let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
-                    }
+                if let Some(score) = matcher.fuzzy_match(text, query)
+                    && (best_score.is_none() || Some(score) > best_score)
+                {
+                    best_score = Some(score);
                 }
             };
 
@@ -7513,10 +7507,10 @@ impl App {
                 check_match(&item.author.username);
                 check_match(&format!("@{}", item.author.username));
             }
-            if enabled_cols.contains("Milestone") {
-                if let Some(ms) = &item.milestone {
-                    check_match(&ms.title);
-                }
+            if enabled_cols.contains("Milestone")
+                && let Some(ms) = &item.milestone
+            {
+                check_match(&ms.title);
             }
             if enabled_cols.contains("Labels") {
                 for label in &item.labels {
@@ -7561,7 +7555,7 @@ impl App {
             }
         }
 
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_items.sort_by_key(|a| std::cmp::Reverse(a.1));
         scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
@@ -7779,10 +7773,10 @@ impl App {
             let mut best_score: Option<i64> = None;
 
             let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
-                    }
+                if let Some(score) = matcher.fuzzy_match(text, query)
+                    && (best_score.is_none() || Some(score) > best_score)
+                {
+                    best_score = Some(score);
                 }
             };
 
@@ -7806,13 +7800,13 @@ impl App {
                     check_match(&display_ref);
                 }
             }
-            if enabled_cols.contains("Stages") {
-                if let Some(jobs) = pipeline_jobs.get(&item.id()) {
-                    for job in jobs {
-                        check_match(job.name());
-                        check_match(job.stage());
-                        check_match(job.status());
-                    }
+            if enabled_cols.contains("Stages")
+                && let Some(jobs) = pipeline_jobs.get(&item.id())
+            {
+                for job in jobs {
+                    check_match(job.name());
+                    check_match(job.stage());
+                    check_match(job.status());
                 }
             }
             if enabled_cols.contains("Name") {
@@ -7827,20 +7821,20 @@ impl App {
             if enabled_cols.contains("Actor") {
                 check_match(item.actor_login());
             }
-            if enabled_cols.contains("Created") {
-                if let Some(created) = item.created_at() {
-                    check_match(&crate::utils::format::time_ago(created));
-                }
+            if enabled_cols.contains("Created")
+                && let Some(created) = item.created_at()
+            {
+                check_match(&crate::utils::format::time_ago(created));
             }
-            if enabled_cols.contains("Source") {
-                if let Some(source) = item.source() {
-                    check_match(source);
-                }
+            if enabled_cols.contains("Source")
+                && let Some(source) = item.source()
+            {
+                check_match(source);
             }
-            if enabled_cols.contains("Duration") {
-                if let Some(duration) = item.duration_seconds() {
-                    check_match(&format!("{}m {}s", duration / 60, duration % 60));
-                }
+            if enabled_cols.contains("Duration")
+                && let Some(duration) = item.duration_seconds()
+            {
+                check_match(&format!("{}m {}s", duration / 60, duration % 60));
             }
 
             if let Some(score) = best_score {
@@ -7848,7 +7842,7 @@ impl App {
             }
         }
 
-        scored_items.sort_by(|a, b| b.0.cmp(&a.0));
+        scored_items.sort_by_key(|a| std::cmp::Reverse(a.0));
         scored_items.into_iter().map(|(_, item)| item).collect()
     }
 
@@ -7949,10 +7943,10 @@ impl App {
             let mut best_score: Option<i64> = None;
 
             let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
-                    }
+                if let Some(score) = matcher.fuzzy_match(text, query)
+                    && (best_score.is_none() || Some(score) > best_score)
+                {
+                    best_score = Some(score);
                 }
             };
 
@@ -7968,25 +7962,25 @@ impl App {
             if enabled_cols.contains("Name") {
                 check_match(item.name());
             }
-            if enabled_cols.contains("Matrix") {
-                if let Some(matrix) = item.matrix() {
-                    check_match(matrix);
-                }
+            if enabled_cols.contains("Matrix")
+                && let Some(matrix) = item.matrix()
+            {
+                check_match(matrix);
             }
-            if enabled_cols.contains("Runner") {
-                if let Some(runner) = item.runner() {
-                    check_match(runner);
-                }
+            if enabled_cols.contains("Runner")
+                && let Some(runner) = item.runner()
+            {
+                check_match(runner);
             }
             if enabled_cols.contains("Needs") {
                 for need in item.needs() {
                     check_match(need);
                 }
             }
-            if enabled_cols.contains("Duration") {
-                if let Some(dur) = item.duration_seconds() {
-                    check_match(&format!("{}m {}s", dur / 60, dur % 60));
-                }
+            if enabled_cols.contains("Duration")
+                && let Some(dur) = item.duration_seconds()
+            {
+                check_match(&format!("{}m {}s", dur / 60, dur % 60));
             }
 
             if let Some(score) = best_score {
@@ -7994,7 +7988,7 @@ impl App {
             }
         }
 
-        scored_items.sort_by(|a, b| b.0.cmp(&a.0));
+        scored_items.sort_by_key(|a| std::cmp::Reverse(a.0));
         scored_items.into_iter().map(|(_, item)| item).collect()
     }
 
@@ -8379,21 +8373,20 @@ impl App {
             Ok(items) => (items, None),
             Err(error) => (Vec::new(), Some(error)),
         };
-        if items.is_empty() {
-            if let Some(cached) = self.cached_selector_items() {
-                let notice =
-                    crate::notice::Notice::info("Offline fallback: cached selector items.")
-                        .from_request(request);
-                self.push_notice(match failure.as_deref() {
-                    Some(error) => notice.with_detail(error),
-                    None => notice,
-                });
-                if let Some(selector) = self.selector_mut() {
-                    selector.all_items = cached;
-                    selector.is_loading = false;
-                }
-                return false;
+        if items.is_empty()
+            && let Some(cached) = self.cached_selector_items()
+        {
+            let notice = crate::notice::Notice::info("Offline fallback: cached selector items.")
+                .from_request(request);
+            self.push_notice(match failure.as_deref() {
+                Some(error) => notice.with_detail(error),
+                None => notice,
+            });
+            if let Some(selector) = self.selector_mut() {
+                selector.all_items = cached;
+                selector.is_loading = false;
             }
+            return false;
         }
         if let Some(error) = failure {
             self.push_notice(
@@ -8555,15 +8548,15 @@ impl App {
                 if enabled_cols.contains("State") {
                     check_match(&item.state);
                 }
-                if enabled_cols.contains("Start Date") {
-                    if let Some(d) = &item.start_date {
-                        check_match(d);
-                    }
+                if enabled_cols.contains("Start Date")
+                    && let Some(d) = &item.start_date
+                {
+                    check_match(d);
                 }
-                if enabled_cols.contains("Due Date") {
-                    if let Some(d) = &item.due_date {
-                        check_match(d);
-                    }
+                if enabled_cols.contains("Due Date")
+                    && let Some(d) = &item.due_date
+                {
+                    check_match(d);
                 }
                 matches
             })

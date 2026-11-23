@@ -60,24 +60,24 @@ pub fn handle_key(
             let value = text_input.buffer.value().to_string();
             match text_input.action {
                 crate::app::TextInputAction::EditPageSize => {
-                    if let Ok(new_size) = value.trim().parse::<usize>() {
-                        if new_size > 0 {
-                            app.config.page_size = new_size;
-                            app.page_size = new_size;
-                            if let Some(ref mut client) = app.gitlab_client {
-                                client.page_size = new_size;
-                            }
-                            if let Some(client) = app.gitlab_client.clone() {
-                                app.start_loading_tab(app.active_tab);
-                                spawn_refresh_active_tab(
-                                    fx,
-                                    &client,
-                                    &app.scope,
-                                    app.requested_state_queries(),
-                                    app.active_tab,
-                                    app.scoped_sender(tx.clone()),
-                                );
-                            }
+                    if let Ok(new_size) = value.trim().parse::<usize>()
+                        && new_size > 0
+                    {
+                        app.config.page_size = new_size;
+                        app.page_size = new_size;
+                        if let Some(ref mut client) = app.gitlab_client {
+                            client.page_size = new_size;
+                        }
+                        if let Some(client) = app.gitlab_client.clone() {
+                            app.start_loading_tab(app.active_tab);
+                            spawn_refresh_active_tab(
+                                fx,
+                                &client,
+                                &app.scope,
+                                app.requested_state_queries(),
+                                app.active_tab,
+                                app.scoped_sender(tx.clone()),
+                            );
                         }
                     }
                 }
@@ -255,30 +255,30 @@ pub fn handle_key(
                     comment_id,
                     ref discussion_id,
                 } => {
-                    if !value.trim().is_empty() {
-                        if let Some(client) = app.gitlab_client.clone() {
-                            let project = app.project_path_for_open_mr(mr_iid);
-                            let thread_id = discussion_id.clone();
-                            let body = value.clone();
-                            let tx = tx.clone();
-                            let _ = tx.send(Event::CommandStarted(format!(
-                                "Replying to comment ID {comment_id} in MR #{mr_iid}"
-                            )));
-                            handlers::diff_view::spawn_mr_review_task(fx, &tx, async move {
-                                client
-                                    .reply_to_thread(&project, mr_iid, &thread_id, &body)
-                                    .await
-                            });
-                        }
+                    if !value.trim().is_empty()
+                        && let Some(client) = app.gitlab_client.clone()
+                    {
+                        let project = app.project_path_for_open_mr(mr_iid);
+                        let thread_id = discussion_id.clone();
+                        let body = value.clone();
+                        let tx = tx.clone();
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Replying to comment ID {comment_id} in MR #{mr_iid}"
+                        )));
+                        handlers::diff_view::spawn_mr_review_task(fx, &tx, async move {
+                            client
+                                .reply_to_thread(&project, mr_iid, &thread_id, &body)
+                                .await
+                        });
                     }
                 }
                 crate::app::TextInputAction::EditNewField { field_idx } => {
                     // Write the value directly into the edit_menu fields
                     // (no CLI call — iid==0 means this entity is not yet created)
-                    if let Some(ref mut menu) = app.edit_menu_mut() {
-                        if let Some(field) = menu.fields.get_mut(field_idx) {
-                            field.value = value.clone();
-                        }
+                    if let Some(ref mut menu) = app.edit_menu_mut()
+                        && let Some(field) = menu.fields.get_mut(field_idx)
+                    {
+                        field.value = value.clone();
                     }
                 }
             }

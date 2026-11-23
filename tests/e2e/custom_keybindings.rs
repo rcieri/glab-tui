@@ -39,10 +39,10 @@ fn wait_for_file(
 ) -> Result<String, String> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     while Instant::now() < deadline {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if !content.is_empty() {
-                return Ok(content);
-            }
+        if let Ok(content) = std::fs::read_to_string(path)
+            && !content.is_empty()
+        {
+            return Ok(content);
         }
         pump_output(session, Duration::from_millis(20));
     }

@@ -477,22 +477,21 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
 /// After the user moved to another tab: fetch it unless it is loading or
 /// fresh, and the related items its highlighted row previews.
 pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if let Some(client) = &app.gitlab_client {
-        if !app.loading_tabs.contains(&app.active_tab)
-            && !app.refreshed_tabs.contains(&app.active_tab)
-        {
-            if !app.loaded_tabs.contains(&app.active_tab) {
-                app.loading_tabs.insert(app.active_tab);
-            }
-            spawn_refresh_active_tab(
-                fx,
-                client,
-                &app.scope,
-                app.requested_state_queries(),
-                app.active_tab,
-                app.scoped_sender(tx.clone()),
-            );
+    if let Some(client) = &app.gitlab_client
+        && !app.loading_tabs.contains(&app.active_tab)
+        && !app.refreshed_tabs.contains(&app.active_tab)
+    {
+        if !app.loaded_tabs.contains(&app.active_tab) {
+            app.loading_tabs.insert(app.active_tab);
         }
+        spawn_refresh_active_tab(
+            fx,
+            client,
+            &app.scope,
+            app.requested_state_queries(),
+            app.active_tab,
+            app.scoped_sender(tx.clone()),
+        );
     }
     if app.active_tab == Tab::Issues {
         maybe_fetch_related_mrs(app, tx);
@@ -584,13 +583,14 @@ fn with_pr_stack(
     // Stacks exist only in GitHub repositories; anywhere else the answer is
     // already known to be "not stacked".
     let can_be_stacked = app.is_github() && app.scope.is_repository();
-    if !is_known && can_be_stacked {
-        if let Some(client) = app.gitlab_client.clone() {
-            crate::fetch::request_pr_stack(fx, &client, app, pr.clone(), tx);
-            app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
-            app.pending_stack_action = Some((pr, action));
-            return;
-        }
+    if !is_known
+        && can_be_stacked
+        && let Some(client) = app.gitlab_client.clone()
+    {
+        crate::fetch::request_pr_stack(fx, &client, app, pr.clone(), tx);
+        app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
+        app.pending_stack_action = Some((pr, action));
+        return;
     }
     run_stack_action(app, &pr.0, pr.1, action);
 }
@@ -1055,28 +1055,28 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::IssuesOpenInBrowser, key_event) =>
             {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    if let Some(issue) = app.filtered_issues().get(selected_idx) {
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return false;
-                        };
-                        let project_path = if !issue.project_path.is_empty() {
-                            issue.project_path.clone()
-                        } else {
-                            app.scope.as_str().to_string()
-                        };
-                        let iid_str = issue.iid.to_string();
-                        let tx2 = tx.clone();
-                        fx.spawn(async move {
-                            let result = client
-                                .open_in_browser(&project_path, "issue", &iid_str)
-                                .await;
-                            let _ = tx2.send(Event::CommandCompleted(
-                                crate::app::Tab::Issues,
-                                CommandOutcome::read_only(result),
-                            ));
-                        });
-                    }
+                if let Some(selected_idx) = app.issues.state.selected()
+                    && let Some(issue) = app.filtered_issues().get(selected_idx)
+                {
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return false;
+                    };
+                    let project_path = if !issue.project_path.is_empty() {
+                        issue.project_path.clone()
+                    } else {
+                        app.scope.as_str().to_string()
+                    };
+                    let iid_str = issue.iid.to_string();
+                    let tx2 = tx.clone();
+                    fx.spawn(async move {
+                        let result = client
+                            .open_in_browser(&project_path, "issue", &iid_str)
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Issues,
+                            CommandOutcome::read_only(result),
+                        ));
+                    });
                 }
             }
             _ if app
@@ -1084,14 +1084,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::IssuesSelectIssue, key_event) =>
             {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    if let Some(i) = app.filtered_issues().get(selected_idx) {
-                        let key = (i.project_path.clone(), i.iid);
-                        if app.selected_issues.contains(&key) {
-                            app.selected_issues.remove(&key);
-                        } else {
-                            app.selected_issues.insert(key);
-                        }
+                if let Some(selected_idx) = app.issues.state.selected()
+                    && let Some(i) = app.filtered_issues().get(selected_idx)
+                {
+                    let key = (i.project_path.clone(), i.iid);
+                    if app.selected_issues.contains(&key) {
+                        app.selected_issues.remove(&key);
+                    } else {
+                        app.selected_issues.insert(key);
                     }
                 }
             }
@@ -1100,14 +1100,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::IssuesDrillIntoScope, key_event) =>
             {
-                if app.scope.is_group() {
-                    if let Some(idx) = app.issues.state.selected() {
-                        let filtered = app.filtered_issues();
-                        if let Some(issue) = filtered.get(idx) {
-                            if !issue.project_path.is_empty() {
-                                app.drill_into(issue.project_path.clone());
-                            }
-                        }
+                if app.scope.is_group()
+                    && let Some(idx) = app.issues.state.selected()
+                {
+                    let filtered = app.filtered_issues();
+                    if let Some(issue) = filtered.get(idx)
+                        && !issue.project_path.is_empty()
+                    {
+                        app.drill_into(issue.project_path.clone());
                     }
                 }
             }
@@ -1221,14 +1221,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::MrsSelectMr, key_event)
             {
-                if let Some(selected_idx) = app.mrs.state.selected() {
-                    if let Some(m) = app.filtered_mrs().get(selected_idx) {
-                        let key = (m.project_path.clone(), m.iid);
-                        if app.selected_mrs.contains(&key) {
-                            app.selected_mrs.remove(&key);
-                        } else {
-                            app.selected_mrs.insert(key);
-                        }
+                if let Some(selected_idx) = app.mrs.state.selected()
+                    && let Some(m) = app.filtered_mrs().get(selected_idx)
+                {
+                    let key = (m.project_path.clone(), m.iid);
+                    if app.selected_mrs.contains(&key) {
+                        app.selected_mrs.remove(&key);
+                    } else {
+                        app.selected_mrs.insert(key);
                     }
                 }
             } else if app
@@ -1236,14 +1236,14 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::MrsDrillIntoScope, key_event)
             {
-                if app.scope.is_group() {
-                    if let Some(idx) = app.mrs.state.selected() {
-                        let filtered = app.filtered_mrs();
-                        if let Some(mr) = filtered.get(idx) {
-                            if !mr.project_path.is_empty() {
-                                app.drill_into(mr.project_path.clone());
-                            }
-                        }
+                if app.scope.is_group()
+                    && let Some(idx) = app.mrs.state.selected()
+                {
+                    let filtered = app.filtered_mrs();
+                    if let Some(mr) = filtered.get(idx)
+                        && !mr.project_path.is_empty()
+                    {
+                        app.drill_into(mr.project_path.clone());
                     }
                 }
             } else if app
@@ -1887,12 +1887,11 @@ pub fn handle_active_tab_key(
                     .map(|p| format!("#{} — {} ({})", p.id(), p.ref_branch(), p.status()))
                     .collect();
                 let mut pre_selected = std::collections::HashSet::new();
-                if let Some(active_id) = app.active_pipeline_id {
-                    if let Some(i) = app.pipelines.items.iter().position(|p| p.id() == active_id) {
-                        if let Some(p) = pipelines.get(i) {
-                            pre_selected.insert(p.clone());
-                        }
-                    }
+                if let Some(active_id) = app.active_pipeline_id
+                    && let Some(i) = app.pipelines.items.iter().position(|p| p.id() == active_id)
+                    && let Some(p) = pipelines.get(i)
+                {
+                    pre_selected.insert(p.clone());
                 }
                 let start_idx = pre_selected
                     .iter()

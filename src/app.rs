@@ -4219,6 +4219,14 @@ impl EnvironmentDeployments {
     }
 }
 
+/// A pull request's GitHub "Viewed" sync and the client that opened its diff.
+/// Batches go out through that client: after a scope switch
+/// `App::gitlab_client` is being rebuilt, or reaches another host.
+pub struct PullRequestViewedSync {
+    pub sync: ViewedSync,
+    pub client: crate::domain::client::GitlabClient,
+}
+
 pub struct App {
     pub config: Config,
     /// Resolved from `config.theme_preset`, `config.theme` and
@@ -4413,10 +4421,11 @@ pub struct App {
     /// Session-wide diff layout, `Auto` until a layout key pins one.
     pub diff_layout: DiffLayout,
     /// GitHub "Viewed" sync of each pull request opened this session, by
-    /// GraphQL node id. It outlives the diff view so intents queued just before
-    /// closing still go out, and a reopened diff waits for the request the
-    /// closed one sent.
-    pub viewed_syncs: HashMap<String, ViewedSync>,
+    /// GraphQL node id. It outlives the diff view and the scope it was opened
+    /// in, so intents queued just before closing the diff or switching scope
+    /// still go out, and a reopened diff waits for the request the closed one
+    /// sent.
+    pub viewed_syncs: HashMap<String, PullRequestViewedSync>,
     /// Viewed-sync requests settled this session, across pull requests. A
     /// diff fetch carries the count it started at back on `DiffFetched`.
     pub viewed_settles: SettleCount,
@@ -5037,9 +5046,6 @@ impl App {
         self.milestones.state.select(Some(0));
         self.branches.reset_cursor();
         self.environments.reset_cursor();
-        // Results of the old scope's requests are dropped by generation, so a
-        // kept entry would wait on its request forever.
-        self.viewed_syncs.clear();
     }
 
     pub fn drill_into(&mut self, repo: String) {
@@ -7027,13 +7033,22 @@ impl App {
     /// it: the requests settled since, then what the user asked for that is
     /// still on its way.
     pub fn reload_viewed_sync(&mut self, diff_view: &mut DiffView, fetched_at: SettleCount) {
-        let Some(pull_request_id) = diff_view.pull_request_id.clone() else {
+        let (Some(pull_request_id), Some(client)) = (
+            diff_view.pull_request_id.clone(),
+            self.gitlab_client.as_ref(),
+        ) else {
             return;
         };
         let confirmed = diff_view.reviewed_files.clone();
-        let sync = self.viewed_syncs.entry(pull_request_id).or_default();
-        let mut corrections = sync.reload(confirmed, fetched_at);
-        corrections.extend(sync.unsettled());
+        let entry = self
+            .viewed_syncs
+            .entry(pull_request_id)
+            .or_insert_with(|| PullRequestViewedSync {
+                sync: ViewedSync::default(),
+                client: client.clone(),
+            });
+        let mut corrections = entry.sync.reload(confirmed, fetched_at);
+        corrections.extend(entry.sync.unsettled());
         diff_view.apply_review_corrections(&corrections);
     }
 
@@ -7047,7 +7062,7 @@ impl App {
     ) -> bool {
         self.viewed_syncs
             .get_mut(pull_request_id)
-            .is_some_and(|sync| sync.queue(paths, viewed))
+            .is_some_and(|entry| entry.sync.queue(paths, viewed))
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
@@ -10314,19 +10329,6 @@ mod tests {
 
         assert!(!app.job_trace_follow);
         assert!(!app.job_trace_poll_in_flight);
-    }
-
-    #[test]
-    fn reset_on_scope_change_forgets_viewed_syncs_whose_results_it_will_drop() {
-        let mut sync = ViewedSync::default();
-        sync.queue(&["a.rs".to_string()], true);
-        sync.take_changes();
-        let mut app = App::default();
-        app.viewed_syncs.insert("PR_1".to_string(), sync);
-
-        app.reset_on_scope_change();
-
-        assert!(app.viewed_syncs.is_empty());
     }
 
     #[tokio::test]
@@ -13776,6 +13778,21 @@ index 123456..789012 100644
             .expect("file in tree");
     }
 
+    fn app_with_github_client() -> App {
+        App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        }
+    }
+
     #[test]
     fn marks_reset_only_on_files_whose_diff_changed() {
         let mut reviewed = review_fixture();
@@ -13880,7 +13897,7 @@ index 123456..789012 100644
             pull_request_id: "PR_1".to_string(),
             files: HashMap::new(),
         };
-        let mut app = App::default();
+        let mut app = app_with_github_client();
         let mut before = review_fixture();
         before.restore_review_state(&HashMap::new(), Some(server()), false);
         app.reload_viewed_sync(&mut before, SettleCount::default());
@@ -13895,8 +13912,11 @@ index 123456..789012 100644
         app.reload_viewed_sync(&mut after, SettleCount::default());
 
         assert!(after.reviewed_files.contains("README.md"));
-        let sync = app.viewed_syncs.get_mut("PR_1").unwrap();
-        assert_eq!(sync.take_changes(), vec![("README.md".to_string(), true)]);
+        let entry = app.viewed_syncs.get_mut("PR_1").unwrap();
+        assert_eq!(
+            entry.sync.take_changes(),
+            vec![("README.md".to_string(), true)]
+        );
     }
 
     #[test]
@@ -13905,7 +13925,7 @@ index 123456..789012 100644
             pull_request_id: "PR_1".to_string(),
             files: HashMap::from([("README.md".to_string(), FileViewedState::Dismissed)]),
         };
-        let mut app = App::default();
+        let mut app = app_with_github_client();
         let mut before = review_fixture();
         before.restore_review_state(&HashMap::new(), Some(server()), false);
         app.reload_viewed_sync(&mut before, SettleCount::default());

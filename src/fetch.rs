@@ -839,7 +839,15 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
 /// which spaces out the batches of a large toggle.
 const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
 
-pub fn spawn_viewed_sync_flush(fx: &mut Effects, pull_request_id: String, tx: ScopedSender) {
+/// Schedules a pull request's flush. Viewed-sync events travel on the raw
+/// sender, not a `ScopedSender`: a node id names its pull request in any
+/// scope, and a result dropped by a scope switch would strand every batch
+/// queued behind it.
+pub fn spawn_viewed_sync_flush(
+    fx: &mut Effects,
+    pull_request_id: String,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
     fx.spawn(async move {
         tokio::time::sleep(VIEWED_SYNC_DEBOUNCE).await;
         let _ = tx.send(Event::ViewedSyncFlush(pull_request_id));
@@ -853,7 +861,7 @@ pub fn spawn_viewed_files_sync(
     client: &domain::client::GitlabClient,
     pull_request_id: String,
     changes: Vec<(String, bool)>,
-    tx: ScopedSender,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     let client = client.clone();
     fx.spawn(async move {

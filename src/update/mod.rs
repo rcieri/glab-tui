@@ -285,6 +285,40 @@ mod tests {
     }
 
     #[test]
+    fn viewed_marks_queued_before_a_scope_switch_still_reach_github() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        let paths: Vec<String> = (0..=crate::domain::viewed_files::VIEWED_SYNC_BATCH)
+            .map(|i| format!("f{i:03}.rs"))
+            .collect();
+        app.queue_viewed_sync("PR_1", &paths, true);
+        assert_eq!(flush(&mut app, "PR_1"), 1, "the first batch");
+        app.close_diff_view();
+
+        app.drill_into("org/other".to_string());
+        // The new scope's client is still being built.
+        app.gitlab_client = None;
+
+        let first_batch = paths[..crate::domain::viewed_files::VIEWED_SYNC_BATCH]
+            .iter()
+            .map(|path| (path.clone(), true))
+            .collect();
+        let effects = update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: first_batch,
+                result: Ok(vec![]),
+            },
+        );
+        assert_eq!(spawned(&effects), 1, "the follow-up flush");
+        assert_eq!(flush(&mut app, "PR_1"), 1, "the batch left over");
+    }
+
+    #[test]
     fn a_partly_refused_viewed_sync_reverts_only_the_refused_marks() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
@@ -362,7 +396,7 @@ mod tests {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());
-        let mut app = App::default();
+        let mut app = app_with_client();
         let mut diff_view = crate::app::DiffView::new(
             42,
             "org/project-b".to_string(),
@@ -396,10 +430,10 @@ mod tests {
 
         let diff_view = app.diff_view().expect("diff stays open");
         assert!(diff_view.reviewed_files.is_empty());
-        let sync = app.viewed_syncs.get_mut("PR_B").expect("GitHub sync");
-        sync.queue(&["README.md".to_string()], true);
+        let entry = app.viewed_syncs.get_mut("PR_B").expect("GitHub sync");
+        entry.sync.queue(&["README.md".to_string()], true);
         assert_eq!(
-            sync.take_changes(),
+            entry.sync.take_changes(),
             vec![("README.md".to_string(), true)],
             "project B's own mark still reaches GitHub"
         );

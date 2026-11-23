@@ -808,21 +808,17 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.show_cli_error(err_msg);
         }
         Event::ViewedSyncFlush(pull_request_id) => {
-            let sender = app.scoped_sender(tx.clone());
-            let Some(client) = app.gitlab_client.clone() else {
+            let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) else {
                 return;
             };
-            let Some(sync) = app.viewed_syncs.get_mut(&pull_request_id) else {
-                return;
-            };
-            let changes = sync.take_changes();
+            let changes = entry.sync.take_changes();
             if !changes.is_empty() {
                 crate::fetch::spawn_viewed_files_sync(
                     fx,
-                    &client,
+                    &entry.client,
                     pull_request_id,
                     changes,
-                    sender,
+                    tx.clone(),
                 );
             }
         }
@@ -831,7 +827,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             changes,
             result,
         } => {
-            let sender = app.scoped_sender(tx.clone());
             let rejected: std::collections::HashSet<&str> = match &result {
                 Ok(refused) => refused.iter().map(|r| r.path.as_str()).collect(),
                 Err(_) => changes.iter().map(|(path, _)| path.as_str()).collect(),
@@ -839,10 +834,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.viewed_settles = app.viewed_settles.next();
             let settled_at = app.viewed_settles;
             let mut corrections = Vec::new();
-            if let Some(sync) = app.viewed_syncs.get_mut(&pull_request_id) {
-                corrections = sync.settle(&changes, &rejected, settled_at);
-                if sync.claim_follow_up_flush() {
-                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), sender);
+            if let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) {
+                corrections = entry.sync.settle(&changes, &rejected, settled_at);
+                if entry.sync.claim_follow_up_flush() {
+                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), tx.clone());
                 }
             }
             let mut reverted_marks = None;

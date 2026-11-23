@@ -280,11 +280,7 @@ pub fn handle_key(
                 if let Some(pull_request_id) = diff_view.pull_request_id.clone()
                     && app.queue_viewed_sync(&pull_request_id, &paths, marked)
                 {
-                    crate::fetch::spawn_viewed_sync_flush(
-                        fx,
-                        pull_request_id,
-                        app.scoped_sender(tx.clone()),
-                    );
+                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id, tx.clone());
                 }
                 let (reviewed, total) = diff_view.review_progress();
                 app.show_notice(format!(

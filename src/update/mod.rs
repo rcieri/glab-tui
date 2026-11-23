@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn a_viewed_mark_that_failed_after_its_diff_closed_leaves_the_saved_marks() {
+    fn a_viewed_mark_that_failed_after_its_diff_closed_drops_its_saved_mark() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _env = crate::config::EnvGuard::isolate_home(home.path());

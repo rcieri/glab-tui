@@ -1548,12 +1548,21 @@ impl DiffView {
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
         // strings, so expanding at the single point where they are produced
-        // keeps all of them agreeing on where a character sits.
-        let cleaned_diff = strip_ansi_escapes(&raw_diff)
-            .lines()
-            .map(expand_diff_line_tabs)
-            .collect::<Vec<_>>()
-            .join("\n");
+        // keeps all of them agreeing on where a character sits. Fingerprints
+        // hash the raw lines instead: a push that only swaps a tab for spaces,
+        // or flips CRLF and LF, still changes the file.
+        let stripped_diff = strip_ansi_escapes(&raw_diff);
+        let mut raw_lines: Vec<&str> = stripped_diff.split_terminator('\n').collect();
+        if raw_lines
+            .last()
+            .is_some_and(|line| line.trim_end_matches('\r').is_empty())
+        {
+            raw_lines.pop();
+        }
+        let expanded_lines: Vec<String> = raw_lines
+            .iter()
+            .map(|line| expand_diff_line_tabs(line.strip_suffix('\r').unwrap_or(line)))
+            .collect();
         let mut all_lines = Vec::new();
         let mut current_file = String::new();
         let mut old_line_num = None;
@@ -1590,7 +1599,7 @@ impl DiffView {
             Context,
         }
 
-        let diff_lines: Vec<&str> = cleaned_diff.lines().collect();
+        let diff_lines: Vec<&str> = expanded_lines.iter().map(String::as_str).collect();
         for (index, &line) in diff_lines.iter().enumerate() {
             let starts_file = line.starts_with("diff --git ")
                 || (line.starts_with("--- ")
@@ -1842,11 +1851,13 @@ impl DiffView {
         let number_width = line_number_width(&all_lines);
 
         let mut fingerprints: HashMap<&str, Fingerprint> = HashMap::new();
-        for line in all_lines.iter().filter(|l| !l.file_path.is_empty()) {
-            fingerprints
-                .entry(line.file_path.as_str())
-                .or_default()
-                .update(&line.content);
+        for (line, raw) in all_lines.iter().zip(&raw_lines) {
+            if !line.file_path.is_empty() {
+                fingerprints
+                    .entry(line.file_path.as_str())
+                    .or_default()
+                    .update(raw);
+            }
         }
         let file_fingerprints = fingerprints
             .into_iter()
@@ -13756,6 +13767,27 @@ index 123456..789012 100644
         reopened.restore_review_state(&refetched.review_marks(), None, false);
         assert!(reopened.reviewed_files.contains("README.md"));
         assert!(reopened.changed_since_review.is_empty());
+    }
+
+    #[test]
+    fn fingerprints_see_tab_and_line_ending_changes_the_display_hides() {
+        let diff = |added: &str| {
+            DiffView::new(
+                42,
+                "owner/repo".to_string(),
+                format!("--- a/Makefile\n+++ b/Makefile\n@@ -1,1 +1,1 @@\n-old\n{added}\n"),
+            )
+        };
+        let fingerprint = |view: &DiffView| view.file_fingerprints["Makefile"].clone();
+        let tab = diff("+\tbuild");
+        let spaces = diff("+    build");
+        assert_eq!(tab.all_lines[4].content, spaces.all_lines[4].content);
+        assert_ne!(fingerprint(&tab), fingerprint(&spaces));
+
+        let crlf = diff("+build\r");
+        let lf = diff("+build");
+        assert_eq!(crlf.all_lines[4].content, "+build");
+        assert_ne!(fingerprint(&crlf), fingerprint(&lf));
     }
 
     #[test]

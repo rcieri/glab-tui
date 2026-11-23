@@ -697,6 +697,24 @@ pub enum SelectorField {
 }
 
 impl SelectorField {
+    /// Every variant without a payload.
+    pub const FIXED: [SelectorField; 14] = [
+        SelectorField::Labels,
+        SelectorField::Assignees,
+        SelectorField::Reviewers,
+        SelectorField::Milestone,
+        SelectorField::Confidential,
+        SelectorField::DraftStatus,
+        SelectorField::MrPipeline,
+        SelectorField::SourceBranch,
+        SelectorField::TargetBranch,
+        SelectorField::PipelineBranch,
+        SelectorField::WorkflowFile,
+        SelectorField::Tag,
+        SelectorField::CreateFrom,
+        SelectorField::Project,
+    ];
+
     pub fn label(&self) -> String {
         match self {
             SelectorField::Labels => "Labels".to_string(),
@@ -718,26 +736,10 @@ impl SelectorField {
     }
 
     pub fn from_label(label: &str) -> Option<Self> {
-        Some(match label {
-            "Labels" => SelectorField::Labels,
-            "Assignees" => SelectorField::Assignees,
-            "Reviewers" => SelectorField::Reviewers,
-            "Milestone" => SelectorField::Milestone,
-            "Confidential" => SelectorField::Confidential,
-            "Status (Draft/Ready)" => SelectorField::DraftStatus,
-            "Merge Request Pipeline" => SelectorField::MrPipeline,
-            "Source Branch" => SelectorField::SourceBranch,
-            "Target Branch" => SelectorField::TargetBranch,
-            "Branch / Ref" => SelectorField::PipelineBranch,
-            "Workflow File" => SelectorField::WorkflowFile,
-            "Tag" => SelectorField::Tag,
-            "Create From" => SelectorField::CreateFrom,
-            "Project" => SelectorField::Project,
-            other => {
-                let name = other.strip_prefix("Input: ")?;
-                SelectorField::WorkflowInput(name.to_string())
-            }
-        })
+        if let Some(name) = label.strip_prefix("Input: ") {
+            return Some(SelectorField::WorkflowInput(name.to_string()));
+        }
+        Self::FIXED.into_iter().find(|field| field.label() == label)
     }
 }
 
@@ -12032,23 +12034,9 @@ diff --git a/VERSION b/VERSION
 
     #[test]
     fn selector_field_label_round_trips() {
-        let fields = [
-            SelectorField::Labels,
-            SelectorField::Assignees,
-            SelectorField::Reviewers,
-            SelectorField::Milestone,
-            SelectorField::Confidential,
-            SelectorField::DraftStatus,
-            SelectorField::MrPipeline,
-            SelectorField::SourceBranch,
-            SelectorField::TargetBranch,
-            SelectorField::PipelineBranch,
-            SelectorField::WorkflowFile,
-            SelectorField::Tag,
-            SelectorField::CreateFrom,
-            SelectorField::Project,
-            SelectorField::WorkflowInput("version".to_string()),
-        ];
+        let fields = SelectorField::FIXED
+            .into_iter()
+            .chain([SelectorField::WorkflowInput("version".to_string())]);
         for field in fields {
             assert_eq!(
                 SelectorField::from_label(&field.label()),

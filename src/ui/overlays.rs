@@ -1908,6 +1908,98 @@ command = "true"
         }
     }
 
+    /// A click on a save submenu row selects the choice drawn on it, and
+    /// neither saves nor closes the menu.
+    #[test]
+    fn a_click_on_a_save_menu_row_selects_the_choice_drawn_there() {
+        let mut app = App::default();
+        app.open_configure();
+        if let Some(c) = app.configure_mut() {
+            c.save_menu_open = true;
+            c.save_menu_selection = Some(crate::app::SaveMenu::Cancel);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let icons = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &icons,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let text = snapshot_text(&terminal);
+        let list = app
+            .configure()
+            .unwrap()
+            .save_menu_layout
+            .as_ref()
+            .unwrap()
+            .groups[0];
+
+        for (i, &(choice, label)) in SAVE_MENU_CHOICES.iter().enumerate() {
+            let row = list.y + i as u16;
+            let drawn: String = text
+                .lines()
+                .nth(usize::from(row))
+                .unwrap_or_default()
+                .chars()
+                .skip(usize::from(list.x))
+                .take(usize::from(list.width))
+                .collect();
+            assert!(
+                drawn.contains(label),
+                "{label} is drawn on row {row}:\n{text}"
+            );
+
+            click(&mut app, list.x, row);
+
+            let c = app.configure().expect("Configure stays open");
+            assert_eq!(
+                (c.save_menu_open, c.save_menu_selection),
+                (true, Some(choice)),
+                "{text}"
+            );
+        }
+    }
+
+    /// A click anywhere on the help filter box clears the filter, and a click
+    /// on the shortcut list below it leaves the filter alone.
+    #[test]
+    fn a_click_on_the_help_filter_box_clears_the_filter() {
+        let mut app = App::default();
+        app.open_help();
+        app.help_search_query = "merge".to_string();
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        let icons = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &icons,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        terminal
+            .draw(|f| render_overlays(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let layout = app.help_layout.as_ref().unwrap();
+        let (search, list) = (layout.groups[0], layout.groups[1]);
+
+        for (column, row, cleared) in [
+            (list.x, list.y, false),
+            (search.x, search.y, true),
+            (search.right() - 1, search.bottom() - 1, true),
+        ] {
+            app.help_search_query = "merge".to_string();
+
+            click(&mut app, column, row);
+
+            assert_eq!(
+                app.help_search_query.is_empty(),
+                cleared,
+                "click at column {column}, row {row}"
+            );
+        }
+    }
+
     /// A click on a Configure setting acts on the setting drawn under it.
     #[test]
     fn a_click_on_a_configure_setting_acts_on_the_setting_drawn_there() {

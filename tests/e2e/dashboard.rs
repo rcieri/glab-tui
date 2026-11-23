@@ -114,15 +114,17 @@ fn choosing_a_contributor_scopes_the_cards_and_lists_their_activity() {
     session
         .wait_for_screen_contains("MRs · @test-user", 5000)
         .expect("the MR card counts the contributor's work");
-    assert!(
-        screen_line_with(&session, "open, involving @test-user").contains(" 1 "),
-        "test-user authored the one open MR: {}",
-        session.emulator.get_text()
+    wait_for_line(
+        &mut session,
+        "open, involving @test-user",
+        "  1 o open, involving @test-user",
+        "test-user authored the one open MR",
     );
-    assert!(
-        screen_line_with(&session, "opened by @test-user, unassigned").contains(" 2 "),
-        "test-user opened both unassigned issues: {}",
-        session.emulator.get_text()
+    wait_for_line(
+        &mut session,
+        "opened by @test-user, unassigned",
+        "  2 @ opened by @test-user, unassigned",
+        "test-user opened both unassigned issues",
     );
 
     // Newest first: the push, then the comment on issue #7.

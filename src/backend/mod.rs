@@ -349,7 +349,8 @@ pub trait Backend: Send + Sync {
         iid: u64,
     ) -> Result<crate::domain::viewed_files::PrViewedFiles>;
     /// Marks (`true`) or unmarks files as viewed in one request and returns
-    /// the changes GitHub refused; `Err` when it applied none. GitHub only.
+    /// the changes GitHub refused. `Err` when the reply carries no per-file
+    /// result, whatever GitHub applied. GitHub only.
     async fn set_files_viewed(
         &self,
         pull_request_id: &str,

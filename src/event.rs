@@ -79,8 +79,9 @@ pub enum Event {
     ViewedSyncFlush(String),
     /// One GitHub "Viewed" sync request finished. `changes` maps paths to the
     /// viewed state that was sent, and `result` holds the ones GitHub refused,
-    /// or `Err` when it applied none. The pull request is named by its GraphQL
-    /// node id, since its number recurs across the projects of a group.
+    /// or `Err` when the reply carried no per-file result, whatever GitHub
+    /// applied. The pull request is named by its GraphQL node id, since its
+    /// number recurs across the projects of a group.
     ViewedFilesSynced {
         pull_request_id: String,
         changes: Vec<(String, bool)>,

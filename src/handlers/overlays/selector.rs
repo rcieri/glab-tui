@@ -1050,23 +1050,17 @@ pub fn handle_key(
                                     .iter_mut()
                                     .find(|f| f.label == target_field_name)
                                 {
-                                    let display_val = if field == app::SelectorField::Confidential {
-                                        selected_list
+                                    let display_val = match field {
+                                        app::SelectorField::Confidential
+                                        | app::SelectorField::MrPipeline => selected_list
                                             .first()
                                             .cloned()
-                                            .unwrap_or_else(|| "No".to_string())
-                                    } else if field == app::SelectorField::DraftStatus {
-                                        selected_list
+                                            .unwrap_or_else(|| "No".to_string()),
+                                        app::SelectorField::DraftStatus => selected_list
                                             .first()
                                             .cloned()
-                                            .unwrap_or_else(|| "Ready".to_string())
-                                    } else if field == app::SelectorField::MrPipeline {
-                                        selected_list
-                                            .first()
-                                            .cloned()
-                                            .unwrap_or_else(|| "No".to_string())
-                                    } else {
-                                        selected_list.join(", ")
+                                            .unwrap_or_else(|| "Ready".to_string()),
+                                        _ => selected_list.join(", "),
                                     };
 
                                     let is_workflow_file = field

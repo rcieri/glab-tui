@@ -159,15 +159,6 @@ fn visible_stack_column_costs_one_batch_query_per_list_fetch() {
     );
 }
 
-fn request_bodies(session: &TestSession) -> Vec<String> {
-    std::fs::read_to_string(format!("{}.stdin", session.sandbox.log_path.display()))
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
 /// Submit is refused until the dialog has read the repository's merge methods.
 fn wait_for_merge_methods(session: &mut TestSession) {
     session
@@ -177,7 +168,6 @@ fn wait_for_merge_methods(session: &mut TestSession) {
         .wait_for_screen_without("loading…", 15000)
         .expect("the merge dialog should list the methods the repository allows");
 }
-
 #[test]
 fn merging_a_stacked_pr_merges_its_downstack_through_the_async_endpoint() {
     let mut session = session_on_prs_tab(None);
@@ -202,7 +192,7 @@ fn merging_a_stacked_pr_merges_its_downstack_through_the_async_endpoint() {
         "{requests:?}"
     );
     assert_eq!(
-        request_bodies(&session),
+        session.sandbox.request_bodies(),
         vec![r#"{"merge_method":"squash"}"#]
     );
     assert_eq!(calls_matching(&session, "pr merge"), Vec::<String>::new());

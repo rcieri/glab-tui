@@ -169,7 +169,7 @@ impl CustomCommand {
     }
 }
 
-/// A keybinding entry in the config that is ignored or only partly usable.
+/// A config entry that is ignored or only partly usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigProblem {
     /// Which entry: its table, position and key.

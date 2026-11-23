@@ -1,6 +1,7 @@
 use crate::backend::BackendKind;
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
 use crate::config::{Config, Icons, Theme};
+use crate::custom_commands::ConfigProblem;
 use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
@@ -116,6 +117,10 @@ impl Tab {
             Tab::Environments => "environments",
             Tab::Terminal => "terminal",
         }
+    }
+
+    pub fn can_zoom_preview(self) -> bool {
+        self != Tab::Pipelines
     }
 
     pub fn is_high_churn(&self) -> bool {
@@ -249,28 +254,27 @@ impl Tab {
                 if is_group {
                     cols.push("Project");
                 }
-                cols.extend(["ID", "Status", "Ref"]);
+                cols.extend(["ID", "Status"]);
                 if kind.is_github() {
                     cols.push("Name");
                     cols.push("Event");
                     cols.push("SHA");
-                    cols.push("Actor");
                 } else {
                     cols.push("Stages");
                     cols.push("Source");
-                    cols.push("Actor");
                 }
-                cols.push("Created");
-                cols.push("Duration");
+                cols.extend(["Actor", "Created", "Duration", "Ref"]);
                 cols
             }
             Tab::Jobs => {
-                let mut cols = vec!["ID", "Status", "Name", "Matrix"];
+                let mut cols = vec!["ID"];
+                if !kind.is_github() {
+                    cols.push("Stage");
+                }
+                cols.extend(["Status", "Name", "Matrix"]);
                 if kind.is_github() {
                     cols.push("Runner");
                     cols.push("Needs");
-                } else {
-                    cols.push("Stage");
                 }
                 cols.push("Duration");
                 cols
@@ -3496,7 +3500,7 @@ pub enum ModalKind {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConfigureOverlay {
-    pub column_checklist_idx: usize,
+    pub focused_row: usize,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub editing_page_size: bool,
@@ -3504,8 +3508,8 @@ pub struct ConfigureOverlay {
     pub layout: Option<crate::form::FormLayout>,
     /// Same for the save submenu while it is open.
     pub save_menu_layout: Option<crate::form::FormLayout>,
-    /// The setting each visible row of the list stands for, top to bottom;
-    /// `None` for headers and spacers.
+    /// The `configure_rows` index each visible row of the list stands for,
+    /// top to bottom; `None` for headings and spacers.
     pub visible_rows: Vec<Option<usize>>,
 }
 
@@ -4490,6 +4494,13 @@ pub struct App {
     /// edit via double-Enter, back to NORMAL if they entered via `e`).
     pub prev_details_zoomed: bool,
     pub detail_visible: bool,
+    /// Preview visibility of the tabs not on screen, restored by
+    /// `set_active_tab` when the user comes back to them.
+    pub preview_visible_by_tab: std::collections::HashMap<Tab, bool>,
+    /// Column order per tab, from the saved column list or the Configure
+    /// View. Columns it does not list follow the listed ones in their
+    /// built-in order. Tabs without an entry use the built-in order.
+    pub column_order: std::collections::HashMap<Tab, Vec<String>>,
     /// Set by the handler when a keypress should jump the detail pane to
     /// its last rendered line. Only the render pass knows the pane's actual
     /// `max`, so it resolves the flag in the same frame and clears it.
@@ -4573,7 +4584,7 @@ pub struct App {
         Tab,
         std::collections::HashMap<String, std::collections::HashSet<String>>,
     >,
-    pub sidebar_rect: Option<Rect>,
+    pub layout: Option<crate::ui::layout::LayoutPlan>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
@@ -4674,6 +4685,8 @@ impl App {
             details_zoomed: false,
             prev_details_zoomed: false,
             detail_visible: false,
+            preview_visible_by_tab: std::collections::HashMap::new(),
+            column_order: std::collections::HashMap::new(),
             detail_scroll_to_bottom: false,
             job_trace_loading: false,
             pending_job_trace_editor: None,
@@ -4734,7 +4747,7 @@ impl App {
             group_list_state: ratatui::widgets::ListState::default(),
             group_items: Vec::new(),
             column_filters: std::collections::HashMap::new(),
-            sidebar_rect: None,
+            layout: None,
             content_rect: None,
             detail_rect: None,
             overlay_stack: vec![],
@@ -4908,6 +4921,23 @@ macro_rules! define_modal_accessors {
 impl App {
     pub fn captures_text(&self) -> bool {
         self.modal_stack.last().is_some_and(|m| m.captures_text())
+    }
+
+    pub fn layout_state(&self) -> crate::ui::layout::LayoutState {
+        crate::ui::layout::LayoutState {
+            active_tab: self.active_tab,
+            detail_visible: self.detail_visible,
+            details_zoomed: self.details_zoomed,
+            edit_zoomed: self.edit_menu().is_some(),
+        }
+    }
+
+    pub fn compute_layout(&self, size: Rect) -> crate::ui::layout::LayoutPlan {
+        crate::ui::layout::LayoutPlan::compute(crate::ui::layout::LayoutInputs {
+            size,
+            panes: crate::ui::layout::PaneSettings::from(&self.config.layout),
+            state: self.layout_state(),
+        })
     }
 
     pub fn has_modal(&self) -> bool {
@@ -5211,10 +5241,10 @@ impl App {
     }
 
     /// Switch to the Issues tab, drop filters that would hide the target, and
-    /// select + preview `iid` (in `project` when given). Returns whether the
-    /// item is already loaded.
+    /// select `iid` (in `project` when given). A preview open on the tab
+    /// being left stays open. Returns whether the item is already loaded.
     pub fn focus_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
-        self.active_tab = Tab::Issues;
+        self.set_active_tab_keeping_preview(Tab::Issues);
         self.clear_tab_filters(Tab::Issues);
         let found = self.select_visible_issue(project, iid);
         if found {
@@ -5225,10 +5255,11 @@ impl App {
     }
 
     /// Switch to the MergeRequests tab, drop filters that would hide the
-    /// target, and select + preview `iid` (in `project` when given). Returns
-    /// whether the item is already loaded.
+    /// target, and select `iid` (in `project` when given). A preview open on
+    /// the tab being left stays open. Returns whether the item is already
+    /// loaded.
     pub fn focus_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
-        self.active_tab = Tab::MergeRequests;
+        self.set_active_tab_keeping_preview(Tab::MergeRequests);
         self.clear_tab_filters(Tab::MergeRequests);
         let found = self.select_visible_mr(project, iid);
         if found {
@@ -6436,15 +6467,14 @@ impl App {
         self.terminal_scroll = 0;
     }
 
-    /// Rebuilds `custom_commands` from the current config, logging every
-    /// `[keybindings]` entry that binds nothing and every ignored or shadowed
-    /// custom keybinding in the terminal log.
-    pub fn load_keybindings(&mut self) {
+    /// Rebuilds `custom_commands` from the current config. Returns every
+    /// `[keybindings]` entry that binds nothing and every ignored or
+    /// shadowed custom keybinding, for `report_config_problems`.
+    pub fn load_keybindings(&mut self) -> Vec<(&'static str, ConfigProblem)> {
         let (commands, custom_problems) =
             crate::custom_commands::CustomCommands::load(&self.config);
         self.custom_commands = commands;
-        let problems: Vec<_> = self
-            .config
+        self.config
             .keybindings
             .problems()
             .iter()
@@ -6455,7 +6485,22 @@ impl App {
                     .into_iter()
                     .map(|problem| ("Custom keybinding", problem)),
             )
-            .collect();
+            .collect()
+    }
+
+    /// Logs `problems` and what `Config::load` left out of `[layout]` (bad
+    /// values, unknown tab names) as failed Terminal-tab entries, with one
+    /// toast for all of them: a second toast would replace the first before
+    /// it is drawn.
+    pub fn report_config_problems(&mut self, mut problems: Vec<(&'static str, ConfigProblem)>) {
+        problems.extend(
+            std::mem::take(&mut self.config.layout.problems)
+                .into_iter()
+                .map(|problem| ("Layout", problem)),
+        );
+        if problems.is_empty() {
+            return;
+        }
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         for (kind, problem) in &problems {
             self.terminal_commands.push(TerminalCommand {
@@ -6465,12 +6510,10 @@ impl App {
                 ..Default::default()
             });
         }
-        if !problems.is_empty() {
-            self.raise_error_toast(format!(
-                "{} keybinding problem(s); see the Terminal tab",
-                problems.len()
-            ));
-        }
+        self.raise_error_toast(format!(
+            "{} config problem(s); see the Terminal tab",
+            problems.len()
+        ));
     }
 
     pub fn kind(&self) -> BackendKind {
@@ -6546,6 +6589,7 @@ impl App {
             ref mut environments,
             ref search_query,
             ref enabled_columns,
+            ref column_order,
             ref column_filters,
             ref group_by_column,
             ref group_ascending,
@@ -6556,6 +6600,7 @@ impl App {
             enabled_columns: offered_enabled
                 .as_ref()
                 .or_else(|| enabled_columns.get(&tab)),
+            column_order: column_order.get(&tab).map(Vec::as_slice),
             column_filters: column_filters.get(&tab),
             sort: group_by_column
                 .get(&tab)
@@ -6637,32 +6682,27 @@ impl App {
         }
     }
 
+    /// Whether `tab`'s table draws `col`. Renderers check every cell against
+    /// one `shown_columns` instead.
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
-        if col == "Project" && tab != Tab::Todos && !self.scope.is_group() {
-            return false;
-        }
-        if self.is_github() {
-            if tab == Tab::Issues && col == "Due Date" {
-                return false;
-            }
-            if tab == Tab::Milestones && col == "Start Date" {
-                return false;
-            }
-        }
-        if let Some(set) = self.enabled_columns.get(&tab) {
-            if tab == Tab::Issues && matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
-                return set.contains("PRs")
-                    || set.contains("MRs")
-                    || set.contains("Related PRs")
-                    || set.contains("Related MRs");
-            }
-            if tab == Tab::MergeRequests && matches!(col, "Closes" | "Linked Issues") {
-                return set.contains("Closes") || set.contains("Linked Issues");
-            }
-            set.contains(col)
-        } else {
-            true
-        }
+        self.shown_columns(tab).contains(col)
+    }
+
+    /// The columns `tab`'s table draws: the ones this host and scope have,
+    /// enabled under their own name or the other host's name for them.
+    pub fn shown_columns(&self, tab: Tab) -> crate::column_order::ShownColumns {
+        let enabled = self.enabled_columns.get(&tab);
+        let labels = tab
+            .columns(self.kind(), self.scope.is_group())
+            .into_iter()
+            .filter(|col| {
+                enabled.is_none_or(|set| {
+                    set.iter()
+                        .any(|name| crate::column_order::same_column(name, col))
+                })
+            })
+            .collect();
+        crate::column_order::ShownColumns::new(labels)
     }
 
     /// The tab's sort column and whether it is ascending.
@@ -6671,16 +6711,20 @@ impl App {
         Some((col, self.group_ascending.get(&tab).copied().unwrap_or(true)))
     }
 
-    /// Moves the active tab's sort to the next (or previous) visible column.
-    /// "Unsorted" sits between the last and the first column.
+    /// Moves the active tab's sort to the next (or previous) visible column,
+    /// in the order the table draws them. "Unsorted" sits between the last
+    /// and the first column.
     pub fn cycle_sort_column(&mut self, forward: bool) {
         let tab = self.active_tab;
         let mut options: Vec<Option<&str>> = vec![None];
+        let shown = self.shown_columns(tab);
         options.extend(
-            tab.columns(self.kind(), self.scope.is_group())
-                .into_iter()
-                .filter(|col| self.is_column_visible(tab, col))
-                .map(Some),
+            crate::column_order::order_columns(
+                shown.labels(),
+                self.column_order.get(&tab).map(Vec::as_slice),
+            )
+            .into_iter()
+            .map(Some),
         );
         if options.len() == 1 {
             return;
@@ -6712,21 +6756,16 @@ impl App {
         self.update_filter_selection();
     }
 
+    /// The tabs `layout.tabs` shows, in its order.
     pub fn available_tabs(&self) -> Vec<Tab> {
         let kind = self.kind();
-        let mut tabs: Vec<Tab> = Tab::ALL
-            .iter()
-            .filter(|t| t.available_on_platform(kind))
-            .copied()
-            .collect();
-        if let Some(disabled) = &self.config.disabled_tabs {
-            tabs.retain(|t| {
-                !disabled.iter().any(|d| {
-                    Tab::from_str(d).as_ref() == Some(t) || d == &t.title(kind, &self.icons)
-                })
-            });
-        }
-        tabs
+        self.config
+            .layout
+            .tab_order()
+            .into_iter()
+            .filter(|&(tab, is_shown)| is_shown && tab.available_on_platform(kind))
+            .map(|(tab, _)| tab)
+            .collect()
     }
 
     pub fn get_column_filter(
@@ -6998,8 +7037,26 @@ impl App {
             }
         }
         app.apply_config();
-        app.load_keybindings();
+        app.land_on_available_tab();
+        let problems = app.load_keybindings();
+        app.report_config_problems(problems);
         app
+    }
+
+    /// Moves to the first shown tab when the active one is hidden by
+    /// `layout.tabs`.
+    pub fn land_on_available_tab(&mut self) {
+        let tabs = self.available_tabs();
+        if !tabs.contains(&self.active_tab)
+            && let Some(&first) = tabs.first()
+        {
+            self.switch_to_tab(first);
+        }
+    }
+
+    pub fn apply_theme(&mut self) {
+        self.theme = self.config.resolve_theme(self.terminal_appearance);
+        self.icons = Arc::new(self.config.icons.icons());
     }
 
     pub fn apply_config(&mut self) {
@@ -7025,6 +7082,13 @@ impl App {
             if let Some(cols) = &pane.columns {
                 let col_set: std::collections::HashSet<String> = cols.iter().cloned().collect();
                 self.enabled_columns.insert(tab, col_set);
+                // Every list saved before columns could be reordered was
+                // sorted alphabetically, so a sorted list carries no order.
+                if cols.is_sorted() {
+                    self.column_order.remove(&tab);
+                } else {
+                    self.column_order.insert(tab, cols.clone());
+                }
             }
             if let Some(col) = &pane.group_by_column {
                 self.group_by_column.insert(tab, Some(col.clone()));
@@ -7250,20 +7314,11 @@ impl App {
         if tabs.is_empty() {
             return;
         }
-        let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
-        let next_index = (current_index + 1) % tabs.len();
-        self.active_tab = tabs[next_index];
-        self.selected_pipelines.clear();
-        self.selected_jobs.clear();
-        self.selected_issues.clear();
-        self.selected_mrs.clear();
-        self.selected_branches.clear();
-        self.selected_todos.clear();
-        self.select_mode = false;
-        self.select_anchor = None;
-        self.details_zoomed = false;
-        self.detail_visible = false;
-        self.update_filter_selection();
+        let next_index = tabs
+            .iter()
+            .position(|t| t == &self.active_tab)
+            .map_or(0, |current| (current + 1) % tabs.len());
+        self.switch_to_tab(tabs[next_index]);
     }
 
     pub fn previous_tab(&mut self) {
@@ -7277,7 +7332,13 @@ impl App {
         } else {
             current_index - 1
         };
-        self.active_tab = tabs[prev_index];
+        self.switch_to_tab(tabs[prev_index]);
+    }
+
+    /// The user moving to `tab` (tab keys, sidebar click): leaves select mode
+    /// and the zoomed preview behind, and restores `tab`'s own preview.
+    pub fn switch_to_tab(&mut self, tab: Tab) {
+        self.set_active_tab(tab);
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
         self.selected_issues.clear();
@@ -7287,8 +7348,32 @@ impl App {
         self.select_mode = false;
         self.select_anchor = None;
         self.details_zoomed = false;
-        self.detail_visible = false;
         self.update_filter_selection();
+    }
+
+    /// Makes `tab` active, keeping each tab's preview visibility apart:
+    /// the one being left is remembered and `tab`'s is restored.
+    pub fn set_active_tab(&mut self, tab: Tab) {
+        if tab == self.active_tab {
+            return;
+        }
+        self.preview_visible_by_tab
+            .insert(self.active_tab, self.detail_visible);
+        self.detail_visible = self
+            .preview_visible_by_tab
+            .get(&tab)
+            .copied()
+            .unwrap_or(false);
+        self.active_tab = tab;
+    }
+
+    /// `set_active_tab` for a jump from the tab being left to related data:
+    /// a preview open there stays open on `tab`, while the tab being left
+    /// keeps its own remembered visibility.
+    pub fn set_active_tab_keeping_preview(&mut self, tab: Tab) {
+        let preview_was_open = self.detail_visible;
+        self.set_active_tab(tab);
+        self.detail_visible |= preview_was_open;
     }
 
     pub fn filter_issues_list<'a>(
@@ -9520,24 +9605,23 @@ impl App {
 
     pub fn save_layout(&self, target: SaveMenu) {
         let mut cfg = self.config.clone();
-
-        fn sync_pane(
-            tab: Tab,
-            enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
-            column_filters: &std::collections::HashMap<
-                Tab,
-                std::collections::HashMap<String, std::collections::HashSet<String>>,
-            >,
-            group_by_column_map: &std::collections::HashMap<Tab, Option<String>>,
-            group_ascending_map: &std::collections::HashMap<Tab, bool>,
-            pane: &mut crate::config::PaneConfig,
-        ) {
-            pane.columns = enabled_columns.get(&tab).map(|set| {
-                let mut v: Vec<String> = set.iter().cloned().collect();
-                v.sort();
-                v
-            });
-            pane.column_filters = column_filters
+        for tab in Tab::ALL {
+            let pane = match tab {
+                Tab::Issues => &mut cfg.issues,
+                Tab::MergeRequests => &mut cfg.mrs,
+                Tab::Pipelines => &mut cfg.pipelines,
+                Tab::Jobs => &mut cfg.jobs,
+                Tab::Runners => &mut cfg.runners,
+                Tab::Releases => &mut cfg.releases,
+                Tab::Todos => &mut cfg.todos,
+                Tab::Milestones => &mut cfg.milestones,
+                Tab::Branches => &mut cfg.branches,
+                Tab::Environments => &mut cfg.environments,
+                Tab::Terminal => continue,
+            };
+            pane.columns = self.saved_columns(tab);
+            pane.column_filters = self
+                .column_filters
                 .get(&tab)
                 .map(|filters| {
                     filters
@@ -9546,94 +9630,94 @@ impl App {
                         .collect()
                 })
                 .unwrap_or_default();
-            pane.group_by_column = group_by_column_map.get(&tab).cloned().flatten();
-            pane.group_ascending = group_ascending_map.get(&tab).copied().unwrap_or(true);
+            pane.group_by_column = self.group_by_column.get(&tab).cloned().flatten();
+            pane.group_ascending = self.group_ascending.get(&tab).copied().unwrap_or(true);
         }
-
-        sync_pane(
-            Tab::Issues,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.issues,
-        );
-        sync_pane(
-            Tab::MergeRequests,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.mrs,
-        );
-        sync_pane(
-            Tab::Pipelines,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.pipelines,
-        );
-        sync_pane(
-            Tab::Jobs,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.jobs,
-        );
-        sync_pane(
-            Tab::Runners,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.runners,
-        );
-        sync_pane(
-            Tab::Releases,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.releases,
-        );
-        sync_pane(
-            Tab::Todos,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.todos,
-        );
-        sync_pane(
-            Tab::Milestones,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.milestones,
-        );
-        sync_pane(
-            Tab::Branches,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.branches,
-        );
-        sync_pane(
-            Tab::Environments,
-            &self.enabled_columns,
-            &self.column_filters,
-            &self.group_by_column,
-            &self.group_ascending,
-            &mut cfg.environments,
-        );
 
         if let Err(e) = cfg.save_layout(target) {
             eprintln!("Failed to save layout: {e}");
         }
+    }
+
+    /// The tab's enabled columns in display order, as `columns = [...]`
+    /// stores them, each under the name it was enabled with (`MRs` on
+    /// GitHub). A column this host or scope lacks keeps its stored place.
+    /// Enabled names that are in no order follow, alphabetically. A tab
+    /// with no stored order saves its columns sorted, the form `apply_config`
+    /// reads as no order, so a save never pins the built-in order.
+    fn saved_columns(&self, tab: Tab) -> Option<Vec<String>> {
+        let enabled = self.enabled_columns.get(&tab)?;
+        if !self.column_order.contains_key(&tab) {
+            let mut names: Vec<String> = enabled.iter().cloned().collect();
+            names.sort();
+            return Some(names);
+        }
+        let same_column = crate::column_order::same_column;
+        let mut saved: Vec<String> = self
+            .stored_column_order(tab, &self.ordered_columns(tab))
+            .iter()
+            .filter_map(|label| enabled.iter().find(|name| same_column(name, label)))
+            .cloned()
+            .collect();
+        let mut unordered: Vec<&String> = enabled
+            .iter()
+            .filter(|name| !saved.contains(name))
+            .collect();
+        unordered.sort();
+        saved.extend(unordered.into_iter().cloned());
+        Some(saved)
+    }
+
+    /// `display`, an order of `tab`'s current columns, as the order to store:
+    /// merged with the stored order, then with every host's and scope's
+    /// built-in order, so columns this host or scope lacks keep their place.
+    fn stored_column_order(&self, tab: Tab, display: &[&str]) -> Vec<String> {
+        let mut order = match self.column_order.get(&tab) {
+            Some(stored) => crate::column_order::merge_order(display, stored),
+            None => display.iter().map(|label| label.to_string()).collect(),
+        };
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            for is_group in [false, true] {
+                let current: Vec<&str> = order.iter().map(String::as_str).collect();
+                let built_in: Vec<String> = tab
+                    .columns(kind, is_group)
+                    .into_iter()
+                    .map(String::from)
+                    .collect();
+                order = crate::column_order::merge_order(&current, &built_in);
+            }
+        }
+        order
+    }
+
+    /// Every column of `tab` in display order, shown or not.
+    pub fn ordered_columns(&self, tab: Tab) -> Vec<&'static str> {
+        crate::column_order::order_columns(
+            &tab.columns(self.kind(), self.scope.is_group()),
+            self.column_order.get(&tab).map(Vec::as_slice),
+        )
+    }
+
+    /// For a table drawing `tab`'s shown columns in built-in order, where
+    /// each goes in display order (see `column_order::permute`).
+    pub fn column_permutation(&self, tab: Tab) -> Vec<usize> {
+        crate::column_order::display_permutation(
+            self.shown_columns(tab).labels(),
+            self.column_order.get(&tab).map(Vec::as_slice),
+        )
+    }
+
+    /// Moves `column` one place right (`towards_end`) or left in `tab`'s
+    /// display order. Returns whether it moved.
+    pub fn move_column(&mut self, tab: Tab, column: &str, towards_end: bool) -> bool {
+        let Some(moved) =
+            crate::column_order::move_item(&self.ordered_columns(tab), column, towards_end)
+        else {
+            return false;
+        };
+        let order = self.stored_column_order(tab, &moved);
+        self.column_order.insert(tab, order);
+        true
     }
 }
 
@@ -9730,6 +9814,7 @@ mod tests {
         list.refresh(ViewInputs {
             query: "docker",
             enabled_columns: Some(&enabled),
+            column_order: None,
             column_filters: None,
             sort: None,
         });
@@ -9753,6 +9838,7 @@ mod tests {
         list1.refresh(ViewInputs {
             query: "YES",
             enabled_columns: Some(&enabled),
+            column_order: None,
             column_filters: None,
             sort: None,
         });
@@ -9763,6 +9849,7 @@ mod tests {
         list2.refresh(ViewInputs {
             query: "NO",
             enabled_columns: Some(&enabled),
+            column_order: None,
             column_filters: None,
             sort: None,
         });
@@ -9926,6 +10013,7 @@ mod tests {
         list_asc.refresh(ViewInputs {
             query: "",
             enabled_columns: None,
+            column_order: None,
             column_filters: None,
             sort: Some(("Status", true)),
         });
@@ -9935,6 +10023,7 @@ mod tests {
         list_desc.refresh(ViewInputs {
             query: "",
             enabled_columns: None,
+            column_order: None,
             column_filters: None,
             sort: Some(("Status", false)),
         });
@@ -9958,6 +10047,7 @@ mod tests {
         list.refresh(ViewInputs {
             query: "",
             enabled_columns: None,
+            column_order: None,
             column_filters: None,
             sort: Some(("ID", true)),
         });
@@ -10248,6 +10338,28 @@ mod tests {
         assert_eq!(sort(&app), None);
         app.cycle_sort_column(false);
         assert_eq!(sort(&app).as_deref(), Some("Default"));
+    }
+
+    #[test]
+    fn cycle_sort_column_follows_the_saved_column_order() {
+        let mut app = App {
+            active_tab: Tab::Branches,
+            ..App::default()
+        };
+        app.enabled_columns.insert(
+            Tab::Branches,
+            ["Name", "Default"].map(String::from).into_iter().collect(),
+        );
+        app.column_order
+            .insert(Tab::Branches, vec!["Default".into(), "Name".into()]);
+        let sort = |app: &App| app.group_by_column.get(&Tab::Branches).cloned().flatten();
+
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Default"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app).as_deref(), Some("Name"));
+        app.cycle_sort_column(true);
+        assert_eq!(sort(&app), None);
     }
 
     #[test]
@@ -12412,7 +12524,7 @@ index abcdef..ffffff 100644
         assert!(!app.is_column_visible(Tab::MergeRequests, "Author"));
 
         assert!(!app.focus_column_checklist());
-        assert_eq!(app.configure().map(|c| c.column_checklist_idx), None);
+        assert_eq!(app.configure().map(|c| c.focused_row), None);
     }
 
     #[test]
@@ -15606,7 +15718,8 @@ index 123456..789012 100644
             ..App::default()
         };
 
-        app.load_keybindings();
+        let problems = app.load_keybindings();
+        app.report_config_problems(problems);
 
         assert_eq!(app.config.theme_preset.as_deref(), Some("nord"));
         let logged: Vec<(&str, &str)> = app
@@ -15626,6 +15739,36 @@ index 123456..789012 100644
                     "Failed: not a keybinding table glab-tui knows, ignored"
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn keybinding_and_tab_name_problems_share_one_toast() {
+        let mut app = App {
+            config: toml::from_str("[keybindings]\nquit = \"x\"\n")
+                .expect("config with a stray keybinding entry parses"),
+            ..App::default()
+        };
+        app.config.layout.problems = vec![ConfigProblem {
+            binding: "tabs: \"pipeline\"".to_string(),
+            problem: "no tab has this name, so it was left out".to_string(),
+        }];
+
+        let problems = app.load_keybindings();
+        app.report_config_problems(problems);
+
+        let logged: Vec<&str> = app
+            .terminal_commands
+            .iter()
+            .map(|entry| entry.command.as_str())
+            .collect();
+        assert_eq!(
+            logged,
+            ["Keybinding: keybindings.quit", "Layout: tabs: \"pipeline\""]
+        );
+        assert_eq!(
+            app.toast_notice().map(|notice| notice.text()),
+            Some("2 config problem(s); see the Terminal tab")
         );
     }
 
@@ -15708,16 +15851,221 @@ index 123456..789012 100644
     }
 
     #[test]
-    fn available_tabs_filters_disabled_tabs() {
+    fn tab_list_orders_the_tab_keys_and_skips_hidden_tabs() {
         let mut app = App::default();
-        let all_count = app.available_tabs().len();
-        assert!(all_count > 0);
+        app.config.layout = toml::from_str(r#"tabs = ["mrs", "issues", "todos"]"#).unwrap();
+        app.active_tab = Tab::MergeRequests;
 
-        // Disable "Pipelines" tab
-        app.config.disabled_tabs = Some(vec!["Pipelines".to_string()]);
-        let filtered = app.available_tabs();
-        assert_eq!(filtered.len(), all_count - 1);
-        assert!(!filtered.contains(&Tab::Pipelines));
+        assert_eq!(
+            app.available_tabs(),
+            vec![Tab::MergeRequests, Tab::Issues, Tab::Todos]
+        );
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::Issues);
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::Todos);
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+        app.previous_tab();
+        assert_eq!(app.active_tab, Tab::Todos);
+    }
+
+    #[test]
+    fn a_hidden_active_tab_moves_to_the_first_shown_tab() {
+        let mut app = App::default();
+        app.config.layout.tabs = Some(vec![Tab::Pipelines, Tab::Todos]);
+
+        app.land_on_available_tab();
+
+        assert_eq!(app.active_tab, Tab::Pipelines);
+    }
+
+    #[test]
+    fn switching_tabs_and_back_restores_each_tabs_preview() {
+        let mut app = App {
+            active_tab: Tab::Issues,
+            detail_visible: true,
+            ..App::default()
+        };
+
+        app.next_tab();
+        assert!(!app.detail_visible, "MRs never opened its preview");
+        app.previous_tab();
+        assert!(app.detail_visible, "Issues keeps its open preview");
+
+        app.detail_visible = false;
+        app.next_tab();
+        app.detail_visible = true;
+        app.previous_tab();
+        assert!(!app.detail_visible);
+        app.next_tab();
+        assert!(app.detail_visible);
+    }
+
+    #[test]
+    fn next_tab_from_a_hidden_tab_lands_on_the_first_shown_tab() {
+        let mut app = App::default();
+        app.config.layout.tabs = Some(vec![Tab::MergeRequests, Tab::Issues, Tab::Todos]);
+        app.set_active_tab(Tab::Jobs);
+
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+    }
+
+    #[test]
+    fn reordered_columns_save_and_reload_in_the_same_order() {
+        let mut app = App::default();
+        app.enabled_columns.insert(
+            Tab::Issues,
+            ["ID", "State", "Title"]
+                .map(String::from)
+                .into_iter()
+                .collect(),
+        );
+        assert!(app.move_column(Tab::Issues, "Title", false));
+        assert!(app.move_column(Tab::Issues, "Title", false));
+
+        let saved = app.saved_columns(Tab::Issues).unwrap();
+        assert_eq!(saved, ["Title", "ID", "State"].map(String::from));
+
+        let mut reloaded = App::default();
+        reloaded.config.issues.columns = Some(saved);
+        reloaded.apply_config();
+        assert_eq!(
+            reloaded.saved_columns(Tab::Issues).unwrap(),
+            ["Title", "ID", "State"].map(String::from)
+        );
+        assert_eq!(
+            &reloaded.ordered_columns(Tab::Issues)[..3],
+            ["Title", "ID", "State"]
+        );
+        assert_eq!(reloaded.column_permutation(Tab::Issues), vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn a_sorted_column_list_saved_by_an_older_version_keeps_the_built_in_order() {
+        let mut app = App::default();
+        app.config.issues.columns = Some(["Author", "ID", "Title"].map(String::from).to_vec());
+        app.apply_config();
+
+        assert_eq!(app.column_permutation(Tab::Issues), vec![0, 1, 2]);
+        assert_eq!(
+            app.saved_columns(Tab::Issues).unwrap(),
+            ["Author", "ID", "Title"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_a_tab_never_reordered_keeps_the_built_in_order_after_a_reload() {
+        let mut app = App::default();
+        app.enabled_columns.insert(
+            Tab::Issues,
+            ["ID", "Title", "Labels"]
+                .map(String::from)
+                .into_iter()
+                .collect(),
+        );
+
+        let mut reloaded = App::default();
+        reloaded.config.issues.columns = app.saved_columns(Tab::Issues);
+        reloaded.apply_config();
+
+        assert!(!reloaded.column_order.contains_key(&Tab::Issues));
+    }
+
+    #[test]
+    fn saving_keeps_the_place_of_a_column_this_scope_lacks() {
+        let mut app = App::default();
+        app.config.issues.columns = Some(
+            ["Project", "Title", "ID", "State"]
+                .map(String::from)
+                .to_vec(),
+        );
+        app.apply_config();
+        assert!(app.move_column(Tab::Issues, "State", false));
+
+        assert_eq!(
+            app.saved_columns(Tab::Issues).unwrap(),
+            ["Project", "Title", "State", "ID"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_on_github_keeps_a_gitlab_column_name_in_its_place() {
+        let mut app = App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        };
+        app.config.issues.columns = Some(["Title", "MRs", "ID"].map(String::from).to_vec());
+        app.apply_config();
+
+        assert!(app.is_column_visible(Tab::Issues, "PRs"));
+        assert_eq!(
+            app.saved_columns(Tab::Issues).unwrap(),
+            ["Title", "MRs", "ID"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_on_github_keeps_gitlab_only_columns_next_to_their_built_in_neighbours() {
+        let mut app = App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        };
+        app.enabled_columns
+            .get_mut(&Tab::Pipelines)
+            .unwrap()
+            .insert("Project".to_string());
+        assert!(app.move_column(Tab::Pipelines, "Ref", false));
+        assert!(app.move_column(Tab::Jobs, "Matrix", false));
+
+        assert_eq!(
+            app.saved_columns(Tab::Pipelines).unwrap(),
+            [
+                "Project", "ID", "Status", "Stages", "Source", "Created", "Ref", "Duration"
+            ]
+            .map(String::from)
+        );
+        assert_eq!(
+            app.saved_columns(Tab::Jobs).unwrap(),
+            ["ID", "Stage", "Status", "Matrix", "Name"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn saving_on_gitlab_keeps_the_github_stack_column_next_to_its_built_in_neighbours() {
+        let mut app = App::default();
+        app.config.mrs.columns = Some(
+            ["Title", "ID", "Pipeline", "Author"]
+                .map(String::from)
+                .to_vec(),
+        );
+        app.apply_config();
+        app.enabled_columns
+            .get_mut(&Tab::MergeRequests)
+            .unwrap()
+            .insert("Stack".to_string());
+
+        assert_eq!(
+            app.saved_columns(Tab::MergeRequests).unwrap(),
+            ["Title", "ID", "Pipeline", "Stack", "Author"].map(String::from)
+        );
     }
 
     fn nav_pipe(id: u64) -> crate::domain::pipelines::Pipeline {
@@ -16658,6 +17006,35 @@ index 123456..789012 100644
         assert_eq!(selected.project_path, "acme/api");
 
         assert!(!app.focus_issue(Some("acme/docs"), 5));
+    }
+
+    #[test]
+    fn focusing_an_issue_from_an_open_preview_keeps_the_preview_open() {
+        let mut app = App {
+            active_tab: Tab::Todos,
+            detail_visible: true,
+            ..Default::default()
+        };
+        app.issues.items = vec![issue_with_milestone(5, "opened", 1)];
+
+        assert!(app.focus_issue(None, 5));
+        assert!(app.detail_visible);
+
+        app.detail_visible = false;
+        app.switch_to_tab(Tab::Todos);
+        assert!(app.detail_visible, "Todos keeps its own open preview");
+    }
+
+    #[test]
+    fn focusing_an_mr_from_a_closed_preview_leaves_the_preview_closed() {
+        let mut app = App {
+            active_tab: Tab::Todos,
+            ..Default::default()
+        };
+
+        assert!(!app.focus_mr(None, 9));
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+        assert!(!app.detail_visible);
     }
 
     #[test]

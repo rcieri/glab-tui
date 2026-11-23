@@ -86,13 +86,15 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::Configure => {
+                        let last = crate::configure_view::configure_rows(app)
+                            .len()
+                            .saturating_sub(1);
                         if let Some(c) = app.configure_mut() {
-                            let new = if scroll_down {
-                                c.column_checklist_idx.saturating_add(1)
+                            c.focused_row = if scroll_down {
+                                c.focused_row.saturating_add(1).min(last)
                             } else {
-                                c.column_checklist_idx.saturating_sub(1)
+                                c.focused_row.saturating_sub(1)
                             };
-                            c.column_checklist_idx = new;
                         }
                         return;
                     }
@@ -150,13 +152,15 @@ pub fn handle_mouse_event(
             }
 
             // Fallback: content area scrolling
-            if let Some(content_rect) = app.content_rect {
+            let content_rect = app.layout.map(|l| l.content_area);
+            if let Some(content_rect) = content_rect {
                 if rect_contains(content_rect, row, col) {
                     app.scroll_active_table(scroll_down);
                     return;
                 }
             }
-            if let Some(detail_rect) = app.detail_rect {
+            let detail_rect = app.layout.and_then(|l| l.detail_rect_opt());
+            if let Some(detail_rect) = detail_rect {
                 if rect_contains(detail_rect, row, col) {
                     if scroll_down {
                         app.detail_scroll = app.detail_scroll.saturating_add(1);
@@ -239,18 +243,24 @@ pub fn handle_mouse_event(
             }
 
             // Fallback: sidebar / content clicks
-            if let Some(sidebar_rect) = app.sidebar_rect {
+            let sidebar_rect = app.layout.and_then(|l| l.sidebar_rect_opt());
+            if let Some(sidebar_rect) = sidebar_rect {
                 if rect_contains(sidebar_rect, row, col) {
-                    let tab_idx = (row - sidebar_rect.y - 1) as usize;
                     let tabs = app.available_tabs();
-                    if tab_idx < tabs.len() {
-                        app.active_tab = tabs[tab_idx];
+                    let inner = border_inner(sidebar_rect);
+                    let clicked = rect_contains(inner, row, col)
+                        .then(|| tabs.get(usize::from(row - inner.y)).copied())
+                        .flatten();
+                    if let Some(tab) = clicked.filter(|tab| *tab != app.active_tab) {
+                        app.switch_to_tab(tab);
+                        crate::handlers::tabs::load_entered_tab(app, tx, fx);
                     }
                     return;
                 }
             }
 
-            if let Some(content_rect) = app.content_rect {
+            let content_rect = app.layout.map(|l| l.content_area);
+            if let Some(content_rect) = content_rect {
                 if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
                     let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
                     app.click_active_table_row(row_idx);
@@ -370,8 +380,9 @@ fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
     }
 }
 
-/// A click focuses the setting under it and acts on it like the keyboard:
-/// a column is toggled, every other setting runs its `Enter` action.
+/// Mouse click on a Configure View row: focus it and act on it like `Space`.
+/// Ignored while the save menu is open or the page size is being typed, as
+/// keys are.
 fn handle_configure_mouse(
     app: &mut App,
     row: u16,
@@ -379,11 +390,7 @@ fn handle_configure_mouse(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
-    let column_count = app
-        .active_tab
-        .columns(app.kind(), app.scope.is_group())
-        .len();
-    let Some(c) = app.configure_mut() else {
+    let Some(c) = app.configure() else {
         return;
     };
     let Some(list) = c.layout.as_ref().map(|layout| layout.groups[0]) else {
@@ -392,18 +399,12 @@ fn handle_configure_mouse(
     if c.save_menu_open || c.editing_page_size || !rect_contains(list, row, col) {
         return;
     }
-    let Some(Some(setting)) = c.visible_rows.get(usize::from(row - list.y)).copied() else {
+    let Some(Some(idx)) = c.visible_rows.get(usize::from(row - list.y)).copied() else {
         return;
     };
-    c.column_checklist_idx = setting;
-    let code = if setting < column_count {
-        crossterm::event::KeyCode::Char(' ')
-    } else {
-        crossterm::event::KeyCode::Enter
+    let Some(clicked) = crate::configure_view::configure_rows(app).get(idx).copied() else {
+        return;
     };
-    let key = crate::keybinding::KeyPress::from(crossterm::event::KeyEvent::new(
-        code,
-        crossterm::event::KeyModifiers::NONE,
-    ));
-    crate::handlers::overlays::configure::handle_key(app, &key, tx, fx);
+    crate::handlers::overlays::configure::focus(app, idx);
+    crate::handlers::overlays::configure::activate_row(app, clicked, tx, fx);
 }

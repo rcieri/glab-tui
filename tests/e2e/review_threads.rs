@@ -259,9 +259,8 @@ fn test_review_submitted_from_the_diff_view_publishes_drafts_once() {
         "{calls}"
     );
 
-    let bodies =
-        std::fs::read_to_string(format!("{}.stdin", session.sandbox.log_path.display())).unwrap();
-    let draft: serde_json::Value = serde_json::from_str(bodies.lines().next().unwrap()).unwrap();
+    let bodies = session.sandbox.request_bodies();
+    let draft: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
     assert_eq!(draft["note"], "nit");
     assert_eq!(draft["position"]["new_path"], "docs/readme.md");
     assert_eq!(draft["position"]["new_line"], 1, "the draft keeps its line");

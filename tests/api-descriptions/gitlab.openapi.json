@@ -5773,6 +5773,21 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -5864,6 +5879,48 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "job_inputs": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "job_variables_attributes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "key": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "value": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -6103,6 +6160,195 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "commit_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "in_reply_to_discussion_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "position": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "base_sha": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "head_sha": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "height": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "line_range": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "end": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "line_code": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "new_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "old_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "type": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "type": [
+                              "object",
+                              "null"
+                            ]
+                          },
+                          "start": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "line_code": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "new_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "old_line": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "type": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "type": [
+                              "object",
+                              "null"
+                            ]
+                          }
+                        },
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "new_line": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "new_path": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "old_line": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "old_path": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "position_type": {
+                        "type": "string"
+                      },
+                      "start_sha": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "width": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "x": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "y": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "resolve_discussion": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -6141,6 +6387,33 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "internal": {
+                    "type": "boolean"
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reviewer_state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "204": {
             "description": "No content",
@@ -6267,6 +6540,30 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "confidential": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -6302,6 +6599,42 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "due_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "start_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -6840,6 +7173,30 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "branch": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "ref": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -6950,6 +7307,75 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "access_level": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "active": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "locked": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "maintenance_note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "maximum_timeout": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "paused": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "run_untagged": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "tag_list": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

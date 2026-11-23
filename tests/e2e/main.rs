@@ -518,6 +518,15 @@ impl Sandbox {
         ]
     }
 
+    /// The request bodies the mocks read with `--input -`, one per call, in
+    /// the order the calls were recorded.
+    pub fn request_bodies(&self) -> Vec<String> {
+        cli_contract::recorded_calls(&self.log_path)
+            .into_iter()
+            .filter_map(|call| call.stdin)
+            .collect()
+    }
+
     /// Waits until the call log has stopped growing: mocks glab-tui started
     /// keep running after the app is killed, and may still log a call.
     /// The log has to stay unchanged for `QUIET`, long enough for a mock forked

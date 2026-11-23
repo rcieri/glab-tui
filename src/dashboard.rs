@@ -960,6 +960,7 @@ impl App {
             .dashboard
             .list_cursor
             .min(items.len().saturating_sub(1));
+        let mut notice = None;
         let action = match items.get(cursor) {
             Some(DashboardItem::Activity(Activity::Issue(issue))) => DashboardAction::OpenIssue {
                 project: self.scope.project_of(&issue.project_path).to_string(),
@@ -979,7 +980,10 @@ impl App {
                             TargetKind::MergeRequest => DashboardAction::OpenMr { project, iid },
                         }
                     }
-                    None => DashboardAction::Stay,
+                    None => {
+                        notice = Some("This activity has no issue or MR/PR to open");
+                        DashboardAction::Stay
+                    }
                 }
             }
             Some(DashboardItem::Pipeline(pipeline)) => DashboardAction::OpenPipeline(pipeline.id),
@@ -991,13 +995,8 @@ impl App {
             }
             None => DashboardAction::Stay,
         };
-        let is_commit = matches!(
-            items.get(cursor),
-            Some(DashboardItem::Activity(Activity::Contribution(contribution)))
-                if contribution.target.is_none()
-        );
-        if is_commit {
-            self.show_notice("A commit has no issue or MR/PR to open".to_string());
+        if let Some(notice) = notice {
+            self.show_notice(notice);
         }
         action
     }

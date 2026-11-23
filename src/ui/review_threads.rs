@@ -1,4 +1,4 @@
-use super::form::{Extent, FormFrame, FormSize, render_form};
+use super::form::{Backdrop, Extent, FormFrame, FormSize, render_form};
 use super::helpers::rendered_line_count;
 use crate::app::{App, OverlayKind, ReviewThreadsOverview};
 use crate::config::Theme;
@@ -49,6 +49,7 @@ pub(crate) fn render_review_threads(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mu
         },
         hints: Some(KEY_HINTS),
         notice: None,
+        backdrop: Backdrop::Dimmed,
     };
     render_form(f, ctx, size, &frame, &mut form);
     let Some(layout) = form.layout else {

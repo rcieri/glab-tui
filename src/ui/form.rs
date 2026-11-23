@@ -55,6 +55,15 @@ impl FormSize {
     };
 }
 
+/// What a form does to the screen behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Backdrop {
+    /// Its text is repainted in `backdrop_dim`, so it recedes.
+    Dimmed,
+    /// Left as drawn, for a form that previews the screen behind it.
+    Unchanged,
+}
+
 pub(crate) struct FormFrame<'a> {
     pub title: &'a str,
     pub size: FormSize,
@@ -62,6 +71,7 @@ pub(crate) struct FormFrame<'a> {
     pub hints: Option<&'a str>,
     /// A notice about the overlay's own request, drawn above the buttons.
     pub notice: Option<&'a Notice>,
+    pub backdrop: Backdrop,
 }
 
 impl<'a> FormFrame<'a> {
@@ -71,6 +81,7 @@ impl<'a> FormFrame<'a> {
             size: FormSize::DIALOG,
             hints: None,
             notice: None,
+            backdrop: Backdrop::Dimmed,
         }
     }
 }
@@ -202,9 +213,9 @@ impl Styles {
     }
 }
 
-/// Draws `form` centred on `screen` over the dimmed screen, records where
-/// it, its groups, its rows and its buttons went in [`Form::layout`] and
-/// returns its frame.
+/// Draws `form` centred on `screen` over the frame's [`Backdrop`], records
+/// where it, its groups, its rows and its buttons went in [`Form::layout`]
+/// and returns its frame.
 pub(crate) fn render_form(
     f: &mut Frame,
     ctx: &RenderCtx<'_>,
@@ -252,7 +263,9 @@ pub(crate) fn render_form(
     } as u16;
     let area = centered_rect_fixed(width, chrome_rows + body_height, screen);
 
-    dim_backdrop(f.buffer_mut(), screen, area, ctx.theme.backdrop_dim);
+    if frame.backdrop == Backdrop::Dimmed {
+        dim_backdrop(f.buffer_mut(), screen, area, ctx.theme.backdrop_dim);
+    }
     clear_area(f, ctx, area);
     let border = match form.tone() {
         FormTone::Normal => ctx.theme.border_focused,
@@ -1772,6 +1785,7 @@ mod tests {
                     size,
                     hints: Some("j/k move · Esc close"),
                     notice,
+                    backdrop: Backdrop::Dimmed,
                 };
                 render_form(f, &ctx, f.area(), &frame, form);
             })

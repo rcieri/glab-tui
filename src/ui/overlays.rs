@@ -1,4 +1,4 @@
-use super::form::{Extent, FormFrame, FormSize, render_form};
+use super::form::{Backdrop, Extent, FormFrame, FormSize, render_form};
 use super::helpers::highlight_fuzzy_match;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
@@ -129,6 +129,7 @@ pub(crate) fn render_overlays(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App,
             },
             hints: Some(hints),
             notice: None,
+            backdrop: Backdrop::Dimmed,
         };
         render_form(f, ctx, size, &frame, &mut form);
         if let Some(layout) = form.layout {
@@ -187,6 +188,7 @@ fn render_save_menu(
         },
         hints: Some(SAVE_MENU_HINTS),
         notice: None,
+        backdrop: Backdrop::Dimmed,
     };
     render_form(f, ctx, size, &frame, &mut form);
     let Some(layout) = form.layout else {
@@ -271,6 +273,7 @@ fn render_text_input(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Re
         },
         hints: Some(TEXT_INPUT_HINTS),
         notice: None,
+        backdrop: Backdrop::Dimmed,
     };
     render_form(f, ctx, size, &frame, &mut text_input.form);
     if let Some(area) = text_input.form.layout.as_ref().map(|layout| layout.area) {
@@ -312,6 +315,7 @@ fn render_date_picker(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: R
         },
         hints: Some(DATE_PICKER_HINTS),
         notice: None,
+        backdrop: Backdrop::Dimmed,
     };
     render_form(f, ctx, size, &frame, &mut form);
     let Some(layout) = form.layout else {
@@ -462,6 +466,11 @@ fn render_selector(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, size: Rect
         },
         hints: Some(&hints),
         notice: notice.as_ref(),
+        backdrop: if selector.purpose == crate::app::SelectorPurpose::Theme {
+            Backdrop::Unchanged
+        } else {
+            Backdrop::Dimmed
+        },
     };
     render_form(f, ctx, size, &frame, &mut form);
     let Some(layout) = form.layout else {
@@ -1094,6 +1103,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
         },
         hints: Some(&position),
         notice: None,
+        backdrop: Backdrop::Dimmed,
     };
     render_form(f, ctx, size, &frame, &mut form);
     let Some(layout) = form.layout else {
@@ -1930,6 +1940,37 @@ command = "true"
             Some(&crate::app::SelectorPurpose::Theme),
             "{text}"
         );
+    }
+
+    /// The theme picker previews the screen behind it, so only it leaves
+    /// that screen's colors as drawn.
+    #[test]
+    fn only_the_theme_picker_leaves_the_screen_behind_it_undimmed() {
+        let ascii = crate::config::Icons::ascii();
+        let ctx = &crate::ui::render_ctx::RenderCtx {
+            theme: crate::config::Theme::default(),
+            icons: &ascii,
+            kind: crate::backend::BackendKind::GitLab,
+        };
+        let screen_fg = ctx.theme.text_normal;
+        let fg_behind = |app: &mut App| {
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            terminal
+                .draw(|f| {
+                    f.buffer_mut()[(0, 0)].set_fg(screen_fg);
+                    render_overlays(f, ctx, app, f.area());
+                })
+                .unwrap();
+            terminal.backend().buffer()[(0, 0)].fg
+        };
+
+        let mut app = App::default();
+        app.open_theme_picker();
+        assert_eq!(fg_behind(&mut app), screen_fg);
+
+        let mut app = App::default();
+        app.open_selector(crate::app::Selector::draft_actions(0));
+        assert_eq!(fg_behind(&mut app), ctx.theme.backdrop_dim);
     }
 
     /// The footer is drawn unwrapped on one row, and it is the visible way

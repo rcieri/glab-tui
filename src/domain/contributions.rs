@@ -138,8 +138,9 @@ pub enum ContributionKind {
     ThreadComment,
     /// A verdict on an MR/PR: a GitLab approval, or a GitHub review whose
     /// state is approved or changes requested. A GitHub review with no
-    /// verdict (state `commented`) is not a `Review`, since its inline
-    /// comments already arrive as `ThreadComment` events.
+    /// verdict (state `commented`) is a `Comment` when it has a body, and
+    /// counts as nothing by itself otherwise, since its inline comments
+    /// arrive as `ThreadComment` events.
     Review,
 }
 
@@ -419,6 +420,8 @@ struct GhReviewPayload {
 struct GhReview {
     #[serde(default)]
     state: String,
+    #[serde(default)]
+    body: Option<String>,
 }
 
 fn pull_request_target(pr: GhPullRequest) -> ContributionTarget {
@@ -529,14 +532,18 @@ fn github_contributions(event: GhEvent) -> Vec<Contribution> {
             if payload.action != "created" {
                 return Vec::new();
             }
-            let verdict = match payload.review.state.to_lowercase().as_str() {
-                "approved" => "approved",
-                "changes_requested" => "requested changes",
+            let (kind, summary) = match payload.review.state.to_lowercase().as_str() {
+                "approved" => (ContributionKind::Review, "approved".to_string()),
+                "changes_requested" => (ContributionKind::Review, "requested changes".to_string()),
+                "commented" => match payload.review.body.as_deref().map(first_line) {
+                    Some(summary) if !summary.is_empty() => (ContributionKind::Comment, summary),
+                    _ => return Vec::new(),
+                },
                 _ => return Vec::new(),
             };
             vec![base(
-                ContributionKind::Review,
-                verdict.to_string(),
+                kind,
+                summary,
                 Some(pull_request_target(payload.pull_request)),
                 None,
             )]
@@ -847,19 +854,37 @@ mod tests {
     }
 
     #[test]
-    fn a_github_review_with_no_verdict_produces_no_contribution() {
-        let raw = r#"[
-            {"type": "PullRequestReviewEvent", "actor": {"login": "cy"}, "created_at": "2026-10-03T00:00:00Z",
-             "payload": {"action": "created", "review": {"state": "commented"},
-                         "pull_request": {"number": 9, "title": "Add cache"}}}
-        ]"#;
-
-        assert!(
-            parse_github_events(raw)
+    fn a_github_review_with_no_verdict_counts_only_its_summary_as_a_comment() {
+        let review = |review: &str| {
+            format!(
+                r#"[{{"type": "PullRequestReviewEvent", "actor": {{"login": "cy"}},
+                      "created_at": "2026-10-03T00:00:00Z",
+                      "payload": {{"action": "created", "review": {review},
+                                   "pull_request": {{"number": 9}}}}}}]"#
+            )
+        };
+        let shown = |raw: String| -> Vec<(ContributionKind, String)> {
+            parse_github_events(&raw)
                 .expect("valid events")
                 .contributions
-                .is_empty()
+                .into_iter()
+                .map(|c| (c.kind, c.summary))
+                .collect()
+        };
+
+        assert_eq!(
+            shown(review(
+                r#"{"state": "commented", "body": "\nLooks close.\nTwo nits."}"#
+            )),
+            vec![(ContributionKind::Comment, "Looks close.".to_string())]
         );
+        for empty in [
+            r#"{"state": "commented"}"#,
+            r#"{"state": "commented", "body": null}"#,
+            r#"{"state": "commented", "body": "  \n "}"#,
+        ] {
+            assert_eq!(shown(review(empty)), vec![], "{empty}");
+        }
     }
 
     #[test]

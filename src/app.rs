@@ -3653,20 +3653,23 @@ pub struct MergeChoices {
     pub method: MergeMethod,
     pub delete_branch: bool,
     pub auto_merge: bool,
-    /// Every project of the merge squashes whatever method it picks.
-    pub squashes_every_merge: bool,
 }
 
 impl MergeChoices {
     /// The flags `Backend::merge_mr` takes for these choices, with `sha` the
-    /// head commit the merge must find.
-    pub fn options<'a>(&self, sha: Option<&'a str>) -> crate::backend::MergeOptions<'a> {
+    /// head commit the merge must find and `squashes_every_merge` whether the
+    /// merged project squashes whatever method it is asked for.
+    pub fn options<'a>(
+        &self,
+        sha: Option<&'a str>,
+        squashes_every_merge: bool,
+    ) -> crate::backend::MergeOptions<'a> {
         crate::backend::MergeOptions {
             method: self.method,
             delete_branch: self.delete_branch,
             auto_merge: self.auto_merge,
             sha,
-            squashes_every_merge: self.squashes_every_merge,
+            squashes_every_merge,
         }
     }
 }
@@ -3707,8 +3710,6 @@ pub struct SubmitDialog {
     /// The merge methods the method radio offers, in its order. Empty until
     /// the methods of every project in `merge_projects` are known.
     methods: Vec<MergeMethod>,
-    /// Whether every project in `merge_projects` squashes whatever is asked.
-    squashes_every_merge: bool,
     /// The merged MR's own squash flag: its author asked for a squash, so
     /// the radio preselects Squash when the project allows it.
     mr_asks_for_squash: bool,
@@ -3754,7 +3755,6 @@ impl SubmitDialog {
             method: self.merge_method()?,
             delete_branch: is_on(MergeToggle::DeleteSourceBranch),
             auto_merge: is_on(MergeToggle::AutoMerge),
-            squashes_every_merge: self.squashes_every_merge,
         })
     }
 
@@ -3827,7 +3827,6 @@ impl SubmitDialog {
             .position(|&method| method == preselected)
             .unwrap_or(0);
         self.methods = shared.allowed().to_vec();
-        self.squashes_every_merge = shared.squashes_every_merge();
         self.form.apply_loaded(Self::METHODS, |kind| {
             *kind = GroupKind::Radio(Radio::new(labels, preselected_index));
         });
@@ -4225,7 +4224,6 @@ impl SubmitDialog {
             project_path,
             extra_buttons,
             methods: Vec::new(),
-            squashes_every_merge: false,
             mr_asks_for_squash,
             merge_projects,
             form: if is_destructive { form.danger() } else { form },
@@ -11427,7 +11425,6 @@ mod tests {
                 method: Squash,
                 delete_branch: true,
                 auto_merge: false,
-                squashes_every_merge: false,
             })
         );
 
@@ -11451,11 +11448,10 @@ mod tests {
                 method: Merge,
                 delete_branch: false,
                 auto_merge: true,
-                squashes_every_merge: false,
             }
         );
         assert_eq!(
-            choices.options(Some("abc123")),
+            choices.options(Some("abc123"), false),
             crate::backend::MergeOptions {
                 method: Merge,
                 delete_branch: false,
@@ -11496,7 +11492,6 @@ mod tests {
                 method: Squash,
                 delete_branch: false,
                 auto_merge: false,
-                squashes_every_merge: false,
             })
         );
         assert_eq!(dialog.form.focus(), options);

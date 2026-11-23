@@ -135,17 +135,34 @@ fn run_dialog_choice(
     app.close_diff_view();
 }
 
-/// The PRs among `items` (project path, number) that sit in a stack, which
-/// only the stack merge can merge. A failed lookup leaves a project's PRs to
-/// the plain merge, whose error then names the problem.
+/// One MR of a bulk merge, captured before its row leaves the list.
+struct BulkMergeItem {
+    project: String,
+    iid: u64,
+    /// The head commit the merge must find.
+    sha: Option<String>,
+    squashes_every_merge: bool,
+}
+
+/// Whether `project` squashes whatever merge method it is asked for, which
+/// decides whether its merges leave the MR's own squash flag alone.
+fn squashes_every_merge(app: &App, project: &str) -> bool {
+    app.merge_methods
+        .get(project)
+        .is_some_and(crate::domain::mr::MergeMethods::squashes_every_merge)
+}
+
+/// The PRs among `items` that sit in a stack, as (project path, number),
+/// which only the stack merge can merge. A failed lookup leaves a project's
+/// PRs to the plain merge, whose error then names the problem.
 async fn stacked_prs(
     client: &crate::domain::client::GitlabClient,
-    items: &[(String, u64, Option<String>, bool)],
+    items: &[BulkMergeItem],
 ) -> std::collections::HashSet<(String, u64)> {
     let mut by_project: std::collections::HashMap<&str, Vec<u64>> =
         std::collections::HashMap::new();
-    for (project, iid, _, _) in items {
-        by_project.entry(project).or_default().push(*iid);
+    for item in items {
+        by_project.entry(&item.project).or_default().push(item.iid);
     }
     let mut stacked = std::collections::HashSet::new();
     for (project, iids) in by_project {
@@ -452,14 +469,14 @@ fn run_submit_action(
                 .mr_index(&project_path, iid)
                 .and_then(|pos| app.mrs.items.remove(pos).sha);
             app.update_filter_selection();
+            let squashes_every_merge = squashes_every_merge(app, &project_path);
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
             let tx2 = tx.clone();
             fx.spawn(async move {
-                let result = client
-                    .merge_mr(&project_path, iid, &merge.options(mr_sha.as_deref()))
-                    .await;
+                let options = merge.options(mr_sha.as_deref(), squashes_every_merge);
+                let result = client.merge_mr(&project_path, iid, &options).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
                     result
@@ -509,10 +526,7 @@ fn run_submit_action(
             };
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
-            // Whether a project squashes every merge is read per MR: the
-            // dialog's own flag holds only when every project does.
-            let mut items_with_sha: Vec<(String, u64, Option<String>, bool)> =
-                Vec::with_capacity(items.len());
+            let mut merge_items: Vec<BulkMergeItem> = Vec::with_capacity(items.len());
             for (project_path, mr_iid) in &items {
                 let sha = app
                     .mrs
@@ -524,11 +538,12 @@ fn run_submit_action(
                     })
                     .and_then(|m| m.sha.clone());
                 let project = app.scope.project_of(project_path).to_string();
-                let squashes_every_merge = app
-                    .merge_methods
-                    .get(&project)
-                    .is_some_and(crate::domain::mr::MergeMethods::squashes_every_merge);
-                items_with_sha.push((project, *mr_iid, sha, squashes_every_merge));
+                merge_items.push(BulkMergeItem {
+                    squashes_every_merge: squashes_every_merge(app, &project),
+                    project,
+                    iid: *mr_iid,
+                    sha,
+                });
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
                 }) {
@@ -542,25 +557,22 @@ fn run_submit_action(
             let tx2 = tx.clone();
             let total = items.len();
             fx.spawn(async move {
-                let stacked = stacked_prs(&client, &items_with_sha).await;
+                let stacked = stacked_prs(&client, &merge_items).await;
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (proj, mr_iid, sha, squashes_every_merge)) in
-                    items_with_sha.into_iter().enumerate()
-                {
+                for (i, item) in merge_items.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
-                    let result = if stacked.contains(&(proj.clone(), mr_iid)) {
-                        client.merge_pr_stack(&proj, mr_iid, merge.method).await
+                    let result = if stacked.contains(&(item.project.clone(), item.iid)) {
+                        client
+                            .merge_pr_stack(&item.project, item.iid, merge.method)
+                            .await
                     } else {
-                        let options = crate::backend::MergeOptions {
-                            squashes_every_merge,
-                            ..merge.options(sha.as_deref())
-                        };
-                        client.merge_mr(&proj, mr_iid, &options).await
+                        let options = merge.options(item.sha.as_deref(), item.squashes_every_merge);
+                        client.merge_mr(&item.project, item.iid, &options).await
                     };
                     if let Err(e) = result {
-                        failures.push((mr_iid, e.to_string()));
+                        failures.push((item.iid, e.to_string()));
                     }
                 }
                 let _ = tx2.send(Event::CommandCompleted(

@@ -7031,11 +7031,9 @@ impl App {
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
-    /// Hooks a freshly fetched diff up to its pull request's sync: the server
-    /// state it loaded becomes the confirmed state, and what the server may
-    /// not have shown the fetch, started at `fetched_at`, is laid on top of
-    /// it: the requests settled since, then what the user asked for that is
-    /// still on its way.
+    /// Makes the GitHub state `diff_view` loaded the pull request's confirmed
+    /// state, then lays over it what that state may predate: requests settled
+    /// after `fetched_at`, then intents not settled yet.
     pub fn reload_viewed_sync(&mut self, diff_view: &mut DiffView, fetched_at: SettleCount) {
         let (Some(pull_request_id), Some(client)) = (
             diff_view.pull_request_id.clone(),

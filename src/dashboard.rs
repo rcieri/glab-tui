@@ -41,7 +41,8 @@ pub struct DashboardFetchPlan {
     pub sources: Vec<Tab>,
     pub reads_activity: bool,
     /// Whether this refresh restarts `SLOW_REFRESH_INTERVAL`. Unlike
-    /// `reads_activity`, also in group scope, which has no activity feed.
+    /// `reads_activity`, also in group scope, which has no activity feed, so
+    /// there entering the tab restarts it only when a list is read.
     pub restarts_slow_refresh: bool,
 }
 
@@ -497,7 +498,7 @@ impl App {
             .dashboard
             .slow_refreshed_at
             .is_none_or(|at| at.elapsed() >= SLOW_REFRESH_INTERVAL);
-        let sources = self
+        let sources: Vec<Tab> = self
             .shown_dashboard_sources()
             .filter(|tab| {
                 tab.is_fetchable_in(&self.scope, self.kind()) && !self.loading_tabs.contains(tab)
@@ -512,6 +513,7 @@ impl App {
             .collect();
         let restarts_slow_refresh = match refresh {
             DashboardRefresh::Full => true,
+            DashboardRefresh::Missing if self.scope.is_group() => !sources.is_empty(),
             DashboardRefresh::Missing => {
                 matches!(self.dashboard.contributions, ContributionFeed::NotLoaded)
             }
@@ -1364,6 +1366,28 @@ mod tests {
         app.dashboard.slow_refreshed_at = Some(Instant::now());
         assert_eq!(
             app.dashboard_fetch_plan(DashboardRefresh::Periodic),
+            DashboardFetchPlan {
+                sources: vec![],
+                reads_activity: false,
+                restarts_slow_refresh: false,
+            }
+        );
+    }
+
+    #[test]
+    fn entering_a_group_dashboard_restarts_the_timer_only_when_it_reads_a_list() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        assert!(
+            app.dashboard_fetch_plan(DashboardRefresh::Missing)
+                .restarts_slow_refresh
+        );
+
+        app.refreshed_tabs
+            .extend([Tab::MergeRequests, Tab::Issues, Tab::Milestones]);
+        assert_eq!(
+            app.dashboard_fetch_plan(DashboardRefresh::Missing),
             DashboardFetchPlan {
                 sources: vec![],
                 reads_activity: false,

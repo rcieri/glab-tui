@@ -128,15 +128,15 @@ enum ProjectMergeMethod {
     Ff,
 }
 
-/// `squash_option` of a GitLab project. Servers that predate it squash only
-/// when asked, as `default_off` does.
-#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+/// `squash_option` of a GitLab project. glab prints `""` for a server that
+/// does not report it, which squashes only when asked, as `default_off` does.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum SquashOption {
     Never,
     Always,
     DefaultOn,
-    #[default]
+    #[serde(alias = "")]
     DefaultOff,
 }
 
@@ -149,21 +149,17 @@ enum SquashOption {
 fn parse_project_merge_methods(raw: &str) -> Result<MergeMethods> {
     #[derive(Deserialize)]
     struct ProjectMergeSettings {
-        #[serde(default)]
-        merge_method: Option<ProjectMergeMethod>,
-        #[serde(default)]
-        squash_option: Option<SquashOption>,
+        merge_method: ProjectMergeMethod,
+        squash_option: SquashOption,
     }
     let settings: ProjectMergeSettings =
         serde_json::from_str(raw.trim()).context("parsing `glab repo view` merge settings")?;
-    let merge_method = settings
-        .merge_method
-        .ok_or_else(|| anyhow::anyhow!("the project settings carry no merge_method"))?;
+    let merge_method = settings.merge_method;
     let allows_rebase = match merge_method {
         ProjectMergeMethod::Merge => false,
         ProjectMergeMethod::RebaseMerge | ProjectMergeMethod::Ff => true,
     };
-    let squash_option = settings.squash_option.unwrap_or_default();
+    let squash_option = settings.squash_option;
     let squashes_always = squash_option == SquashOption::Always;
     let allowed: Vec<MergeMethod> = [
         (MergeMethod::Merge, !squashes_always),
@@ -4312,16 +4308,17 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             "parsing `glab repo view` merge settings: unknown variant `sometimes`, \
-             expected one of `never`, `always`, `default_on`, `default_off` at line 1 column 58"
+             expected one of `never`, `always`, `default_on`, ``, `default_off` at line 1 column 58"
         );
     }
 
     #[test]
-    fn project_settings_without_a_merge_method_are_an_error() {
-        let error = parse_project_merge_methods(r#"{"id":1}"#).unwrap_err();
+    fn a_squash_option_glab_prints_empty_squashes_only_when_asked() {
+        use MergeMethod::{Merge, Squash};
+        let methods = merge_settings("merge", "");
         assert_eq!(
-            error.to_string(),
-            "the project settings carry no merge_method"
+            (methods.allowed(), methods.preferred()),
+            (&[Merge, Squash][..], Merge)
         );
     }
 

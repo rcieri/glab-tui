@@ -3477,7 +3477,7 @@ pub struct ConfigureOverlay {
     pub editing_page_size: bool,
     /// Written by every draw: the settings list is the form's only group.
     pub layout: Option<crate::form::FormLayout>,
-    /// Same for the save submenu while it is open.
+    /// The save submenu's layout from the last draw, while it is open.
     pub save_menu_layout: Option<crate::form::FormLayout>,
     /// The `configure_rows` index each visible row of the list stands for,
     /// top to bottom; `None` for headings and spacers.

@@ -156,9 +156,8 @@ pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>, fx: 
         return;
     };
     let entity = match todo.target() {
-        Some(NotificationTarget::MergeRequest) if app.is_github() => "pr",
-        Some(NotificationTarget::MergeRequest) => "mr",
-        _ => "issue",
+        Some(NotificationTarget::MergeRequest) => crate::backend::ViewEntity::MergeRequest,
+        _ => crate::backend::ViewEntity::Issue,
     };
     let project_path = if todo.project_path.is_empty() {
         app.scope.as_str().to_string()

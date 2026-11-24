@@ -2,7 +2,7 @@ use super::bounded_output::CapturedStdout;
 use super::cli_runner::CliRunner;
 use super::{
     Backend, Capabilities, CiOps, DeploymentOps, IssueOps, MilestoneOps, MrOps, NotificationOps,
-    ReleaseOps, RepoOps, ReviewOps, RunnerOps, WebTarget,
+    ReleaseOps, RepoOps, ReviewOps, RunnerOps, ViewEntity, WebTarget,
 };
 use crate::command_log::Program;
 use crate::domain::branches::Branch;
@@ -3529,7 +3529,7 @@ impl Backend for GlabBackend {
                 entity,
                 id,
             } => {
-                let mut args = vec![entity, "view", id];
+                let mut args = vec![view_subcommand(entity), "view", id];
                 if !project.is_empty() {
                     args.extend(["-R", project]);
                 }
@@ -3587,6 +3587,14 @@ impl Backend for GlabBackend {
             WebTarget::Job { web_url } => web_url.to_string(),
         };
         self.cli.open_url(&url, label).await
+    }
+}
+
+fn view_subcommand(entity: ViewEntity) -> &'static str {
+    match entity {
+        ViewEntity::Issue => "issue",
+        ViewEntity::MergeRequest => "mr",
+        ViewEntity::Release => "release",
     }
 }
 

@@ -3,7 +3,7 @@ use super::cli_runner::CliRunner;
 use super::logged_command::LoggedCommand;
 use super::{
     Backend, Capabilities, CiOps, DeploymentOps, IssueOps, MilestoneOps, MrOps, NotificationOps,
-    ReleaseOps, RepoOps, ReviewOps, RunnerOps, WebTarget,
+    ReleaseOps, RepoOps, ReviewOps, RunnerOps, ViewEntity, WebTarget,
 };
 use crate::command_log::{Invocation, Program};
 use crate::domain::branches::Branch;
@@ -4209,7 +4209,7 @@ impl Backend for GhBackend {
                 id,
             } => {
                 return self
-                    .open_with_gh(&[entity, "view", id], project, label)
+                    .open_with_gh(&[view_subcommand(entity), "view", id], project, label)
                     .await;
             }
             WebTarget::Pipeline { project, id } => {
@@ -4244,6 +4244,14 @@ impl Backend for GhBackend {
             WebTarget::Job { web_url } => web_url.to_string(),
         };
         self.cli.open_url(&url, label).await
+    }
+}
+
+fn view_subcommand(entity: ViewEntity) -> &'static str {
+    match entity {
+        ViewEntity::Issue => "issue",
+        ViewEntity::MergeRequest => "pr",
+        ViewEntity::Release => "release",
     }
 }
 

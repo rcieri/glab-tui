@@ -1071,7 +1071,7 @@ pub fn handle_active_tab_key(
                         let result = client
                             .open_in_browser(crate::backend::WebTarget::View {
                                 project: &project_path,
-                                entity: "issue",
+                                entity: crate::backend::ViewEntity::Issue,
                                 id: &iid_str,
                             })
                             .await;
@@ -1457,8 +1457,6 @@ pub fn handle_active_tab_key(
                             .keybindings
                             .matches(Action::MrsOpenInBrowser, key_event) =>
                         {
-                            let is_github = app.is_github();
-                            let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
@@ -1473,7 +1471,7 @@ pub fn handle_active_tab_key(
                                 let result = client
                                     .open_in_browser(crate::backend::WebTarget::View {
                                         project: &project_path,
-                                        entity,
+                                        entity: crate::backend::ViewEntity::MergeRequest,
                                         id: &iid_str,
                                     })
                                     .await;
@@ -2415,7 +2413,7 @@ pub fn handle_active_tab_key(
                         let result = client
                             .open_in_browser(crate::backend::WebTarget::View {
                                 project: &project_path,
-                                entity: "release",
+                                entity: crate::backend::ViewEntity::Release,
                                 id: tag_name.as_str(),
                             })
                             .await;

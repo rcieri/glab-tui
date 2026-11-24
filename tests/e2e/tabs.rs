@@ -553,6 +553,41 @@ fn test_gitlab_jobs_tab_opens_the_job_page() {
     );
 }
 
+/// Opens the highlighted MR/PR through the host's own `view` subcommand.
+fn open_mr_in_browser(github: bool, first_title: &str, expected_call: &str) {
+    let mut session = TestSession::new(github, 24, 160);
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app starts");
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains(first_title, 15000)
+        .expect("the MRs tab lists the fixture MRs");
+
+    session.send_input(b"o");
+    session
+        .wait_for_cli_call(expected_call, 5000)
+        .expect("o opens the highlighted MR with the host's view subcommand");
+}
+
+#[test]
+fn test_github_prs_tab_opens_the_pr_with_gh_pr_view() {
+    open_mr_in_browser(
+        true,
+        "Stack top",
+        "gh pr view 11 -R test-owner/test-repo --web",
+    );
+}
+
+#[test]
+fn test_gitlab_mrs_tab_opens_the_mr_with_glab_mr_view() {
+    open_mr_in_browser(
+        false,
+        "Feature: Add pagination support",
+        "glab mr view 2 -R test-owner/test-repo -w",
+    );
+}
+
 #[test]
 fn test_gitlab_jobs_help_offers_start_job() {
     let mut session = TestSession::new(false, 60, 100);

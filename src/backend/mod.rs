@@ -178,14 +178,22 @@ impl MrUpdate {
     }
 }
 
+/// What `WebTarget::View` opens. Each backend maps it to its CLI's
+/// subcommand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewEntity {
+    Issue,
+    MergeRequest,
+    Release,
+}
+
 /// A page `Backend::open_in_browser` opens.
 #[derive(Clone, Copy, Debug)]
 pub enum WebTarget<'a> {
-    /// An issue, MR/PR or release, opened by the CLI's `<entity> view`.
-    /// `entity` is that subcommand: `issue`, `mr`, `pr` or `release`.
+    /// An issue, MR/PR or release, opened by the CLI's `view` subcommand.
     View {
         project: &'a str,
-        entity: &'a str,
+        entity: ViewEntity,
         id: &'a str,
     },
     Pipeline {

@@ -182,6 +182,10 @@ if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"comments,reviews"* ]]; then
     exit 0
 fi
 
+if [[ "$1" == "pr" && "$2" == "view" && " $* " == *" --web "* ]]; then
+    exit 0
+fi
+
 if [[ "$*" == *"api"* ]]; then
     if [[ "$*" == "api user "* ]]; then
         echo "test-user"

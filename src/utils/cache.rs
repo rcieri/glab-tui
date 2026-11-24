@@ -214,6 +214,11 @@ pub struct CleanCacheResult {
     pub total_removed_size: u64,
 }
 
+/// How old a temporary file must be before `clean_cache` takes it for one an
+/// interrupted write left behind, not one a running glab-tui is about to
+/// rename over its cache file.
+const LEFTOVER_TEMP_FILE_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
     let mut result = CleanCacheResult {
         kept_repos: Vec::new(),
@@ -264,13 +269,21 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
         for entry in entries.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
             // Skip special files and anything glab-tui did not write. A
-            // temporary file is left over from an interrupted write and is
-            // never a valid cache file, so it is removed below.
-            let is_cache_file =
-                file_name.ends_with(".json") || file_name.ends_with(private_fs::TEMP_FILE_SUFFIX);
+            // temporary file old enough to be left over from an interrupted
+            // write is never a valid cache file, so it is removed below.
+            let is_cache_file = file_name.ends_with(".json");
+            let is_leftover_temp_file = file_name.ends_with(private_fs::TEMP_FILE_SUFFIX)
+                && entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| {
+                        modified
+                            .elapsed()
+                            .is_ok_and(|age| age > LEFTOVER_TEMP_FILE_AGE)
+                    });
             if file_name == "recent_repos.json"
                 || file_name == "recent_groups.json"
-                || !is_cache_file
+                || !(is_cache_file || is_leftover_temp_file)
             {
                 continue;
             }
@@ -649,5 +662,27 @@ mod tests {
         load_cache("group/project");
 
         assert_eq!(mode_of(&cache_dir), 0o700);
+    }
+
+    #[test]
+    fn clean_cache_removes_only_temporary_files_old_enough_to_be_leftovers() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let cache_dir = get_cache_dir();
+        fs::create_dir_all(&cache_dir).unwrap();
+        let being_written = cache_dir.join("group_project.json.111.tmp");
+        let left_over = cache_dir.join("group_project.json.222.tmp");
+        fs::write(&being_written, "{").unwrap();
+        fs::File::create(&left_over)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * LEFTOVER_TEMP_FILE_AGE)
+            .unwrap();
+
+        let result = clean_cache(false);
+
+        assert!(being_written.exists());
+        assert!(!left_over.exists());
+        assert_eq!(result.removed_files, ["group_project.json.222.tmp"]);
     }
 }

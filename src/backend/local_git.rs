@@ -8,7 +8,7 @@ pub(crate) async fn list_branches(cli: &CliRunner) -> Result<Vec<String>> {
     let raw = cli
         .git()
         .run(
-            &["branch", "-a", "--format=%(refname:short)"],
+            &["branch", "-a", "--format=%(refname)"],
             "Listing Local Branches",
         )
         .await?;
@@ -20,13 +20,13 @@ pub(crate) async fn list_tags(cli: &CliRunner) -> Result<Vec<String>> {
     Ok(distinct_lines(raw.lines()))
 }
 
-/// Local and remote-tracking branch names, `origin/` stripped so a branch
-/// pushed there lists once, without `HEAD`.
+/// Local and `origin` branch names, each listed once.
 fn branch_names(raw: &str) -> Vec<String> {
     distinct_lines(raw.lines().filter_map(|line| {
         let line = line.trim();
-        let name = line.strip_prefix("origin/").unwrap_or(line);
-        (name != "HEAD" && !name.starts_with("origin/")).then_some(name)
+        line.strip_prefix("refs/heads/")
+            .or_else(|| line.strip_prefix("refs/remotes/origin/"))
+            .filter(|name| *name != "HEAD")
     }))
 }
 
@@ -45,8 +45,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remote_tracking_branches_fold_into_their_local_name() {
-        let raw = "main\nfeature/x\norigin/HEAD\norigin/main\norigin/release\n";
+    fn origin_branches_fold_into_their_local_name_without_head_or_a_detached_checkout() {
+        let raw = "(HEAD detached at abc1234)\nrefs/heads/main\nrefs/heads/feature/x\n\
+                   refs/remotes/origin/HEAD\nrefs/remotes/origin/main\n\
+                   refs/remotes/origin/release\nrefs/remotes/upstream/other\n";
         assert_eq!(branch_names(raw), ["main", "feature/x", "release"]);
     }
 }

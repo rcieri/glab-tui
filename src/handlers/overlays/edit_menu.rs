@@ -1727,6 +1727,7 @@ pub fn handle_key(
 
                 let mut all_items = Vec::new();
                 let mut is_loading = true;
+                let mut reads_local_branches = false;
 
                 if field_type == "confidential" {
                     all_items = vec!["Public".to_string(), "Confidential".to_string()];
@@ -1815,7 +1816,7 @@ pub fn handle_key(
                     || field_type == "pipeline_branch"
                     || field_type == "create_from"
                 {
-                    let mut branch_names: Vec<String> = if let Some(ref tc) = target_cache {
+                    let branch_names: Vec<String> = if let Some(tc) = &target_cache {
                         tc.branches.iter().map(|b| b.name.clone()).collect()
                     } else {
                         app.branches
@@ -1824,26 +1825,9 @@ pub fn handle_key(
                             .map(|b| b.name.clone())
                             .collect()
                     };
-                    if branch_names.is_empty()
+                    reads_local_branches = branch_names.is_empty()
                         && !app.scope.is_group()
-                        && target_project.is_empty()
-                        && let Ok(output) = std::process::Command::new("git")
-                            .args(["branch", "-a", "--format=%(refname:short)"])
-                            .output()
-                        && output.status.success()
-                    {
-                        for line in String::from_utf8_lossy(&output.stdout).lines() {
-                            let b = line.trim();
-                            let b = b.strip_prefix("origin/").unwrap_or(b);
-                            if !b.is_empty()
-                                && b != "HEAD"
-                                && !b.starts_with("origin/")
-                                && !branch_names.contains(&b.to_string())
-                            {
-                                branch_names.push(b.to_string());
-                            }
-                        }
-                    }
+                        && target_project.is_empty();
                     if field_type == "pipeline_branch"
                         || field_type == "target_branch"
                         || field_type == "source_branch"
@@ -1889,28 +1873,14 @@ pub fn handle_key(
                         current_set.insert(current_val);
                     }
                 } else if field_type == "tag" {
-                    // Collect existing tags from releases cache + git tag
-                    let mut tags: Vec<String> = app
+                    all_items = app
                         .releases
                         .items()
                         .iter()
                         .map(|r| r.tag_name.clone())
                         .collect();
-                    if let Ok(output) =
-                        // Safe on the UI thread: pure local ref read.
-                        std::process::Command::new("git").args(["tag"]).output()
-                        && output.status.success()
-                    {
-                        for line in String::from_utf8_lossy(&output.stdout).lines() {
-                            let t = line.trim().to_string();
-                            if !t.is_empty() && !tags.contains(&t) {
-                                tags.push(t);
-                            }
-                        }
-                    }
-                    tags.sort();
-                    all_items = tags;
-                    is_loading = false;
+                    all_items.sort();
+                    is_loading = app.gitlab_client.is_some();
                     let current_val = menu.fields[menu.selected_idx].value.clone();
                     if !current_val.is_empty() {
                         current_set.insert(current_val);
@@ -2101,7 +2071,24 @@ pub fn handle_key(
                             "assignees" | "reviewers" => client.fetch_members(&scope).await,
                             "milestone" => client.fetch_milestones(&scope).await,
                             "source_branch" | "target_branch" | "pipeline_branch"
-                            | "create_from" => client.fetch_branches(&scope).await,
+                            | "create_from" => {
+                                // A failed local read falls back to the host's
+                                // branches, like an empty checkout does.
+                                let local = if reads_local_branches {
+                                    client.list_local_branches().await.unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                };
+                                if local.is_empty() {
+                                    client.fetch_branches(&scope).await
+                                } else {
+                                    Ok(local)
+                                }
+                            }
+                            // Outside a git checkout there are no local tags; the
+                            // failed call stays in the Terminal tab and the release
+                            // tags already listed remain.
+                            "tag" => Ok(client.list_local_tags().await.unwrap_or_default()),
                             "project" => client.fetch_projects(&scope).await,
                             _ => Ok(Vec::new()),
                         };

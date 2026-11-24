@@ -806,6 +806,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "async-trait",
+ "bitflags 2.13.1",
  "chrono",
  "clap",
  "crossterm",

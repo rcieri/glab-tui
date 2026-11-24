@@ -807,16 +807,6 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::Notice(msg) => {
             app.show_notice(msg);
         }
-        Event::RunnerStateRevert {
-            runner_id,
-            status,
-            active,
-        } => {
-            app.runners.update(&runner_id, |runner| {
-                runner.status = status;
-                runner.active = active;
-            });
-        }
         Event::PipelineStatusRevert {
             pipeline_id,
             status,

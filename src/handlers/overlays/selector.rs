@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::entity_editor::{apply_selector_changes, rebuild_edit_menu};
-use crate::event::{CommandOutcome, Event};
+use crate::event::Event;
 use crate::git_helpers::slugify;
 use crate::keybinding::KeyPress;
 use crate::keymap::{Action, KeyContext};
@@ -858,77 +858,21 @@ pub fn handle_key(
                                     });
                                 }
                                 "Delete Comment" => {
-                                    let client = app.gitlab_client.clone();
-                                    let project_context = app.project_path_for_open_mr(mr_iid);
-                                    let tx = tx.clone();
-                                    let is_github = client.as_ref().is_some_and(|c| c.is_github);
-
-                                    let _ = tx.send(Event::CommandStarted(format!(
-                                        "Deleting comment MR #{mr_iid}"
-                                    )));
-
-                                    fx.spawn(async move {
-                                        if client.is_some() {
-                                            let output = if is_github {
-                                                let endpoint = if comment
-                                                    .position
-                                                    .is_some()
-                                                {
-                                                    format!(
-                                                        "repos/{project_context}/pulls/comments/{comment_id}"
-                                                    )
-                                                } else {
-                                                    format!(
-                                                        "repos/{project_context}/issues/comments/{comment_id}"
-                                                    )
-                                                };
-                                                crate::backend::subprocess::output(
-                                                    tokio::process::Command::new("gh")
-                                                        .args(["api", &endpoint, "-X", "DELETE"]),
-                                                    None,
-                                                )
-                                                .await
-                                            } else {
-                                                let encoded_path =
-                                                    project_context
-                                                        .replace("/", "%2F");
-                                                crate::backend::subprocess::output(
-                                                    tokio::process::Command::new("glab").args([
-                                                        "api",
-                                                        &format!("projects/{encoded_path}/merge_requests/{mr_iid}/notes/{comment_id}"),
-                                                        "-X",
-                                                        "DELETE"
-                                                    ]),
-                                                    None,
-                                                )
-                                                .await
-                                            };
-
-                                            match output {
-                                                Ok(out)
-                                                    if out.status.success() =>
-                                                {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Ok(CommandOutcome::Mutated),
-                                                    ));
-                                                }
-                                                Ok(out) => {
-                                                    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Err(err),
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Err(e.to_string()),
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    });
+                                    if let Some(client) = app.gitlab_client.clone() {
+                                        let project = app.project_path_for_open_mr(mr_iid);
+                                        let _ = tx.send(Event::CommandStarted(format!(
+                                            "Deleting comment MR #{mr_iid}"
+                                        )));
+                                        handlers::diff_view::spawn_mr_review_task(
+                                            fx,
+                                            tx,
+                                            async move {
+                                                client
+                                                    .delete_comment(&project, mr_iid, &comment)
+                                                    .await
+                                            },
+                                        );
+                                    }
                                 }
                                 _ => {}
                             }

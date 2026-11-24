@@ -1285,7 +1285,7 @@ pub(crate) fn render_tab_pipelines(
     }
     let icons = ctx.icons;
     let is_github = ctx.kind.is_github();
-    if !Tab::Pipelines.is_fetchable_in(&app.scope, ctx.kind) {
+    if !Tab::Pipelines.is_listable_with(app.capabilities()) {
         let [list, preview] = group_scope_unavailable(app, theme, icons, "Pipelines", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
@@ -2174,7 +2174,7 @@ pub(crate) fn render_tab_runners(
     let header_style = ctx.header_style();
     let theme = &ctx.theme;
     let icons = ctx.icons;
-    if app.scope.is_group() {
+    if !Tab::Runners.is_listable_with(app.capabilities()) {
         let [list, preview] = group_scope_unavailable(app, theme, icons, "Runners", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
@@ -2234,7 +2234,7 @@ pub(crate) fn render_tab_releases(
         return;
     }
     let icons = ctx.icons;
-    if app.scope.is_group() {
+    if !Tab::Releases.is_listable_with(app.capabilities()) {
         let [list, preview] = group_scope_unavailable(app, theme, icons, "Releases", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
@@ -2548,6 +2548,12 @@ pub(crate) fn render_tab_milestones(
         return;
     }
     let icons = ctx.icons;
+    if !Tab::Milestones.is_listable_with(app.capabilities()) {
+        let [list, preview] = group_scope_unavailable(app, theme, icons, "Milestones", main_block);
+        f.render_widget(list, content_area);
+        f.render_widget(preview, detail_rect);
+        return;
+    }
     if app.milestones.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(
@@ -2836,7 +2842,7 @@ pub(crate) fn render_tab_branches(
         return;
     }
     let icons = ctx.icons;
-    if app.scope.is_group() {
+    if !Tab::Branches.is_listable_with(app.capabilities()) {
         let [list, preview] = group_scope_unavailable(app, theme, icons, "Branches", main_block);
         f.render_widget(list, content_area);
         f.render_widget(preview, detail_rect);
@@ -2883,7 +2889,7 @@ pub(crate) fn render_tab_environments(
     let header_style = ctx.header_style();
     let theme = &ctx.theme;
     let icons = ctx.icons;
-    if app.scope.is_group() {
+    if !Tab::Environments.is_listable_with(app.capabilities()) {
         let [list, preview] =
             group_scope_unavailable(app, theme, icons, "Environments", main_block);
         f.render_widget(list, content_area);

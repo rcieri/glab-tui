@@ -100,6 +100,9 @@ if [[ "$*" == *"api"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
+    elif [[ "$*" == *"/merge_requests/"*"/notes/"* ]]; then
+        # Editing or deleting one comment; glab-tui reads no reply.
+        echo ""
     elif [[ "$*" == *"/members/all"* ]]; then
         cat "$FIXTURES_DIR/members.json"
     elif [[ "$*" == *"groups/"*"/labels"* ]]; then

@@ -1,7 +1,7 @@
-use crate::app::{App, FieldType, Tab};
+use crate::app::{App, FieldType};
 use crate::domain::mr::DiscussionNote;
 use crate::effect::{EditPurpose, Effects};
-use crate::event::{CommandOutcome, Event};
+use crate::event::Event;
 use crate::handlers::diff_view::add_diff_comment;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -73,8 +73,7 @@ pub fn apply(
     }
 }
 
-/// Replaces the body of a pushed comment. Neither `gh` nor `glab` has a
-/// subcommand to edit a review comment, so this goes through their `api`.
+/// Replaces the body of a pushed comment.
 fn spawn_comment_edit(
     app: &App,
     mr_iid: u64,
@@ -86,48 +85,11 @@ fn spawn_comment_edit(
     let Some(client) = app.gitlab_client.clone() else {
         return;
     };
-    let is_github = client.is_github;
-    let project_context = app.project_path_for_open_mr(mr_iid);
-    let Some(comment_id) = comment.id else {
-        return;
-    };
+    let project = app.project_path_for_open_mr(mr_iid);
     let _ = tx.send(Event::CommandStarted(format!(
         "Editing comment MR #{mr_iid}"
     )));
-    let tx = tx.clone();
-    fx.spawn(async move {
-        let (program, endpoint, method) = if is_github {
-            let kind = if comment.position.is_some() {
-                "pulls"
-            } else {
-                "issues"
-            };
-            (
-                "gh",
-                format!("repos/{project_context}/{kind}/comments/{comment_id}"),
-                "PATCH",
-            )
-        } else {
-            let encoded_path = project_context.replace('/', "%2F");
-            (
-                "glab",
-                format!("projects/{encoded_path}/merge_requests/{mr_iid}/notes/{comment_id}"),
-                "PUT",
-            )
-        };
-        let payload = serde_json::json!({ "body": body }).to_string();
-        let output = crate::backend::subprocess::output(
-            tokio::process::Command::new(program)
-                .args(["api", &endpoint, "--input", "-", "-X", method]),
-            Some(payload.as_bytes()),
-        )
-        .await;
-
-        let result = match output {
-            Ok(out) if out.status.success() => Ok(CommandOutcome::Mutated),
-            Ok(out) => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
-            Err(e) => Err(e.to_string()),
-        };
-        let _ = tx.send(Event::CommandCompleted(Tab::MergeRequests, result));
+    crate::handlers::diff_view::spawn_mr_review_task(fx, tx, async move {
+        client.edit_comment(&project, mr_iid, &comment, &body).await
     });
 }

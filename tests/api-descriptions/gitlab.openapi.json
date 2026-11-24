@@ -6509,7 +6509,7 @@
           }
         },
         "x-read-at": [
-          "overlays::selector::handle_key (response not parsed)"
+          "GlabBackend::delete_comment, gitlab_note_endpoint (response not parsed)"
         ]
       },
       "put": {
@@ -6575,7 +6575,7 @@
           }
         },
         "x-read-at": [
-          "editor_result::spawn_comment_edit (glab api -X PUT --input -, response not parsed)"
+          "GlabBackend::edit_comment, gitlab_note_endpoint (glab api -X PUT --input -, response not parsed)"
         ]
       }
     },

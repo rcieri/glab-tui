@@ -38,6 +38,7 @@ similar = { version = "3.2", default-features = false }
 unicode-segmentation = "1.13"
 async-trait = "0.1.89"
 clap = { version = "4", features = ["derive"] }
+bitflags = "2"
 serde-saphyr = { version = "1.1", default-features = false, features = ["deserialize"] }
 pulldown-cmark = { version = "0.13.0", default-features = false }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }

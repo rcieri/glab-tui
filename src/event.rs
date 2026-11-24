@@ -172,14 +172,6 @@ pub enum Event {
         pr_numbers: Vec<u64>,
         stacks: std::collections::HashMap<u64, crate::domain::mr::StackInfo>,
     },
-    /// A optimistic UI mutation for `runner_id` failed; restore the row's
-    /// prior `status`/`active` fields. Sender fills `status`/`active` with
-    /// the values that were on screen before the user pressed pause/resume.
-    RunnerStateRevert {
-        runner_id: u64,
-        status: String,
-        active: bool,
-    },
     /// An optimistic pipeline retry/cancel failed; restore the row's prior status.
     PipelineStatusRevert {
         pipeline_id: u64,

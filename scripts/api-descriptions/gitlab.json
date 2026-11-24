@@ -309,7 +309,7 @@
       "method": "delete",
       "path": "/api/v4/projects/{id}/merge_requests/{noteable_id}/notes/{note_id}",
       "code": [
-        "overlays::selector::handle_key (response not parsed)"
+        "GlabBackend::delete_comment, gitlab_note_endpoint (response not parsed)"
       ],
       "read": {}
     },
@@ -317,7 +317,7 @@
       "method": "put",
       "path": "/api/v4/projects/{id}/merge_requests/{noteable_id}/notes/{note_id}",
       "code": [
-        "editor_result::spawn_comment_edit (glab api -X PUT --input -, response not parsed)"
+        "GlabBackend::edit_comment, gitlab_note_endpoint (glab api -X PUT --input -, response not parsed)"
       ],
       "read": {}
     },

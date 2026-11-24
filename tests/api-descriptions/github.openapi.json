@@ -3840,7 +3840,7 @@
           }
         },
         "x-read-at": [
-          "overlays::selector::handle_key"
+          "GhBackend::delete_comment, github_comment_endpoint"
         ]
       },
       "get": {
@@ -3941,7 +3941,7 @@
           }
         },
         "x-read-at": [
-          "editor_result::spawn_comment_edit, --input - -X PATCH (response unread)"
+          "GhBackend::edit_comment, github_comment_endpoint, -X PATCH --input - (response unread)"
         ]
       }
     },
@@ -4234,7 +4234,7 @@
           }
         },
         "x-read-at": [
-          "overlays::selector::handle_key"
+          "GhBackend::delete_comment, github_comment_endpoint"
         ]
       },
       "get": {
@@ -4335,7 +4335,7 @@
           }
         },
         "x-read-at": [
-          "editor_result::spawn_comment_edit, --input - -X PATCH (response unread)"
+          "GhBackend::edit_comment, github_comment_endpoint, -X PATCH --input - (response unread)"
         ]
       }
     },

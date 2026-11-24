@@ -2,6 +2,14 @@
 
 Welcome, AI Agent! This document contains essential context, architectural guidelines, and coding standards for navigating and contributing to `glab-tui`. Please adhere to these rules when analyzing the codebase, writing new features, or refactoring.
 
+## Where new text goes
+
+Every agent loads this file in full at the start of every session, so it holds only what applies everywhere, plus pointers to the rest.
+
+* What the callers of one module need (invariants, call order, what new code must do) goes into that module's `//!` doc.
+* Reference material (tables, procedures, release steps) goes into [docs/](docs/), with a one-line pointer here.
+* `scripts/check-agents-md-size.sh` (CI and `just check`) fails when this file grows past its ceiling or falls more than 1 KiB below it. A PR that raises the ceiling says why.
+
 ## 1. Project Overview
 
 `glab-tui` is a Terminal User Interface (TUI) for managing GitLab and GitHub repositories. 
@@ -556,7 +564,7 @@ The `glab` and `gh` subcommands and flags (`glab v1.122.0` / `gh v2.102.0`) are 
 * **Unknown mock calls fail the test:** a `gh`/`glab` call the mocks in `tests/mocks/` have no case for exits 2 and is appended to `<TEST_LOG_PATH>.unhandled`. `Sandbox::drop` (`tests/e2e/main.rs`) fails the test while that file is not empty and lists the calls, after waiting for mocks still running once the app was killed. A new call glab-tui makes needs a mock case. Injected failures (`TEST_*_FAIL_*`) exit 1 and are not recorded.
 * **Overlay snapshots:** `ui::overlays::tests` renders the merge `SubmitDialog` at 60, 80 and 120 columns and a twenty-item bulk merge (which exercises the form's compaction) at 60 and 80 columns on a `TestBackend` and compares them with `src/ui/snapshots/*.txt` (icons normalized to the ASCII set, so the developer's icon config cannot change the result). After an intended layout change, regenerate with `GLAB_TUI_UPDATE_SNAPSHOTS=1 cargo test --lib merge` and review the diff.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
-* **Before a change is done:** run `just check`. It runs the recipes that CI's Rustfmt, Clippy and Test jobs run: `fmt-check` (`just fmt` fixes it), `lint` (Clippy over all targets with warnings denied), `test` (unit tests) and `e2e` (needs `cargo-nextest`). The Justfile is the source of truth for these commands.
+* **Before a change is done:** run `just check`. It runs the recipes that CI's AGENTS.md size, Rustfmt, Clippy and Test jobs run: `agents-md-size`, `fmt-check` (`just fmt` fixes it), `lint` (Clippy over all targets with warnings denied), `test` (unit tests) and `e2e` (needs `cargo-nextest`). The Justfile is the source of truth for these commands.
 * **Tests:** Unit tests live in the library, and `just test` covers them. `cargo test --bin glab-tui` alone only covers the tests in `main.rs`.
 * **Bug fixes start with a test:** a bug fix starts with a test that fails without the fix, in the same PR.
 * **MSRV:** The Minimum Supported Rust Version is `1.88`. Edition 2024

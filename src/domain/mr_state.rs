@@ -170,11 +170,10 @@ pub fn workflow_cell_word(s: Option<WorkflowStatus>) -> Option<&'static str> {
 ///
 /// Container-level `#[serde(default)]`: deserializing a cache written before
 /// a field existed on this struct (e.g. `you_reviewed`, added later) must not
-/// fail. Without this, `load_cache`'s `serde_json::from_str` returns `Err`
-/// for a *missing field*, which `load_cache` swallows into
-/// `ProjectCache::default()` — silently discarding the entire cache, not
-/// just this field: issues, pipelines, runners, releases, todos, milestones,
-/// branches, and environments all vanish with it.
+/// fail. Without this, a *missing field* fails the cache file's whole data
+/// section, which `ProjectCache::from_json` then reads as empty: issues,
+/// pipelines, runners, releases, todos, milestones, branches and
+/// environments all vanish with it, not just this field.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ApprovalState {
@@ -475,10 +474,9 @@ mod tests {
         // Regression guard: without a container-level `#[serde(default)]`,
         // deserializing a cache written before `you_reviewed` (or
         // `current_user`) existed on this struct fails with "missing field",
-        // and `load_cache` silently swallows that into
-        // `ProjectCache::default()` — discarding not just this field but the
-        // entire cache (issues, pipelines, runners, releases, todos,
-        // milestones, branches, environments all vanish with it).
+        // and `ProjectCache::from_json` reads the whole data section as
+        // empty (issues, pipelines, runners, releases, todos, milestones,
+        // branches, environments all vanish with it).
         let json = r#"{
             "approved": true,
             "approvals_left": null,

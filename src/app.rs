@@ -6828,6 +6828,7 @@ impl App {
     /// Files marked as reviewed for an MR/PR, restored from the project cache.
     pub fn reviewed_files_for_mr(&self, mr_iid: u64) -> HashSet<String> {
         self.project_cache
+            .prefs
             .reviewed_files
             .get(&mr_iid)
             .map(|paths| paths.iter().cloned().collect())
@@ -6838,17 +6839,21 @@ impl App {
     /// The caller persists the cache to disk.
     pub fn store_reviewed_files_for_mr(&mut self, mr_iid: u64, reviewed: &HashSet<String>) {
         if reviewed.is_empty() {
-            self.project_cache.reviewed_files.remove(&mr_iid);
+            self.project_cache.prefs.reviewed_files.remove(&mr_iid);
             return;
         }
         let mut paths: Vec<String> = reviewed.iter().cloned().collect();
         paths.sort();
-        self.project_cache.reviewed_files.insert(mr_iid, paths);
+        self.project_cache
+            .prefs
+            .reviewed_files
+            .insert(mr_iid, paths);
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
     pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
         self.project_cache
+            .prefs
             .draft_comments
             .get(project_path)
             .and_then(|drafts| drafts.get(&mr_iid))
@@ -6873,7 +6878,7 @@ impl App {
     /// drafts of an MR/PR and writes the project cache to disk, so drafts
     /// outlive the diff view and the process.
     pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
-        let drafts = &mut self.project_cache.draft_comments;
+        let drafts = &mut self.project_cache.prefs.draft_comments;
         if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
             if let Some(project_drafts) = drafts.get_mut(project_path) {
                 project_drafts.remove(&mr_iid);
@@ -8206,11 +8211,11 @@ impl App {
         match field_type.as_str() {
             "labels" => {
                 self.cached_labels = items.clone();
-                self.project_cache.labels = items.clone();
+                self.project_cache.data.labels = items.clone();
             }
             "assignees" | "reviewers" => {
                 self.cached_members = items.clone();
-                self.project_cache.members = items.clone();
+                self.project_cache.data.members = items.clone();
             }
             _ => {}
         }
@@ -8551,6 +8556,21 @@ impl App {
             table,
             is_focused,
         });
+    }
+
+    /// Shows the cached deployments of `environment` until its fetch lands,
+    /// unless its deployments are already shown.
+    pub fn show_cached_deployments(&mut self, environment: &str) {
+        let is_shown = self
+            .environment_deployments
+            .as_ref()
+            .is_some_and(|shown| shown.environment == environment);
+        if is_shown {
+            return;
+        }
+        if let Some(cached) = self.project_cache.data.deployments.get(environment) {
+            self.show_deployments(environment.to_string(), cached.clone());
+        }
     }
 
     /// The shown deployments, when the navigation keys belong to them.
@@ -11474,7 +11494,7 @@ diff --git a/VERSION b/VERSION
         assert!(!selector.is_loading);
         assert_eq!(selector.all_items, labels);
         assert_eq!(app.cached_labels, labels);
-        assert_eq!(app.project_cache.labels, labels);
+        assert_eq!(app.project_cache.data.labels, labels);
     }
 
     #[test]
@@ -11501,7 +11521,7 @@ diff --git a/VERSION b/VERSION
     #[test]
     fn failed_selector_fetch_without_a_cache_reports_inside_and_leaves_the_cache() {
         let mut app = App::default();
-        app.project_cache.labels = vec!["persisted".to_string()];
+        app.project_cache.data.labels = vec!["persisted".to_string()];
         let request = app.next_request_tag();
         app.open_selector(loading_labels_selector(request));
 
@@ -11517,7 +11537,7 @@ diff --git a/VERSION b/VERSION
         );
         assert_eq!(app.toast_notice(), None);
         assert!(app.cached_labels.is_empty());
-        assert_eq!(app.project_cache.labels, ["persisted"]);
+        assert_eq!(app.project_cache.data.labels, ["persisted"]);
     }
 
     #[test]

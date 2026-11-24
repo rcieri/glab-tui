@@ -504,6 +504,7 @@ mod tests {
         );
         assert!(
             crate::utils::cache::load_cache(app.scope.as_str())
+                .prefs
                 .draft_comments
                 .is_empty(),
             "the posted drafts must not come back when the diff reopens"
@@ -524,6 +525,7 @@ mod tests {
         assert!(app.stale_draft_comments.is_empty());
         assert_eq!(
             crate::utils::cache::load_cache(app.scope.as_str())
+                .prefs
                 .draft_comments
                 .get(PROJECT)
                 .and_then(|drafts| drafts.get(&7))

@@ -1720,7 +1720,7 @@ pub fn handle_key(
                         }
                     });
                 let target_cache = if !target_project.is_empty() && target_project.contains('/') {
-                    Some(crate::utils::cache::load_cache(&target_project))
+                    Some(crate::utils::cache::load_cache(&target_project).data)
                 } else {
                     None
                 };

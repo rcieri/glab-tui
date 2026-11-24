@@ -3,7 +3,7 @@
 # smaller, so MAX_BYTES follows the file down and freed space stays free.
 set -euo pipefail
 
-MAX_BYTES=149866
+MAX_BYTES=143516
 SLACK_BYTES=1024
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

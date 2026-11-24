@@ -4223,12 +4223,12 @@ impl EnvironmentDeployments {
 /// closed or the scope switched. Batches go out through the client that
 /// opened the diff: after a scope switch `App::gitlab_client` is being
 /// rebuilt, or reaches another host. `project_path` and `mr_iid` name the
-/// saved marks a settled request corrects, and `scope` the cache they were
-/// saved in when the diff was opened.
+/// saved marks a settled request corrects, and `scopes` every cache a diff
+/// of the pull request saved them in.
 pub struct PullRequestViewedSync {
     pub sync: ViewedSync,
     pub client: crate::domain::client::GitlabClient,
-    pub scope: crate::scope::Scope,
+    pub scopes: HashSet<crate::scope::Scope>,
     pub project_path: String,
     pub mr_iid: u64,
 }
@@ -7082,10 +7082,11 @@ impl App {
                 .or_insert_with(|| PullRequestViewedSync {
                     sync: ViewedSync::default(),
                     client: client.clone(),
-                    scope: self.scope.clone(),
+                    scopes: HashSet::new(),
                     project_path: diff_view.project_path.clone(),
                     mr_iid: diff_view.mr_iid,
                 });
+        entry.scopes.insert(self.scope.clone());
         let mut corrections = entry.sync.reload(confirmed, fetched_at);
         corrections.extend(entry.sync.unsettled());
         diff_view.apply_review_corrections(&corrections);
@@ -7108,20 +7109,20 @@ impl App {
     /// viewed-sync request left on GitHub. Its open diff takes every
     /// correction, even one opened without GitHub's state. Without an open
     /// diff only the saved marks GitHub does not hold are dropped: saving a
-    /// mark takes the file's fingerprint, which only a diff has. The cache of
-    /// `saved_in`, the scope the marks were saved in, drops them too when the
-    /// user has switched away from it.
+    /// mark takes the file's fingerprint, which only a diff has. The caches
+    /// of `saved_in`, the scopes the marks were saved in, drop them too when
+    /// the user has switched away from them.
     pub fn apply_viewed_corrections(
         &mut self,
-        saved_in: &crate::scope::Scope,
+        saved_in: &HashSet<crate::scope::Scope>,
         project_path: &str,
         mr_iid: u64,
         corrections: &[(String, bool)],
     ) {
-        if *saved_in != self.scope {
-            let mut cache = crate::utils::cache::load_cache(saved_in.as_str());
+        for scope in saved_in.iter().filter(|scope| **scope != self.scope) {
+            let mut cache = crate::utils::cache::load_cache(scope.as_str());
             if drop_unviewed_marks(&mut cache.review_marks, project_path, mr_iid, corrections) {
-                crate::utils::cache::save_cache(saved_in.as_str(), &cache);
+                crate::utils::cache::save_cache(scope.as_str(), &cache);
             }
         }
         match self

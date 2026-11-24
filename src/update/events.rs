@@ -840,7 +840,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), tx.clone());
                 }
                 settled = Some((
-                    entry.scope.clone(),
+                    entry.scopes.clone(),
                     entry.project_path.clone(),
                     entry.mr_iid,
                     corrections,

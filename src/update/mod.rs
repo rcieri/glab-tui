@@ -369,6 +369,32 @@ mod tests {
     }
 
     #[test]
+    fn a_viewed_mark_that_failed_drops_it_from_the_scope_its_reopened_diff_saved_it_in() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        app.close_diff_view();
+        app.drill_into("org/project".to_string());
+        app.project_cache = crate::utils::cache::load_cache(app.scope.as_str());
+        let reopened_in = app.scope.clone();
+        update(&mut app, github_diff_fetched("PR_1"));
+        let marks = readme_diff().marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project", 42, marks);
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        app.close_diff_view();
+        app.drill_into("org/other".to_string());
+        app.project_cache = crate::utils::cache::load_cache(app.scope.as_str());
+
+        update(&mut app, readme_mark_failed());
+
+        let saved = crate::utils::cache::load_cache(reopened_in.as_str());
+        assert_eq!(saved.review_marks, std::collections::HashMap::new());
+    }
+
+    #[test]
     fn a_viewed_mark_that_failed_reverts_on_a_diff_reopened_without_github_state() {
         let _guard = crate::config::lock_test_env();
         let home = tempfile::tempdir().unwrap();

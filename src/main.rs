@@ -36,6 +36,16 @@ fn run_effects(app: &mut App, terminal: &mut AppTerminal, effects: Vec<Effect>) 
     true
 }
 
+/// Writes the queued cache saves however `main` returns: through `Quit`, a
+/// terminal error, or a panic unwinding out of the event loop.
+struct FlushCacheOnExit;
+
+impl Drop for FlushCacheOnExit {
+    fn drop(&mut self) {
+        crate::utils::cache::flush_cache_writes();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     use clap::Parser;
@@ -310,6 +320,7 @@ async fn main() -> Result<()> {
     let tx = app.tx.clone();
     fetch::prefetch_highlighted(&mut app, &tx, &mut fx);
     let mut effects = fx.into_vec();
+    let _flush_cache = FlushCacheOnExit;
     loop {
         if !run_effects(&mut app, &mut terminal, effects) {
             break;
@@ -337,8 +348,6 @@ async fn main() -> Result<()> {
             None => Vec::new(),
         };
     }
-
-    crate::utils::cache::flush_cache_writes();
 
     // Restore terminal
     disable_raw_mode()?;

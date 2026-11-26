@@ -1067,7 +1067,7 @@ src/
 
 ```sh
 just test       # unit tests
-just check      # fmt check, clippy, unit tests and e2e tests
+just check      # AGENTS.md size check, fmt check, clippy, unit tests and e2e tests
 ```
 
 Unit tests live in several modules:
@@ -1105,7 +1105,7 @@ The repository includes `rust-toolchain.toml` to automatically pin the Rust vers
 A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 
 ```sh
-just check      # runs fmt check, clippy, unit tests, and e2e tests (mirrors CI)
+just check      # runs the AGENTS.md size check, fmt check, clippy, unit tests and e2e tests (mirrors CI)
 ```
 
 Available recipes:
@@ -1118,7 +1118,8 @@ Available recipes:
 - `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e --no-fail-fast`, requires `cargo-nextest`)
 - `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
 - `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
-- `just check` — run the recipes CI's Rustfmt, Clippy and Test jobs run (`fmt-check`, `lint`, `test`, `e2e`)
+- `just agents-md-size` — check that `AGENTS.md` stays within the ceiling in `scripts/check-agents-md-size.sh`
+- `just check` — run the recipes CI's AGENTS.md size, Rustfmt, Clippy and Test jobs run (`agents-md-size`, `fmt-check`, `lint`, `test`, `e2e`)
 - `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 
 

@@ -859,6 +859,110 @@
         },
         "type": "object"
       },
+      "APIEntitiesEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "action_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author": {},
+          "author_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "author_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imported_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesNote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "push_data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/APIEntitiesPushEventPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wiki_page": {}
+        },
+        "type": "object"
+      },
       "APIEntitiesGroupLabel": {
         "additionalProperties": false,
         "properties": {
@@ -1894,6 +1998,133 @@
             ]
           },
           "web_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesNote": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {},
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commands_changes": {},
+          "commit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidential": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imported_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "internal": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "noteable_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "noteable_iid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "noteable_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "project_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resolvable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resolved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_by": {},
+          "suggestions": {},
+          "system": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
             "type": [
               "string",
               "null"
@@ -3828,6 +4059,60 @@
           "wiki_enabled": {
             "type": [
               "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "APIEntitiesPushEventPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "commit_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ref_type": {
+            "type": [
+              "string",
               "null"
             ]
           }
@@ -5800,6 +6085,110 @@
         },
         "x-read-at": [
           "GlabBackend::stop_environment (response not parsed)"
+        ]
+      }
+    },
+    "/api/v4/projects/{id}/events": {
+      "get": {
+        "operationId": "GetApiV4ProjectsIdEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_type",
+            "schema": {
+              "enum": [
+                "issue",
+                "milestone",
+                "merge_request",
+                "note",
+                "project",
+                "snippet",
+                "user",
+                "wiki",
+                "design"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIEntitiesEvent"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GlabBackend::list_contribution_page, domain::contributions::parse_gitlab_events"
         ]
       }
     },

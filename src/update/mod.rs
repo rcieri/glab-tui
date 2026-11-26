@@ -999,6 +999,73 @@ mod tests {
         assert!(!app.job_trace_follow, "the next log opens unfollowed");
     }
 
+    fn dashboard_with_failing_issues() -> App {
+        let mut app = app_with_client();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.active_tab = Tab::Dashboard;
+        update(
+            &mut app,
+            Event::FetchFailed(Tab::Issues, "issues are disabled".to_string()),
+        );
+        app.show_error("newer error".to_string());
+        app
+    }
+
+    fn toast_text(app: &App) -> Option<&str> {
+        app.toast_notice().map(|notice| notice.text())
+    }
+
+    #[test]
+    fn a_failure_the_dashboard_card_already_shows_raises_no_second_toast() {
+        let mut app = dashboard_with_failing_issues();
+
+        update(
+            &mut app,
+            Event::FetchFailed(Tab::Issues, "issues are disabled".to_string()),
+        );
+        assert_eq!(toast_text(&app), Some("newer error"));
+
+        update(
+            &mut app,
+            Event::FetchFailed(Tab::Issues, "HTTP 500".to_string()),
+        );
+        assert_eq!(toast_text(&app), Some("HTTP 500"));
+    }
+
+    #[test]
+    fn a_full_dashboard_refresh_reports_an_unchanged_failure_again() {
+        let mut app = dashboard_with_failing_issues();
+        let client = app.gitlab_client.clone().expect("a client");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = app.scoped_sender(tx);
+        crate::fetch::spawn_refresh_dashboard(
+            &mut crate::effect::Effects::default(),
+            &client,
+            &mut app,
+            crate::dashboard::DashboardRefresh::Full,
+            tx,
+        );
+
+        update(
+            &mut app,
+            Event::FetchFailed(Tab::Issues, "issues are disabled".to_string()),
+        );
+        assert_eq!(toast_text(&app), Some("issues are disabled"));
+    }
+
+    #[test]
+    fn an_unchanged_failure_of_the_list_on_screen_is_still_raised() {
+        let mut app = dashboard_with_failing_issues();
+        app.active_tab = Tab::Issues;
+
+        update(
+            &mut app,
+            Event::FetchFailed(Tab::Issues, "issues are disabled".to_string()),
+        );
+        assert_eq!(toast_text(&app), Some("issues are disabled"));
+    }
+
     #[test]
     fn ctrl_s_while_review_threads_is_open_does_not_open_repo_switcher() {
         let mut app = app_with_client();

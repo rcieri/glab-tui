@@ -87,13 +87,13 @@ fn refresh_periodically(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Eff
             && let Some(client) = app.gitlab_client.clone()
         {
             app.start_loading_tab(app.active_tab);
-            fetch::spawn_refresh_active_tab(
+            let tx = app.scoped_sender(tx.clone());
+            fetch::spawn_refresh_shown_tab(
                 fx,
                 &client.muted(),
-                &app.scope,
-                app.requested_state_queries(),
-                app.active_tab,
-                app.scoped_sender(tx.clone()),
+                app,
+                crate::dashboard::DashboardRefresh::Periodic,
+                tx,
             );
         }
         app.last_list_refresh = Instant::now();

@@ -230,6 +230,40 @@
     },
     {
       "method": "get",
+      "path": "/api/v4/projects/{id}/events",
+      "code": [
+        "GlabBackend::list_contribution_page, domain::contributions::parse_gitlab_events"
+      ],
+      "read": {
+        "id": {},
+        "action_name": {},
+        "author_username": {},
+        "created_at": {},
+        "target_type": {},
+        "target_iid": {},
+        "target_title": {},
+        "push_data": {
+          "commit_count": {},
+          "ref": {},
+          "ref_type": {},
+          "commit_to": {},
+          "commit_title": {}
+        },
+        "note": {
+          "body": {},
+          "noteable_type": {},
+          "noteable_iid": {},
+          "position": {
+            "new_path": {}
+          }
+        }
+      },
+      "absent_ok": {
+        "note.position.new_path": "the spec does not describe a note's position, but a DiffNote event carries it: new_path names the file a thread comment was made on"
+      }
+    },
+    {
+      "method": "get",
       "path": "/api/v4/projects/{id}/issues/{issue_iid}/closed_by",
       "code": [
         "GlabBackend::list_issue_related_mrs, GiClosedBy"

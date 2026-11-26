@@ -20,6 +20,9 @@ pub struct Assignee {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Reviewer {
     pub username: String,
+    /// A GitHub team review request: `username` is the team's name, not a login.
+    #[serde(default)]
+    pub is_team: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

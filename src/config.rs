@@ -259,6 +259,8 @@ pub enum Appearance {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
+    pub tab_dashboard: String,
+    pub commit: String,
     pub tab_issue: String,
     pub tab_pr: String,
     pub tab_pipeline: String,
@@ -374,11 +376,15 @@ pub struct Icons {
     pub pointer: String,
     pub todo_unread: String,
     pub todo_read: String,
+    pub progress_filled: String,
+    pub progress_empty: String,
 }
 
 impl Icons {
     pub fn nerd() -> Self {
         Self {
+            tab_dashboard: "\u{f463}".to_string(),
+            commit: "\u{f417}".to_string(),
             tab_issue: "\u{f41b}".to_string(),
             tab_pr: "\u{f407}".to_string(),
             tab_pipeline: "\u{f500}".to_string(),
@@ -494,6 +500,8 @@ impl Icons {
             pointer: "❯".to_string(),
             todo_unread: "\u{f0e0}".to_string(),
             todo_read: "\u{f2b6}".to_string(),
+            progress_filled: "█".to_string(),
+            progress_empty: "░".to_string(),
         }
     }
 
@@ -501,6 +509,8 @@ impl Icons {
     /// font.
     pub fn ascii() -> Self {
         Self {
+            tab_dashboard: "&".to_string(),
+            commit: "*".to_string(),
             tab_issue: "#".to_string(),
             tab_pr: "!".to_string(),
             tab_pipeline: ">".to_string(),
@@ -616,6 +626,8 @@ impl Icons {
             pointer: ">".to_string(),
             todo_unread: "*".to_string(),
             todo_read: ".".to_string(),
+            progress_filled: "#".to_string(),
+            progress_empty: "-".to_string(),
         }
     }
 }
@@ -1432,6 +1444,40 @@ fn def_command_timeout_seconds() -> u64 {
     120
 }
 
+/// The `[dashboard]` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DashboardConfig {
+    /// The Dashboard tab is opt-in, so it does not take the first tab from
+    /// people used to starting on Issues.
+    pub enabled: bool,
+    /// Whose work the Dashboard opens on: `me`, `everyone` or a login.
+    pub person: String,
+    pub mr_idle_days: u32,
+    pub issue_idle_days: u32,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        let idle = crate::domain::dashboard::IdleDays::default();
+        Self {
+            enabled: false,
+            person: "me".to_string(),
+            mr_idle_days: idle.mrs,
+            issue_idle_days: idle.issues,
+        }
+    }
+}
+
+impl DashboardConfig {
+    pub fn idle_days(&self) -> crate::domain::dashboard::IdleDays {
+        crate::domain::dashboard::IdleDays {
+            mrs: self.mr_idle_days,
+            issues: self.issue_idle_days,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -1473,6 +1519,7 @@ pub struct Config {
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
     pub layout: LayoutConfig,
+    pub dashboard: DashboardConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1506,6 +1553,7 @@ impl Default for Config {
             command_timeout_seconds: def_command_timeout_seconds(),
             icons: IconSet::default(),
             layout: LayoutConfig::default(),
+            dashboard: DashboardConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -1570,8 +1618,8 @@ theme_preset = "default"
 # theme_light = "catppuccin-latte"
 # appearance = "dark"
 
-# Tab to open on launch. Valid values: issues, mrs, pr, pipelines, runners, releases,
-# todos, milestones, branches, environments, terminal. Case-insensitive.
+# Tab to open on launch. Valid values: dashboard, issues, mrs, pr, pipelines, runners,
+# releases, todos, milestones, branches, environments, terminal. Case-insensitive.
 # Overridden by the --tab CLI flag.
 # active_tab = "mrs"
 
@@ -1648,6 +1696,14 @@ page_size = 100
 # release. Until then they are read from a file whose [layout] does not set the
 # same thing: disabled_tabs becomes `tabs` without those tabs. Saving from the
 # Configure View writes [layout] and removes them from the file it saves to.
+
+[dashboard]
+# The Dashboard tab is off until enabled here.
+enabled = false
+# Whose work it opens on: "me", "everyone" or a login.
+person = "me"
+mr_idle_days = 7
+issue_idle_days = 14
 
 # Per-pane column config (unset = show all columns)
 # [issues]

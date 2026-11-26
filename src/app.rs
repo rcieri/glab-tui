@@ -63,6 +63,7 @@ pub use crate::config::SaveMenu;
     Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub enum Tab {
+    Dashboard,
     #[default]
     Issues,
     MergeRequests,
@@ -89,7 +90,8 @@ fn environment_columns(mut labels: Vec<&'static str>, kind: BackendKind) -> Vec<
 }
 
 impl Tab {
-    pub const ALL: [Tab; 11] = [
+    pub const ALL: [Tab; 12] = [
+        Tab::Dashboard,
         Tab::Issues,
         Tab::MergeRequests,
         Tab::Pipelines,
@@ -105,6 +107,7 @@ impl Tab {
 
     pub fn to_str(self) -> &'static str {
         match self {
+            Tab::Dashboard => "dashboard",
             Tab::Issues => "issues",
             Tab::MergeRequests => "mrs",
             Tab::Pipelines => "pipelines",
@@ -125,7 +128,12 @@ impl Tab {
 
     pub fn is_high_churn(&self) -> bool {
         match self {
-            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Jobs | Tab::Todos => true,
+            Tab::Dashboard
+            | Tab::Issues
+            | Tab::MergeRequests
+            | Tab::Pipelines
+            | Tab::Jobs
+            | Tab::Todos => true,
             Tab::Runners
             | Tab::Releases
             | Tab::Milestones
@@ -145,8 +153,30 @@ impl Tab {
         }
     }
 
+    /// The tabs whose lists the Dashboard tab summarizes, and refreshes when
+    /// it is refreshed. In group scope it leaves out the lists that can only
+    /// fail there: releases on both backends, pipelines on GitLab and
+    /// milestones on GitHub.
+    pub fn dashboard_sources(scope: &crate::scope::Scope, kind: BackendKind) -> &'static [Tab] {
+        const REPOSITORY: &[Tab] = &[
+            Tab::MergeRequests,
+            Tab::Issues,
+            Tab::Pipelines,
+            Tab::Milestones,
+            Tab::Releases,
+        ];
+        const GITLAB_GROUP: &[Tab] = &[Tab::MergeRequests, Tab::Issues, Tab::Milestones];
+        const GITHUB_ORG: &[Tab] = &[Tab::MergeRequests, Tab::Issues, Tab::Pipelines];
+        match (scope.is_group(), kind.is_github()) {
+            (false, _) => REPOSITORY,
+            (true, false) => GITLAB_GROUP,
+            (true, true) => GITHUB_ORG,
+        }
+    }
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            "dashboard" => Some(Tab::Dashboard),
             "issues" => Some(Tab::Issues),
             "mrs" | "mergerequests" | "pr" | "prs" | "pullrequests" | "pull_requests" => {
                 Some(Tab::MergeRequests)
@@ -168,6 +198,7 @@ impl Tab {
 
     pub fn title(&self, kind: BackendKind, icons: &Icons) -> String {
         match self {
+            Tab::Dashboard => format!("{} Dashboard", icons.tab_dashboard),
             Tab::Issues => format!("{} Issues", icons.tab_issue),
             Tab::MergeRequests => {
                 if kind.is_github() {
@@ -285,7 +316,7 @@ impl Tab {
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Branches => column_labels::<BranchColumn>(),
             Tab::Environments => environment_columns(column_labels::<EnvironmentColumn>(), kind),
-            Tab::Terminal => vec![],
+            Tab::Dashboard | Tab::Terminal => vec![],
         }
     }
 
@@ -347,12 +378,17 @@ impl Tab {
             Tab::Environments => {
                 environment_columns(default_column_labels::<EnvironmentColumn>(), kind)
             }
-            Tab::Terminal => vec![],
+            Tab::Dashboard | Tab::Terminal => vec![],
         }
     }
 
     pub fn available_on_platform(&self, _kind: BackendKind) -> bool {
         true
+    }
+
+    /// Whether the config turns this tab on: the Dashboard is opt-in.
+    pub fn is_enabled_in(&self, config: &crate::config::Config) -> bool {
+        *self != Tab::Dashboard || config.dashboard.enabled
     }
 }
 
@@ -3604,7 +3640,7 @@ impl SubmitDialog {
         let kind = app.kind();
         let mr = kind.term("mr");
         let mr_short = kind.term("mr_short");
-        let marker = if kind.is_github() { "#" } else { "!" };
+        let marker = kind.mr_reference_prefix();
 
         let action_clone = action.clone();
         let strategies = match &action {
@@ -4168,6 +4204,9 @@ pub struct App {
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
+    /// Why the last fetch of a tab with no rows failed, until its next fetch
+    /// completes. The Dashboard shows it instead of counting an empty list.
+    pub fetch_failures: std::collections::HashMap<Tab, String>,
     /// The server state queries in effect when `take_state_query_refetches`
     /// last ran; `None` until it first runs for the current scope.
     pub observed_state_queries: Option<StateQueries>,
@@ -4289,6 +4328,7 @@ pub struct App {
     /// Milestones progress column to avoid per-row API calls.
     pub milestone_progress_cache: std::collections::HashMap<u64, (usize, usize)>,
     pub terminal_scroll: usize,
+    pub dashboard: crate::dashboard::DashboardState,
     pub branches: ListTab<BranchColumn>,
     pub environments: ListTab<EnvironmentColumn>,
     pub environment_deployments: Option<EnvironmentDeployments>,
@@ -4380,6 +4420,7 @@ impl App {
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
+            fetch_failures: std::collections::HashMap::new(),
             observed_state_queries: None,
             switch_repo_paths: std::collections::HashMap::new(),
             switch_repo_groups: std::collections::HashSet::new(),
@@ -4452,6 +4493,7 @@ impl App {
             milestone_issues_cache: std::collections::HashMap::new(),
             milestone_progress_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
+            dashboard: crate::dashboard::DashboardState::default(),
             branches: ListTab::default(),
             environments: ListTab::default(),
             environment_deployments: None,
@@ -4849,9 +4891,15 @@ impl App {
         self.select_mode = false;
         self.select_anchor = None;
         self.loaded_tabs.clear();
+        self.fetch_failures.clear();
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
         self.observed_state_queries = None;
+        let person = self.configured_dashboard_person();
+        if self.dashboard.queue_table.is_some() {
+            self.set_active_tab(Tab::Dashboard);
+        }
+        self.dashboard.reset_for_scope(person);
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
         self.fetching_related_mrs.clear();
@@ -4928,6 +4976,39 @@ impl App {
             self.details_zoomed = false;
         }
         found
+    }
+
+    /// Switch to the Pipelines tab at its top level, drop filters that would
+    /// hide the target, and select pipeline `id`. Returns whether it is listed.
+    pub fn focus_pipeline(&mut self, id: u64) -> bool {
+        while self.ascend() {}
+        self.clear_tab_filters(Tab::Pipelines);
+        self.switch_to_tab(Tab::Pipelines);
+        let idx = self.filtered_pipelines().iter().position(|p| p.id() == id);
+        if let Some(idx) = idx {
+            self.pipelines.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Switch to the Milestones tab, drop filters that would hide the
+    /// target, and select milestone `iid`. Returns whether it is listed.
+    pub fn focus_milestone(&mut self, iid: u64) -> bool {
+        self.clear_tab_filters(Tab::Milestones);
+        self.switch_to_tab(Tab::Milestones);
+        let idx = self.filtered_milestones().iter().position(|m| m.iid == iid);
+        if let Some(idx) = idx {
+            self.milestones.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Switch to the Releases tab, drop filters that would hide the target,
+    /// and select the release tagged `tag`. Returns whether it is listed.
+    pub fn focus_release(&mut self, tag: &str) -> bool {
+        self.clear_tab_filters(Tab::Releases);
+        self.switch_to_tab(Tab::Releases);
+        self.releases.select(&tag.to_string())
     }
 
     /// Highlight issue `iid` (in `project` when given) among the rows the
@@ -6193,9 +6274,12 @@ impl App {
             Tab::Jobs => Some(&mut self.jobs.state),
             Tab::Todos => Some(&mut self.todos.state),
             Tab::Milestones => Some(&mut self.milestones.state),
-            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {
-                None
-            }
+            Tab::Dashboard
+            | Tab::Runners
+            | Tab::Releases
+            | Tab::Branches
+            | Tab::Environments
+            | Tab::Terminal => None,
         }
     }
 
@@ -6314,10 +6398,11 @@ impl App {
         self.loading_tabs.remove(&tab);
         self.loaded_tabs.insert(tab);
         self.refreshed_tabs.insert(tab);
+        self.fetch_failures.remove(&tab);
     }
 
     /// Whether a list tab has rows on screen. Jobs, which belong to one
-    /// pipeline, and the Terminal tab never count.
+    /// pipeline, and the Dashboard and Terminal tabs never count.
     pub fn has_rows(&self, tab: Tab) -> bool {
         match tab {
             Tab::Issues => !self.issues.items.is_empty(),
@@ -6329,7 +6414,7 @@ impl App {
             Tab::Milestones => !self.milestones.items.is_empty(),
             Tab::Branches => !self.branches.items().is_empty(),
             Tab::Environments => !self.environments.items().is_empty(),
-            Tab::Jobs | Tab::Terminal => false,
+            Tab::Dashboard | Tab::Jobs | Tab::Terminal => false,
         }
     }
 
@@ -6376,6 +6461,10 @@ impl App {
     /// in the order the table draws them. "Unsorted" sits between the last
     /// and the first column.
     pub fn cycle_sort_column(&mut self, forward: bool) {
+        if self.active_tab == Tab::Dashboard {
+            self.cycle_contributors_sort(forward);
+            return;
+        }
         let tab = self.active_tab;
         let mut options: Vec<Option<&str>> = vec![None];
         let shown = self.shown_columns(tab);
@@ -6409,6 +6498,10 @@ impl App {
     /// Does nothing while the tab is unsorted: the flip would be invisible
     /// and surprise the user on the next `cycle_sort_column`.
     pub fn reverse_sort_order(&mut self) {
+        if self.active_tab == Tab::Dashboard {
+            self.reverse_contributors_sort();
+            return;
+        }
         if self.sort_for(self.active_tab).is_none() {
             return;
         }
@@ -6424,8 +6517,18 @@ impl App {
             .layout
             .tab_order()
             .into_iter()
-            .filter(|&(tab, is_shown)| is_shown && tab.available_on_platform(kind))
+            .filter(|&(tab, is_shown)| {
+                is_shown && tab.available_on_platform(kind) && tab.is_enabled_in(&self.config)
+            })
             .map(|(tab, _)| tab)
+            .collect()
+    }
+
+    /// The tabs the config turns on, shown or not, in built-in order.
+    pub fn enabled_tabs(&self) -> Vec<Tab> {
+        Tab::ALL
+            .into_iter()
+            .filter(|tab| tab.is_enabled_in(&self.config))
             .collect()
     }
 
@@ -6601,6 +6704,14 @@ impl App {
         }
     }
 
+    /// The top-level pipelines, wherever a descent into a child level put
+    /// them.
+    pub fn root_pipelines(&self) -> &[crate::domain::pipelines::Pipeline] {
+        self.pipeline_nav
+            .first()
+            .map_or(&self.pipelines.items, |root| &root.items)
+    }
+
     /// Forgets the cached jobs of every listed pipeline whose status differs in
     /// `fetched`, so the highlight prefetch loads the jobs of its new outcome.
     pub fn drop_jobs_of_changed_pipelines(
@@ -6698,14 +6809,19 @@ impl App {
             app.active_tab = tab;
         }
         app.apply_config();
+        app.dashboard.person = app.configured_dashboard_person();
         app.land_on_available_tab();
         let problems = app.load_keybindings();
         app.report_config_problems(problems);
         app
     }
 
+    pub fn configured_dashboard_person(&self) -> crate::dashboard::DashboardPerson {
+        crate::dashboard::DashboardPerson::from_config(&self.config.dashboard.person)
+    }
+
     /// Moves to the first shown tab when the active one is hidden by
-    /// `layout.tabs`.
+    /// `layout.tabs`, or is the Dashboard while it is not enabled.
     pub fn land_on_available_tab(&mut self) {
         let tabs = self.available_tabs();
         if !tabs.contains(&self.active_tab)
@@ -6739,6 +6855,7 @@ impl App {
                 Tab::Branches => &self.config.branches,
                 Tab::Environments => &self.config.environments,
                 Tab::Terminal => &self.config.terminal,
+                Tab::Dashboard => continue,
             };
             if let Some(cols) = &pane.columns {
                 let col_set: std::collections::HashSet<String> = cols.iter().cloned().collect();
@@ -6975,7 +7092,7 @@ impl App {
         }
         let next_index = tabs
             .iter()
-            .position(|t| t == &self.active_tab)
+            .position(|t| *t == self.shown_tab())
             .map_or(0, |current| (current + 1) % tabs.len());
         self.switch_to_tab(tabs[next_index]);
     }
@@ -6985,7 +7102,10 @@ impl App {
         if tabs.is_empty() {
             return;
         }
-        let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
+        let current_index = tabs
+            .iter()
+            .position(|t| *t == self.shown_tab())
+            .unwrap_or(0);
         let prev_index = if current_index == 0 {
             tabs.len() - 1
         } else {
@@ -6997,6 +7117,9 @@ impl App {
     /// The user moving to `tab` (tab keys, sidebar click): leaves select mode
     /// and the zoomed preview behind, and restores `tab`'s own preview.
     pub fn switch_to_tab(&mut self, tab: Tab) {
+        if self.dashboard.queue_table.is_some() {
+            self.dashboard.leave();
+        }
         self.set_active_tab(tab);
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
@@ -7016,6 +7139,13 @@ impl App {
         if tab == self.active_tab {
             return;
         }
+        let leaves_queue_table = self
+            .dashboard
+            .queue_table
+            .is_some_and(|table| table.tab() != tab);
+        if self.active_tab == Tab::Dashboard || leaves_queue_table {
+            self.dashboard.leave();
+        }
         self.preview_visible_by_tab
             .insert(self.active_tab, self.detail_visible);
         self.detail_visible = self
@@ -7033,6 +7163,19 @@ impl App {
         let preview_was_open = self.detail_visible;
         self.set_active_tab(tab);
         self.detail_visible |= preview_was_open;
+    }
+
+    /// `(closed, total)` issues of a milestone, `None` until any are known.
+    pub fn milestone_progress(&self, iid: u64) -> Option<(usize, usize)> {
+        self.milestone_progress_cache
+            .get(&iid)
+            .copied()
+            .filter(|&(_, total)| total > 0)
+            .or_else(|| {
+                let issues = self.milestone_issues_cache.get(&iid)?;
+                let closed = issues.iter().filter(|i| i.state == "closed").count();
+                Some((closed, issues.len())).filter(|&(_, total)| total > 0)
+            })
     }
 
     pub fn filter_issues_list<'a>(
@@ -7252,6 +7395,7 @@ impl App {
             Tab::Issues,
             Self::issue_filter_values,
         );
+        self.retain_queue_table_issues(&mut list);
         list
     }
 
@@ -7556,6 +7700,7 @@ impl App {
             Tab::MergeRequests,
             Self::mr_filter_values,
         );
+        self.retain_queue_table_mrs(&mut list);
         list
     }
 
@@ -8856,7 +9001,12 @@ impl App {
                     }
                 }
             }
-            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {}
+            Tab::Dashboard
+            | Tab::Runners
+            | Tab::Releases
+            | Tab::Branches
+            | Tab::Environments
+            | Tab::Terminal => {}
         }
         values.into_iter().collect()
     }
@@ -9249,7 +9399,12 @@ impl App {
                     }
                 }
             }
-            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {}
+            Tab::Dashboard
+            | Tab::Runners
+            | Tab::Releases
+            | Tab::Branches
+            | Tab::Environments
+            | Tab::Terminal => {}
         }
         self.rebuild_group_map();
     }
@@ -9268,7 +9423,7 @@ impl App {
                 Tab::Milestones => &mut cfg.milestones,
                 Tab::Branches => &mut cfg.branches,
                 Tab::Environments => &mut cfg.environments,
-                Tab::Terminal => continue,
+                Tab::Dashboard | Tab::Terminal => continue,
             };
             pane.columns = self.saved_columns(tab);
             pane.column_filters = self

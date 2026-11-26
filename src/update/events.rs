@@ -528,6 +528,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.project_cache.environments = app.environments.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
+        Event::DashboardRefreshed => {
+            app.complete_loading_tab(app::Tab::Dashboard, "Success");
+        }
+        Event::ContributionsFetched(result) => app.apply_contributions(result),
         Event::SelectorItemsFetched { request, items } => {
             if app.apply_selector_items(request, items) {
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -707,11 +711,16 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
         }
         Event::FetchFailed(tab, err_msg) => {
+            // Read before `complete_loading_tab` forgets the previous failure.
+            let is_on_a_card = app.dashboard_card_shows_failure(tab, &err_msg);
             app.complete_loading_tab(tab, &format!("Failed: {err_msg}"));
             if app.has_rows(tab) {
                 app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
             } else {
-                app.show_cli_error(err_msg);
+                app.fetch_failures.insert(tab, err_msg.clone());
+                if !is_on_a_card {
+                    app.show_cli_error(err_msg);
+                }
             }
         }
         Event::DiffFetched {

@@ -436,7 +436,8 @@ mod tests {
         );
         let order = layout.tab_order();
         assert_eq!(order[0], (Tab::MergeRequests, true));
-        assert_eq!(order[5], (Tab::Jobs, false));
+        assert_eq!(order[5], (Tab::Dashboard, false));
+        assert_eq!(order[6], (Tab::Jobs, false));
         assert_eq!(order.len(), Tab::ALL.len());
     }
 

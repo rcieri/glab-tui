@@ -147,7 +147,8 @@ impl LayoutPlan {
         } else {
             0
         };
-        let wants_preview = state.detail_visible && state.active_tab != Tab::Terminal;
+        let wants_preview =
+            state.detail_visible && !matches!(state.active_tab, Tab::Terminal | Tab::Dashboard);
         let placement = if wants_preview {
             place_preview(panes, workspace_area, term_height)
         } else {

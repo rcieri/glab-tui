@@ -309,6 +309,7 @@ fn validate(
     let tabs: Vec<Tab> = Tab::ALL
         .into_iter()
         .filter(|tab| pane.applies_to(*tab))
+        .filter(|tab| tab.is_enabled_in(config))
         .collect();
     let mut builtin_shadows: Vec<(Tab, Action)> = Vec::new();
     let mut shadowed_on: Vec<Tab> = Vec::new();
@@ -1180,6 +1181,41 @@ command = "true"
             vec![
                 ("GLAB_TUI_HEAD_REF_NAME".to_string(), "feat/a"),
                 ("GLAB_TUI_PR_NUMBER".to_string(), "7"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_dashboard_key_shadows_a_universal_binding_only_once_the_dashboard_is_on() {
+        let mut config = config_with(
+            r#"
+[[universal]]
+key = "w"
+command = "true"
+"#,
+        );
+        let problems = |config: &Config| -> Vec<String> {
+            CustomCommands::load(config)
+                .1
+                .into_iter()
+                .map(|problem| problem.problem)
+                .collect()
+        };
+
+        assert_eq!(
+            problems(&config),
+            vec![
+                "does not run on the jobs, terminal tab(s): keybindings.jobs.toggle_trace_wrap, keybindings.terminal.toggle_wrap takes the key first"
+                    .to_string()
+            ]
+        );
+
+        config.dashboard.enabled = true;
+        assert_eq!(
+            problems(&config),
+            vec![
+                "does not run on the dashboard, jobs, terminal tab(s): keybindings.dashboard.cycle_window, keybindings.jobs.toggle_trace_wrap, keybindings.terminal.toggle_wrap takes the key first"
+                    .to_string()
             ]
         );
     }

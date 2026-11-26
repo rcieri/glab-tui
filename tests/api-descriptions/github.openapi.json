@@ -1,6 +1,36 @@
 {
   "components": {
     "schemas": {
+      "actor": {
+        "additionalProperties": false,
+        "properties": {
+          "avatar_url": {
+            "type": "string"
+          },
+          "display_login": {
+            "type": "string"
+          },
+          "gravatar_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "login": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "login"
+        ],
+        "type": "object"
+      },
       "branch-with-protection": {
         "additionalProperties": false,
         "properties": {
@@ -145,6 +175,120 @@
         ],
         "type": "object"
       },
+      "commit-comment-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "comment": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "commit_id": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "html_url": {
+                "type": "string"
+              },
+              "id": {
+                "type": "integer"
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "node_id": {
+                "type": "string"
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "position": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "reactions": {},
+              "updated_at": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "user": {}
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "action",
+          "comment"
+        ],
+        "type": "object"
+      },
+      "create-event": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "full_ref": {
+            "type": "string"
+          },
+          "master_branch": {
+            "type": "string"
+          },
+          "pusher_type": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "ref_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "delete-event": {
+        "additionalProperties": false,
+        "properties": {
+          "full_ref": {
+            "type": "string"
+          },
+          "pusher_type": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "ref_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
       "deployment": {
         "additionalProperties": false,
         "properties": {
@@ -273,6 +417,19 @@
         ],
         "type": "object"
       },
+      "discussion-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "discussion": {}
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
       "empty-object": {
         "additionalProperties": false,
         "properties": {},
@@ -310,6 +467,107 @@
           "html_url",
           "id",
           "name"
+        ],
+        "type": "object"
+      },
+      "event": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/actor"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "org": {},
+          "payload": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/create-event"
+              },
+              {
+                "$ref": "#/components/schemas/delete-event"
+              },
+              {
+                "$ref": "#/components/schemas/discussion-event"
+              },
+              {
+                "$ref": "#/components/schemas/issues-event"
+              },
+              {
+                "$ref": "#/components/schemas/issue-comment-event"
+              },
+              {
+                "$ref": "#/components/schemas/fork-event"
+              },
+              {
+                "$ref": "#/components/schemas/gollum-event"
+              },
+              {
+                "$ref": "#/components/schemas/member-event"
+              },
+              {
+                "$ref": "#/components/schemas/public-event"
+              },
+              {
+                "$ref": "#/components/schemas/push-event"
+              },
+              {
+                "$ref": "#/components/schemas/pull-request-event"
+              },
+              {
+                "$ref": "#/components/schemas/pull-request-review-comment-event"
+              },
+              {
+                "$ref": "#/components/schemas/pull-request-review-event"
+              },
+              {
+                "$ref": "#/components/schemas/commit-comment-event"
+              },
+              {
+                "$ref": "#/components/schemas/release-event"
+              },
+              {
+                "$ref": "#/components/schemas/watch-event"
+              }
+            ]
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "repo": {},
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "actor",
+          "created_at",
+          "id",
+          "payload",
+          "type"
+        ],
+        "type": "object"
+      },
+      "fork-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "forkee": {}
+        },
+        "required": [
+          "action"
         ],
         "type": "object"
       },
@@ -631,6 +889,130 @@
         ],
         "type": "object"
       },
+      "gollum-event": {
+        "additionalProperties": false,
+        "properties": {
+          "pages": {}
+        },
+        "type": "object"
+      },
+      "issue": {
+        "additionalProperties": false,
+        "properties": {
+          "active_lock_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee": {},
+          "assignees": {},
+          "author_association": {
+            "type": "string"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_html": {
+            "type": "string"
+          },
+          "body_text": {
+            "type": "string"
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_by": {},
+          "comments": {
+            "type": "integer"
+          },
+          "comments_url": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "draft": {
+            "type": "boolean"
+          },
+          "events_url": {
+            "type": "string"
+          },
+          "html_url": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "issue_dependencies_summary": {},
+          "issue_field_values": {},
+          "labels": {},
+          "labels_url": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "milestone": {},
+          "node_id": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "parent_issue_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "performed_via_github_app": {},
+          "pinned_comment": {},
+          "pull_request": {},
+          "reactions": {},
+          "repository": {},
+          "repository_url": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "state_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {},
+          "sub_issues_summary": {},
+          "timeline_url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {},
+          "updated_at": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "user": {}
+        },
+        "required": [
+          "number",
+          "title"
+        ],
+        "type": "object"
+      },
       "issue-comment": {
         "additionalProperties": false,
         "properties": {
@@ -685,6 +1067,26 @@
         },
         "required": [
           "user"
+        ],
+        "type": "object"
+      },
+      "issue-comment-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "comment": {
+            "$ref": "#/components/schemas/issue-comment"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/issue"
+          }
+        },
+        "required": [
+          "action",
+          "comment",
+          "issue"
         ],
         "type": "object"
       },
@@ -871,6 +1273,39 @@
           "title",
           "updated_at",
           "user"
+        ],
+        "type": "object"
+      },
+      "issues-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "assignee": {},
+          "assignees": {},
+          "issue": {
+            "$ref": "#/components/schemas/issue"
+          },
+          "label": {},
+          "labels": {}
+        },
+        "required": [
+          "action",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "member-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "member": {}
+        },
+        "required": [
+          "action"
         ],
         "type": "object"
       },
@@ -1591,6 +2026,9 @@
         ],
         "type": "object"
       },
+      "public-event": {
+        "type": "object"
+      },
       "public-user": {
         "additionalProperties": false,
         "properties": {
@@ -1749,6 +2187,29 @@
         ],
         "type": "object"
       },
+      "pull-request-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "assignee": {},
+          "assignees": {},
+          "label": {},
+          "labels": {},
+          "number": {
+            "type": "integer"
+          },
+          "pull_request": {
+            "$ref": "#/components/schemas/pull-request-minimal"
+          }
+        },
+        "required": [
+          "action",
+          "pull_request"
+        ],
+        "type": "object"
+      },
       "pull-request-merge-async-result": {
         "additionalProperties": false,
         "properties": {
@@ -1830,6 +2291,27 @@
         "required": [
           "details",
           "status"
+        ],
+        "type": "object"
+      },
+      "pull-request-minimal": {
+        "additionalProperties": false,
+        "properties": {
+          "base": {},
+          "head": {},
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number"
         ],
         "type": "object"
       },
@@ -1954,6 +2436,176 @@
         ],
         "type": "object"
       },
+      "pull-request-review-comment-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "comment": {
+            "additionalProperties": false,
+            "properties": {
+              "_links": {},
+              "body": {
+                "type": "string"
+              },
+              "commit_id": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "diff_hunk": {
+                "type": "string"
+              },
+              "html_url": {
+                "type": "string"
+              },
+              "id": {
+                "type": "integer"
+              },
+              "in_reply_to_id": {
+                "type": "integer"
+              },
+              "node_id": {
+                "type": "string"
+              },
+              "original_commit_id": {
+                "type": "string"
+              },
+              "original_position": {
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              },
+              "position": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "pull_request_review_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "pull_request_url": {
+                "type": "string"
+              },
+              "reactions": {},
+              "subject_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "user": {}
+            },
+            "required": [
+              "body",
+              "path"
+            ],
+            "type": "object"
+          },
+          "pull_request": {
+            "$ref": "#/components/schemas/pull-request-minimal"
+          }
+        },
+        "required": [
+          "action",
+          "comment",
+          "pull_request"
+        ],
+        "type": "object"
+      },
+      "pull-request-review-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "pull_request": {
+            "$ref": "#/components/schemas/pull-request-minimal"
+          },
+          "review": {
+            "additionalProperties": false,
+            "properties": {
+              "_links": {},
+              "body": {
+                "type": "string"
+              },
+              "commit_id": {
+                "type": "string"
+              },
+              "html_url": {
+                "type": "string"
+              },
+              "id": {
+                "type": "integer"
+              },
+              "node_id": {
+                "type": "string"
+              },
+              "pull_request_url": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "submitted_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "user": {}
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "action",
+          "pull_request",
+          "review"
+        ],
+        "type": "object"
+      },
+      "push-event": {
+        "additionalProperties": false,
+        "properties": {
+          "before": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "push_id": {
+            "type": "integer"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "head",
+          "ref"
+        ],
+        "type": "object"
+      },
       "release": {
         "additionalProperties": false,
         "properties": {
@@ -2053,6 +2705,19 @@
           "name",
           "published_at",
           "tag_name"
+        ],
+        "type": "object"
+      },
+      "release-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "release": {}
+        },
+        "required": [
+          "action"
         ],
         "type": "object"
       },
@@ -2302,6 +2967,18 @@
           "subject",
           "unread",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "watch-event": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
         ],
         "type": "object"
       },
@@ -3707,6 +4384,61 @@
         },
         "x-read-at": [
           "GhBackend::list_environments, GhEnvResp/GhEnv"
+        ]
+      }
+    },
+    "/repos/{owner}/{repo}/events": {
+      "get": {
+        "operationId": "ActivityListRepoEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/event"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "x-read-at": [
+          "GhBackend::list_contribution_page, domain::contributions::parse_github_events"
         ]
       }
     },

@@ -1,4 +1,18 @@
 #!/bin/bash
+
+# Prints a fixture with every HOURS_AGO_<n> replaced by the UTC time n hours
+# before now, for fixtures whose readers only keep recent entries.
+cat_relative() {
+    local text hours at
+    text=$(cat "$1")
+    # Largest first: `HOURS_AGO_1` is a prefix of `HOURS_AGO_10`.
+    for hours in $(grep -o 'HOURS_AGO_[0-9]*' "$1" | sed 's/HOURS_AGO_//' | sort -rnu); do
+        at=$(( $(date +%s) - hours * 3600 ))
+        at=$(date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ)
+        text=${text//HOURS_AGO_$hours/$at}
+    done
+    printf '%s\n' "$text"
+}
 LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
 FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
@@ -96,6 +110,11 @@ if [[ "$*" == *"api"* ]]; then
     fi
     if [[ "$2" == runners/* ]]; then
         cat "$FIXTURES_DIR/runner_${2#runners/}.json"
+    elif [[ "$*" =~ /events\?(.*\&)?page=1([^0-9]|$) ]]; then
+        cat_relative "$FIXTURES_DIR/events.json"
+    elif [[ "$*" == *"/events?"* ]]; then
+        # GitLab ends its feed with an empty page.
+        echo '[]'
     elif [[ "$*" == *"/draft_notes/bulk_publish"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then

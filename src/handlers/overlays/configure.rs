@@ -2,7 +2,7 @@ use crate::app::{App, SaveMenu};
 use crate::configure_view::{ConfigureRow, configure_rows, move_tab, toggle_tab};
 use crate::effect::Effects;
 use crate::event::Event;
-use crate::fetch::spawn_refresh_active_tab;
+use crate::fetch::spawn_refresh_shown_tab;
 use crate::keybinding::KeyPress;
 use crossterm::event::KeyCode;
 use ratatui::widgets::ListState;
@@ -85,6 +85,7 @@ pub fn handle_key(
                     if let Some(ref mut client) = app.gitlab_client {
                         client.page_size = new_size;
                     }
+                    app.refreshed_tabs.clear();
                     refresh_active_tab(app, tx, fx);
                 }
                 if let Some(c) = app.configure_mut() {
@@ -126,7 +127,12 @@ pub fn handle_key(
                     let tab = app.active_tab;
                     app.move_column(tab, column, towards_end)
                 }
-                ConfigureRow::Tab(tab) => move_tab(&mut app.config.layout, tab, towards_end),
+                ConfigureRow::Tab(tab) => {
+                    let enabled = app.enabled_tabs();
+                    move_tab(&mut app.config.layout, tab, towards_end, |t| {
+                        enabled.contains(&t)
+                    })
+                }
                 _ => false,
             };
             if moved {
@@ -193,7 +199,8 @@ pub(crate) fn activate_row(
         }
         ConfigureRow::Theme => app.open_theme_picker(),
         ConfigureRow::Tab(shown_tab) => {
-            if !toggle_tab(&mut app.config.layout, shown_tab) {
+            let enabled = app.enabled_tabs();
+            if !toggle_tab(&mut app.config.layout, shown_tab, |t| enabled.contains(&t)) {
                 app.show_notice("The last shown tab cannot be hidden".to_string());
                 return;
             }
@@ -261,13 +268,13 @@ fn previous_section_start(rows: &[ConfigureRow], cursor: usize) -> usize {
 fn refresh_active_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
     if let Some(client) = app.gitlab_client.clone() {
         app.start_loading_tab(app.active_tab);
-        spawn_refresh_active_tab(
+        let tx = app.scoped_sender(tx.clone());
+        spawn_refresh_shown_tab(
             fx,
             &client,
-            &app.scope,
-            app.requested_state_queries(),
-            app.active_tab,
-            app.scoped_sender(tx.clone()),
+            app,
+            crate::dashboard::DashboardRefresh::Full,
+            tx,
         );
     }
 }
@@ -308,6 +315,7 @@ mod tests {
     use crate::app::Tab;
     use crate::config::PreviewPlacement;
     use crate::configure_view::LayoutSetting;
+    use crate::effect::Effect;
     use crossterm::event::{KeyEvent, KeyModifiers};
 
     fn configure_open_on(tab: Tab) -> App {
@@ -424,5 +432,69 @@ mod tests {
         assert_eq!(focused(&app), ConfigureRow::Column("ID"));
         press(&mut app, KeyCode::BackTab);
         assert_eq!(focused(&app), ConfigureRow::Save);
+    }
+
+    fn client() -> crate::domain::client::GitlabClient {
+        crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        }
+    }
+
+    fn enter_page_size(app: &mut App, size: &str) -> Vec<Effect> {
+        if let Some(c) = app.configure_mut() {
+            c.editing_page_size = true;
+        }
+        app.page_size_input = size.to_string();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+        handle_key(
+            app,
+            &KeyPress::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &tx,
+            &mut fx,
+        );
+        fx.into_vec()
+    }
+
+    #[test]
+    fn a_new_page_size_on_the_dashboard_refetches_every_list_it_shows() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.gitlab_client = Some(client());
+        app.active_tab = Tab::Dashboard;
+        app.open_configure();
+
+        let effects = enter_page_size(&mut app, "200");
+
+        assert_eq!(app.gitlab_client.map(|client| client.page_size), Some(200));
+        assert_eq!(
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Spawn(_)))
+                .count(),
+            1
+        );
+        assert!(app.loading_tabs.contains(&Tab::MergeRequests));
+        assert!(app.loading_tabs.contains(&Tab::Issues));
+    }
+
+    #[test]
+    fn a_new_page_size_makes_every_other_list_read_again_on_its_next_visit() {
+        let mut app = configure_open_on(Tab::Issues);
+        app.gitlab_client = Some(client());
+        app.refreshed_tabs
+            .extend([Tab::Issues, Tab::MergeRequests, Tab::Dashboard]);
+
+        enter_page_size(&mut app, "200");
+
+        assert!(app.refreshed_tabs.is_empty());
+        assert!(app.loading_tabs.contains(&Tab::Issues));
     }
 }

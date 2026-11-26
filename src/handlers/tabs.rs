@@ -1,7 +1,6 @@
 use crate::app::{App, Tab};
 use crate::effect::{Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event, ScopedSender};
-use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::KeyPress;
 use crate::keymap::{Action, KeyContext};
@@ -472,20 +471,20 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
 /// After the user moved to another tab: fetch it unless it is loading or
 /// fresh, and the related items its highlighted row previews.
 pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if let Some(client) = &app.gitlab_client
+    if let Some(client) = app.gitlab_client.clone()
         && !app.loading_tabs.contains(&app.active_tab)
         && !app.refreshed_tabs.contains(&app.active_tab)
     {
         if !app.loaded_tabs.contains(&app.active_tab) {
             app.loading_tabs.insert(app.active_tab);
         }
-        spawn_refresh_active_tab(
+        let tx = app.scoped_sender(tx.clone());
+        crate::fetch::spawn_refresh_shown_tab(
             fx,
-            client,
-            &app.scope,
-            app.requested_state_queries(),
-            app.active_tab,
-            app.scoped_sender(tx.clone()),
+            &client,
+            app,
+            crate::dashboard::DashboardRefresh::Missing,
+            tx,
         );
     }
     if app.active_tab == Tab::Issues {
@@ -2777,6 +2776,30 @@ pub fn handle_active_tab_key(
         crate::app::Tab::Terminal => {
             handled = crate::handlers::terminal::handle_tab_key(app, key_event);
         }
+        crate::app::Tab::Dashboard => {
+            use crate::dashboard::CardStep;
+            if app
+                .config
+                .keybindings
+                .matches(Action::DashboardCycleWindow, key_event)
+            {
+                app.cycle_contributors_view();
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::GlobalPrevTab, key_event)
+            {
+                handled = app.step_dashboard_sideways(CardStep::Left);
+            } else if app
+                .config
+                .keybindings
+                .matches(Action::GlobalNextTab, key_event)
+            {
+                handled = app.step_dashboard_sideways(CardStep::Right);
+            } else {
+                handled = false;
+            }
+        }
     }
 
     if !handled {
@@ -2868,6 +2891,9 @@ pub fn handle_active_tab_key(
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
                     app.ascend();
+                } else if app.close_queue_table()
+                    || (app.active_tab == crate::app::Tab::Dashboard && app.leave_dashboard_level())
+                {
                 } else if !app.search_query.is_empty() {
                     // Last-resort Esc action: drop the active filter. The
                     // previous Esc press already exited the search input
@@ -2889,6 +2915,7 @@ pub fn handle_active_tab_key(
             }
             _ if app.config.keybindings.matches(Action::ListOpen, key_event) => {
                 match app.active_tab {
+                    crate::app::Tab::Dashboard => open_from_dashboard(app, tx, fx),
                     crate::app::Tab::Pipelines => {
                         if let Some(idx) = app.pipelines.state.selected() {
                             let pipe_info = app.filtered_pipelines().get(idx).map(|p| {
@@ -3059,16 +3086,20 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::GlobalNextTab, key_event) =>
             {
-                app.next_tab();
-                load_entered_tab(app, tx, fx);
+                if app.dashboard.queue_table.is_none() {
+                    app.next_tab();
+                    load_entered_tab(app, tx, fx);
+                }
             }
             _ if app
                 .config
                 .keybindings
                 .matches(Action::GlobalPrevTab, key_event) =>
             {
-                app.previous_tab();
-                load_entered_tab(app, tx, fx);
+                if app.dashboard.queue_table.is_none() {
+                    app.previous_tab();
+                    load_entered_tab(app, tx, fx);
+                }
             }
             _ if app
                 .config
@@ -3108,6 +3139,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.next(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.step_dashboard(true),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
                         }
@@ -3161,6 +3193,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.previous(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.step_dashboard(false),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_add(1);
                         }
@@ -3214,6 +3247,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.first(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.select_first_on_dashboard(),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = usize::MAX;
                         }
@@ -3270,6 +3304,7 @@ pub fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.last(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Dashboard => app.select_last_on_dashboard(),
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = 0;
                         }
@@ -3293,6 +3328,88 @@ pub fn handle_active_tab_key(
     }
 
     handled
+}
+
+/// `Enter` on the Dashboard: one level down, or out to the issue, MR/PR,
+/// pipeline, milestone or release under the cursor, in its tab with the
+/// preview open.
+fn open_from_dashboard(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
+    use crate::dashboard::DashboardAction;
+    match app.enter_dashboard() {
+        DashboardAction::Stay => {}
+        DashboardAction::OpenPipeline(id) => {
+            app.focus_pipeline(id);
+            app.detail_visible = true;
+            load_entered_tab(app, tx, fx);
+        }
+        DashboardAction::OpenMilestone(iid) => {
+            app.focus_milestone(iid);
+            app.detail_visible = true;
+            load_entered_tab(app, tx, fx);
+        }
+        DashboardAction::OpenRelease(tag) => {
+            app.focus_release(&tag);
+            app.detail_visible = true;
+            load_entered_tab(app, tx, fx);
+        }
+        DashboardAction::OpenIssue { project, iid } => {
+            let is_listed = match app.gitlab_client.clone() {
+                Some(client) => focus_or_fetch_issue(app, &client, &project, iid, tx, fx),
+                None => app.focus_issue(Some(&project), iid),
+            };
+            if is_listed {
+                maybe_fetch_related_mrs(app, tx);
+            }
+            app.detail_visible = true;
+        }
+        DashboardAction::OpenMr { project, iid } => {
+            let is_listed = match app.gitlab_client.clone() {
+                Some(client) => focus_or_fetch_mr(app, &client, &project, iid, tx, fx),
+                None => app.focus_mr(Some(&project), iid),
+            };
+            if is_listed {
+                maybe_fetch_mr_related_issues(app, tx);
+            }
+            app.detail_visible = true;
+        }
+    }
+}
+
+/// Selects issue `iid` of `project` on the Issues tab, fetching it when the
+/// list does not hold it. Returns whether it was listed. Until a fetched
+/// issue arrives nothing is selected, so the preview never shows another
+/// issue in its place.
+pub(crate) fn focus_or_fetch_issue(
+    app: &mut App,
+    client: &crate::domain::client::GitlabClient,
+    project: &str,
+    iid: u64,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) -> bool {
+    if app.focus_issue(Some(project), iid) {
+        return true;
+    }
+    app.issues.state.select(None);
+    crate::fetch::spawn_fetch_issue(fx, client, project, iid, app.scoped_sender(tx.clone()));
+    false
+}
+
+/// `focus_or_fetch_issue` for an MR/PR on the MRs/PRs tab.
+pub(crate) fn focus_or_fetch_mr(
+    app: &mut App,
+    client: &crate::domain::client::GitlabClient,
+    project: &str,
+    iid: u64,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) -> bool {
+    if app.focus_mr(Some(project), iid) {
+        return true;
+    }
+    app.mrs.state.select(None);
+    crate::fetch::spawn_fetch_mr(fx, client, project, iid, app.scoped_sender(tx.clone()));
+    false
 }
 
 /// Switch to the Merge Requests tab, drop the filters that would hide the
@@ -4529,6 +4646,31 @@ pub(crate) mod tests {
             "project_path": project,
         }))
         .expect("merge request fixture")
+    }
+
+    #[test]
+    fn opening_an_unlisted_mr_clears_the_selection_until_it_is_fetched() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("acme/alpha".to_string());
+        app.mrs.items = vec![mr_in("acme/alpha", 1, "bob")];
+        app.mrs.state.select(Some(0));
+        let client = crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+
+        let is_listed = focus_or_fetch_mr(&mut app, &client, "acme/alpha", 9, &tx, &mut fx);
+
+        assert!(!is_listed);
+        assert_eq!(app.mrs.state.selected(), None);
+        assert_eq!(fx.into_vec().len(), 1);
     }
 
     #[tokio::test]

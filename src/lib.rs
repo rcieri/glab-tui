@@ -8,6 +8,7 @@ pub mod command_log;
 pub mod config;
 pub mod configure_view;
 pub mod custom_commands;
+pub mod dashboard;
 pub mod domain;
 pub mod editor;
 pub mod effect;

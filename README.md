@@ -1067,7 +1067,7 @@ src/
 
 ```sh
 just test       # unit tests
-just check      # fmt check, clippy, unit tests and e2e tests
+just check      # AGENTS.md size check, fmt check, clippy, unit tests and e2e tests
 ```
 
 Unit tests live in several modules:

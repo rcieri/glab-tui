@@ -483,7 +483,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .iter()
         .map(|t| {
             let title = format!(" {} ", t.title(kind, ctx.icons).to_uppercase());
-            if *t == app.active_tab {
+            if *t == app.shown_tab() {
                 ListItem::new(title).style(
                     Style::default()
                         .bg(ctx.theme.border_focused)
@@ -513,7 +513,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Inside a pipeline descent the tab name alone no longer says where you
     // are, so the path down is appended. Jobs shows the opened pipeline's
     // path. The Todos tab shows which items its read filter lets through.
-    let breadcrumb = match app.active_tab {
+    let shown_tab = app.shown_tab();
+    let breadcrumb = match shown_tab {
         Tab::Dashboard => app.scope.display(),
         Tab::Pipelines => app.nav_breadcrumb(),
         Tab::Jobs => app.jobs_breadcrumb(),
@@ -522,13 +523,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         _ => String::new(),
     };
     let tab_title = if breadcrumb.is_empty() {
-        format!(" {} ", app.active_tab.title(kind, ctx.icons))
+        format!(" {} ", shown_tab.title(kind, ctx.icons))
     } else {
-        format!(
-            " {} › {} ",
-            app.active_tab.title(kind, ctx.icons),
-            breadcrumb
-        )
+        format!(" {} › {} ", shown_tab.title(kind, ctx.icons), breadcrumb)
     };
     let main_block = Block::default()
         .borders(Borders::ALL)
@@ -544,50 +541,81 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         );
 
-    match app.active_tab {
-        Tab::Issues => {
-            tabs::render_tab_issues(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::MergeRequests => tabs::render_tab_merge_requests(
+    if let Some(table) = app.dashboard.queue_table {
+        dashboard::render_queue_table(
             f,
             ctx,
             app,
-            content_area,
-            detail_rect,
+            table,
+            [content_area, detail_rect],
             main_block.clone(),
-        ),
-        Tab::Pipelines => {
-            tabs::render_tab_pipelines(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Jobs => {
-            tabs::render_tab_jobs(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Runners => {
-            tabs::render_tab_runners(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Releases => {
-            tabs::render_tab_releases(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Todos => {
-            tabs::render_tab_todos(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Milestones => {
-            tabs::render_tab_milestones(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Branches => {
-            tabs::render_tab_branches(f, ctx, app, content_area, detail_rect, main_block.clone())
-        }
-        Tab::Environments => tabs::render_tab_environments(
-            f,
-            ctx,
-            app,
-            content_area,
-            detail_rect,
-            main_block.clone(),
-        ),
-        Tab::Terminal => tabs::render_tab_terminal(f, ctx, app, content_area),
-        Tab::Dashboard => {
-            dashboard::render_tab_dashboard(f, ctx, app, content_area, main_block.clone())
+        );
+    } else {
+        match app.active_tab {
+            Tab::Issues => {
+                tabs::render_tab_issues(f, ctx, app, content_area, detail_rect, main_block.clone())
+            }
+            Tab::MergeRequests => tabs::render_tab_merge_requests(
+                f,
+                ctx,
+                app,
+                content_area,
+                detail_rect,
+                main_block.clone(),
+            ),
+            Tab::Pipelines => tabs::render_tab_pipelines(
+                f,
+                ctx,
+                app,
+                content_area,
+                detail_rect,
+                main_block.clone(),
+            ),
+            Tab::Jobs => {
+                tabs::render_tab_jobs(f, ctx, app, content_area, detail_rect, main_block.clone())
+            }
+            Tab::Runners => {
+                tabs::render_tab_runners(f, ctx, app, content_area, detail_rect, main_block.clone())
+            }
+            Tab::Releases => tabs::render_tab_releases(
+                f,
+                ctx,
+                app,
+                content_area,
+                detail_rect,
+                main_block.clone(),
+            ),
+            Tab::Todos => {
+                tabs::render_tab_todos(f, ctx, app, content_area, detail_rect, main_block.clone())
+            }
+            Tab::Milestones => tabs::render_tab_milestones(
+                f,
+                ctx,
+                app,
+                content_area,
+                detail_rect,
+                main_block.clone(),
+            ),
+            Tab::Branches => tabs::render_tab_branches(
+                f,
+                ctx,
+                app,
+                content_area,
+                detail_rect,
+                main_block.clone(),
+            ),
+            Tab::Environments => tabs::render_tab_environments(
+                f,
+                ctx,
+                app,
+                content_area,
+                detail_rect,
+                main_block.clone(),
+            ),
+            Tab::Terminal => tabs::render_tab_terminal(f, ctx, app, content_area),
+            Tab::Dashboard => {
+                dashboard::render_tab_dashboard(f, ctx, app, content_area, main_block.clone());
+            }
         }
     }
 

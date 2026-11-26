@@ -259,19 +259,22 @@ pub fn handle_mouse_event(
                 let clicked = rect_contains(inner, row, col)
                     .then(|| tabs.get(usize::from(row - inner.y)).copied())
                     .flatten();
-                if let Some(tab) = clicked.filter(|tab| *tab != app.active_tab) {
+                if let Some(tab) = clicked.filter(|tab| *tab != app.shown_tab()) {
                     app.switch_to_tab(tab);
                     crate::handlers::tabs::load_entered_tab(app, tx, fx);
                 }
                 return;
             }
 
-            let content_rect = app.layout.map(|l| l.content_area);
-            if let Some(content_rect) = content_rect
-                && rect_contains(content_rect, row, col)
-                && row >= content_rect.y + 3
+            let table_rect = app
+                .dashboard
+                .queue_table_area
+                .or_else(|| app.layout.map(|l| l.content_area));
+            if let Some(table_rect) = table_rect
+                && rect_contains(table_rect, row, col)
+                && row >= table_rect.y + 3
             {
-                let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
+                let row_idx = (row - table_rect.y).saturating_sub(3) as usize;
                 app.click_active_table_row(row_idx);
             }
         }

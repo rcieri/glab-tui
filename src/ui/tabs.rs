@@ -164,6 +164,7 @@ pub(crate) fn render_tab_issues(
             Tab::Issues,
             App::issue_filter_values,
         );
+        app.retain_queue_table_issues(&mut filtered_issues);
 
         let permutation = app.column_permutation(Tab::Issues);
         let shown = app.shown_columns(Tab::Issues);
@@ -551,6 +552,7 @@ pub(crate) fn render_tab_merge_requests(
             Tab::MergeRequests,
             App::mr_filter_values,
         );
+        app.retain_queue_table_mrs(&mut filtered_mrs);
 
         let permutation = app.column_permutation(Tab::MergeRequests);
         let shown = app.shown_columns(Tab::MergeRequests);

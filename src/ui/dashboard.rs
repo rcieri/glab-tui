@@ -18,7 +18,7 @@ use crate::backend::BackendKind;
 use crate::config::{Icons, Theme};
 use crate::dashboard::{
     ContributionFeed, ContributorsView, CountCut, DashboardCard, DashboardFocus, DashboardItem,
-    DashboardPerson, DashboardRow,
+    DashboardPerson, DashboardRow, QueueTable,
 };
 use crate::domain::contributions::{
     Contribution, ContributionKind, ContributionTarget, TargetKind,
@@ -40,6 +40,8 @@ const CARD_HEIGHT: u16 = 9;
 const CARD_BODY_LINES: usize = CARD_HEIGHT as usize - 2;
 /// Below this many rows the item list is left out.
 const LIST_MIN_HEIGHT: u16 = 3;
+/// The queue table takes its tab's keys, so only the way back is named.
+const QUEUE_TABLE_HINT: &str = " Esc back to the queues ";
 const COUNT_WIDTH: usize = 3;
 /// One of the two longest fixed queue labels (with "opened by you,
 /// unassigned"), which sets how narrow a card may get.
@@ -148,13 +150,15 @@ impl Context<'_> {
     }
 }
 
+/// Draws the Dashboard. With a queue table open, the item list is left out
+/// and its area and title are returned for the table.
 pub(crate) fn render_tab_dashboard(
     f: &mut Frame,
     render: &RenderCtx<'_>,
     app: &App,
     area: Rect,
     block: Block,
-) {
+) -> Option<(Rect, String)> {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -178,9 +182,13 @@ pub(crate) fn render_tab_dashboard(
     let cards = app.dashboard_cards();
     let grid = card_grid(inner, cards.len());
     app.dashboard.grid_columns.set(grid.columns);
+    let is_table_open = app.dashboard.queue_table.is_some();
     if ctx.focus == DashboardFocus::List && !grid.shows_list {
+        if is_table_open {
+            return Some((inner, item_list_title(&ctx)));
+        }
         render_item_list(f, &ctx, inner);
-        return;
+        return None;
     }
 
     let card_lines: Vec<&[DashboardCard]> = cards.chunks(grid.columns).collect();
@@ -209,8 +217,62 @@ pub(crate) fn render_tab_dashboard(
         }
     }
 
-    if grid.shows_list {
-        render_item_list(f, &ctx, list_area);
+    if !grid.shows_list {
+        return None;
+    }
+    if is_table_open {
+        return Some((list_area, item_list_title(&ctx)));
+    }
+    render_item_list(f, &ctx, list_area);
+    None
+}
+
+/// The Dashboard with the open queue listed in its tab's own table below
+/// the cards, and that tab's preview beside them.
+pub(crate) fn render_queue_table(
+    f: &mut Frame,
+    render: &RenderCtx<'_>,
+    app: &mut App,
+    table: QueueTable,
+    areas: [Rect; 2],
+    block: Block,
+) {
+    let [area, detail_rect] = areas;
+    let slot = render_tab_dashboard(f, render, app, area, block);
+    app.dashboard.queue_table_area = slot.as_ref().map(|(list_area, _)| *list_area);
+    let Some((list_area, title)) = slot else {
+        return;
+    };
+    let count = match table {
+        QueueTable::Mrs(_) => app.filtered_mrs().len(),
+        QueueTable::Issues(_) => app.filtered_issues().len(),
+    };
+    let theme = &render.theme;
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.border_focused))
+        .title(Span::styled(
+            format!(" {title} · {count} "),
+            Style::default()
+                .fg(theme.header_fg)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title(
+            Line::styled(QUEUE_TABLE_HINT, Style::default().fg(theme.text_muted)).right_aligned(),
+        );
+    match table {
+        QueueTable::Mrs(_) => super::tabs::render_tab_merge_requests(
+            f,
+            render,
+            app,
+            list_area,
+            detail_rect,
+            list_block,
+        ),
+        QueueTable::Issues(_) => {
+            super::tabs::render_tab_issues(f, render, app, list_area, detail_rect, list_block)
+        }
     }
 }
 

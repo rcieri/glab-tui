@@ -2891,8 +2891,8 @@ pub fn handle_active_tab_key(
                     }
                 } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
                     app.ascend();
-                } else if app.active_tab == crate::app::Tab::Dashboard
-                    && app.leave_dashboard_level()
+                } else if app.close_queue_table()
+                    || (app.active_tab == crate::app::Tab::Dashboard && app.leave_dashboard_level())
                 {
                 } else if !app.search_query.is_empty() {
                     // Last-resort Esc action: drop the active filter. The
@@ -3086,16 +3086,20 @@ pub fn handle_active_tab_key(
                 .keybindings
                 .matches(Action::GlobalNextTab, key_event) =>
             {
-                app.next_tab();
-                load_entered_tab(app, tx, fx);
+                if app.dashboard.queue_table.is_none() {
+                    app.next_tab();
+                    load_entered_tab(app, tx, fx);
+                }
             }
             _ if app
                 .config
                 .keybindings
                 .matches(Action::GlobalPrevTab, key_event) =>
             {
-                app.previous_tab();
-                load_entered_tab(app, tx, fx);
+                if app.dashboard.queue_table.is_none() {
+                    app.previous_tab();
+                    load_entered_tab(app, tx, fx);
+                }
             }
             _ if app
                 .config

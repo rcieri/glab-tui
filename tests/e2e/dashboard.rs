@@ -8,7 +8,8 @@
 //! Contributors, then Pipelines, Milestones and Releases. `Enter` goes from
 //! the tab into the cards, from a card into its rows (the contributors are
 //! everyone, you, `@reviewer-user` and `@test-user`, so `k` from the first
-//! wraps to `@test-user`), and from a row into its item list.
+//! wraps to `@test-user`), and from a row into its item list, which for an
+//! MR or issue queue is the MRs or Issues table with that tab's keys.
 //!
 //! The activity feed (`events.json`) holds a push by `test-user` 2 hours
 //! ago, a diff comment by `reviewer-user` 30 hours ago, a comment by
@@ -65,7 +66,7 @@ fn wait_for_line(session: &mut TestSession, needle: &str, expected: &str, why: &
 }
 
 #[test]
-fn a_queue_lists_its_items_and_enter_opens_one() {
+fn a_queue_opens_in_the_mrs_table_with_its_keys() {
     let mut session = dashboard_session();
     session
         .wait_for_screen_contains("Open · 1 ", 5000)
@@ -84,15 +85,33 @@ fn a_queue_lists_its_items_and_enter_opens_one() {
 
     session.press_keys(b"\r\r\r");
     session
-        .wait_for_screen_contains("Enter open · Esc back", 5000)
-        .expect("Enter goes into the cards, the MR queues, then the list");
+        .wait_for_screen_contains("Esc back to the queues", 5000)
+        .expect("Enter goes into the cards, the MR queues, then the queue's MRs table");
+    session
+        .wait_for_screen_contains(" SELECT ", 1)
+        .expect_err("select mode starts off");
+    session.press_keys(b"v");
+    session
+        .wait_for_screen_contains(" SELECT ", 5000)
+        .expect("v starts select mode in the queue table, as on the MRs tab");
+    session.press_keys(b"\x1b");
+    session.settle(200);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains(" SELECT ") && screen.contains("Esc back to the queues"),
+        "the first Esc drops the selection and stays in the queue table: {screen}"
+    );
+
     session.press_keys(b"\r");
     session
-        .wait_for_screen_contains("┌ ! MRs ", 5000)
-        .expect("Enter on a listed MR opens the MRs tab");
-    session
         .wait_for_screen_contains("Preview: MR !2 ", 5000)
-        .expect("the MR is selected with its preview open");
+        .expect("Enter opens the MR's preview, as on the MRs tab");
+    session.press_keys(b"\x1b");
+    session.settle(200);
+    session.press_keys(b"\x1b");
+    session
+        .wait_for_screen_contains("j/k pick · Enter list · Esc cards", 5000)
+        .expect("Esc closes the preview, then goes back to the queues");
 }
 
 #[test]
@@ -297,11 +316,11 @@ fn a_short_terminal_shows_the_focused_list_instead_of_hiding_it_under_the_cards(
 
     session.press_keys(b"\r\r\r");
     session
-        .wait_for_screen_contains("Enter open · Esc back", 5000)
-        .expect("Enter steps down into the list even though it would not fit under the cards");
+        .wait_for_screen_contains("Esc back to the queues", 5000)
+        .expect("Enter steps down into the table even though it would not fit under the cards");
     session
         .wait_for_screen_contains("!2", 5000)
-        .expect("the open MR is visible in the full-area list, not hidden for lack of room");
+        .expect("the open MR is visible in the full-area table, not hidden for lack of room");
 }
 
 #[test]

@@ -8,11 +8,14 @@ use crate::domain::dashboard::{
     self, Activity, ActivityWindow, IssueQueue, MilestoneProgress, MrQueue, Now, Person,
     recent_activity,
 };
+use crate::domain::issues::Issue;
+use crate::domain::mr::MergeRequest;
 use crate::domain::pipelines::Pipeline;
 use crate::domain::releases::Release;
 use crate::domain::state_query::StateQuery;
 use crate::utils::format::parse_rfc3339;
 use chrono::{DateTime, Utc};
+use ratatui::layout::Rect;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -267,6 +270,32 @@ impl DashboardRow {
     }
 }
 
+/// A queue of the MR/PR or Issues card listed in its tab's own table, with
+/// that tab's keys: while one is open its tab is the active tab, drawn below
+/// the Dashboard's cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueTable {
+    Mrs(MrQueue),
+    Issues(IssueQueue),
+}
+
+impl QueueTable {
+    pub fn of_row(row: &DashboardRow) -> Option<Self> {
+        match row {
+            DashboardRow::Mr(queue) => Some(Self::Mrs(*queue)),
+            DashboardRow::Issue(queue) => Some(Self::Issues(*queue)),
+            DashboardRow::Contributor(_) | DashboardRow::Card(_) => None,
+        }
+    }
+
+    pub fn tab(self) -> Tab {
+        match self {
+            Self::Mrs(_) => Tab::MergeRequests,
+            Self::Issues(_) => Tab::Issues,
+        }
+    }
+}
+
 /// One entry of the list below the cards.
 #[derive(Debug, Clone, Copy)]
 pub enum DashboardItem<'a> {
@@ -328,6 +357,9 @@ pub struct DashboardState {
     pub contributors_sort: Option<ContributorSort>,
     /// When the activity feed and the slow lists were last requested.
     pub slow_refreshed_at: Option<Instant>,
+    pub queue_table: Option<QueueTable>,
+    /// Where the last draw put the open queue table, for mouse clicks.
+    pub queue_table_area: Option<Rect>,
 }
 
 /// The cards `rows` belong to, in order.
@@ -342,10 +374,12 @@ fn cards_of(rows: &[DashboardRow]) -> Vec<DashboardCard> {
 }
 
 impl DashboardState {
-    /// Leaving the tab hands `h`/`l` back to tab switching on return. The
-    /// selected card and rows stay.
+    /// Leaving the tab hands `h`/`l` back to tab switching on return and
+    /// closes the queue table. The selected card and rows stay.
     pub fn leave(&mut self) {
         self.focus = DashboardFocus::Tab;
+        self.queue_table = None;
+        self.queue_table_area = None;
     }
 
     /// A new repository or group: nothing selected, the configured person,
@@ -462,6 +496,58 @@ impl App {
     /// The current moment, with the configured idle thresholds.
     pub fn dashboard_now(&self) -> Now {
         Now::current(self.config.dashboard.idle_days())
+    }
+
+    /// The tab the sidebar and the title show: the Dashboard while one of
+    /// its queues is listed in the MRs/PRs or Issues table.
+    pub fn shown_tab(&self) -> Tab {
+        if self.dashboard.queue_table.is_some() {
+            Tab::Dashboard
+        } else {
+            self.active_tab
+        }
+    }
+
+    /// Keeps only the MRs/PRs of the open queue table, if it lists MRs/PRs.
+    pub fn retain_queue_table_mrs(&self, mrs: &mut Vec<&MergeRequest>) {
+        let Some(QueueTable::Mrs(queue)) = self.dashboard.queue_table else {
+            return;
+        };
+        let (now, signed_in) = (self.dashboard_now(), self.dashboard_signed_in_user());
+        let person = self.dashboard_person();
+        mrs.retain(|mr| queue.holds(mr, person, signed_in, now));
+    }
+
+    /// Keeps only the issues of the open queue table, if it lists issues.
+    pub fn retain_queue_table_issues(&self, issues: &mut Vec<&Issue>) {
+        let Some(QueueTable::Issues(queue)) = self.dashboard.queue_table else {
+            return;
+        };
+        let (now, person) = (self.dashboard_now(), self.dashboard_person());
+        issues.retain(|issue| queue.holds(issue, person, now));
+    }
+
+    /// Lists `table` in its tab's table below the cards, on its first item.
+    fn open_queue_table(&mut self, table: QueueTable) {
+        self.switch_to_tab(table.tab());
+        self.dashboard.queue_table = Some(table);
+        self.dashboard.focus = DashboardFocus::List;
+        match table {
+            QueueTable::Mrs(_) => self.mrs.state.select(Some(0)),
+            QueueTable::Issues(_) => self.issues.state.select(Some(0)),
+        }
+        self.update_filter_selection();
+    }
+
+    /// `Esc` in a queue table: back to the queues. Returns false when no
+    /// queue table is open.
+    pub fn close_queue_table(&mut self) -> bool {
+        if self.dashboard.queue_table.is_none() {
+            return false;
+        }
+        self.switch_to_tab(Tab::Dashboard);
+        self.dashboard.focus = DashboardFocus::Rows;
+        true
     }
 
     /// The Dashboard's cards in the current scope, in order, without the
@@ -947,13 +1033,18 @@ impl App {
                 DashboardAction::Stay
             }
             DashboardFocus::Rows => {
-                if let Some(row) = self.dashboard_selected_row(now)
-                    && let DashboardRow::Contributor(person) = &row
-                {
+                let row = self.dashboard_selected_row(now);
+                if let Some(DashboardRow::Contributor(person)) = &row {
                     self.dashboard.person = person.clone();
-                    self.dashboard.select_row(Some(&row));
+                    self.dashboard.select_row(row.as_ref());
                 }
-                self.open_dashboard_list(now);
+                match row.as_ref().and_then(QueueTable::of_row) {
+                    Some(_) if self.dashboard_items(now).is_empty() => {
+                        self.show_notice("Nothing to list here".to_string());
+                    }
+                    Some(table) => self.open_queue_table(table),
+                    None => self.open_dashboard_list(now),
+                }
                 DashboardAction::Stay
             }
             DashboardFocus::List => self.open_dashboard_item(now),
@@ -1710,6 +1801,48 @@ mod tests {
                 .expect("a valid merge request")
             })
             .collect()
+    }
+
+    #[test]
+    fn enter_on_a_queue_lists_only_its_items_in_the_mrs_table_until_esc() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.active_tab = Tab::Dashboard;
+        app.mrs.items = open_mrs(3);
+        app.mrs.items[1].draft = true;
+        app.dashboard.person = DashboardPerson::Everyone;
+        app.dashboard
+            .select_row(Some(&DashboardRow::Mr(MrQueue::Drafts)));
+        app.dashboard.focus = DashboardFocus::Rows;
+
+        assert_eq!(app.enter_dashboard(), DashboardAction::Stay);
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+        assert_eq!(app.shown_tab(), Tab::Dashboard);
+        let iids: Vec<u64> = app.filtered_mrs().iter().map(|mr| mr.iid).collect();
+        assert_eq!(iids, vec![2]);
+
+        assert!(app.close_queue_table());
+        assert_eq!(app.active_tab, Tab::Dashboard);
+        assert_eq!(app.dashboard.focus, DashboardFocus::Rows);
+        assert_eq!(app.filtered_mrs().len(), 3);
+        assert!(!app.close_queue_table());
+    }
+
+    #[test]
+    fn switching_tabs_from_a_queue_table_closes_it() {
+        let mut app = App::default();
+        app.config.dashboard.enabled = true;
+        app.active_tab = Tab::Dashboard;
+        app.mrs.items = open_mrs(2);
+        app.dashboard.person = DashboardPerson::Everyone;
+        app.dashboard.focus = DashboardFocus::Rows;
+        app.enter_dashboard();
+        assert_eq!(app.active_tab, Tab::MergeRequests);
+
+        app.switch_to_tab(Tab::MergeRequests);
+        assert_eq!(app.dashboard.queue_table, None);
+        assert_eq!(app.shown_tab(), Tab::MergeRequests);
+        assert_eq!(app.filtered_mrs().len(), 2);
     }
 
     fn filter_state(app: &mut App, tab: Tab, state: &str) {

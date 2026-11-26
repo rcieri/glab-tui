@@ -4896,6 +4896,9 @@ impl App {
         self.refreshed_tabs.clear();
         self.observed_state_queries = None;
         let person = self.configured_dashboard_person();
+        if self.dashboard.queue_table.is_some() {
+            self.set_active_tab(Tab::Dashboard);
+        }
         self.dashboard.reset_for_scope(person);
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
@@ -7089,7 +7092,7 @@ impl App {
         }
         let next_index = tabs
             .iter()
-            .position(|t| t == &self.active_tab)
+            .position(|t| *t == self.shown_tab())
             .map_or(0, |current| (current + 1) % tabs.len());
         self.switch_to_tab(tabs[next_index]);
     }
@@ -7099,7 +7102,10 @@ impl App {
         if tabs.is_empty() {
             return;
         }
-        let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
+        let current_index = tabs
+            .iter()
+            .position(|t| *t == self.shown_tab())
+            .unwrap_or(0);
         let prev_index = if current_index == 0 {
             tabs.len() - 1
         } else {
@@ -7111,6 +7117,9 @@ impl App {
     /// The user moving to `tab` (tab keys, sidebar click): leaves select mode
     /// and the zoomed preview behind, and restores `tab`'s own preview.
     pub fn switch_to_tab(&mut self, tab: Tab) {
+        if self.dashboard.queue_table.is_some() {
+            self.dashboard.leave();
+        }
         self.set_active_tab(tab);
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
@@ -7130,7 +7139,11 @@ impl App {
         if tab == self.active_tab {
             return;
         }
-        if self.active_tab == Tab::Dashboard {
+        let leaves_queue_table = self
+            .dashboard
+            .queue_table
+            .is_some_and(|table| table.tab() != tab);
+        if self.active_tab == Tab::Dashboard || leaves_queue_table {
             self.dashboard.leave();
         }
         self.preview_visible_by_tab
@@ -7382,6 +7395,7 @@ impl App {
             Tab::Issues,
             Self::issue_filter_values,
         );
+        self.retain_queue_table_issues(&mut list);
         list
     }
 
@@ -7686,6 +7700,7 @@ impl App {
             Tab::MergeRequests,
             Self::mr_filter_values,
         );
+        self.retain_queue_table_mrs(&mut list);
         list
     }
 

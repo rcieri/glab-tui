@@ -14,7 +14,7 @@
 │ !11                                                      │
 │ !12                                                      │
 │ v 8 more                                                 │
-│ Strategy o Merge commit  * Squash  o Rebase              │
+│ Merge method o Merge commit  * Squash                    │
 │ Options + Delete source branch                           │
 │         - Auto-merge                                     │
 │ ──────────────────────────────────────────────────────── │

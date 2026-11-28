@@ -62,6 +62,10 @@ pub struct MergeRequest {
     #[serde(default)]
     pub sha: Option<String>,
     pub draft: bool,
+    /// The MR's own "Squash commits" flag from the GitLab response. Always
+    /// false on GitHub, which has no per-PR flag, and for older cached entries.
+    #[serde(default)]
+    pub squash: bool,
     pub description: Option<String>,
     #[serde(default)]
     pub head_pipeline: Option<crate::domain::pipelines::Pipeline>,
@@ -128,7 +132,7 @@ impl PrStack {
 }
 
 /// How a merge brings a PR's commits into its base branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MergeMethod {
     Merge,
     Squash,
@@ -136,9 +140,16 @@ pub enum MergeMethod {
 }
 
 impl MergeMethod {
-    pub const ALL: [Self; 3] = [Self::Merge, Self::Squash, Self::Rebase];
-    /// The strategy a merge dialog opens on.
-    pub const DEFAULT: Self = Self::Squash;
+    /// Every method, in the order the merge form lists them.
+    pub const ALL: [MergeMethod; 3] = [Self::Merge, Self::Squash, Self::Rebase];
+
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Squash => "squash",
+            Self::Rebase => "rebase",
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -147,13 +158,111 @@ impl MergeMethod {
             Self::Rebase => "Rebase",
         }
     }
+}
 
-    pub fn as_api_str(self) -> &'static str {
-        match self {
-            Self::Merge => "merge",
-            Self::Squash => "squash",
-            Self::Rebase => "rebase",
+/// What a merge without a method flag does: GitLab projects whose merge
+/// method is fast-forward only fast-forward their target branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlainMerge {
+    MergeCommit,
+    FastForward,
+    /// A merge spanning projects that disagree.
+    Mixed,
+}
+
+/// The merge methods a project accepts and the one a merge preselects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeMethods {
+    allowed: Vec<MergeMethod>,
+    preferred: MergeMethod,
+    plain_merge: PlainMerge,
+    /// GitLab projects that always squash do so whatever a merge asks for.
+    squashes_every_merge: bool,
+}
+
+impl MergeMethods {
+    /// `None` when `allowed` is empty. `allowed` is kept in
+    /// [`MergeMethod::ALL`] order; a `preferred` method the project does not
+    /// allow falls back to Squash, then to the first allowed one.
+    pub fn new(allowed: &[MergeMethod], preferred: Option<MergeMethod>) -> Option<Self> {
+        let allowed: Vec<MergeMethod> = MergeMethod::ALL
+            .into_iter()
+            .filter(|method| allowed.contains(method))
+            .collect();
+        let preferred = preferred
+            .filter(|method| allowed.contains(method))
+            .or_else(|| {
+                allowed
+                    .contains(&MergeMethod::Squash)
+                    .then_some(MergeMethod::Squash)
+            })
+            .or_else(|| allowed.first().copied())?;
+        Some(Self {
+            allowed,
+            preferred,
+            plain_merge: PlainMerge::MergeCommit,
+            squashes_every_merge: false,
+        })
+    }
+
+    pub fn with_plain_merge(self, plain_merge: PlainMerge) -> Self {
+        Self {
+            plain_merge,
+            ..self
         }
+    }
+
+    pub fn squashing_every_merge(self) -> Self {
+        Self {
+            squashes_every_merge: true,
+            ..self
+        }
+    }
+
+    /// Whether every merge squashes whatever method it picks, so the MR's own
+    /// squash flag decides nothing.
+    pub fn squashes_every_merge(&self) -> bool {
+        self.squashes_every_merge
+    }
+
+    pub fn allowed(&self) -> &[MergeMethod] {
+        &self.allowed
+    }
+
+    pub fn preferred(&self) -> MergeMethod {
+        self.preferred
+    }
+
+    /// The name the merge form gives `method` for these projects.
+    pub fn label(&self, method: MergeMethod) -> &'static str {
+        match (method, self.plain_merge) {
+            (MergeMethod::Merge, PlainMerge::FastForward) => "Fast-forward",
+            (MergeMethod::Merge, PlainMerge::Mixed) => "Merge commit or fast-forward",
+            (MergeMethod::Rebase, _) if self.squashes_every_merge => "Rebase and squash",
+            _ => method.label(),
+        }
+    }
+
+    /// The methods both accept, for a merge spanning several projects.
+    /// `None` when they share none. It squashes every merge only when both
+    /// projects do.
+    pub fn intersect(&self, other: &MergeMethods) -> Option<Self> {
+        let shared: Vec<MergeMethod> = self
+            .allowed
+            .iter()
+            .copied()
+            .filter(|method| other.allowed.contains(method))
+            .collect();
+        let plain_merge = if self.plain_merge == other.plain_merge {
+            self.plain_merge
+        } else {
+            PlainMerge::Mixed
+        };
+        Self::new(&shared, Some(self.preferred)).map(|methods| Self {
+            plain_merge,
+            squashes_every_merge: self.squashes_every_merge && other.squashes_every_merge,
+            ..methods
+        })
     }
 }
 

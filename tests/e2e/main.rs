@@ -12,6 +12,7 @@ mod config;
 mod custom_keybindings;
 mod edit_people;
 mod environments;
+mod gitlab_merge;
 mod group_scope_actions;
 mod job_trace;
 mod keybindings;
@@ -34,6 +35,7 @@ mod state_filter;
 mod tabs;
 mod todos;
 mod unhandled_calls;
+mod viewed_files;
 mod workspace;
 
 // Declarations of libc functions

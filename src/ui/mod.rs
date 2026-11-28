@@ -1,6 +1,6 @@
 pub mod compaction;
 mod diff;
-mod form;
+pub(crate) mod form;
 mod helpers;
 pub(crate) mod inspector;
 pub mod job_trace;
@@ -26,15 +26,13 @@ use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestio
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
+pub(crate) use self::overlays::{SAVE_MENU_CHOICES, date_picker_day_at, date_picker_month_cells};
 use crate::app::{App, DiffLine, Tab};
 use crate::config::Theme;
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{sanitize_untrusted, truncate};
 use std::collections::HashSet;
 use std::sync::Arc;
-
-/// Rows a modal gives to a notice about its own request, below its content.
-pub const MODAL_NOTICE_ROWS: u16 = 1;
 
 /// Render the active edit/create menu as an interactive inspector into the
 /// (full-zoom) detail pane — the same pane the read-only preview uses. Returns
@@ -802,13 +800,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let files_list = if file_tree_visible {
                 let (reviewed_count, total_files) = diff_view.review_progress();
-                let files_title = if reviewed_count > 0 {
+                let changed_count = diff_view.changed_since_review.len();
+                let changed_suffix = if changed_count > 0 {
+                    format!(" {} {}", icons.file_changed_since_review, changed_count)
+                } else {
+                    String::new()
+                };
+                let files_title = if reviewed_count > 0 || changed_count > 0 {
                     format!(
-                        " {} {} {}/{}{} ",
+                        " {} {} {}/{}{}{} ",
                         icons.label_files,
                         ctx.icons.file_reviewed,
                         reviewed_count,
                         total_files,
+                        changed_suffix,
                         if diff_view.hide_reviewed {
                             " (hidden)"
                         } else {
@@ -844,6 +849,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     } else if node.is_reviewed {
                         format!("{} ", ctx.icons.file_reviewed)
+                    } else if node
+                        .file_path
+                        .as_ref()
+                        .is_some_and(|p| diff_view.changed_since_review.contains(p))
+                    {
+                        format!("{} ", ctx.icons.file_changed_since_review)
                     } else {
                         "  ".to_string()
                     };
@@ -2146,7 +2157,7 @@ diff --git a/a.rs b/a.rs
             is_loading: false,
             entity_iid: 7,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
             request: Some(request),

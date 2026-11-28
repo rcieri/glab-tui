@@ -265,17 +265,23 @@ pub fn handle_key(
             if !diff_view.focus_on_files {
                 diff_view.update_selected_file_from_cursor();
             }
-            let target = {
-                let paths = diff_view.selected_file_paths();
-                if paths.len() == 1 {
-                    paths[0].clone()
-                } else {
-                    format!("{} files", paths.len())
-                }
+            let paths = diff_view.selected_file_paths();
+            let target = if paths.len() == 1 {
+                paths[0].clone()
+            } else {
+                format!("{} files", paths.len())
             };
             if let Some((_, marked)) = diff_view.toggle_reviewed() {
-                app.store_reviewed_files_for_mr(diff_view.mr_iid, &diff_view.reviewed_files);
-                crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                app.store_review_marks(
+                    &diff_view.project_path,
+                    diff_view.mr_iid,
+                    diff_view.review_marks(),
+                );
+                if let Some(pull_request_id) = diff_view.pull_request_id.clone()
+                    && app.queue_viewed_sync(&pull_request_id, &paths, marked)
+                {
+                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id, tx.clone());
+                }
                 let (reviewed, total) = diff_view.review_progress();
                 app.show_notice(format!(
                     "{} {} ({}/{} reviewed)",

@@ -9,6 +9,10 @@ use crate::handlers::tabs::{
 use crate::keybinding::KeyPress;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Reached only if `merge_blocker` let Submit through without a picked
+/// method, which the dialog has already been popped for.
+const NO_MERGE_METHOD: &str = "No merge method is picked";
+
 pub fn handle_submit_dialog(
     app: &mut App,
     key_event: &KeyPress,
@@ -56,7 +60,8 @@ pub fn click_submit_dialog(
     apply_form_action(app, action, tx, fx);
 }
 
-/// Every outcome but a button press or Cancel keeps the dialog open.
+/// Every outcome but a button press or Cancel keeps the dialog open, and so
+/// does Submit while the merge has no method to merge with.
 fn apply_form_action(
     app: &mut App,
     action: FormAction,
@@ -74,6 +79,12 @@ fn apply_form_action(
             app.pop_submit_dialog();
         }
         FormAction::Activate(button) => {
+            if button == SubmitDialog::SUBMIT_BUTTON_INDEX
+                && let Some(blocker) = app.submit_dialog().and_then(SubmitDialog::merge_blocker)
+            {
+                app.show_error(blocker);
+                return;
+            }
             let Some(dialog) = app.pop_submit_dialog() else {
                 return;
             };
@@ -124,17 +135,34 @@ fn run_dialog_choice(
     app.close_diff_view();
 }
 
-/// The PRs among `items` (project path, number) that sit in a stack, which
-/// only the stack merge can merge. A failed lookup leaves a project's PRs to
-/// the plain merge, whose error then names the problem.
+/// One MR of a bulk merge, captured before its row leaves the list.
+struct BulkMergeItem {
+    project: String,
+    iid: u64,
+    /// The head commit the merge must find.
+    sha: Option<String>,
+    squashes_every_merge: bool,
+}
+
+/// Whether `project` squashes whatever merge method it is asked for, which
+/// decides whether its merges leave the MR's own squash flag alone.
+fn squashes_every_merge(app: &App, project: &str) -> bool {
+    app.merge_methods
+        .get(project)
+        .is_some_and(crate::domain::mr::MergeMethods::squashes_every_merge)
+}
+
+/// The PRs among `items` that sit in a stack, as (project path, number),
+/// which only the stack merge can merge. A failed lookup leaves a project's
+/// PRs to the plain merge, whose error then names the problem.
 async fn stacked_prs(
     client: &crate::domain::client::GitlabClient,
-    items: &[(String, u64, Option<String>)],
+    items: &[BulkMergeItem],
 ) -> std::collections::HashSet<(String, u64)> {
     let mut by_project: std::collections::HashMap<&str, Vec<u64>> =
         std::collections::HashMap::new();
-    for (project, iid, _) in items {
-        by_project.entry(project).or_default().push(*iid);
+    for item in items {
+        by_project.entry(&item.project).or_default().push(item.iid);
     }
     let mut stacked = std::collections::HashSet::new();
     for (project, iids) in by_project {
@@ -144,13 +172,15 @@ async fn stacked_prs(
     }
     stacked
 }
-/// Runs `confirm_action` against `project_path`, the project the dialog was
-/// opened for, never one re-resolved from the iid.
+
+/// Runs the dialog's action against its `project_path`, the project the
+/// dialog was opened for, never one re-resolved from the iid. `merge` is
+/// `None` for actions that do not merge.
 fn run_submit_action(
     app: &mut App,
     confirm_action: crate::app::ConfirmAction,
     project_path: String,
-    merge: MergeChoices,
+    merge: Option<MergeChoices>,
     tx: UnboundedSender<Event>,
     fx: &mut Effects,
 ) {
@@ -183,7 +213,7 @@ fn run_submit_action(
             if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "closed".to_string();
             }
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
             let tx2 = tx.clone();
             fx.spawn(async move {
@@ -211,7 +241,7 @@ fn run_submit_action(
             if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "active".to_string();
             }
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
             let tx2 = tx.clone();
             fx.spawn(async move {
@@ -427,6 +457,10 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
+            let Some(merge) = merge else {
+                app.show_error(NO_MERGE_METHOD.to_string());
+                return;
+            };
             // Capture the source-branch head SHA before removing the row so
             // `glab mr merge --sha=<sha>` can satisfy GitLab 19.2+ merge
             // requirements (#470). Pre-19.2 instances ignore it; GitHub's
@@ -435,14 +469,14 @@ fn run_submit_action(
                 .mr_index(&project_path, iid)
                 .and_then(|pos| app.mrs.items.remove(pos).sha);
             app.update_filter_selection();
+            let squashes_every_merge = squashes_every_merge(app, &project_path);
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
             let tx2 = tx.clone();
             fx.spawn(async move {
-                let result = client
-                    .merge_mr(&project_path, iid, &merge.options(mr_sha.as_deref()))
-                    .await;
+                let options = merge.options(mr_sha.as_deref(), squashes_every_merge);
+                let result = client.merge_mr(&project_path, iid, &options).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
                     result
@@ -460,7 +494,10 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeStack(pr_number) => {
-            let method = merge.method;
+            let Some(MergeChoices { method, .. }) = merge else {
+                app.show_error(NO_MERGE_METHOD.to_string());
+                return;
+            };
             let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
                 Some(crate::domain::mr::StackLookup::Full(stack)) => {
                     stack.downstack_open_entries().map(|e| e.number).collect()
@@ -483,10 +520,13 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
+            let Some(merge) = merge else {
+                app.show_error(NO_MERGE_METHOD.to_string());
+                return;
+            };
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
-            let mut items_with_sha: Vec<(String, u64, Option<String>)> =
-                Vec::with_capacity(items.len());
+            let mut merge_items: Vec<BulkMergeItem> = Vec::with_capacity(items.len());
             for (project_path, mr_iid) in &items {
                 let sha = app
                     .mrs
@@ -497,12 +537,13 @@ fn run_submit_action(
                             && (project_path.is_empty() || m.project_path == *project_path)
                     })
                     .and_then(|m| m.sha.clone());
-                let project = if project_path.is_empty() {
-                    app.scope.as_str().to_string()
-                } else {
-                    project_path.clone()
-                };
-                items_with_sha.push((project, *mr_iid, sha));
+                let project = app.scope.project_of(project_path).to_string();
+                merge_items.push(BulkMergeItem {
+                    squashes_every_merge: squashes_every_merge(app, &project),
+                    project,
+                    iid: *mr_iid,
+                    sha,
+                });
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
                 }) {
@@ -516,21 +557,22 @@ fn run_submit_action(
             let tx2 = tx.clone();
             let total = items.len();
             fx.spawn(async move {
-                let stacked = stacked_prs(&client, &items_with_sha).await;
+                let stacked = stacked_prs(&client, &merge_items).await;
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (proj, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
+                for (i, item) in merge_items.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
-                    let result = if stacked.contains(&(proj.clone(), mr_iid)) {
-                        client.merge_pr_stack(&proj, mr_iid, merge.method).await
-                    } else {
+                    let result = if stacked.contains(&(item.project.clone(), item.iid)) {
                         client
-                            .merge_mr(&proj, mr_iid, &merge.options(sha.as_deref()))
+                            .merge_pr_stack(&item.project, item.iid, merge.method)
                             .await
+                    } else {
+                        let options = merge.options(item.sha.as_deref(), item.squashes_every_merge);
+                        client.merge_mr(&item.project, item.iid, &options).await
                     };
                     if let Err(e) = result {
-                        failures.push((mr_iid, e.to_string()));
+                        failures.push((item.iid, e.to_string()));
                     }
                 }
                 let _ = tx2.send(Event::CommandCompleted(

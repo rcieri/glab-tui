@@ -295,6 +295,11 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # theme palette.
 # fetch_label_colors = true
 
+# Sync files marked as reviewed (`m` in the diff view) with your GitHub
+# "Viewed" checkboxes. Writes visible state to your GitHub account; set to
+# false to keep marks local. No effect on GitLab, which has no API for it.
+# sync_viewed_files = true
+
 # Icon glyphs. "nerd" (default) needs a Nerd Font in the terminal; without one
 # the glyphs fall back to other fonts, often double-width, and borders and
 # columns drift out of line. "ascii" draws every icon as one ASCII character.
@@ -738,7 +743,9 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Ctrl+p` | Previous search match | `search_previous` |
 | `?` / `F1` | Show help | `global.help` |
 
-**Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` and restored the next time you open the same diff (files that are no longer part of the diff are dropped). They are local to `glab-tui` — GitLab's own "viewed" checkboxes are not synced.
+**Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` together with a fingerprint of each file's diff, and restored the next time you open the same diff: a file whose diff changed since you marked it (a new push, or a rebase that moved its hunks) comes back unreviewed with a "changed since review" indicator (`~` with `icons = "ascii"`), counted in the tree header, while untouched files keep their mark. Files that are no longer part of the diff are dropped. Marks saved by versions before the fingerprint existed are dropped once, since the version they covered is unknown.
+
+**GitHub "Viewed" sync.** On GitHub, marks are your pull request's "Viewed" checkboxes: opening a diff loads their state alongside the diff and the comments, `m` updates GitHub in the background (rapid toggles are batched, a directory goes out in batches of up to 50 files), and a failed update reverts the mark with an error toast. Files GitHub reports as changed since you viewed them show the "changed since review" indicator and stay visible under `M`. Local marks are never uploaded on their own. When GitHub's viewed state can't be loaded (an SSO-protected organization, a token missing a scope), an error toast says so and the local marks apply. Marks made then stay local, and the next open that does load GitHub's state replaces them with it. Set `sync_viewed_files = false` to keep marks local. GitLab has no API for its "Viewed" checkboxes (they live in the browser's storage), so marks there are always local.
 
 **Review threads overview.** Inline comments only appear under a line that is still in the diff, so plain MR/PR comments and threads whose line was rebased away are otherwise invisible. Press `T` to list every thread with its status (`UNRESOLVED` / `RESOLVED`), its location (`file:line`, `GENERAL`, or `OUTDATED`), the author, an excerpt, its age and the reply count; the lower pane shows the full thread. `j`/`k` move and wrap around at either end like the other lists, `Ctrl+d`/`Ctrl+u` move half a page, `g`/`G` jump to the first/last thread, `u` narrows the list to unresolved threads, `J`/`K` scroll the thread, `Enter` jumps the diff cursor to the thread's line (or to its file when the line is gone), `a` opens the usual reply / resolve / edit / delete actions, and `Esc` closes it. Jumping to a file you marked as reviewed unfolds its directory, and if `M` was hiding it, reviewed files are shown again. On GitHub the overview also lists the PR's conversation comments and the summary of every review submitted with a body, as `GENERAL` threads ordered by creation time. A review summary carries its verdict as a badge (`APPROVED`, `CHANGES REQUESTED`, `COMMENTED`, `DISMISSED`). Neither can be replied to or resolved: `a` offers edit and delete for a conversation comment, and nothing for a review summary.
 
@@ -1067,7 +1074,7 @@ src/
 
 ```sh
 just test       # unit tests
-just check      # fmt check, clippy, unit tests and e2e tests
+just check      # AGENTS.md size check, fmt check, clippy, unit tests and e2e tests
 ```
 
 Unit tests live in several modules:
@@ -1105,7 +1112,7 @@ The repository includes `rust-toolchain.toml` to automatically pin the Rust vers
 A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 
 ```sh
-just check      # runs fmt check, clippy, unit tests, and e2e tests (mirrors CI)
+just check      # runs the AGENTS.md size check, fmt check, clippy, unit tests and e2e tests (mirrors CI)
 ```
 
 Available recipes:
@@ -1118,7 +1125,8 @@ Available recipes:
 - `just e2e` — run the e2e mock suite, one process per test (`cargo nextest run --test e2e --no-fail-fast`, requires `cargo-nextest`)
 - `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
 - `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
-- `just check` — run the recipes CI's Rustfmt, Clippy and Test jobs run (`fmt-check`, `lint`, `test`, `e2e`)
+- `just agents-md-size` — check that `AGENTS.md` stays within the ceiling in `scripts/check-agents-md-size.sh`
+- `just check` — run the recipes CI's AGENTS.md size, Rustfmt, Clippy and Test jobs run (`agents-md-size`, `fmt-check`, `lint`, `test`, `e2e`)
 - `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 
 

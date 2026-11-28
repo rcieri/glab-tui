@@ -196,7 +196,7 @@ mod tests {
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels),
             multi_select: true,
             state: ratatui::widgets::ListState::default(),
             request: None,
@@ -426,7 +426,8 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.hide_reviewed_files = true;
         if let Some(diff_view) = app.diff_view_mut() {
             diff_view.restore_review_state(
-                std::collections::HashSet::from(["src/lib.rs".to_string()]),
+                &diff_view.marks_on_this_diff(&["src/lib.rs"]),
+                None,
                 true,
             );
         }
@@ -475,7 +476,10 @@ diff --git a/src/lib.rs b/src/lib.rs
         );
 
         let selector = app.selector().expect("a opens the comment picker");
-        assert_eq!(selector.field_type, "comment_select");
+        assert_eq!(
+            selector.purpose,
+            crate::app::SelectorPurpose::CommentChoice { mr_iid: 7 }
+        );
         assert_eq!(selector.all_items.len(), 2);
         assert_eq!(selector.cursor_idx, 0);
 
@@ -563,6 +567,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     fn saved_drafts(app: &App, project_path: &str, mr_iid: u64) -> Vec<String> {
         crate::utils::cache::load_cache(app.scope.as_str())
+            .prefs
             .draft_comments
             .get(project_path)
             .and_then(|drafts| drafts.get(&mr_iid))

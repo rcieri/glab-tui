@@ -14,4 +14,5 @@ pub mod review;
 pub mod review_threads;
 pub mod runners;
 pub mod state_query;
+pub mod viewed_files;
 pub mod workflow_inputs;

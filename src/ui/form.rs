@@ -1,17 +1,21 @@
-//! Draws a [`Form`]: title, body, button row and key footer inside one frame.
+//! Draws a [`Form`]: title, body, notice, button row and key footer inside
+//! one frame.
 //!
-//! The title, the buttons and the footer are laid out first and always keep
-//! their rows. The body gets what is left, and the compaction steps of
-//! [`Compaction`] are applied in order until it fits. When even the most
-//! compact body is taller than its rows, it scrolls to keep the focus visible.
+//! The title, the notice, the buttons and the footer are laid out first and
+//! always keep their rows. The body gets what is left, and the compaction
+//! steps of [`Compaction`] are applied in order until it fits. When even the
+//! most compact body is taller than its rows, it scrolls to keep the focus
+//! visible. [`GroupKind::Custom`] regions sized by share or fill take the
+//! rows the rest of the body leaves.
 
 use super::diff::centered_rect_fixed;
 use super::modal::{button_style, clear_area};
 use crate::config::{Icons, Theme};
 use crate::form::{
     ButtonTone, ClickTarget, Focus, Form, FormLayout, FormTone, Group, GroupKind, GroupPath,
-    ItemList, LineInput, ListEntry, NoteLevel, Preview, Progress, Radio, Toggles,
+    ItemList, LineInput, ListEntry, NoteLevel, Preview, Progress, Radio, Rows, Toggles,
 };
+use crate::notice::{Notice, NoticeLevel};
 use crate::ui::render_ctx::RenderCtx;
 use crate::utils::format::{displayable, sanitize_untrusted, wrap_ranges};
 use ratatui::{
@@ -24,6 +28,64 @@ use ratatui::{
 };
 use std::ops::Range;
 
+/// One axis of a form's outer size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Extent {
+    Fixed(u16),
+    /// This share of the screen, never below `min`.
+    Percent {
+        percent: u16,
+        min: u16,
+    },
+    /// What the body needs: [`FORM_WIDTH`] across, the body's rows down.
+    Content,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FormSize {
+    pub width: Extent,
+    pub height: Extent,
+}
+
+impl FormSize {
+    /// A dialog: [`FORM_WIDTH`] columns, as tall as its body.
+    pub const DIALOG: Self = Self {
+        width: Extent::Content,
+        height: Extent::Content,
+    };
+}
+
+/// What a form does to the screen behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Backdrop {
+    /// Its text is repainted in `backdrop_dim`, so it recedes.
+    Dimmed,
+    /// Left as drawn, for a form that previews the screen behind it.
+    Unchanged,
+}
+
+pub(crate) struct FormFrame<'a> {
+    pub title: &'a str,
+    pub size: FormSize,
+    /// The key footer; `None` takes the focused group's from the form.
+    pub hints: Option<&'a str>,
+    /// A notice about the overlay's own request, drawn above the buttons.
+    pub notice: Option<&'a Notice>,
+    pub backdrop: Backdrop,
+}
+
+impl<'a> FormFrame<'a> {
+    pub fn dialog(title: &'a str) -> Self {
+        Self {
+            title,
+            size: FormSize::DIALOG,
+            hints: None,
+            notice: None,
+            backdrop: Backdrop::Dimmed,
+        }
+    }
+}
+
 const FORM_WIDTH: u16 = 64;
 const BORDER: u16 = 1;
 const PADDING_COLUMNS: u16 = 1;
@@ -32,11 +94,21 @@ const BORDER_ROWS: u16 = 2 * CONTENT_MARGIN.vertical;
 const SEPARATOR_ROWS: u16 = 1;
 const BUTTON_ROWS: u16 = 1;
 const FOOTER_ROWS: u16 = 1;
-const CHROME_ROWS: u16 = BORDER_ROWS + SEPARATOR_ROWS + BUTTON_ROWS + FOOTER_ROWS;
 const SCREEN_MARGIN_ROWS: u16 = 2;
 const MIN_SHORT_LIST_ENTRIES: usize = 3;
 const RADIO_GAP_COLUMNS: usize = 2;
 const SECTION_INDENT: usize = 2;
+
+/// Columns a form `width` wide leaves for its content inside the border and
+/// the padding.
+pub(crate) fn text_columns(width: u16) -> u16 {
+    width.saturating_sub(2 * CONTENT_MARGIN.horizontal)
+}
+
+/// Width of a form whose content is `text` columns wide.
+pub(crate) const fn outer_columns(text: u16) -> u16 {
+    text + 2 * CONTENT_MARGIN.horizontal
+}
 
 /// The steps that shrink a body too tall for the screen, in the order they
 /// are taken. Each step keeps the ones before it.
@@ -93,6 +165,10 @@ struct BodyRow {
     line: Line<'static>,
     targets: Vec<RowTarget>,
     is_focused: bool,
+    /// The top-level group the row belongs to; `None` for a spacer.
+    group: Option<usize>,
+    /// A row of a [`GroupKind::Custom`] region, drawn by the form's owner.
+    is_region: bool,
 }
 
 impl BodyRow {
@@ -101,11 +177,21 @@ impl BodyRow {
             line,
             targets: Vec::new(),
             is_focused: false,
+            group: None,
+            is_region: false,
         }
     }
 
     fn blank() -> Self {
         Self::plain(Line::default())
+    }
+
+    fn region(group: usize) -> Self {
+        Self {
+            group: Some(group),
+            is_region: true,
+            ..Self::blank()
+        }
     }
 }
 
@@ -132,29 +218,59 @@ impl Styles {
     }
 }
 
-/// Draws `form` centred in `size` over the dimmed screen, records where its
-/// rows and buttons went for clicks and returns its frame.
+/// Draws `form` centred on `screen` over the frame's [`Backdrop`], records
+/// where it, its groups, its rows and its buttons went in [`Form::layout`]
+/// and returns its frame.
 pub(crate) fn render_form(
     f: &mut Frame,
     ctx: &RenderCtx<'_>,
+    screen: Rect,
+    frame: &FormFrame<'_>,
     form: &mut Form,
-    title: &str,
-    size: Rect,
 ) -> Rect {
-    let width = FORM_WIDTH.min(size.width);
-    let text_width = usize::from(width.saturating_sub(2 * CONTENT_MARGIN.horizontal));
-    let max_height = size
-        .height
-        .saturating_sub(SCREEN_MARGIN_ROWS)
-        .max(CHROME_ROWS)
-        .min(size.height);
-    let body_capacity = usize::from(max_height.saturating_sub(CHROME_ROWS));
+    let width = outer_extent(frame.size.width, screen.width, FORM_WIDTH);
+    let text_width = usize::from(text_columns(width));
+    let has_buttons = !form.buttons().is_empty();
+    let chrome_rows = BORDER_ROWS
+        + u16::from(frame.notice.is_some())
+        + if has_buttons {
+            SEPARATOR_ROWS + BUTTON_ROWS
+        } else {
+            0
+        }
+        + FOOTER_ROWS;
+    let height = match frame.size.height {
+        Extent::Content => screen
+            .height
+            .saturating_sub(SCREEN_MARGIN_ROWS)
+            .max(chrome_rows)
+            .min(screen.height),
+        extent => outer_extent(extent, screen.height, 0).max(chrome_rows.min(screen.height)),
+    };
+    let body_capacity = usize::from(height.saturating_sub(chrome_rows));
 
-    let rows = fitting_body(form, ctx, text_width, body_capacity);
-    let body_height = rows.len().min(body_capacity) as u16;
-    let area = centered_rect_fixed(width, CHROME_ROWS + body_height, size);
+    let flex = match frame.size.height {
+        Extent::Content => Vec::new(),
+        _ => {
+            let one_row_each: Vec<u16> = form
+                .groups()
+                .iter()
+                .map(|group| u16::from(is_flexible(group)))
+                .collect();
+            let natural = fitting_body(form, ctx, text_width, body_capacity, &one_row_each);
+            flexible_rows(form.groups(), body_capacity, natural.len())
+        }
+    };
+    let rows = fitting_body(form, ctx, text_width, body_capacity, &flex);
+    let body_height = match frame.size.height {
+        Extent::Content => rows.len().min(body_capacity),
+        _ => body_capacity,
+    } as u16;
+    let area = centered_rect_fixed(width, chrome_rows + body_height, screen);
 
-    dim_backdrop(f.buffer_mut(), size, area, ctx.theme.backdrop_dim);
+    if frame.backdrop == Backdrop::Dimmed {
+        dim_backdrop(f.buffer_mut(), screen, area, ctx.theme.backdrop_dim);
+    }
     clear_area(f, ctx, area);
     let border = match form.tone() {
         FormTone::Normal => ctx.theme.border_focused,
@@ -162,7 +278,7 @@ pub(crate) fn render_form(
     };
     f.render_widget(
         Block::default()
-            .title(format!(" {} ", sanitize_untrusted(title)))
+            .title(format!(" {} ", sanitize_untrusted(frame.title)))
             .title_style(
                 Style::default()
                     .fg(ctx.theme.header_fg)
@@ -174,15 +290,17 @@ pub(crate) fn render_form(
         area,
     );
 
-    let [body_area, separator, buttons_area, footer_area] = Layout::vertical([
+    let [body_area, notice_area, separator, buttons_area, footer_area] = Layout::vertical([
         Constraint::Length(body_height),
-        Constraint::Length(SEPARATOR_ROWS),
-        Constraint::Length(BUTTON_ROWS),
+        Constraint::Length(u16::from(frame.notice.is_some())),
+        Constraint::Length(if has_buttons { SEPARATOR_ROWS } else { 0 }),
+        Constraint::Length(if has_buttons { BUTTON_ROWS } else { 0 }),
         Constraint::Length(FOOTER_ROWS),
     ])
     .areas(area.inner(CONTENT_MARGIN));
 
     let mut targets = Vec::new();
+    let mut groups = vec![Rect::default(); form.groups().len()];
     form.scroll = scroll_to_focus(form.scroll, &rows, usize::from(body_height));
     for (offset, row) in rows
         .into_iter()
@@ -195,6 +313,13 @@ pub(crate) fn render_form(
             height: 1,
             ..body_area
         };
+        if let Some(rect) = row.group.and_then(|index| groups.get_mut(index)) {
+            *rect = if rect.is_empty() {
+                row_area
+            } else {
+                rect.union(row_area)
+            };
+        }
         targets.extend(row.targets.iter().map(
             |&RowTarget {
                  column,
@@ -213,40 +338,101 @@ pub(crate) fn render_form(
                 )
             },
         ));
-        f.render_widget(Paragraph::new(row.line), row_area);
+        if !row.is_region {
+            f.render_widget(Paragraph::new(row.line), row_area);
+        }
     }
 
-    f.render_widget(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(ctx.theme.border)),
-        separator,
-    );
-    render_buttons(f, ctx, form, buttons_area, &mut targets);
-    f.render_widget(
-        Paragraph::new(footer_line(
-            form,
-            &ctx.theme,
-            usize::from(footer_area.width),
+    if let Some(notice) = frame.notice {
+        f.render_widget(
+            Paragraph::new(notice_line(ctx, notice)).style(Style::default().bg(ctx.theme.bg)),
+            notice_area,
+        );
+    }
+    if has_buttons {
+        f.render_widget(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(ctx.theme.border)),
+            separator,
+        );
+        render_buttons(f, ctx, form, buttons_area, &mut targets);
+    }
+    let footer = match frame.hints {
+        Some(hints) => Line::from(Span::styled(
+            hints.to_string(),
+            Style::default().fg(ctx.theme.text_muted).bg(ctx.theme.bg),
         )),
-        footer_area,
-    );
+        None => footer_line(form, &ctx.theme, usize::from(footer_area.width)),
+    };
+    f.render_widget(Paragraph::new(footer), footer_area);
 
-    form.layout = Some(FormLayout { targets });
+    form.layout = Some(FormLayout {
+        area,
+        groups,
+        targets,
+    });
     area
 }
 
+fn outer_extent(extent: Extent, available: u16, content: u16) -> u16 {
+    let wanted = match extent {
+        Extent::Fixed(size) => size,
+        Extent::Percent { percent, min } => {
+            let share = u32::from(available) * u32::from(percent) / 100;
+            u16::try_from(share).unwrap_or(u16::MAX).max(min)
+        }
+        Extent::Content => content,
+    };
+    wanted.min(available)
+}
+
+fn is_flexible(group: &Group) -> bool {
+    matches!(group.kind, GroupKind::Custom(Rows::Percent(_) | Rows::Fill))
+}
+
+/// The rows each [`GroupKind::Custom`] region sized by share or fill gets,
+/// by top-level group index. `natural` is the body with one row in each of
+/// them, so its spacers are counted; the `capacity - natural` rows left
+/// over go to the shares first, in order, then all of them to the first fill.
+fn flexible_rows(groups: &[Group], capacity: usize, natural: usize) -> Vec<u16> {
+    let mut left = u16::try_from(capacity.saturating_sub(natural)).unwrap_or(u16::MAX);
+    let total = u32::try_from(capacity).unwrap_or(u32::MAX);
+    let mut rows: Vec<u16> = groups.iter().map(|g| u16::from(is_flexible(g))).collect();
+    for (index, group) in groups.iter().enumerate() {
+        if let GroupKind::Custom(Rows::Percent(percent)) = group.kind {
+            let share = u16::try_from(total * u32::from(percent) / 100).unwrap_or(u16::MAX);
+            let extra = share.saturating_sub(1).min(left);
+            rows[index] += extra;
+            left -= extra;
+        }
+    }
+    for (index, group) in groups.iter().enumerate() {
+        if let GroupKind::Custom(Rows::Fill) = group.kind {
+            rows[index] += std::mem::take(&mut left);
+        }
+    }
+    rows
+}
+
 /// The body at the first compaction step that fits `capacity` rows, else
-/// at the last one, which then scrolls.
-fn fitting_body(form: &Form, ctx: &RenderCtx<'_>, width: usize, capacity: usize) -> Vec<BodyRow> {
+/// at the last one, which then scrolls. `flex` gives the rows of the
+/// regions sized by share or fill, none when empty.
+fn fitting_body(
+    form: &Form,
+    ctx: &RenderCtx<'_>,
+    width: usize,
+    capacity: usize,
+    flex: &[u16],
+) -> Vec<BodyRow> {
     let mut rows = Vec::new();
     for compaction in Compaction::ALL {
         let fit = Fit::at(compaction);
-        rows = body_rows(form, ctx, width, fit);
+        rows = body_rows(form, ctx, width, fit, flex);
         if rows.len() > capacity {
             continue;
         }
-        return with_longest_lists(form, ctx, width, capacity, fit, rows);
+        return with_longest_lists(form, ctx, width, capacity, fit, flex, rows);
     }
     rows
 }
@@ -261,6 +447,7 @@ fn with_longest_lists(
     width: usize,
     capacity: usize,
     fit: Fit,
+    flex: &[u16],
     mut rows: Vec<BodyRow>,
 ) -> Vec<BodyRow> {
     let Some(fewest) = fit.list_entries else {
@@ -277,6 +464,7 @@ fn with_longest_lists(
                 list_entries: Some(kept),
                 ..fit
             },
+            flex,
         );
         if candidate.len() <= capacity {
             (fitting, rows) = (kept, candidate);
@@ -329,52 +517,88 @@ fn dim_backdrop(buffer: &mut Buffer, screen: Rect, form_area: Rect, color: Color
     }
 }
 
-fn body_rows(form: &Form, ctx: &RenderCtx<'_>, width: usize, fit: Fit) -> Vec<BodyRow> {
+fn body_rows(
+    form: &Form,
+    ctx: &RenderCtx<'_>,
+    width: usize,
+    fit: Fit,
+    flex: &[u16],
+) -> Vec<BodyRow> {
     let compaction = fit.compaction;
     let styles = Styles::new(&ctx.theme);
     let mut rows = Vec::new();
     for (index, group) in form.groups().iter().enumerate() {
+        let path = GroupPath::top(index);
+        let mut group_body = match &group.kind {
+            GroupKind::Collapsible(section) => {
+                section_rows(form, index, section, ctx, &styles, width, fit)
+            }
+            GroupKind::Custom(region) => {
+                let height = match region {
+                    Rows::Fixed(rows) => *rows,
+                    Rows::Percent(_) | Rows::Fill => flex.get(index).copied().unwrap_or(0),
+                };
+                (0..height).map(|_| BodyRow::region(index)).collect()
+            }
+            _ => group_rows(form, path, group, ctx, &styles, width, fit),
+        };
+        if group_body.is_empty() {
+            continue;
+        }
         if compaction == Compaction::Roomy && !rows.is_empty() {
             rows.push(BodyRow::blank());
         }
-        let path = GroupPath::top(index);
-        let GroupKind::Collapsible(section) = &group.kind else {
-            rows.extend(group_rows(form, path, group, ctx, &styles, width, fit));
-            continue;
+        for row in &mut group_body {
+            row.group = Some(index);
+        }
+        rows.append(&mut group_body);
+    }
+    rows
+}
+
+/// A collapsible section's header, then its groups while it is expanded.
+fn section_rows(
+    form: &Form,
+    index: usize,
+    section: &crate::form::Collapsible,
+    ctx: &RenderCtx<'_>,
+    styles: &Styles,
+    width: usize,
+    fit: Fit,
+) -> Vec<BodyRow> {
+    let path = GroupPath::top(index);
+    let has_focus = matches!(
+        form.focus(),
+        Focus::Group(focused) | Focus::Editing(focused) if focused.index == index
+    );
+    let is_expanded =
+        section.is_expanded && (fit.compaction < Compaction::FoldedSections || has_focus);
+    let mut rows = vec![section_header(
+        form,
+        path,
+        section,
+        is_expanded,
+        ctx.icons,
+        styles,
+    )];
+    if !is_expanded {
+        return rows;
+    }
+    for (child, group) in section.groups.iter().enumerate() {
+        let path = GroupPath {
+            index,
+            child: Some(child),
         };
-        let has_focus = matches!(
-            form.focus(),
-            Focus::Group(focused) | Focus::Editing(focused) if focused.index == index
-        );
-        let is_expanded =
-            section.is_expanded && (compaction < Compaction::FoldedSections || has_focus);
-        rows.push(section_header(
+        let child_rows = group_rows(
             form,
             path,
-            section,
-            is_expanded,
-            ctx.icons,
-            &styles,
-        ));
-        if !is_expanded {
-            continue;
-        }
-        for (child, group) in section.groups.iter().enumerate() {
-            let path = GroupPath {
-                index,
-                child: Some(child),
-            };
-            let child_rows = group_rows(
-                form,
-                path,
-                group,
-                ctx,
-                &styles,
-                width.saturating_sub(SECTION_INDENT),
-                fit,
-            );
-            rows.extend(child_rows.into_iter().map(indent));
-        }
+            group,
+            ctx,
+            styles,
+            width.saturating_sub(SECTION_INDENT),
+            fit,
+        );
+        rows.extend(child_rows.into_iter().map(indent));
     }
     rows
 }
@@ -421,6 +645,7 @@ fn section_header(
             target: ClickTarget::Row { path, row: 0 },
         }],
         is_focused,
+        ..BodyRow::blank()
     }
 }
 
@@ -454,6 +679,9 @@ fn group_rows(
     let mut rows = match &group.kind {
         GroupKind::Radio(radio) => radio_rows(radio, path, focus_row, ctx, styles, content_width),
         GroupKind::Toggles(toggles) => toggle_rows(toggles, path, focus_row, ctx.icons, styles),
+        GroupKind::LineInput(input) if input.is_wrapped => {
+            wrapped_input_rows(input, path, form.focus(), ctx, content_width)
+        }
         GroupKind::LineInput(input) => vec![line_input_row(
             input,
             path,
@@ -488,7 +716,7 @@ fn group_rows(
                 .map(|row| BodyRow::plain(Line::from(Span::styled(row.to_string(), style))))
                 .collect()
         }
-        GroupKind::Collapsible(_) => Vec::new(),
+        GroupKind::Collapsible(_) | GroupKind::Custom(_) => Vec::new(),
     };
     if group.is_loading() && label.is_none() {
         rows.push(BodyRow::plain(Line::from(Span::styled(
@@ -609,6 +837,7 @@ fn radio_rows(
                 }],
                 line: Line::from(span),
                 is_focused,
+                ..BodyRow::blank()
             })
             .collect();
     }
@@ -635,6 +864,7 @@ fn radio_rows(
         line: Line::from(spans),
         targets,
         is_focused,
+        ..BodyRow::blank()
     }]
 }
 
@@ -673,6 +903,7 @@ fn toggle_rows(
                     target: ClickTarget::Row { path, row },
                 }],
                 is_focused,
+                ..BodyRow::blank()
             }
         })
         .collect()
@@ -755,7 +986,74 @@ fn line_input_row(
             target: ClickTarget::Row { path, row: 0 },
         }],
         is_focused,
+        ..BodyRow::blank()
     }
+}
+
+/// A wrapped line input as drawn: escape sequences removed, wrapped without
+/// collapsing spaces, and one column kept free for the cursor at the end of
+/// a full row.
+struct WrappedInput {
+    text: String,
+    rows: Vec<Range<usize>>,
+    /// Byte offset of the cursor in `text`.
+    cursor: usize,
+}
+
+impl WrappedInput {
+    fn new(buffer: &crate::app::TextBuffer, width: usize) -> Self {
+        let value = buffer.value();
+        let text = displayable(value);
+        let cursor = displayable(&value[..buffer.cursor_byte_offset()]).len();
+        let rows = wrap_ranges(&text, width.saturating_sub(1));
+        Self { text, rows, cursor }
+    }
+
+    fn cursor_row(&self) -> usize {
+        self.rows
+            .iter()
+            .rposition(|row| row.start <= self.cursor)
+            .unwrap_or(0)
+    }
+}
+
+/// Every row of a wrapped line input, the cursor drawn while it is typed
+/// into. The cursor's row counts as focused, so a long text scrolls to it.
+fn wrapped_input_rows(
+    input: &LineInput,
+    path: GroupPath,
+    focus: Focus,
+    ctx: &RenderCtx<'_>,
+    width: usize,
+) -> Vec<BodyRow> {
+    let wrapped = WrappedInput::new(&input.buffer, width);
+    let is_editing = focus == Focus::Editing(path);
+    let is_focused = is_editing || focus == Focus::Group(path);
+    let cursor_row = wrapped.cursor_row();
+    let style = Style::default().fg(ctx.theme.text_normal).bg(ctx.theme.bg);
+    wrapped
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let row_text = &wrapped.text[row.clone()];
+            let text = if is_editing && index == cursor_row {
+                let (head, tail) = row_text.split_at(wrapped.cursor - row.start);
+                format!("{head}{}{tail}", ctx.icons.input_cursor)
+            } else {
+                row_text.to_string()
+            };
+            BodyRow {
+                targets: vec![RowTarget {
+                    column: 0,
+                    width: width as u16,
+                    target: ClickTarget::Row { path, row: 0 },
+                }],
+                is_focused: is_focused && index == cursor_row,
+                ..BodyRow::plain(Line::from(Span::styled(text, style)))
+            }
+        })
+        .collect()
 }
 
 /// The longest end of `text` that fits in `columns` display columns.
@@ -943,6 +1241,32 @@ fn button_text(label: &str, width: usize) -> String {
     }
 }
 
+/// One row inside a form for a notice about the overlay's own request.
+fn notice_line(ctx: &RenderCtx<'_>, notice: &Notice) -> Line<'static> {
+    let theme = &ctx.theme;
+    let mut spans = match notice.level() {
+        NoticeLevel::Error => vec![Span::styled(
+            format!(
+                "{} {}",
+                ctx.icons.status_failed,
+                sanitize_untrusted(notice.text())
+            ),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        )],
+        NoticeLevel::Info => vec![Span::styled(
+            sanitize_untrusted(notice.text()).into_owned(),
+            Style::default().fg(theme.yellow),
+        )],
+    };
+    if let Some(detail) = notice.detail() {
+        spans.push(Span::styled(
+            format!(" {}", sanitize_untrusted(detail)),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    Line::from(spans)
+}
+
 /// The focused group's keys, as many as fit in `width` columns.
 fn footer_line(form: &Form, theme: &Theme, width: usize) -> Line<'static> {
     let key = Style::default()
@@ -1039,7 +1363,7 @@ mod tests {
         let icons = Icons::ascii();
         let ctx = ctx(&icons);
         let form = crowded_form();
-        let text = |compaction| rows_text(&body_rows(&form, &ctx, 60, Fit::at(compaction)));
+        let text = |compaction| rows_text(&body_rows(&form, &ctx, 60, Fit::at(compaction), &[]));
 
         assert_eq!(
             text(Compaction::Roomy),
@@ -1100,10 +1424,10 @@ mod tests {
         let mut form = crowded_form();
         let tab = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Tab);
         form.handle_key(&tab);
-        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections), &[]);
         assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
         form.handle_key(&tab);
-        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections), &[]);
         assert_eq!(
             rows.iter().position(|row| row.is_focused),
             Some(rows.len() - 1)
@@ -1118,7 +1442,7 @@ mod tests {
         form.handle_key(&crossterm::event::KeyEvent::from(
             crossterm::event::KeyCode::Char('a'),
         ));
-        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections), &[]);
         assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
     }
 
@@ -1131,7 +1455,7 @@ mod tests {
             path: GroupPath::top(2),
             row: 0,
         });
-        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections));
+        let rows = body_rows(&form, &ctx, 60, Fit::at(Compaction::FoldedSections), &[]);
         assert_eq!(rows_text(&rows)[5..], ["v Advanced  a", "  - Bypass rules"]);
     }
 
@@ -1185,9 +1509,9 @@ mod tests {
         let icons = Icons::ascii();
         let ctx = ctx(&icons);
         let form = crowded_form();
-        assert_eq!(fitting_body(&form, &ctx, 60, 10).len(), 10);
-        assert_eq!(fitting_body(&form, &ctx, 60, 7).len(), 7);
-        assert_eq!(fitting_body(&form, &ctx, 60, 3).len(), 6);
+        assert_eq!(fitting_body(&form, &ctx, 60, 10, &[]).len(), 10);
+        assert_eq!(fitting_body(&form, &ctx, 60, 7, &[]).len(), 7);
+        assert_eq!(fitting_body(&form, &ctx, 60, 3, &[]).len(), 6);
     }
 
     #[test]
@@ -1207,7 +1531,7 @@ mod tests {
             ButtonRow::single(Button::new("Cancel", ButtonTone::Neutral)),
         );
         assert_eq!(
-            rows_text(&fitting_body(&form, &ctx, 60, 8)),
+            rows_text(&fitting_body(&form, &ctx, 60, 8, &[])),
             [
                 "Merging 10 MRs",
                 "!1",
@@ -1266,7 +1590,7 @@ mod tests {
             ButtonRow::single(Button::new("Close", ButtonTone::Neutral)),
         );
         assert_eq!(
-            rows_text(&body_rows(&form, &ctx, 60, Fit::at(Compaction::Roomy))),
+            rows_text(&body_rows(&form, &ctx, 60, Fit::at(Compaction::Roomy), &[])),
             [
                 "Progress 2/3",
                 "+ !1",
@@ -1316,7 +1640,7 @@ mod tests {
             ButtonRow::single(Button::new("Cancel", ButtonTone::Neutral)),
         );
         assert_eq!(
-            rows_text(&body_rows(&form, &ctx, 60, Fit::at(Compaction::Roomy))),
+            rows_text(&body_rows(&form, &ctx, 60, Fit::at(Compaction::Roomy), &[])),
             [
                 "Delete branch".to_string(),
                 "b".repeat(60),
@@ -1378,6 +1702,16 @@ mod tests {
     }
 
     #[test]
+    fn a_wrapped_input_with_the_cursor_inside_an_escape_sequence_does_not_reveal_its_tail() {
+        let mut input = LineInput::new("ab\u{1b}[31mcd\te".into(), None);
+        for _ in 0..7 {
+            input.buffer.apply_edit_key(crossterm::event::KeyCode::Left);
+        }
+        let wrapped = WrappedInput::new(&input.buffer, 20);
+        assert_eq!((wrapped.text.as_str(), wrapped.cursor), ("abcd e", 2));
+    }
+
+    #[test]
     fn the_counter_sits_at_the_end_of_the_input_row() {
         let icons = Icons::ascii();
         let ctx = ctx(&icons);
@@ -1390,7 +1724,13 @@ mod tests {
             ButtonRow::single(Button::new("Merge", ButtonTone::Positive)),
         );
         assert_eq!(
-            rows_text(&body_rows(&form, &ctx, 30, Fit::at(Compaction::NoSpacers))),
+            rows_text(&body_rows(
+                &form,
+                &ctx,
+                30,
+                Fit::at(Compaction::NoSpacers),
+                &[]
+            )),
             ["Subject Fix               3/72"]
         );
     }
@@ -1403,7 +1743,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 9)).unwrap();
         terminal
             .draw(|f| {
-                render_form(f, &ctx, &mut form, "Merge", f.area());
+                render_form(f, &ctx, f.area(), &FormFrame::dialog("Merge"), &mut form);
             })
             .unwrap();
         let rows = buffer_rows(&terminal);
@@ -1423,7 +1763,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 9)).unwrap();
         terminal
             .draw(|f| {
-                render_form(f, &ctx, &mut form, "Delete Branch 'a\u{9b}31mb'", f.area());
+                let frame = FormFrame::dialog("Delete Branch 'a\u{9b}31mb'");
+                render_form(f, &ctx, f.area(), &frame, &mut form);
             })
             .unwrap();
         let rows = buffer_rows(&terminal);
@@ -1431,6 +1772,139 @@ mod tests {
             rows[1],
             format!("┌ Delete Branch 'ab' {}┐", "─".repeat(38)),
             "{rows:#?}"
+        );
+    }
+
+    fn draw_panel(
+        form: &mut Form,
+        size: FormSize,
+        notice: Option<&Notice>,
+    ) -> Terminal<TestBackend> {
+        let icons = Icons::ascii();
+        let ctx = ctx(&icons);
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        terminal
+            .draw(|f| {
+                let frame = FormFrame {
+                    title: "Panel",
+                    size,
+                    hints: Some("j/k move · Esc close"),
+                    notice,
+                    backdrop: Backdrop::Dimmed,
+                };
+                render_form(f, &ctx, f.area(), &frame, form);
+            })
+            .unwrap();
+        terminal
+    }
+
+    #[test]
+    fn regions_sized_by_share_and_fill_take_the_rows_the_rest_leaves() {
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::Custom(Rows::Fixed(1))),
+            Group::new(GroupKind::Custom(Rows::Percent(50))),
+            Group::new(GroupKind::Custom(Rows::Fill)),
+        ]);
+        let size = FormSize {
+            width: Extent::Fixed(40),
+            height: Extent::Fixed(16),
+        };
+        let terminal = draw_panel(&mut form, size, None);
+        let layout = form.layout.unwrap();
+        assert_eq!(layout.area.height, 16);
+        // 16 rows less border, footer: 13 body rows, 2 of them spacers.
+        let heights: Vec<u16> = layout.groups.iter().map(|rect| rect.height).collect();
+        assert_eq!(heights, [1, 6, 4]);
+        assert_eq!(layout.groups[1].y, layout.groups[0].bottom() + 1);
+        assert!(buffer_rows(&terminal)[layout.area.bottom() as usize - 2].contains("j/k move"));
+    }
+
+    #[test]
+    fn a_fill_region_before_toggles_leaves_every_toggle_its_row() {
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::Custom(Rows::Fill)),
+            Group::new(GroupKind::Toggles(Toggles::new(vec![
+                Toggle::new("Flag", false),
+                Toggle::new("Flag", false),
+            ]))),
+        ]);
+        let size = FormSize {
+            width: Extent::Fixed(40),
+            height: Extent::Fixed(10),
+        };
+        draw_panel(&mut form, size, None);
+        let layout = form.layout.unwrap();
+        // 10 rows less border, footer: 7 body rows, 1 of them a spacer.
+        let heights: Vec<u16> = layout.groups.iter().map(|rect| rect.height).collect();
+        assert_eq!(heights, [4, 2]);
+        assert_eq!(layout.groups[1].y, layout.groups[0].bottom() + 1);
+    }
+
+    #[test]
+    fn a_panel_sized_to_its_content_gives_a_fill_region_no_rows() {
+        let mut form = Form::panel(vec![
+            Group::note(NoteLevel::Info, "body"),
+            Group::new(GroupKind::Custom(Rows::Fill)),
+        ]);
+        let size = FormSize {
+            width: Extent::Fixed(40),
+            height: Extent::Content,
+        };
+        draw_panel(&mut form, size, None);
+        let layout = form.layout.unwrap();
+        assert_eq!(layout.groups[1].height, 0);
+        assert_eq!(layout.area.height, 2 + 1 + 1);
+    }
+
+    #[test]
+    fn the_notice_gets_its_own_row_below_the_body() {
+        let mut form = Form::panel(vec![Group::new(GroupKind::Custom(Rows::Fixed(2)))]);
+        let notice = Notice::error("Could not load the labels");
+        let size = FormSize {
+            width: Extent::Fixed(40),
+            height: Extent::Content,
+        };
+        let terminal = draw_panel(&mut form, size, Some(&notice));
+        let layout = form.layout.unwrap();
+        let notice_row = layout.groups[0].bottom();
+        assert!(
+            buffer_rows(&terminal)[usize::from(notice_row)].contains("Could not load the labels")
+        );
+    }
+
+    #[test]
+    fn a_wrapped_line_input_keeps_its_spaces_and_wraps_a_long_word_with_the_cursor_shown() {
+        const INPUT: crate::form::GroupId = crate::form::GroupId("input");
+        let value = format!("a   b {}", "x".repeat(40));
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::LineInput(LineInput::new(value, None).wrapped())).with_id(INPUT),
+        ]);
+        form.edit(INPUT);
+        let size = FormSize {
+            width: Extent::Fixed(40),
+            height: Extent::Content,
+        };
+        let terminal = draw_panel(&mut form, size, None);
+        let input = form.layout.unwrap().groups[0];
+        let rows: Vec<String> = buffer_rows(&terminal)
+            [usize::from(input.y)..usize::from(input.bottom())]
+            .iter()
+            .map(|row| {
+                row.chars()
+                    .skip(usize::from(input.x))
+                    .take(usize::from(input.width))
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "a   b".to_string(),
+                "x".repeat(35),
+                format!("{}{}", "x".repeat(5), Icons::ascii().input_cursor),
+            ]
         );
     }
 }

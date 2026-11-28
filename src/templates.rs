@@ -1,13 +1,31 @@
-pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
+/// The template picker's entry that leaves the description empty.
+pub const BLANK_TEMPLATE_CHOICE: &str = "-- (blank)";
+
+/// Which description templates a template picker lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemplateKind {
+    Issue,
+    Mr,
+}
+
+impl TemplateKind {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Issue => "Issue",
+            Self::Mr => "Merge Request",
+        }
+    }
+}
+
+pub fn list_templates(kind: TemplateKind) -> Vec<(String, String)> {
     let mut templates: Vec<(String, String)> = Vec::new();
 
-    let dirs = if template_type == "issue" {
-        vec![".github/ISSUE_TEMPLATE", ".gitlab/issue_templates"]
-    } else {
-        vec![
+    let dirs = match kind {
+        TemplateKind::Issue => vec![".github/ISSUE_TEMPLATE", ".gitlab/issue_templates"],
+        TemplateKind::Mr => vec![
             ".github/PULL_REQUEST_TEMPLATE",
             ".gitlab/merge_request_templates",
-        ]
+        ],
     };
 
     for dir in &dirs {
@@ -36,18 +54,17 @@ pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
 
     // Only look for root-level template fallback if no directory templates exist
     if templates.is_empty() {
-        let paths = if template_type == "issue" {
-            vec![
+        let paths = match kind {
+            TemplateKind::Issue => vec![
                 ".github/issue_template.md",
                 ".github/ISSUE_TEMPLATE.md",
                 ".gitlab/issue_template.md",
-            ]
-        } else {
-            vec![
+            ],
+            TemplateKind::Mr => vec![
                 ".github/pull_request_template.md",
                 ".github/PULL_REQUEST_TEMPLATE.md",
                 ".gitlab/merge_request_template.md",
-            ]
+            ],
         };
 
         for path in &paths {
@@ -66,8 +83,8 @@ pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
     templates
 }
 
-pub fn get_default_template(template_type: &str) -> Option<String> {
-    let templates = list_templates(template_type);
+pub fn get_default_template(kind: TemplateKind) -> Option<String> {
+    let templates = list_templates(kind);
     if let Some((_, content)) = templates
         .iter()
         .find(|(n, _)| n.eq_ignore_ascii_case("default"))

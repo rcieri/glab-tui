@@ -3,7 +3,7 @@ use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event};
 use crate::git_helpers::get_workflow_files;
 use crate::keybinding::KeyPress;
-use crate::templates::list_templates;
+use crate::templates::{BLANK_TEMPLATE_CHOICE, list_templates};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
@@ -1664,47 +1664,33 @@ pub fn handle_key(
                 return;
             }
 
-            if field_name == "Labels"
-                || field_name == "Assignees"
-                || field_name == "Reviewers"
-                || field_name == "Milestone"
-                || field_name == "Confidential"
-                || field_name == "Status (Draft/Ready)"
-                || field_name == "Merge Request Pipeline"
-                || field_name == "Source Branch"
-                || field_name == "Target Branch"
-                || field_name == "Branch / Ref"
-                || field_name == "Create From"
-                || field_name == "Workflow File"
-                || field_name == "Tag"
-                || field_name == "Create from Issue"
-                || field_name == "Description Template"
-                || (field_name == "Project"
-                    && menu.selected_idx < menu.fields.len()
-                    && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Ref)
-                || field_name.starts_with("Input: ")
-            {
+            let is_ref_row = menu
+                .fields
+                .get(menu.selected_idx)
+                .is_some_and(|f| f.kind == crate::app::FieldType::Ref);
+            let purpose = match field_name.as_str() {
+                "Create from Issue" => Some(crate::app::SelectorPurpose::CreateMrFromIssue),
+                "Description Template" => Some(crate::app::SelectorPurpose::DescriptionTemplate {
+                    kind: menu.entity_kind.template_kind(),
+                }),
+                "Project" if !is_ref_row => None,
+                _ => crate::app::SelectorField::from_label(&field_name)
+                    .map(crate::app::SelectorPurpose::Field),
+            };
+            if let Some(purpose) = purpose {
                 let mut current_set = std::collections::HashSet::new();
-                let field_type = match field_name.as_str() {
-                    "Labels" => "labels",
-                    "Assignees" => "assignees",
-                    "Reviewers" => "reviewers",
-                    "Milestone" => "milestone",
-                    "Confidential" => "confidential",
-                    "Status (Draft/Ready)" => "draft_status",
-                    "Merge Request Pipeline" => "mr_pipeline",
-                    "Source Branch" => "source_branch",
-                    "Target Branch" => "target_branch",
-                    "Branch / Ref" => "pipeline_branch",
-                    "Create From" => "create_from",
-                    "Create from Issue" => "create_mr_from_issue",
-                    "Description Template" => "description_template",
-                    "Workflow File" => "workflow_file",
-                    "Tag" => "tag",
-                    "Project" => "project",
-                    _ => "",
+                let field = match &purpose {
+                    crate::app::SelectorPurpose::Field(field) => Some(field.clone()),
+                    _ => None,
                 };
-                let multi_select = matches!(field_type, "labels" | "assignees" | "reviewers");
+                let multi_select = matches!(
+                    field,
+                    Some(
+                        crate::app::SelectorField::Labels
+                            | crate::app::SelectorField::Assignees
+                            | crate::app::SelectorField::Reviewers
+                    )
+                );
 
                 let target_project = menu
                     .fields
@@ -1720,30 +1706,38 @@ pub fn handle_key(
                         }
                     });
                 let target_cache = if !target_project.is_empty() && target_project.contains('/') {
-                    Some(crate::utils::cache::load_cache(&target_project))
+                    Some(crate::utils::cache::load_cache(&target_project).data)
                 } else {
                     None
                 };
 
                 let mut all_items = Vec::new();
                 let mut is_loading = true;
-                let target_scope = if field_type != "project" && target_project.contains('/') {
+                let target_scope = if field != Some(crate::app::SelectorField::Project)
+                    && target_project.contains('/')
+                {
                     crate::scope::Scope::Repository(target_project.clone())
                 } else {
                     app.scope.clone()
                 };
                 let reads_checkout = matches!(
-                    field_type,
-                    "source_branch" | "target_branch" | "pipeline_branch" | "create_from" | "tag"
+                    field,
+                    Some(
+                        crate::app::SelectorField::SourceBranch
+                            | crate::app::SelectorField::TargetBranch
+                            | crate::app::SelectorField::PipelineBranch
+                            | crate::app::SelectorField::CreateFrom
+                            | crate::app::SelectorField::Tag
+                    )
                 ) && reads_checkout_refs(
                     &target_scope,
                     crate::domain::client::get_project_context().ok().as_deref(),
                 );
 
-                if field_type == "confidential" {
+                if field == Some(crate::app::SelectorField::Confidential) {
                     all_items = vec!["Public".to_string(), "Confidential".to_string()];
                     is_loading = false;
-                } else if field_type == "draft_status" {
+                } else if field == Some(crate::app::SelectorField::DraftStatus) {
                     all_items = vec!["Draft".to_string(), "Ready".to_string()];
                     is_loading = false;
                     let is_new_entity = entity_iid == 0 || entity_type.starts_with("new_");
@@ -1761,7 +1755,7 @@ pub fn handle_key(
                             "Ready".to_string()
                         });
                     }
-                } else if field_type == "mr_pipeline" {
+                } else if field == Some(crate::app::SelectorField::MrPipeline) {
                     all_items = vec!["Yes".to_string(), "No".to_string()];
                     is_loading = false;
                     let is_new_entity = entity_iid == 0 || entity_type.starts_with("new_");
@@ -1773,7 +1767,7 @@ pub fn handle_key(
                             current_set.insert("No".to_string());
                         }
                     }
-                } else if field_type == "labels" {
+                } else if field == Some(crate::app::SelectorField::Labels) {
                     if let Some(ref tc) = target_cache {
                         if !tc.labels.is_empty() {
                             all_items = tc.labels.clone();
@@ -1783,7 +1777,12 @@ pub fn handle_key(
                         all_items = app.cached_labels.clone();
                         is_loading = false;
                     }
-                } else if field_type == "assignees" || field_type == "reviewers" {
+                } else if matches!(
+                    field,
+                    Some(
+                        crate::app::SelectorField::Assignees | crate::app::SelectorField::Reviewers
+                    )
+                ) {
                     if let Some(ref tc) = target_cache {
                         if !tc.members.is_empty() {
                             all_items = tc.members.clone();
@@ -1793,7 +1792,7 @@ pub fn handle_key(
                         all_items = app.cached_members.clone();
                         is_loading = false;
                     }
-                } else if field_type == "milestone" {
+                } else if field == Some(crate::app::SelectorField::Milestone) {
                     if let Some(ref tc) = target_cache
                         && !tc.milestones.is_empty()
                     {
@@ -1822,11 +1821,15 @@ pub fn handle_key(
                             is_loading = false;
                         }
                     }
-                } else if field_type == "source_branch"
-                    || field_type == "target_branch"
-                    || field_type == "pipeline_branch"
-                    || field_type == "create_from"
-                {
+                } else if matches!(
+                    field,
+                    Some(
+                        crate::app::SelectorField::SourceBranch
+                            | crate::app::SelectorField::TargetBranch
+                            | crate::app::SelectorField::PipelineBranch
+                            | crate::app::SelectorField::CreateFrom
+                    )
+                ) {
                     let branch_names: Vec<String> = if let Some(tc) = &target_cache {
                         tc.branches.iter().map(|b| b.name.clone()).collect()
                     } else {
@@ -1836,15 +1839,9 @@ pub fn handle_key(
                             .map(|b| b.name.clone())
                             .collect()
                     };
-                    if field_type == "pipeline_branch"
-                        || field_type == "target_branch"
-                        || field_type == "source_branch"
-                        || field_type == "create_from"
-                    {
-                        let current_val = menu.fields[menu.selected_idx].value.clone();
-                        if !current_val.is_empty() {
-                            current_set.insert(current_val);
-                        }
+                    let current_val = menu.fields[menu.selected_idx].value.clone();
+                    if !current_val.is_empty() {
+                        current_set.insert(current_val);
                     }
                     if !branch_names.is_empty() {
                         all_items = branch_names;
@@ -1852,7 +1849,7 @@ pub fn handle_key(
                             is_loading = false;
                         }
                     }
-                } else if field_type == "workflow_file" {
+                } else if field == Some(crate::app::SelectorField::WorkflowFile) {
                     all_items = get_workflow_files(app.is_github());
                     is_loading = false;
                     // Pre-select any already-typed value
@@ -1880,7 +1877,7 @@ pub fn handle_key(
                     if !current_val.is_empty() {
                         current_set.insert(current_val);
                     }
-                } else if field_type == "tag" {
+                } else if field == Some(crate::app::SelectorField::Tag) {
                     all_items = app
                         .releases
                         .items()
@@ -1893,7 +1890,7 @@ pub fn handle_key(
                     if !current_val.is_empty() {
                         current_set.insert(current_val);
                     }
-                } else if field_type == "create_mr_from_issue" {
+                } else if matches!(purpose, crate::app::SelectorPurpose::CreateMrFromIssue) {
                     let issues: Vec<String> = app
                         .issues
                         .items
@@ -1903,19 +1900,15 @@ pub fn handle_key(
                         .collect();
                     all_items = issues;
                     is_loading = false;
-                } else if field_type == "description_template" {
-                    let template_type = if entity_type == "new_mr" {
-                        "mr"
-                    } else {
-                        "issue"
-                    };
-                    let templates = list_templates(template_type);
-                    let template_names: Vec<String> = std::iter::once("-- (blank)".to_string())
-                        .chain(templates.iter().map(|(n, _)| n.clone()))
-                        .collect();
+                } else if let crate::app::SelectorPurpose::DescriptionTemplate { kind } = &purpose {
+                    let templates = list_templates(*kind);
+                    let template_names: Vec<String> =
+                        std::iter::once(BLANK_TEMPLATE_CHOICE.to_string())
+                            .chain(templates.iter().map(|(n, _)| n.clone()))
+                            .collect();
                     all_items = template_names;
                     is_loading = false;
-                } else if field_type == "project" {
+                } else if field == Some(crate::app::SelectorField::Project) {
                     let mut known = Vec::new();
                     for i in &app.issues.items {
                         if !i.project_path.is_empty() {
@@ -1952,9 +1945,14 @@ pub fn handle_key(
                 if entity_iid == 0 || entity_type.starts_with("new_") {
                     let current_val = menu.fields[menu.selected_idx].value.clone();
                     if !current_val.is_empty()
-                        && field_type != "draft_status"
-                        && field_type != "mr_pipeline"
-                        && field_type != "project"
+                        && !matches!(
+                            field,
+                            Some(
+                                crate::app::SelectorField::DraftStatus
+                                    | crate::app::SelectorField::MrPipeline
+                                    | crate::app::SelectorField::Project
+                            )
+                        )
                     {
                         if multi_select {
                             for item in current_val.split(',') {
@@ -1969,18 +1967,18 @@ pub fn handle_key(
                     }
                 } else if entity_type == "issue" {
                     if let Some(issue) = app.issues.items.iter().find(|i| i.iid == entity_iid) {
-                        match field_type {
-                            "labels" => {
+                        match field {
+                            Some(crate::app::SelectorField::Labels) => {
                                 for l in &issue.labels {
                                     current_set.insert(l.clone());
                                 }
                             }
-                            "assignees" => {
+                            Some(crate::app::SelectorField::Assignees) => {
                                 for a in &issue.assignees {
                                     current_set.insert(format!("@{}", a.username));
                                 }
                             }
-                            "milestone" => {
+                            Some(crate::app::SelectorField::Milestone) => {
                                 if let Some(m) = &issue.milestone {
                                     current_set.insert(m.title.clone());
                                 }
@@ -1991,28 +1989,28 @@ pub fn handle_key(
                 } else if entity_type == "mr"
                     && let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid)
                 {
-                    match field_type {
-                        "labels" => {
+                    match field {
+                        Some(crate::app::SelectorField::Labels) => {
                             for l in &mr.labels {
                                 current_set.insert(l.clone());
                             }
                         }
-                        "assignees" => {
+                        Some(crate::app::SelectorField::Assignees) => {
                             for a in &mr.assignees {
                                 current_set.insert(format!("@{}", a.username));
                             }
                         }
-                        "reviewers" => {
+                        Some(crate::app::SelectorField::Reviewers) => {
                             for r in &mr.reviewers {
                                 current_set.insert(format!("@{}", r.username));
                             }
                         }
-                        "milestone" => {
+                        Some(crate::app::SelectorField::Milestone) => {
                             if let Some(m) = &mr.milestone {
                                 current_set.insert(m.title.clone());
                             }
                         }
-                        "target_branch" => {
+                        Some(crate::app::SelectorField::TargetBranch) => {
                             current_set.insert(mr.target_branch.clone());
                         }
                         _ => {}
@@ -2041,11 +2039,7 @@ pub fn handle_key(
                     is_loading,
                     entity_iid,
                     entity_type: entity_type.clone(),
-                    field_type: if field_name.starts_with("Input: ") {
-                        field_name.clone()
-                    } else {
-                        field_type.to_string()
-                    },
+                    purpose,
                     multi_select,
                     state: {
                         let mut s = ListState::default();
@@ -2061,18 +2055,26 @@ pub fn handle_key(
                 if let (Some(request), Some(client)) = (request, &app.gitlab_client) {
                     let client = client.clone();
                     let scope = target_scope;
-                    let field_type = field_type.to_string();
                     let tx = app.scoped_sender(tx.clone());
                     fx.spawn(async move {
-                        let res = match field_type.as_str() {
-                            "labels" => client
+                        let res = match field {
+                            Some(crate::app::SelectorField::Labels) => client
                                 .fetch_labels(&scope)
                                 .await
                                 .map(|labels| labels.into_iter().map(|l| l.name).collect()),
-                            "assignees" | "reviewers" => client.fetch_members(&scope).await,
-                            "milestone" => client.fetch_milestones(&scope).await,
-                            "source_branch" | "target_branch" | "pipeline_branch"
-                            | "create_from" => {
+                            Some(
+                                crate::app::SelectorField::Assignees
+                                | crate::app::SelectorField::Reviewers,
+                            ) => client.fetch_members(&scope).await,
+                            Some(crate::app::SelectorField::Milestone) => {
+                                client.fetch_milestones(&scope).await
+                            }
+                            Some(
+                                crate::app::SelectorField::SourceBranch
+                                | crate::app::SelectorField::TargetBranch
+                                | crate::app::SelectorField::PipelineBranch
+                                | crate::app::SelectorField::CreateFrom,
+                            ) => {
                                 let remote = client.fetch_branches(&scope).await;
                                 if reads_checkout {
                                     let local =
@@ -2082,8 +2084,12 @@ pub fn handle_key(
                                     remote
                                 }
                             }
-                            "tag" => Ok(client.list_local_tags().await.unwrap_or_default()),
-                            "project" => client.fetch_projects(&scope).await,
+                            Some(crate::app::SelectorField::Tag) => {
+                                Ok(client.list_local_tags().await.unwrap_or_default())
+                            }
+                            Some(crate::app::SelectorField::Project) => {
+                                client.fetch_projects(&scope).await
+                            }
                             _ => Ok(Vec::new()),
                         };
                         let _ = tx.send(Event::SelectorItemsFetched {
@@ -2100,31 +2106,15 @@ pub fn handle_key(
                 if entity_iid == 0 || entity_type.starts_with("new_") {
                     let raw_val = menu.fields[menu.selected_idx].value.clone();
                     if raw_val.trim().is_empty() {
-                        let template_type = if entity_type == "new_mr" {
-                            "mr"
-                        } else {
-                            "issue"
-                        };
-                        let templates = list_templates(template_type);
+                        let kind = menu.entity_kind.template_kind();
+                        let templates = list_templates(kind);
                         if !templates.is_empty() {
                             let template_names: Vec<String> =
-                                std::iter::once("-- (blank)".to_string())
+                                std::iter::once(BLANK_TEMPLATE_CHOICE.to_string())
                                     .chain(templates.iter().map(|(n, _)| n.clone()))
                                     .collect();
-                            let field_type = if entity_type == "new_mr" {
-                                "mr_template_selector"
-                            } else {
-                                "issue_template_selector"
-                            };
                             let sel = crate::app::Selector {
-                                title: format!(
-                                    " Select {} Template ",
-                                    if template_type == "mr" {
-                                        "Merge Request"
-                                    } else {
-                                        "Issue"
-                                    }
-                                ),
+                                title: format!(" Select {} Template ", kind.title()),
                                 all_items: template_names,
                                 selected_items: std::collections::HashSet::new(),
                                 cursor_idx: 0,
@@ -2133,11 +2123,7 @@ pub fn handle_key(
                                 is_loading: false,
                                 entity_iid: 0,
                                 entity_type: entity_type.clone(),
-                                field_type: if field_name.starts_with("Input: ") {
-                                    field_name.clone()
-                                } else {
-                                    field_type.to_string()
-                                },
+                                purpose: crate::app::SelectorPurpose::DescriptionTemplate { kind },
                                 multi_select: false,
                                 state: {
                                     let mut s = ListState::default();
@@ -2388,6 +2374,49 @@ mod tests {
                 ("debug".to_string(), "bool(false)".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn enter_on_a_selector_row_opens_the_picker_for_that_row() {
+        use crate::app::{EditEntityKind, EditMenu, Field, SelectorField, SelectorPurpose};
+        let rows = [
+            ("Create from Issue", SelectorPurpose::CreateMrFromIssue),
+            (
+                "Target Branch",
+                SelectorPurpose::Field(SelectorField::TargetBranch),
+            ),
+            ("Project", SelectorPurpose::Field(SelectorField::Project)),
+        ];
+        for (label, expected) in rows {
+            let mut app = App::default();
+            app.open_edit_menu(EditMenu {
+                title: "New MR".to_string(),
+                entity_project: "g/p".to_string(),
+                fields: vec![Field::ref_field(label, String::new())],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 0,
+                entity_kind: EditEntityKind::CreateMr,
+                state: ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            });
+            let tx = app.tx.clone();
+            let mut fx = Effects::default();
+            let enter = KeyPress::from(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            ));
+            handle_key(&mut app, &enter, &tx, &mut fx);
+            assert_eq!(
+                app.selector().map(|s| s.purpose.clone()),
+                Some(expected),
+                "{label}"
+            );
+        }
     }
 
     #[tokio::test]

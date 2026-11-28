@@ -46,6 +46,12 @@ if [[ -n "$TEST_GH_HANG_MATCH" && "$*" == *"$TEST_GH_HANG_MATCH"* ]]; then
     exec sleep 300
 fi
 
+# Merge settings the merge dialog reads: every method, squash preselected.
+if [[ "$*" == "repo view --json mergeCommitAllowed"* ]]; then
+    echo '{"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"SQUASH"}'
+    exit 0
+fi
+
 # The branch list: the fixture, plus the branch a `git/refs` POST created.
 branches_json() {
     if [[ -f "$LOG_FILE.created_branch" ]]; then
@@ -149,6 +155,24 @@ if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
         entries+=("\"pr_$number\":{\"number\":$number,\"stack\":$stack,\"stackEntry\":$entry}")
     done
     (IFS=,; echo "{\"data\":{\"repository\":{${entries[*]}}}}")
+    exit 0
+fi
+
+# "Viewed" checkboxes of the diff view: no file is viewed yet, and every
+# mark/unmark mutation succeeds. The reply check refuses keys the mutation
+# does not select, so answer exactly the `f<i>` aliases sent.
+if [[ "$*" == "api graphql"*"viewerViewedState"* ]]; then
+    echo '{"data":{"repository":{"pullRequest":{"id":"PR_mock","files":{
+        "pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+    exit 0
+fi
+
+if [[ "$*" == "api graphql"*"markFileAsViewed"* ]]; then
+    entries=()
+    for alias in $(grep -oE 'f[0-9]+:(un)?markFileAsViewed' <<<"$*"); do
+        entries+=("\"${alias%%:*}\":{\"clientMutationId\":null}")
+    done
+    (IFS=,; echo "{\"data\":{${entries[*]}}}")
     exit 0
 fi
 

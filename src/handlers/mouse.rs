@@ -1,4 +1,4 @@
-use crate::app::{App, SaveMenu};
+use crate::app::App;
 use crate::effect::Effects;
 use crate::event::Event;
 use tokio::sync::mpsc::UnboundedSender;
@@ -39,7 +39,7 @@ pub fn handle_mouse_event(
                     continue;
                 }
                 match kind {
-                    OverlayKind::Selector | OverlayKind::ColumnFilter => {
+                    OverlayKind::Selector => {
                         if let Some(sel) = app.selector_mut() {
                             let delta: i32 = if scroll_down { 1 } else { -1 };
                             let new_idx = (sel.cursor_idx as i32 + delta).max(0) as usize;
@@ -185,31 +185,20 @@ pub fn handle_mouse_event(
                         );
                         return;
                     }
-                    OverlayKind::ColumnFilter => {
-                        handle_selector_mouse(app, inner, row, 3, 3);
-                        return;
-                    }
                     OverlayKind::SaveMenu => {
-                        handle_save_menu_mouse(app, *rect, row, col);
+                        handle_save_menu_mouse(app, row, col);
                         return;
                     }
                     OverlayKind::Configure => {
-                        handle_configure_mouse(app, row, tx, fx);
+                        handle_configure_mouse(app, row, col, tx, fx);
                         return;
                     }
                     OverlayKind::DatePicker => {
-                        handle_date_picker_mouse(app, *rect, row, col);
+                        handle_date_picker_mouse(app, row, col);
                         return;
                     }
                     OverlayKind::Selector => {
-                        let has_search = app.selector().is_some_and(|s| s.has_filter_bar());
-                        let sr = if has_search { 3 } else { 0 };
-                        let notice_rows = if app.modal_notice().is_some() {
-                            crate::ui::MODAL_NOTICE_ROWS
-                        } else {
-                            0
-                        };
-                        handle_selector_mouse(app, inner, row, sr, 1 + notice_rows);
+                        handle_selector_mouse(app, row, col);
                         return;
                     }
                     OverlayKind::TextInput => {
@@ -234,8 +223,11 @@ pub fn handle_mouse_event(
                         return;
                     }
                     OverlayKind::Help => {
-                        // Click in search area → focus search
-                        if row >= inner.y && row < inner.y + 3 {
+                        let over_search = app
+                            .help_layout
+                            .as_ref()
+                            .is_some_and(|layout| rect_contains(layout.groups[0], row, col));
+                        if over_search {
                             app.help_search_query.clear();
                         }
                         return;
@@ -279,36 +271,29 @@ pub fn handle_mouse_event(
     }
 }
 
-/// Mouse click on selector list area.
-fn handle_selector_mouse(
-    app: &mut App,
-    inner: ratatui::layout::Rect,
-    row: u16,
-    search_rows: u16,
-    footer_rows: u16,
-) {
-    let sel = match app.selector_mut() {
-        Some(s) => s,
-        None => return,
+/// A click in the filter box starts filtering. A click on a row moves the
+/// cursor there and toggles it, or picks it in a single-select list.
+fn handle_selector_mouse(app: &mut App, row: u16, col: u16) {
+    let Some(layout) = app.selector_layout.as_ref() else {
+        return;
     };
-
-    // Search/filter bar click area
-    if search_rows > 0 {
-        let search_bot = inner.y + search_rows;
-        if row >= inner.y && row < search_bot {
-            sel.is_filtering = true;
-            return;
-        }
-    }
-
-    // List area: after search, before footer
-    let list_y = inner.y + search_rows;
-    let list_h = inner.height.saturating_sub(search_rows + footer_rows);
-    let list_bot = list_y + list_h;
-
-    if row < list_y || row >= list_bot {
+    let Some(&first) = layout.groups.first() else {
+        return;
+    };
+    let Some(&list) = layout.groups.last() else {
+        return;
+    };
+    let Some(sel) = app.selector_mut() else {
+        return;
+    };
+    if sel.purpose.has_filter_bar() && rect_contains(first, row, col) {
+        sel.is_filtering = true;
         return;
     }
+    if !rect_contains(list, row, col) {
+        return;
+    }
+    let list_y = list.y;
 
     let offset = sel.state.offset();
     let item_idx = (row - list_y) as usize + offset;
@@ -361,105 +346,62 @@ fn handle_edit_menu_mouse(app: &mut App, inner: ratatui::layout::Rect, row: u16,
     menu.state.select(Some(item_idx));
 }
 
-/// Mouse click on save submenu.
-fn handle_save_menu_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, _col: u16) {
+/// A click on a save submenu choice selects it.
+fn handle_save_menu_mouse(app: &mut App, row: u16, col: u16) {
     let Some(c) = app.configure_mut() else {
         return;
     };
-    if !c.save_menu_open {
+    let Some(list) = c.save_menu_layout.as_ref().map(|layout| layout.groups[0]) else {
+        return;
+    };
+    if !c.save_menu_open || !rect_contains(list, row, col) {
         return;
     }
-    let inner = border_inner(rect);
-    if row < inner.y || row >= inner.y + 3 {
-        return;
-    }
-    let idx = (row - inner.y) as usize;
-    match idx {
-        0 => c.save_menu_selection = Some(SaveMenu::Local),
-        1 => c.save_menu_selection = Some(SaveMenu::Global),
-        2 => c.save_menu_selection = Some(SaveMenu::Cancel),
-        _ => {}
+    if let Some(&(choice, _)) = crate::ui::SAVE_MENU_CHOICES.get(usize::from(row - list.y)) {
+        c.save_menu_selection = Some(choice);
     }
 }
 
-/// Mouse click on date picker.
-fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
-    use chrono::Datelike;
-    let dp = match app.date_picker_mut() {
-        Some(d) => d,
-        None => return,
-    };
-    let inner = border_inner(rect);
-
-    // Header row: ◀ (col 0-2), Month Year (center), ▶ (cols 33-35 for 36-wide)
-    let header_y = inner.y;
-    if row == header_y {
-        let left_arrow = col >= rect.x && col <= rect.x + 3;
-        let right_arrow = col >= rect.x + rect.width - 4 && col <= rect.x + rect.width;
-        if left_arrow {
-            if dp.month == 1 {
-                dp.month = 12;
-                dp.year = dp.year.saturating_sub(1);
-            } else {
-                dp.month -= 1;
-            }
-            dp.day = dp.day.min(crate::app::days_in_month(dp.year, dp.month));
-            return;
-        }
-        if right_arrow {
-            if dp.month == 12 {
-                dp.month = 1;
-                dp.year += 1;
-            } else {
-                dp.month += 1;
-            }
-            dp.day = dp.day.min(crate::app::days_in_month(dp.year, dp.month));
-            return;
-        }
-        return;
-    }
-
-    // Day grid: rows inner.y+1 through inner.y+7, 7 columns
-    let day_y = row.saturating_sub(inner.y + 1);
-    if day_y >= 7 {
-        return;
-    }
-    // Columns in the grid: each cell ~5 chars wide (36-2 border = 34, 34/7 ≈ 4.8)
-    let grid_start = inner.x;
-    let grid_width = inner.width;
-    let col_width = grid_width / 7;
-    let day_col = col.saturating_sub(grid_start) / col_width;
-    if day_col >= 7 {
-        return;
-    }
-    let Some(first_date) = chrono::NaiveDate::from_ymd_opt(dp.year, dp.month, 1) else {
+/// The arrows beside the month step it; a day in the grid is picked.
+fn handle_date_picker_mouse(app: &mut App, row: u16, col: u16) {
+    let Some(dp) = app.date_picker_mut() else {
         return;
     };
-    let start_weekday = first_date.weekday().num_days_from_sunday();
-    let total_days = crate::app::days_in_month(dp.year, dp.month);
-    let cell_idx = day_y * 7 + day_col;
-    let day_num = (cell_idx as i32) - (start_weekday as i32) + 1;
-    if day_num >= 1 && day_num <= total_days as i32 {
-        dp.day = day_num as u32;
+    let Some(calendar) = dp.layout.as_ref().map(|layout| layout.groups[0]) else {
+        return;
+    };
+    let [prev, _, next] = crate::ui::date_picker_month_cells(calendar);
+    if rect_contains(prev, row, col) {
+        dp.move_month(-1);
+    } else if rect_contains(next, row, col) {
+        dp.move_month(1);
+    } else if let Some((weekday, week)) = crate::ui::date_picker_day_at(calendar, col, row)
+        && let Some(day) = dp.day_in_cell(weekday, week)
+    {
+        dp.day = day;
     }
 }
 
 /// Mouse click on a Configure View row: focus it and act on it like `Space`.
 /// Ignored while the save menu is open or the page size is being typed, as
 /// keys are.
-fn handle_configure_mouse(app: &mut App, row: u16, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if app
-        .configure()
-        .is_none_or(|c| c.save_menu_open || c.editing_page_size)
-    {
+fn handle_configure_mouse(
+    app: &mut App,
+    row: u16,
+    col: u16,
+    tx: &UnboundedSender<Event>,
+    fx: &mut Effects,
+) {
+    let Some(c) = app.configure() else {
+        return;
+    };
+    let Some(list) = c.layout.as_ref().map(|layout| layout.groups[0]) else {
+        return;
+    };
+    if c.save_menu_open || c.editing_page_size || !rect_contains(list, row, col) {
         return;
     }
-    let Some(idx) = app.configure().and_then(|c| {
-        c.row_hits
-            .iter()
-            .find(|hit| hit.screen_row == row)
-            .map(|hit| hit.row)
-    }) else {
+    let Some(Some(idx)) = c.visible_rows.get(usize::from(row - list.y)).copied() else {
         return;
     };
     let Some(clicked) = crate::configure_view::configure_rows(app).get(idx).copied() else {

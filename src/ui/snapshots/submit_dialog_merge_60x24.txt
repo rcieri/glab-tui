@@ -6,8 +6,8 @@
 ┌ + Merge Merge Request #2 ────────────────────────────────┐
 │ Merging: feature/pagination → main                       │
 │                                                          │
-│ Strategy                                                 │
-│ o Merge commit  * Squash  o Rebase                       │
+│ Merge method                                             │
+│ o Merge commit  * Squash                                 │
 │                                                          │
 │ Options                                                  │
 │ + Delete source branch                                   │

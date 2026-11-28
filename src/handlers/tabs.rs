@@ -26,15 +26,22 @@ fn spawn_open_diff(
         return;
     };
     app.diff_loading = true;
+    let sync_viewed = app.syncs_viewed_files();
+    let fetched_at = app.viewed_settles;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
-        let event = match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await {
-            Ok((diff_view, comments)) => Event::DiffFetched {
-                diff_view,
-                comments,
-            },
-            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {err}")),
-        };
+        let event =
+            match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid, sync_viewed)
+                .await
+            {
+                Ok((diff_view, comments, viewed_files)) => Event::DiffFetched {
+                    diff_view,
+                    comments,
+                    viewed_files,
+                    fetched_at,
+                },
+                Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {err}")),
+            };
         let _ = tx.send(event);
     });
 }
@@ -418,6 +425,7 @@ fn handle_environments_key(
         if let Some(shown) = app.environment_deployments.as_mut() {
             shown.is_focused = !shown.table.items.is_empty();
         }
+        app.show_cached_deployments(&environment.name);
         spawn_fetch_deployments(app, tx, environment.name, fx);
     } else if app.is_deployments_focus_key(key_event) {
         if let Some(shown) = app.environment_deployments.as_mut() {
@@ -673,7 +681,7 @@ fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
         is_loading: false,
         entity_iid: pr_number,
         entity_type: "mr".to_string(),
-        field_type: "stack_entries".to_string(),
+        purpose: crate::app::SelectorPurpose::StackEntries,
         multi_select: false,
         state: {
             let mut s = ListState::default();
@@ -1033,7 +1041,7 @@ pub fn handle_active_tab_key(
                                 is_loading: false,
                                 entity_iid: issue_iid,
                                 entity_type: String::new(),
-                                field_type: "related_mrs".to_string(),
+                                purpose: crate::app::SelectorPurpose::RelatedMrs,
                                 multi_select: false,
                                 state: {
                                     let mut s = ListState::default();
@@ -1600,7 +1608,7 @@ pub fn handle_active_tab_key(
                                             is_loading: false,
                                             entity_iid: mr_iid,
                                             entity_type: String::new(),
-                                            field_type: "linked_issues".to_string(),
+                                            purpose: crate::app::SelectorPurpose::LinkedIssues,
                                             multi_select: false,
                                             state: {
                                                 let mut s = ListState::default();
@@ -1924,7 +1932,7 @@ pub fn handle_active_tab_key(
                     is_loading: false,
                     entity_iid: 0,
                     entity_type: String::new(),
-                    field_type: "pipeline_select".to_string(),
+                    purpose: crate::app::SelectorPurpose::PipelineSelect,
                     multi_select: false,
                     state: {
                         let mut s = ratatui::widgets::ListState::default();
@@ -5000,6 +5008,25 @@ pub(crate) mod tests {
         let mut app = app_with_focused_deployments(two_deployments());
 
         dispatch(&mut app, &key(KeyCode::Esc));
+        dispatch(&mut app, &key(KeyCode::Enter));
+        dispatch(&mut app, &key(KeyCode::Char('j')));
+
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(10));
+        assert_eq!(highlighted_environment(&app), Some("production"));
+    }
+
+    #[tokio::test]
+    async fn view_key_shows_the_cached_deployments_until_the_fetch_lands() {
+        let mut app = app_with_focused_deployments(serde_json::json!([]));
+        app.environment_deployments = None;
+        let cached = &mut app.project_cache.data;
+        cached.set_environments(app.environments.items());
+        cached.set_deployments(
+            "production",
+            &serde_json::from_value::<Vec<_>>(two_deployments())
+                .expect("deployment fixture parses"),
+        );
+
         dispatch(&mut app, &key(KeyCode::Enter));
         dispatch(&mut app, &key(KeyCode::Char('j')));
 

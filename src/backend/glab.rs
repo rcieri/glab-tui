@@ -11,7 +11,10 @@ use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
-use crate::domain::mr::{DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, ensure_complete_diff};
+use crate::domain::mr::{
+    DiscussionNote, MR_DIFF_MAX_BYTES, MergeMethod, MergeMethods, MergeRequest, PlainMerge,
+    ensure_complete_diff,
+};
 use crate::domain::notifications::{Notification, NotificationDetail, NotificationTarget};
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
@@ -113,6 +116,75 @@ pub fn parse_group_projects(raw: &str) -> anyhow::Result<Vec<String>> {
         .into_iter()
         .map(|p| p.path_with_namespace)
         .collect())
+}
+
+/// `merge_method` of a GitLab project: whether a plain merge writes a merge
+/// commit, and whether the branch must be rebased onto its target first.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ProjectMergeMethod {
+    Merge,
+    RebaseMerge,
+    Ff,
+}
+
+/// `squash_option` of a GitLab project. glab prints `""` for a server that
+/// does not report it, which squashes only when asked, as `default_off` does.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SquashOption {
+    Never,
+    Always,
+    DefaultOn,
+    #[serde(alias = "")]
+    DefaultOff,
+}
+
+/// GitLab picks merge commit vs. fast-forward per project (`merge_method`),
+/// and lets each merge squash unless `squash_option` forbids or forces it.
+/// `Merge` is `glab mr merge` without a method flag, a fast-forward on `ff`
+/// projects. `Rebase` stands for `glab mr merge --rebase`, which projects
+/// requiring a linear history (`ff`, `rebase_merge`) need for a branch
+/// behind its target, so it stays offered when the project always squashes.
+fn parse_project_merge_methods(raw: &str) -> Result<MergeMethods> {
+    #[derive(Deserialize)]
+    struct ProjectMergeSettings {
+        merge_method: ProjectMergeMethod,
+        squash_option: SquashOption,
+    }
+    let settings: ProjectMergeSettings =
+        serde_json::from_str(raw.trim()).context("parsing `glab repo view` merge settings")?;
+    let merge_method = settings.merge_method;
+    let allows_rebase = match merge_method {
+        ProjectMergeMethod::Merge => false,
+        ProjectMergeMethod::RebaseMerge | ProjectMergeMethod::Ff => true,
+    };
+    let squash_option = settings.squash_option;
+    let squashes_always = squash_option == SquashOption::Always;
+    let allowed: Vec<MergeMethod> = [
+        (MergeMethod::Merge, !squashes_always),
+        (MergeMethod::Squash, squash_option != SquashOption::Never),
+        (MergeMethod::Rebase, allows_rebase),
+    ]
+    .into_iter()
+    .filter_map(|(method, is_allowed)| is_allowed.then_some(method))
+    .collect();
+    let preferred = match squash_option {
+        SquashOption::Always | SquashOption::DefaultOn => MergeMethod::Squash,
+        SquashOption::Never | SquashOption::DefaultOff => MergeMethod::Merge,
+    };
+    let plain_merge = match merge_method {
+        ProjectMergeMethod::Ff => PlainMerge::FastForward,
+        ProjectMergeMethod::Merge | ProjectMergeMethod::RebaseMerge => PlainMerge::MergeCommit,
+    };
+    let methods = MergeMethods::new(&allowed, Some(preferred))
+        .ok_or_else(|| anyhow::anyhow!("the project allows no merge method"))?
+        .with_plain_merge(plain_merge);
+    Ok(if squashes_always {
+        methods.squashing_every_merge()
+    } else {
+        methods
+    })
 }
 
 /// One runner's details from the bulk GraphQL query: its tags, when it was
@@ -913,9 +985,8 @@ impl GlabBackend {
     fn merge_args(
         project: &str,
         iid: u64,
-        squash: bool,
+        method: MergeMethod,
         delete_branch: bool,
-        strategy: Option<&str>,
         auto_merge: bool,
         sha: Option<&str>,
     ) -> Vec<String> {
@@ -926,21 +997,14 @@ impl GlabBackend {
             "-R".into(),
             project.into(),
         ];
-        if squash {
+        if method == MergeMethod::Squash {
             args.push("--squash".into());
         }
         if delete_branch {
             args.push("--remove-source-branch".into());
         }
-        if let Some(s) = strategy {
-            match s {
-                "rebase" => args.push("--rebase".into()),
-                // "merge" and "squash" are the default behaviors — squash
-                // is set via the `squash` flag above, and plain merge is
-                // implicit when no flag is passed.
-                "merge" | "squash" => {}
-                other => debug_assert!(false, "unknown merge strategy: {other}"),
-            }
+        if method == MergeMethod::Rebase {
+            args.push("--rebase".into());
         }
         if auto_merge {
             args.push("--auto-merge=true".into());
@@ -951,11 +1015,12 @@ impl GlabBackend {
         // Passing --auto-merge=false forces an immediate merge attempt which
         // causes glab to exhaust its internal retry loop ("All attempts fail")
         // whenever a pipeline is still in progress (#372).
-        if let Some(sha) = sha {
-            // GitLab 19.2+ and any repo with the group "Require a commit SHA
-            // when merging" setting reject merges without --sha
-            // (`400 SHA must be provided when merging`). Pass it through
-            // verbatim so callers don't have to know the flag name (#470).
+        // GitLab 19.2+ and any repo with the group "Require a commit SHA
+        // when merging" setting reject merges without --sha
+        // (`400 SHA must be provided when merging`). A rebase replaces the
+        // head commit, so the SHA check would refuse every rebase that was
+        // needed, and glab rejects `--sha` together with `--rebase`.
+        if let Some(sha) = sha.filter(|_| method != MergeMethod::Rebase) {
             args.push(format!("--sha={sha}"));
         }
         args.push("--yes".into());
@@ -1001,6 +1066,52 @@ impl GlabBackend {
             .context("Failed to parse glab mr view output")?
             .diff_refs
             .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
+    }
+
+    /// The MR's own squash flag, which GitLab follows on merge unless the
+    /// project always or never squashes.
+    async fn mr_squash_flag(&self, project: &str, iid: u64) -> Result<bool> {
+        #[derive(Deserialize)]
+        struct GiMr {
+            squash: bool,
+        }
+        let raw = self
+            .cli
+            .run(
+                &[
+                    "mr",
+                    "view",
+                    &iid.to_string(),
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                ],
+                "READING MR SQUASH",
+            )
+            .await?;
+        Ok(serde_json::from_str::<GiMr>(&raw)
+            .context("parsing the squash flag of `glab mr view`")?
+            .squash)
+    }
+
+    /// Flips the MR's squash flag: glab's `--squash-before-merge` toggles it
+    /// and cannot set a value.
+    async fn toggle_mr_squash(&self, project: &str, iid: u64, label: &str) -> Result<()> {
+        self.cli
+            .run(
+                &[
+                    "mr",
+                    "update",
+                    &iid.to_string(),
+                    "--squash-before-merge",
+                    "-R",
+                    project,
+                ],
+                label,
+            )
+            .await
+            .map(drop)
     }
 
     /// Creates one draft note per comment, then publishes them. `created`
@@ -1526,6 +1637,8 @@ impl MrOps for GlabBackend {
                         #[serde(default)]
                         sha: Option<String>,
                         draft: bool,
+                        #[serde(default)]
+                        squash: bool,
                         description: Option<String>,
                         #[serde(default)]
                         head_pipeline: Option<GiPipeline>,
@@ -1592,6 +1705,7 @@ impl MrOps for GlabBackend {
                             source_branch: m.source_branch,
                             sha: m.sha,
                             draft: m.draft,
+                            squash: m.squash,
                             description: m.description,
                             head_pipeline: m.head_pipeline.map(|p| Pipeline {
                                 id: p.id,
@@ -1706,6 +1820,8 @@ impl MrOps for GlabBackend {
             sha: Option<String>,
             draft: bool,
             #[serde(default)]
+            squash: bool,
+            #[serde(default)]
             description: Option<String>,
             #[serde(default)]
             head_pipeline: Option<GiPipeline>,
@@ -1771,6 +1887,7 @@ impl MrOps for GlabBackend {
             source_branch: m.source_branch,
             sha: m.sha,
             draft: m.draft,
+            squash: m.squash,
             description: m.description,
             head_pipeline: m.head_pipeline.map(|p| Pipeline {
                 id: p.id,
@@ -1937,24 +2054,49 @@ impl MrOps for GlabBackend {
         options: &super::MergeOptions<'_>,
     ) -> Result<()> {
         let super::MergeOptions {
-            squash,
+            method,
             delete_branch,
-            strategy,
             auto_merge,
             sha,
+            squashes_every_merge,
         } = *options;
-        let args = Self::merge_args(
-            project,
-            iid,
-            squash,
-            delete_branch,
-            strategy,
-            auto_merge,
-            sha,
-        );
+        // GitLab squashes whenever the MR's own squash flag is set (the
+        // default on `default_on` projects), and its merge endpoint can only
+        // turn the flag on, so a merge that must not squash clears it first,
+        // and sets it again when the merge fails so the MR is left as it was.
+        let clears_squash = method != MergeMethod::Squash
+            && !squashes_every_merge
+            && self.mr_squash_flag(project, iid).await?;
+        if clears_squash {
+            self.toggle_mr_squash(project, iid, "CLEARING MR SQUASH")
+                .await?;
+        }
+        let args = Self::merge_args(project, iid, method, delete_branch, auto_merge, sha);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.cli.run(&args_refs, "MERGING MR").await?;
+        if let Err(merge_error) = self.cli.run(&args_refs, "MERGING MR").await {
+            if clears_squash
+                && let Err(restore_error) = self
+                    .toggle_mr_squash(project, iid, "RESTORING MR SQUASH")
+                    .await
+            {
+                return Err(anyhow::anyhow!(
+                    "restoring the squash flag of !{iid} failed ({restore_error:#}), so it stays cleared. The merge failed: {merge_error:#}"
+                ));
+            }
+            return Err(merge_error);
+        }
         Ok(())
+    }
+
+    async fn list_merge_methods(&self, project: &str) -> Result<MergeMethods> {
+        let raw = self
+            .cli
+            .run(
+                &["repo", "view", "--output", "json", "--", project],
+                "Reading Merge Settings",
+            )
+            .await?;
+        parse_project_merge_methods(&raw)
     }
 
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
@@ -2105,6 +2247,24 @@ impl ReviewOps for GlabBackend {
             )
             .await?;
         parse_mr_discussions(&raw)
+    }
+
+    async fn list_viewed_files(
+        &self,
+        _project: &str,
+        _iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        // GitLab keeps "Viewed" checkboxes in browser localStorage only; no
+        // API exposes them.
+        anyhow::bail!("GitLab has no server-side viewed-file state")
+    }
+
+    async fn set_files_viewed(
+        &self,
+        _pull_request_id: &str,
+        _changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+        anyhow::bail!("GitLab has no server-side viewed-file state")
     }
 
     async fn submit_review(
@@ -3927,7 +4087,8 @@ mod tests {
 
     #[test]
     fn merge_args_skip_confirmation_prompt() {
-        let args = GlabBackend::merge_args("group/project", 42, true, true, None, false, None);
+        let args =
+            GlabBackend::merge_args("group/project", 42, MergeMethod::Squash, true, false, None);
 
         assert_eq!(
             args,
@@ -3950,7 +4111,8 @@ mod tests {
 
     #[test]
     fn merge_args_auto_merge_true_adds_flag() {
-        let args = GlabBackend::merge_args("group/project", 42, false, false, None, true, None);
+        let args =
+            GlabBackend::merge_args("group/project", 42, MergeMethod::Merge, false, true, None);
         assert!(args.contains(&"--auto-merge=true".to_string()));
         assert!(!args.contains(&"--auto-merge=false".to_string()));
     }
@@ -3961,36 +4123,23 @@ mod tests {
         // --auto-merge=false because that forces glab to attempt an immediate
         // merge even when a pipeline is still running, causing it to exhaust
         // its internal retry loop with "All attempts fail" (#372).
-        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false, None);
+        let args =
+            GlabBackend::merge_args("group/project", 42, MergeMethod::Merge, false, false, None);
         assert!(!args.iter().any(|a| a.starts_with("--auto-merge")));
     }
 
     #[test]
     fn merge_args_rebase_strategy_adds_rebase_flag() {
-        let args = GlabBackend::merge_args(
-            "group/project",
-            42,
-            false,
-            false,
-            Some("rebase"),
-            false,
-            None,
-        );
+        let args =
+            GlabBackend::merge_args("group/project", 42, MergeMethod::Rebase, false, false, None);
         assert!(args.contains(&"--rebase".to_string()));
         assert!(!args.contains(&"--squash".to_string()));
     }
 
     #[test]
-    fn merge_args_merge_strategy_is_default() {
-        let args = GlabBackend::merge_args(
-            "group/project",
-            42,
-            false,
-            false,
-            Some("merge"),
-            false,
-            None,
-        );
+    fn merge_args_merge_commit_passes_no_method_flag() {
+        let args =
+            GlabBackend::merge_args("group/project", 42, MergeMethod::Merge, false, false, None);
         assert!(!args.contains(&"--rebase".to_string()));
         assert!(!args.contains(&"--squash".to_string()));
     }
@@ -4004,9 +4153,8 @@ mod tests {
         let args = GlabBackend::merge_args(
             "group/project",
             42,
+            MergeMethod::Merge,
             false,
-            false,
-            None,
             false,
             Some("b968d3bc753974a475d5475b7ca46639f9ec3cba"),
         );
@@ -4018,8 +4166,119 @@ mod tests {
         // Cached MRs that pre-date this field deserialize without a SHA.
         // We must not invent or pass an empty --sha; instead omit the flag
         // and let glab behave as it did pre-19.2.
-        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false, None);
+        let args =
+            GlabBackend::merge_args("group/project", 42, MergeMethod::Merge, false, false, None);
         assert!(!args.iter().any(|a| a.starts_with("--sha")));
+    }
+
+    #[test]
+    fn merge_args_never_pair_a_rebase_with_the_sha() {
+        let args = GlabBackend::merge_args(
+            "group/project",
+            42,
+            MergeMethod::Rebase,
+            false,
+            false,
+            Some("b968d3bc753974a475d5475b7ca46639f9ec3cba"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "mr",
+                "merge",
+                "42",
+                "-R",
+                "group/project",
+                "--rebase",
+                "--yes"
+            ]
+        );
+    }
+
+    fn merge_settings(merge_method: &str, squash_option: &str) -> MergeMethods {
+        parse_project_merge_methods(&format!(
+            r#"{{"id":1,"merge_method":"{merge_method}","squash_option":"{squash_option}"}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn project_merge_settings_map_onto_the_methods_a_merge_may_pick() {
+        use MergeMethod::{Merge, Rebase, Squash};
+        let cases: &[(&str, &str, &[MergeMethod], MergeMethod)] = &[
+            ("merge", "default_off", &[Merge, Squash], Merge),
+            ("merge", "default_on", &[Merge, Squash], Squash),
+            ("merge", "never", &[Merge], Merge),
+            (
+                "rebase_merge",
+                "default_off",
+                &[Merge, Squash, Rebase],
+                Merge,
+            ),
+            ("ff", "default_off", &[Merge, Squash, Rebase], Merge),
+            ("ff", "never", &[Merge, Rebase], Merge),
+            ("ff", "always", &[Squash, Rebase], Squash),
+            ("rebase_merge", "always", &[Squash, Rebase], Squash),
+        ];
+        for &(merge_method, squash_option, allowed, preferred) in cases {
+            let methods = merge_settings(merge_method, squash_option);
+            assert_eq!(
+                (methods.allowed(), methods.preferred()),
+                (allowed, preferred),
+                "merge_method={merge_method} squash_option={squash_option}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plain_merge_on_a_fast_forward_project_is_named_fast_forward() {
+        let fast_forward = merge_settings("ff", "default_off");
+        let merge_commit = merge_settings("rebase_merge", "default_off");
+        assert_eq!(fast_forward.label(MergeMethod::Merge), "Fast-forward");
+        assert_eq!(merge_commit.label(MergeMethod::Merge), "Merge commit");
+        assert_eq!(
+            fast_forward
+                .intersect(&merge_commit)
+                .map(|shared| shared.label(MergeMethod::Merge)),
+            Some("Merge commit or fast-forward")
+        );
+    }
+
+    #[test]
+    fn a_rebase_on_a_project_that_always_squashes_is_named_rebase_and_squash() {
+        let always = merge_settings("ff", "always");
+        let encouraged = merge_settings("ff", "default_on");
+        assert_eq!(always.label(MergeMethod::Rebase), "Rebase and squash");
+        assert_eq!(encouraged.label(MergeMethod::Rebase), "Rebase");
+        assert_eq!(
+            always
+                .intersect(&encouraged)
+                .map(|shared| shared.label(MergeMethod::Rebase)),
+            Some("Rebase")
+        );
+    }
+
+    #[test]
+    fn an_unknown_squash_option_is_an_error_naming_it() {
+        let error = parse_project_merge_methods(
+            r#"{"id":1,"merge_method":"merge","squash_option":"sometimes"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "parsing `glab repo view` merge settings: unknown variant `sometimes`, \
+             expected one of `never`, `always`, `default_on`, ``, `default_off` at line 1 column 58"
+        );
+    }
+
+    #[test]
+    fn a_squash_option_glab_prints_empty_squashes_only_when_asked() {
+        use MergeMethod::{Merge, Squash};
+        let methods = merge_settings("merge", "");
+        assert_eq!(
+            (methods.allowed(), methods.preferred()),
+            (&[Merge, Squash][..], Merge)
+        );
     }
 
     #[test]

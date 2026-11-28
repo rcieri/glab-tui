@@ -40,7 +40,7 @@ impl CliRunner {
     }
 
     pub(crate) async fn run(&self, args: &[&str], desc: &str) -> Result<String> {
-        let stdout = self.run_bounded(args, desc, None).await?;
+        let stdout = self.run_bounded(args, desc, None, |_| false).await?;
         Ok(String::from_utf8(stdout.bytes)?)
     }
 
@@ -51,7 +51,23 @@ impl CliRunner {
         desc: &str,
         max_stdout_bytes: usize,
     ) -> Result<CapturedStdout> {
-        self.run_bounded(args, desc, Some(max_stdout_bytes)).await
+        self.run_bounded(args, desc, Some(max_stdout_bytes), |_| false)
+            .await
+    }
+
+    /// `run` that also returns what a failed call printed when
+    /// `keeps_failed_stdout` accepts it, such as a GraphQL reply carrying
+    /// `data` beside its errors. The call is logged as failed either way.
+    pub(crate) async fn run_keeping_failed_stdout(
+        &self,
+        args: &[&str],
+        desc: &str,
+        keeps_failed_stdout: fn(&[u8]) -> bool,
+    ) -> Result<String> {
+        let stdout = self
+            .run_bounded(args, desc, None, keeps_failed_stdout)
+            .await?;
+        Ok(String::from_utf8(stdout.bytes)?)
     }
 
     async fn run_bounded(
@@ -59,11 +75,17 @@ impl CliRunner {
         args: &[&str],
         desc: &str,
         max_stdout_bytes: Option<usize>,
+        keeps_failed_stdout: fn(&[u8]) -> bool,
     ) -> Result<CapturedStdout> {
         if !self.is_api_client() {
-            return self.run_once(args, desc, max_stdout_bytes).await;
+            return self
+                .run_once(args, desc, max_stdout_bytes, keeps_failed_stdout)
+                .await;
         }
-        super::rate_limit::execute_with_retry(|| self.run_once(args, desc, max_stdout_bytes)).await
+        super::rate_limit::execute_with_retry(|| {
+            self.run_once(args, desc, max_stdout_bytes, keeps_failed_stdout)
+        })
+        .await
     }
 
     /// Local `git` reads reach no API, so they take no rate-limit slot.
@@ -76,6 +98,7 @@ impl CliRunner {
         args: &[&str],
         desc: &str,
         max_stdout_bytes: Option<usize>,
+        keeps_failed_stdout: fn(&[u8]) -> bool,
     ) -> Result<CapturedStdout> {
         let binary = self.program.binary();
         let logged = LoggedCommand::start(desc, Invocation::new(self.program, args));
@@ -93,6 +116,9 @@ impl CliRunner {
             let child_output = output.child_output();
             let reason = logged.failure_reason(&child_output);
             logged.finish(self.tx(), format!("Failed: {reason}"), child_output);
+            if keeps_failed_stdout(&output.stdout.bytes) {
+                return Ok(output.stdout);
+            }
             anyhow::bail!("{binary} command failed: {reason}")
         }
     }

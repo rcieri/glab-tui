@@ -6,12 +6,16 @@ use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::state_query::{StateQueries, StateQuery};
+use crate::domain::viewed_files::{
+    FileViewedState, Fingerprint, PrViewedFiles, SettleCount, ViewedSync,
+};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::form::{
-    Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel,
-    Radio, Toggle, Toggles,
+    Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, Note,
+    NoteLevel, Radio, Toggle, Toggles,
 };
 use crate::syntax::{DiffHighlighter, DiffSide, SyntaxToken, styled_tokens};
+use crate::templates::TemplateKind;
 use crate::ui::list_tab::branches::BranchColumn;
 use crate::ui::list_tab::environments::EnvironmentColumn;
 use crate::ui::list_tab::releases::ReleaseColumn;
@@ -26,7 +30,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::ListState;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
@@ -384,6 +388,14 @@ pub enum EditEntityKind {
 }
 
 impl EditEntityKind {
+    /// Which description templates this form's template pickers list.
+    pub fn template_kind(&self) -> TemplateKind {
+        match self {
+            Self::CreateMr | Self::EditMr | Self::BulkEditMrs => TemplateKind::Mr,
+            _ => TemplateKind::Issue,
+        }
+    }
+
     pub fn is_create(&self) -> bool {
         matches!(
             self,
@@ -607,6 +619,120 @@ impl Field {
     }
 }
 
+/// What a [`Selector`] picks, carrying the ids its submit acts on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectorPurpose {
+    /// A field of the entity named by `Selector::entity_type` / `entity_iid`,
+    /// written to the open edit menu, or straight to the entity without one.
+    Field(SelectorField),
+    JumpToId,
+    ColumnFilter {
+        tab: Tab,
+        column: String,
+    },
+    SwitchRepo,
+    Theme,
+    /// A creation form's description template picker, opened from the
+    /// "Description Template" row or on an empty Description.
+    DescriptionTemplate {
+        kind: TemplateKind,
+    },
+    CreateMrFromIssue,
+    RelatedMrs,
+    StackEntries,
+    LinkedIssues,
+    PipelineSelect,
+    CommentChoice {
+        mr_iid: u64,
+    },
+    CommentActions {
+        comment_id: u64,
+        mr_iid: u64,
+    },
+    DraftActions {
+        index: usize,
+    },
+}
+
+impl SelectorPurpose {
+    /// Whether the selector shows a filter box. A short fixed list does not.
+    pub fn has_filter_bar(&self) -> bool {
+        !matches!(
+            self,
+            SelectorPurpose::CommentActions { .. }
+                | SelectorPurpose::DraftActions { .. }
+                | SelectorPurpose::RelatedMrs
+                | SelectorPurpose::LinkedIssues
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectorField {
+    Labels,
+    Assignees,
+    Reviewers,
+    Milestone,
+    Confidential,
+    DraftStatus,
+    MrPipeline,
+    SourceBranch,
+    TargetBranch,
+    PipelineBranch,
+    WorkflowFile,
+    Tag,
+    CreateFrom,
+    Project,
+    WorkflowInput(String),
+}
+
+impl SelectorField {
+    /// Every variant without a payload.
+    pub const FIXED: [SelectorField; 14] = [
+        SelectorField::Labels,
+        SelectorField::Assignees,
+        SelectorField::Reviewers,
+        SelectorField::Milestone,
+        SelectorField::Confidential,
+        SelectorField::DraftStatus,
+        SelectorField::MrPipeline,
+        SelectorField::SourceBranch,
+        SelectorField::TargetBranch,
+        SelectorField::PipelineBranch,
+        SelectorField::WorkflowFile,
+        SelectorField::Tag,
+        SelectorField::CreateFrom,
+        SelectorField::Project,
+    ];
+
+    pub fn label(&self) -> String {
+        match self {
+            SelectorField::Labels => "Labels".to_string(),
+            SelectorField::Assignees => "Assignees".to_string(),
+            SelectorField::Reviewers => "Reviewers".to_string(),
+            SelectorField::Milestone => "Milestone".to_string(),
+            SelectorField::Confidential => "Confidential".to_string(),
+            SelectorField::DraftStatus => "Status (Draft/Ready)".to_string(),
+            SelectorField::MrPipeline => "Merge Request Pipeline".to_string(),
+            SelectorField::SourceBranch => "Source Branch".to_string(),
+            SelectorField::TargetBranch => "Target Branch".to_string(),
+            SelectorField::PipelineBranch => "Branch / Ref".to_string(),
+            SelectorField::WorkflowFile => "Workflow File".to_string(),
+            SelectorField::Tag => "Tag".to_string(),
+            SelectorField::CreateFrom => "Create From".to_string(),
+            SelectorField::Project => "Project".to_string(),
+            SelectorField::WorkflowInput(name) => format!("Input: {name}"),
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        if let Some(name) = label.strip_prefix("Input: ") {
+            return Some(SelectorField::WorkflowInput(name.to_string()));
+        }
+        Self::FIXED.into_iter().find(|field| field.label() == label)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Selector {
     pub title: String,
@@ -618,7 +744,7 @@ pub struct Selector {
     pub is_loading: bool,
     pub entity_iid: u64,
     pub entity_type: String, // "issue", "mr"
-    pub field_type: String,  // "labels", "assignees", "reviewers", "milestone"
+    pub purpose: SelectorPurpose,
     pub multi_select: bool,
     pub state: ListState,
     /// The item fetch this selector started. Its notices are drawn inside
@@ -659,7 +785,7 @@ impl Selector {
             .iter()
             .any(|item| item.to_lowercase() == query.to_lowercase());
         if !exact_match {
-            if self.field_type == "jump_to_id" {
+            if self.purpose == SelectorPurpose::JumpToId {
                 if let Some((kind, id)) = parse_jump_input(query) {
                     let loaded = self.all_items.iter().any(|item| {
                         let parsed = item
@@ -700,13 +826,7 @@ impl Selector {
         self.state.select(Some(self.cursor_idx));
     }
 
-    fn single_choice(
-        title: String,
-        items: Vec<String>,
-        entity_iid: u64,
-        entity_type: String,
-        field_type: &str,
-    ) -> Self {
+    fn single_choice(title: String, items: Vec<String>, purpose: SelectorPurpose) -> Self {
         Self {
             title,
             all_items: items,
@@ -715,9 +835,9 @@ impl Selector {
             search_query: String::new(),
             is_filtering: false,
             is_loading: false,
-            entity_iid,
-            entity_type,
-            field_type: field_type.to_string(),
+            entity_iid: 0,
+            entity_type: String::new(),
+            purpose,
             multi_select: false,
             state: ListState::default(),
             request: None,
@@ -733,9 +853,7 @@ impl Selector {
         let mut picker = Self::single_choice(
             " Select Theme ".to_string(),
             presets,
-            0,
-            THEME_PICKER_FIELD_TYPE.to_string(),
-            THEME_PICKER_FIELD_TYPE,
+            SelectorPurpose::Theme,
         );
         picker.cursor_idx = cursor;
         picker.state.select(Some(cursor));
@@ -745,17 +863,15 @@ impl Selector {
     /// The preset under a theme picker's cursor. `None` for any other
     /// selector and on the `+ Create` row a search appends.
     pub fn highlighted_theme(&self) -> Option<String> {
-        if self.field_type != THEME_PICKER_FIELD_TYPE {
+        if self.purpose != SelectorPurpose::Theme {
             return None;
         }
         let item = self.get_filtered_items().into_iter().nth(self.cursor_idx)?;
         self.all_items.contains(&item).then_some(item)
     }
 
-    /// Actions on one pushed review comment. The `comment_action_select`
-    /// handler reads the comment id from `entity_iid` and parses the MR iid
-    /// back out of `entity_type`. `None` for a note without a REST id (a
-    /// GitHub review summary): nothing can be done with it.
+    /// Actions on one pushed review comment. `None` for a note without a
+    /// REST id (a GitHub review summary): nothing can be done with it.
     pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Option<Self> {
         let comment_id = comment.id?;
         let mut actions = Vec::new();
@@ -774,38 +890,32 @@ impl Selector {
         Some(Self::single_choice(
             format!(" Actions for Comment {comment_id} "),
             actions,
-            comment_id,
-            mr_iid.to_string(),
-            "comment_action_select",
+            SelectorPurpose::CommentActions { comment_id, mr_iid },
         ))
     }
 
-    /// Actions on a local draft; `entity_iid` is the 0-based draft index.
+    /// Actions on a local draft.
     pub fn draft_actions(draft_idx: usize) -> Self {
         Self::single_choice(
             format!(" Actions for Draft #{} ", draft_idx + 1),
             vec!["Edit Draft".to_string(), "Delete Draft".to_string()],
-            draft_idx as u64,
-            "draft".to_string(),
-            "comment_action_select",
+            SelectorPurpose::DraftActions { index: draft_idx },
         )
     }
 
     /// Picker over several comments/drafts built from `comment_choice_item`
-    /// and `draft_choice_item`, whose prefixes the `comment_select` handler
-    /// parses.
+    /// and `draft_choice_item`, whose prefixes the
+    /// [`SelectorPurpose::CommentChoice`] submit parses.
     pub fn comment_choice(items: Vec<String>, mr_iid: u64) -> Self {
         Self::single_choice(
             " Select Comment to Interact ".to_string(),
             items,
-            mr_iid,
-            "mr".to_string(),
-            "comment_select",
+            SelectorPurpose::CommentChoice { mr_iid },
         )
     }
 
-    /// `None` for a note without a REST id, which the `comment_select`
-    /// handler could not find again.
+    /// `None` for a note without a REST id, which the
+    /// [`SelectorPurpose::CommentChoice`] submit could not find again.
     pub fn comment_choice_item(comment: &DiscussionNote) -> Option<String> {
         Some(format!(
             "ID: {} | @{}: {}",
@@ -822,16 +932,7 @@ impl Selector {
             crate::utils::format::truncate(&body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
         )
     }
-
-    /// Whether this selector shows a search/filter bar.
-    pub fn has_filter_bar(&self) -> bool {
-        self.field_type != "comment_action_select"
-            && self.field_type != "related_mrs"
-            && self.field_type != "linked_issues"
-    }
 }
-
-pub const THEME_PICKER_FIELD_TYPE: &str = "theme_selector";
 
 const COMMENT_EXCERPT_CHARS: usize = 40;
 
@@ -1469,6 +1570,20 @@ pub struct DiffView {
     /// Paths of files the user marked as reviewed (`m`), persisted per MR/PR in
     /// the project cache.
     pub reviewed_files: HashSet<String>,
+    /// Fingerprint of each file's diff text. A cached mark only survives a
+    /// re-fetch while the file's fingerprint still matches the reviewed one.
+    pub file_fingerprints: HashMap<String, String>,
+    /// Files reviewed in an earlier version that changed since — a local mark
+    /// whose fingerprint no longer matches, or GitHub's `DISMISSED` state.
+    /// They count as unreviewed.
+    pub changed_since_review: HashSet<String>,
+    /// The mismatching local marks, kept with the reviewed version's
+    /// fingerprint so the indicator survives re-fetches until the file is
+    /// toggled.
+    stale_marks: HashMap<String, String>,
+    /// GraphQL node id of the pull request, set once GitHub's viewed state
+    /// loaded; it keys the session's `App::viewed_syncs` entry.
+    pub pull_request_id: Option<String>,
     /// Filter reviewed files out of the tree (`M`).
     pub hide_reviewed: bool,
 }
@@ -1545,12 +1660,21 @@ impl DiffView {
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
         // strings, so expanding at the single point where they are produced
-        // keeps all of them agreeing on where a character sits.
-        let cleaned_diff = strip_ansi_escapes(&raw_diff)
-            .lines()
-            .map(expand_diff_line_tabs)
-            .collect::<Vec<_>>()
-            .join("\n");
+        // keeps all of them agreeing on where a character sits. Fingerprints
+        // hash the raw lines instead: a push that only swaps a tab for spaces,
+        // or flips CRLF and LF, still changes the file.
+        let stripped_diff = strip_ansi_escapes(&raw_diff);
+        let mut raw_lines: Vec<&str> = stripped_diff.split_terminator('\n').collect();
+        if raw_lines
+            .last()
+            .is_some_and(|line| line.trim_end_matches('\r').is_empty())
+        {
+            raw_lines.pop();
+        }
+        let expanded_lines: Vec<String> = raw_lines
+            .iter()
+            .map(|line| expand_diff_line_tabs(line.strip_suffix('\r').unwrap_or(line)))
+            .collect();
         let mut all_lines = Vec::new();
         let mut current_file = String::new();
         let mut old_line_num = None;
@@ -1587,7 +1711,7 @@ impl DiffView {
             Context,
         }
 
-        let diff_lines: Vec<&str> = cleaned_diff.lines().collect();
+        let diff_lines: Vec<&str> = expanded_lines.iter().map(String::as_str).collect();
         for (index, &line) in diff_lines.iter().enumerate() {
             let starts_file = line.starts_with("diff --git ")
                 || (line.starts_with("--- ")
@@ -1838,6 +1962,20 @@ impl DiffView {
 
         let number_width = line_number_width(&all_lines);
 
+        let mut fingerprints: HashMap<&str, Fingerprint> = HashMap::new();
+        for (line, raw) in all_lines.iter().zip(&raw_lines) {
+            if !line.file_path.is_empty() {
+                fingerprints
+                    .entry(line.file_path.as_str())
+                    .or_default()
+                    .update(raw);
+            }
+        }
+        let file_fingerprints = fingerprints
+            .into_iter()
+            .map(|(path, fingerprint)| (path.to_string(), fingerprint.finish()))
+            .collect();
+
         let mut view = Self {
             mr_iid,
             project_path,
@@ -1865,6 +2003,10 @@ impl DiffView {
             file_tree_visible: true,
             line_number_width: number_width,
             reviewed_files: HashSet::new(),
+            file_fingerprints,
+            changed_since_review: HashSet::new(),
+            stale_marks: HashMap::new(),
+            pull_request_id: None,
             hide_reviewed: false,
         };
 
@@ -1872,20 +2014,114 @@ impl DiffView {
         view
     }
 
-    /// Seeds the reviewed-file marks (restored from the project cache) and the
-    /// hide-reviewed filter, then rebuilds the tree around them.
-    pub fn restore_review_state(&mut self, reviewed: HashSet<String>, hide_reviewed: bool) {
-        // Drop marks for files no longer in the diff so stale paths never leak
-        // back into the cache.
-        let mut known = Vec::new();
-        self.root_node.collect_file_paths(&mut known);
-        let known: HashSet<String> = known.into_iter().collect();
-        self.reviewed_files = reviewed.into_iter().filter(|p| known.contains(p)).collect();
+    /// Seeds the review state and the hide-reviewed filter, then rebuilds the
+    /// tree around them.
+    ///
+    /// `saved` maps each locally reviewed path to the fingerprint of the
+    /// version reviewed; a mark whose file changed since comes back
+    /// unreviewed, flagged in `changed_since_review`. `server`, GitHub's
+    /// viewed state when synced, replaces the local marks altogether. Paths no
+    /// longer in the diff are dropped either way.
+    pub fn restore_review_state(
+        &mut self,
+        saved: &HashMap<String, String>,
+        server: Option<PrViewedFiles>,
+        hide_reviewed: bool,
+    ) {
+        self.reviewed_files.clear();
+        self.changed_since_review.clear();
+        self.stale_marks.clear();
+        self.pull_request_id = None;
+        match server {
+            Some(server) => {
+                for (path, state) in server.files {
+                    if !self.file_fingerprints.contains_key(&path) {
+                        continue;
+                    }
+                    match state {
+                        FileViewedState::Viewed => {
+                            self.reviewed_files.insert(path);
+                        }
+                        FileViewedState::Dismissed => {
+                            self.changed_since_review.insert(path);
+                        }
+                        FileViewedState::Unviewed => {}
+                    }
+                }
+                self.pull_request_id = Some(server.pull_request_id);
+            }
+            None => {
+                for (path, reviewed_fingerprint) in saved {
+                    match self.file_fingerprints.get(path) {
+                        Some(current) if current == reviewed_fingerprint => {
+                            self.reviewed_files.insert(path.clone());
+                        }
+                        Some(_) => {
+                            self.changed_since_review.insert(path.clone());
+                            self.stale_marks
+                                .insert(path.clone(), reviewed_fingerprint.clone());
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
         self.hide_reviewed = hide_reviewed;
         // Directories already fully reviewed on a previous pass open folded.
         self.root_node
             .sync_expansion_to_review(&HashSet::new(), &self.reviewed_files);
         self.rebuild_visible_nodes_keep_position();
+    }
+
+    /// The marks to persist: each reviewed file with its current fingerprint,
+    /// plus the marks that went stale, with the fingerprint they were made on.
+    pub fn review_marks(&self) -> HashMap<String, String> {
+        let mut marks = self.stale_marks.clone();
+        for path in &self.reviewed_files {
+            if let Some(fingerprint) = self.file_fingerprints.get(path) {
+                marks.insert(path.clone(), fingerprint.clone());
+            }
+        }
+        marks
+    }
+
+    /// Marks for `paths` as if they had been reviewed on this exact diff.
+    #[cfg(test)]
+    pub(crate) fn marks_on_this_diff(&self, paths: &[&str]) -> HashMap<String, String> {
+        paths
+            .iter()
+            .map(|path| {
+                let fingerprint = self.file_fingerprints.get(*path).cloned();
+                (path.to_string(), fingerprint.unwrap_or_default())
+            })
+            .collect()
+    }
+
+    /// Forces the reviewed state of the given files (sync results); returns how
+    /// many actually changed. A file forced to reviewed loses its "changed
+    /// since review" flag, as a toggle does. One forced back to unreviewed (a
+    /// failed sync) keeps whatever flag the server state gave it.
+    pub fn apply_review_corrections(&mut self, corrections: &[(String, bool)]) -> usize {
+        let before = self.reviewed_files.clone();
+        for (path, reviewed) in corrections {
+            if !self.file_fingerprints.contains_key(path) {
+                continue;
+            }
+            if *reviewed {
+                self.reviewed_files.insert(path.clone());
+                self.changed_since_review.remove(path);
+                self.stale_marks.remove(path);
+            } else {
+                self.reviewed_files.remove(path);
+            }
+        }
+        let changed = before.symmetric_difference(&self.reviewed_files).count();
+        if changed > 0 {
+            self.root_node
+                .sync_expansion_to_review(&before, &self.reviewed_files);
+            self.rebuild_visible_nodes_keep_position();
+        }
+        changed
     }
 
     /// Files covered by the current tree selection: the selected file itself, or
@@ -1907,7 +2143,8 @@ impl DiffView {
     }
 
     /// Marks or unmarks the current selection. A directory flips as a whole:
-    /// fully reviewed → unmark everything, otherwise mark everything.
+    /// fully reviewed → unmark everything, otherwise mark everything. Either
+    /// way the files lose their "changed since review" flag.
     /// Returns the affected file count and the new state.
     pub fn toggle_reviewed(&mut self) -> Option<(usize, bool)> {
         let paths = self.selected_file_paths();
@@ -1922,6 +2159,8 @@ impl DiffView {
             } else {
                 self.reviewed_files.remove(path);
             }
+            self.changed_since_review.remove(path);
+            self.stale_marks.remove(path);
         }
         self.root_node
             .sync_expansion_to_review(&before, &self.reviewed_files);
@@ -3098,6 +3337,7 @@ impl TextBuffer {
     }
 
     /// The value with `cursor` inserted between the characters around the cursor.
+    #[cfg(test)]
     pub fn value_with_cursor(&self, cursor: char) -> String {
         let mut rendered = self.value.clone();
         rendered.insert(self.byte_offset(self.cursor_char_idx), cursor);
@@ -3128,21 +3368,44 @@ impl TextBuffer {
     }
 }
 
+/// A one-line prompt: a form holding a single wrapped line input, typed
+/// into from the start.
 #[derive(Clone, Debug)]
 pub struct TextInput {
     pub title: String,
-    pub buffer: TextBuffer,
+    pub form: Form,
     pub action: TextInputAction,
 }
 
 impl TextInput {
+    const INPUT: GroupId = GroupId("input");
+
     /// Opens the input with the cursor after the last character of `value`.
     pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        let title = title.into();
+        let input = crate::form::LineInput::new(value, None).wrapped();
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::LineInput(input)).with_id(Self::INPUT),
+        ]);
+        form.edit(Self::INPUT);
         Self {
-            title: title.into(),
-            buffer: TextBuffer::new(value),
+            title,
+            form,
             action,
         }
+    }
+
+    pub fn value(&self) -> &str {
+        self.form
+            .line_input(Self::INPUT)
+            .map(|input| input.buffer.value())
+            .unwrap_or_default()
+    }
+
+    pub fn buffer_mut(&mut self) -> Option<&mut TextBuffer> {
+        self.form
+            .line_input_mut(Self::INPUT)
+            .map(|input| &mut input.buffer)
     }
 }
 
@@ -3196,6 +3459,8 @@ pub struct DatePicker {
     pub month: u32,
     pub day: u32,
     pub action: DatePickerAction,
+    /// Written by every draw; the calendar is its only group.
+    pub layout: Option<crate::form::FormLayout>,
 }
 
 #[derive(Clone, Debug)]
@@ -3242,6 +3507,7 @@ impl DatePicker {
             month: parsed_date.month(),
             day: parsed_date.day(),
             action,
+            layout: None,
         }
     }
 
@@ -3279,6 +3545,16 @@ impl DatePicker {
         if self.day > max_days {
             self.day = max_days;
         }
+    }
+
+    /// The day the grid shows in the cell at `weekday` (0 is Sunday) of
+    /// `week`, `None` for a cell before the first or after the last day.
+    pub fn day_in_cell(&self, weekday: u32, week: u32) -> Option<u32> {
+        use chrono::Datelike;
+        let first = chrono::NaiveDate::from_ymd_opt(self.year, self.month, 1)?;
+        (week * 7 + weekday + 1)
+            .checked_sub(first.weekday().num_days_from_sunday())
+            .filter(|day| (1..=days_in_month(self.year, self.month)).contains(day))
     }
 }
 
@@ -3324,7 +3600,6 @@ pub enum OverlayKind {
     Help,
     Configure,
     SaveMenu,
-    ColumnFilter,
     ConfirmPopup,
     ReviewThreads,
     ReviewSubmit,
@@ -3346,20 +3621,19 @@ pub enum ModalKind {
     Help,
 }
 
-/// A Configure View row the last frame drew, for clicks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConfigureRowHit {
-    pub screen_row: u16,
-    pub row: usize,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct ConfigureOverlay {
     pub focused_row: usize,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub editing_page_size: bool,
-    pub row_hits: Vec<ConfigureRowHit>,
+    /// Written by every draw: the settings list is the form's only group.
+    pub layout: Option<crate::form::FormLayout>,
+    /// The save submenu's layout from the last draw, while it is open.
+    pub save_menu_layout: Option<crate::form::FormLayout>,
+    /// The `configure_rows` index each visible row of the list stands for,
+    /// top to bottom; `None` for headings and spacers.
+    pub visible_rows: Vec<Option<usize>>,
 }
 
 #[derive(Debug)]
@@ -3500,7 +3774,7 @@ impl DialogChoice {
     }
 }
 
-/// What the strategy radio and the option toggles of a merge dialog chose.
+/// What the method radio and the option toggles of a merge dialog chose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MergeChoices {
     pub method: MergeMethod,
@@ -3510,14 +3784,19 @@ pub struct MergeChoices {
 
 impl MergeChoices {
     /// The flags `Backend::merge_mr` takes for these choices, with `sha` the
-    /// head commit the merge must find.
-    pub fn options<'a>(&self, sha: Option<&'a str>) -> crate::backend::MergeOptions<'a> {
+    /// head commit the merge must find and `squashes_every_merge` whether the
+    /// merged project squashes whatever method it is asked for.
+    pub fn options<'a>(
+        &self,
+        sha: Option<&'a str>,
+        squashes_every_merge: bool,
+    ) -> crate::backend::MergeOptions<'a> {
         crate::backend::MergeOptions {
-            squash: self.method == MergeMethod::Squash,
+            method: self.method,
             delete_branch: self.delete_branch,
-            strategy: (self.method != MergeMethod::Squash).then(|| self.method.as_api_str()),
             auto_merge: self.auto_merge,
             sha,
+            squashes_every_merge,
         }
     }
 }
@@ -3545,26 +3824,34 @@ impl MergeToggle {
 }
 
 /// A [`Form`] that gates a mutating API call behind an explicit Submit
-/// button: the body text, any choices the action takes (merge strategy and
-/// options) and the buttons Submit, then any extra choices the action
-/// offers, then Cancel. Destructive actions open in the form's danger tone,
-/// on Cancel.
+/// button: the body text, any choices the action takes (for a merge the
+/// methods its projects allow, then the merge options) and the buttons
+/// Submit, then any extra choices the action offers, then Cancel.
+/// Destructive actions open in the form's danger tone, on Cancel.
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
     pub project_path: String,
     /// Buttons between Submit and Cancel, left to right.
     extra_buttons: Vec<DialogChoice>,
-    /// The merge methods the `Strategy` radio offers, in its order.
-    strategies: Vec<MergeMethod>,
+    /// The merge methods the method radio offers, in its order. Empty until
+    /// the methods of every project in `merge_projects` are known.
+    methods: Vec<MergeMethod>,
+    /// The merged MR's own squash flag: its author asked for a squash, so
+    /// the radio preselects Squash when the project allows it.
+    mr_asks_for_squash: bool,
+    /// The projects a merge acts on, whose merge methods its form offers.
+    /// Empty for every other action.
+    pub merge_projects: Vec<String>,
     pub form: Form,
 }
 
 impl SubmitDialog {
     pub const SUBMIT_BUTTON_INDEX: usize = 0;
     const BODY: GroupId = GroupId("body");
-    const STRATEGY: GroupId = GroupId("strategy");
+    const METHODS: GroupId = GroupId("merge_methods");
     const MERGE_OPTIONS: GroupId = GroupId("merge_options");
+    const LOADING_METHODS: &str = "The merge methods are still loading.";
 
     /// The extra button at form button index `button`, if it is one.
     pub fn choice_at(&self, button: usize) -> Option<DialogChoice> {
@@ -3573,14 +3860,17 @@ impl SubmitDialog {
             .and_then(|i| self.extra_buttons.get(i).copied())
     }
 
-    /// The merge the dialog's strategy and options ask for. A dialog without
-    /// one of the groups contributes that group's defaults.
-    pub fn merge_choices(&self) -> MergeChoices {
-        let method = self
-            .form
-            .radio(Self::STRATEGY)
-            .and_then(|radio| self.strategies.get(radio.selected).copied())
-            .unwrap_or(MergeMethod::DEFAULT);
+    /// The merge method picked in the form; `None` until the projects'
+    /// methods are known, and for actions that do not merge.
+    pub fn merge_method(&self) -> Option<MergeMethod> {
+        let radio = self.form.radio(Self::METHODS)?;
+        self.methods.get(radio.selected).copied()
+    }
+
+    /// The merge the dialog's method and options ask for, `None` until a
+    /// method is picked. A dialog without the options group merges with
+    /// their defaults.
+    pub fn merge_choices(&self) -> Option<MergeChoices> {
         let is_on = |toggle: MergeToggle| {
             let row = MergeToggle::ALL.iter().position(|&t| t == toggle);
             self.form
@@ -3588,11 +3878,100 @@ impl SubmitDialog {
                 .and_then(|toggles| toggles.items.get(row?))
                 .map_or(toggle.is_on_by_default(), |item| item.is_on)
         };
-        MergeChoices {
-            method,
+        Some(MergeChoices {
+            method: self.merge_method()?,
             delete_branch: is_on(MergeToggle::DeleteSourceBranch),
             auto_merge: is_on(MergeToggle::AutoMerge),
+        })
+    }
+
+    /// Why Submit cannot merge yet, `None` once a method is picked or when
+    /// the action does not merge.
+    pub fn merge_blocker(&self) -> Option<String> {
+        if self.merge_projects.is_empty() || self.merge_method().is_some() {
+            return None;
         }
+        Some(
+            match self.form.group(Self::METHODS).map(|group| &group.kind) {
+                Some(GroupKind::Note(note)) => note.text.clone(),
+                _ => Self::LOADING_METHODS.to_string(),
+            },
+        )
+    }
+
+    /// A merge whose methods are neither known nor known to be unreadable.
+    pub fn is_waiting_for_merge_methods(&self) -> bool {
+        self.form
+            .group(Self::METHODS)
+            .is_some_and(Group::is_loading)
+    }
+
+    /// Fills the method radio once the session knows the methods of every
+    /// project the merge spans. The toggles and the focus are kept, so an
+    /// answer arriving late never undoes an edit.
+    pub fn refresh_merge_methods(
+        &mut self,
+        known: &HashMap<String, crate::domain::mr::MergeMethods>,
+    ) {
+        if !self.is_waiting_for_merge_methods() {
+            return;
+        }
+        let mut methods = self.merge_projects.iter().map(|project| known.get(project));
+        let Some(Some(first)) = methods.next() else {
+            return;
+        };
+        let mut shared = Some(first.clone());
+        for next in methods {
+            let Some(next) = next else {
+                return;
+            };
+            shared = shared.and_then(|s| s.intersect(next));
+        }
+        let Some(shared) = shared else {
+            self.methods.clear();
+            self.form.apply_loaded(Self::METHODS, |kind| {
+                *kind = GroupKind::Note(Note {
+                    level: NoteLevel::Error,
+                    text: "These projects share no merge method.".to_string(),
+                });
+            });
+            return;
+        };
+        let labels = shared
+            .allowed()
+            .iter()
+            .map(|&method| shared.label(method).to_string())
+            .collect();
+        let preselected =
+            if self.mr_asks_for_squash && shared.allowed().contains(&MergeMethod::Squash) {
+                MergeMethod::Squash
+            } else {
+                shared.preferred()
+            };
+        let preselected_index = shared
+            .allowed()
+            .iter()
+            .position(|&method| method == preselected)
+            .unwrap_or(0);
+        self.methods = shared.allowed().to_vec();
+        self.form.apply_loaded(Self::METHODS, |kind| {
+            *kind = GroupKind::Radio(Radio::new(labels, preselected_index));
+        });
+    }
+
+    /// Records that `project`'s merge methods could not be read.
+    pub fn fail_merge_methods(&mut self, project: &str, error: &str) {
+        if !self.merge_projects.iter().any(|p| p == project) {
+            return;
+        }
+        let failure = format!("Could not read the merge methods {project} allows: {error}");
+        self.methods.clear();
+        self.form.apply_loaded(Self::METHODS, |kind| {
+            *kind = GroupKind::Note(Note {
+                level: NoteLevel::Error,
+                text: failure,
+            });
+        });
     }
 
     /// Build the dialog for an action whose target carries no project of
@@ -3618,12 +3997,6 @@ impl SubmitDialog {
         let marker = if kind.is_github() { "#" } else { "!" };
 
         let action_clone = action.clone();
-        let strategies = match &action {
-            ConfirmAction::MergeMr(_)
-            | ConfirmAction::MergeStack(_)
-            | ConfirmAction::BulkMergeMrs(_) => MergeMethod::ALL.to_vec(),
-            _ => Vec::new(),
-        };
         let (title, body, submit_label, options) = match &action {
             ConfirmAction::DeleteMilestone(milestone) => (
                 format!("Delete Milestone #{}", milestone.iid),
@@ -3730,10 +4103,7 @@ impl SubmitDialog {
                 } else {
                     format!("Merging: {source} \u{2192} {target}")
                 };
-                let options = vec![
-                    Self::strategy_group(&strategies),
-                    Self::merge_options_group(),
-                ];
+                let options = vec![Self::methods_group(), Self::merge_options_group()];
                 (
                     format!("Merge {mr} #{iid}"),
                     body,
@@ -3770,13 +4140,13 @@ impl SubmitDialog {
                     }
                     None => (String::new(), Vec::new()),
                 };
-                options.push(Self::strategy_group(&strategies));
+                options.push(Self::methods_group());
                 (title, body, "Merge".to_string(), options)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
                     Self::bulk_merge_items(app, iids, marker),
-                    Self::strategy_group(&strategies),
+                    Self::methods_group(),
                     Self::merge_options_group(),
                 ];
                 (
@@ -3928,6 +4298,21 @@ impl SubmitDialog {
                 )
             }
         };
+        let merge_projects: Vec<String> = match &action {
+            ConfirmAction::MergeMr(_) | ConfirmAction::MergeStack(_) => vec![project_path.clone()],
+            ConfirmAction::BulkMergeMrs(items) => {
+                let mut projects: Vec<String> = items
+                    .iter()
+                    .map(|(project, _)| app.scope.project_of(project).to_string())
+                    .collect();
+                projects.sort();
+                projects.dedup();
+                projects
+            }
+            _ => Vec::new(),
+        };
+        let mr_asks_for_squash = matches!(action, ConfirmAction::MergeMr(iid)
+            if app.mr_index(&project_path, iid).is_some_and(|pos| app.mrs.items[pos].squash));
         let extra_buttons = match &action {
             ConfirmAction::SubmitReview(_) => {
                 vec![DialogChoice::KeepDrafts, DialogChoice::DiscardDrafts]
@@ -3961,27 +4346,27 @@ impl SubmitDialog {
         );
         let form = Form::new(title, groups, buttons);
 
-        Self {
+        let mut dialog = Self {
             action: action_clone,
             project_path,
             extra_buttons,
-            strategies,
+            methods: Vec::new(),
+            mr_asks_for_squash,
+            merge_projects,
             form: if is_destructive { form.danger() } else { form },
-        }
+        };
+        dialog.refresh_merge_methods(&app.merge_methods);
+        dialog
     }
 
-    fn strategy_group(strategies: &[MergeMethod]) -> Group {
-        let choices = strategies
-            .iter()
-            .map(|method| method.label().to_string())
-            .collect();
-        let default = strategies
-            .iter()
-            .position(|&method| method == MergeMethod::DEFAULT)
-            .unwrap_or_default();
-        Group::new(GroupKind::Radio(Radio::new(choices, default)))
-            .with_id(Self::STRATEGY)
-            .with_label("Strategy")
+    /// The method radio, empty and loading until the projects' merge
+    /// settings are read: their methods arrive through
+    /// [`Self::refresh_merge_methods`].
+    fn methods_group() -> Group {
+        Group::new(GroupKind::Radio(Radio::new(Vec::new(), 0)))
+            .with_id(Self::METHODS)
+            .with_label("Merge method")
+            .loading()
     }
 
     fn merge_options_group() -> Group {
@@ -4027,7 +4412,7 @@ impl SubmitDialog {
     }
 
     pub(crate) fn is_on_cancel(&self) -> bool {
-        self.form.focused_button() == Some(self.form.cancel())
+        self.form.cancel().is_some() && self.form.focused_button() == self.form.cancel()
     }
 
     pub(crate) fn body(&self) -> &str {
@@ -4087,6 +4472,52 @@ impl EnvironmentDeployments {
             .selected()
             .and_then(|idx| self.table.items.get(idx))
     }
+}
+
+/// A pull request's GitHub "Viewed" sync with what it needs once its diff is
+/// closed or the scope switched. Batches go out through the client that
+/// opened the diff: after a scope switch `App::gitlab_client` is being
+/// rebuilt, or reaches another host. `project_path` and `mr_iid` name the
+/// saved marks a settled request corrects, and `scopes` every cache a diff
+/// of the pull request saved them in.
+pub struct PullRequestViewedSync {
+    pub sync: ViewedSync,
+    pub client: crate::domain::client::GitlabClient,
+    pub scopes: HashSet<crate::scope::Scope>,
+    pub project_path: String,
+    pub mr_iid: u64,
+}
+
+/// Drops the marks of an MR/PR that a settled viewed sync left unviewed on
+/// GitHub. Returns whether any was dropped.
+fn drop_unviewed_marks(
+    review_marks: &mut HashMap<String, HashMap<u64, HashMap<String, String>>>,
+    project_path: &str,
+    mr_iid: u64,
+    corrections: &[(String, bool)],
+) -> bool {
+    let Some(project_marks) = review_marks.get_mut(project_path) else {
+        return false;
+    };
+    let Some(marks) = project_marks.get_mut(&mr_iid) else {
+        return false;
+    };
+    let saved = marks.len();
+    for (path, viewed) in corrections {
+        if !viewed {
+            marks.remove(path);
+        }
+    }
+    if marks.len() == saved {
+        return false;
+    }
+    if marks.is_empty() {
+        project_marks.remove(&mr_iid);
+        if project_marks.is_empty() {
+            review_marks.remove(project_path);
+        }
+    }
+    true
 }
 
 pub struct App {
@@ -4174,6 +4605,11 @@ pub struct App {
     /// PR whose stack fetch a key press is waiting on, and what to do once it
     /// lands: the key was pressed before the session knew the stack.
     pub pending_stack_action: Option<((String, u64), StackAction)>,
+    /// The merge methods each project allows, read once per session when a
+    /// merge dialog first needs them.
+    pub merge_methods: HashMap<String, crate::domain::mr::MergeMethods>,
+    /// Projects whose merge methods are being read.
+    pub fetching_merge_methods: HashSet<String>,
     /// PR open in the inspector and when it got there. Its stack is fetched
     /// only once it has stayed selected for the debounce window.
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
@@ -4264,6 +4700,10 @@ pub struct App {
     pub help_selected: usize,
     /// Scroll offset of the help table, kept across frames.
     pub help_table_state: ratatui::widgets::TableState,
+    /// Where the last draw put the help overlay's filter box and table.
+    pub help_layout: Option<crate::form::FormLayout>,
+    /// Where the last draw put the open selector's filter box and list.
+    pub selector_layout: Option<crate::form::FormLayout>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
@@ -4282,6 +4722,15 @@ pub struct App {
     pub hide_reviewed_files: bool,
     /// Session-wide diff layout, `Auto` until a layout key pins one.
     pub diff_layout: DiffLayout,
+    /// GitHub "Viewed" sync of each pull request opened this session, by
+    /// GraphQL node id. It outlives the diff view and the scope it was opened
+    /// in, so intents queued just before closing the diff or switching scope
+    /// still go out, and a reopened diff waits for the request the closed one
+    /// sent.
+    pub viewed_syncs: HashMap<String, PullRequestViewedSync>,
+    /// Viewed-sync requests settled this session, across pull requests. A
+    /// diff fetch carries the count it started at back on `DiffFetched`.
+    pub viewed_settles: SettleCount,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4311,7 +4760,6 @@ pub struct App {
         Tab,
         std::collections::HashMap<String, std::collections::HashSet<String>>,
     >,
-    pub column_filter_context: Option<(Tab, String)>,
     pub layout: Option<crate::ui::layout::LayoutPlan>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
@@ -4388,6 +4836,8 @@ impl App {
             pr_stacks: std::collections::HashMap::new(),
             fetching_pr_stacks: std::collections::HashSet::new(),
             pending_stack_action: None,
+            merge_methods: HashMap::new(),
+            fetching_merge_methods: HashSet::new(),
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
@@ -4430,6 +4880,8 @@ impl App {
             help_search_query: String::new(),
             help_selected: 0,
             help_table_state: ratatui::widgets::TableState::default(),
+            help_layout: None,
+            selector_layout: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             diff_loading: false,
@@ -4453,6 +4905,8 @@ impl App {
             in_review_mode: false,
             hide_reviewed_files: false,
             diff_layout: DiffLayout::Auto,
+            viewed_syncs: HashMap::new(),
+            viewed_settles: SettleCount::default(),
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             page_size: config.page_size,
@@ -4471,7 +4925,6 @@ impl App {
             group_list_state: ratatui::widgets::ListState::default(),
             group_items: Vec::new(),
             column_filters: std::collections::HashMap::new(),
-            column_filter_context: None,
             layout: None,
             content_rect: None,
             detail_rect: None,
@@ -4791,6 +5244,58 @@ impl App {
         self.push_modal(Modal::EditMenu(Box::new(menu)));
     }
 
+    /// Takes the answer to a merge-methods read: remembers a success for the
+    /// session and redraws the open merge dialog either way.
+    pub fn apply_merge_methods(
+        &mut self,
+        project: String,
+        result: Result<crate::domain::mr::MergeMethods, String>,
+    ) {
+        self.fetching_merge_methods.remove(&project);
+        let failure = match result {
+            Ok(methods) => {
+                self.merge_methods.insert(project, methods);
+                None
+            }
+            Err(error) => Some((project, error)),
+        };
+        let App {
+            modal_stack,
+            merge_methods,
+            ..
+        } = self;
+        for modal in modal_stack.iter_mut() {
+            if let Modal::Submit(dialog) = modal {
+                match &failure {
+                    Some((project, error)) => dialog.fail_merge_methods(project, error),
+                    None => dialog.refresh_merge_methods(merge_methods),
+                }
+            }
+        }
+    }
+
+    /// Projects the open merge dialog waits on that nobody is reading yet;
+    /// marks them as being read.
+    pub fn take_merge_methods_to_fetch(&mut self) -> Vec<String> {
+        let Some(dialog) = self.submit_dialog() else {
+            return Vec::new();
+        };
+        if !dialog.is_waiting_for_merge_methods() {
+            return Vec::new();
+        }
+        let missing: Vec<String> = dialog
+            .merge_projects
+            .iter()
+            .filter(|project| {
+                !self.merge_methods.contains_key(*project)
+                    && !self.fetching_merge_methods.contains(*project)
+            })
+            .cloned()
+            .collect();
+        self.fetching_merge_methods.extend(missing.iter().cloned());
+        missing
+    }
+
     pub fn open_diff_view(&mut self, diff: DiffView) {
         match self.diff_view_mut() {
             Some(open) => *open = diff,
@@ -4836,6 +5341,7 @@ impl App {
 
     pub fn reset_on_scope_change(&mut self) {
         self.scope_generation = self.scope_generation.next();
+        self.fetching_merge_methods.clear();
         if self.scope.is_group() {
             for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {
                 self.enabled_columns
@@ -4849,7 +5355,6 @@ impl App {
         self.stale_tabs.clear();
         self.search_query.clear();
         self.column_filters.clear();
-        self.column_filter_context = None;
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.selected_branches.clear();
@@ -6339,6 +6844,12 @@ impl App {
         self.kind().is_github()
     }
 
+    /// Whether a diff fetch should load GitHub's viewed state: GitLab has no
+    /// API for it.
+    pub fn syncs_viewed_files(&self) -> bool {
+        self.config.sync_viewed_files && self.is_github()
+    }
+
     pub fn start_loading_tab(&mut self, tab: Tab) {
         let client_cannot_list = self
             .gitlab_client
@@ -6494,18 +7005,18 @@ impl App {
     }
 
     /// Apply the value-filter picker result. Empty selection clears the
-    /// filter for the column held in `column_filter_context`; any non-empty
-    /// selection replaces it. Wraps `column_filter_context.take()` so the
-    /// picker state is dropped on confirmation.
+    /// filter for `col`; any non-empty selection replaces it.
     ///
     /// Extracted from the `main.rs` keypress handler so the reset-on-empty
     /// semantics are unit-testable in isolation. See issue #510: before this
     /// helper, an empty selection silently re-applied the focused value and
     /// there was no in-UI way to clear a column filter.
-    pub fn apply_column_filter_picker(&mut self, selected: std::collections::HashSet<String>) {
-        let Some((tab, col)) = self.column_filter_context.take() else {
-            return;
-        };
+    pub fn apply_column_filter_picker(
+        &mut self,
+        tab: Tab,
+        col: String,
+        selected: std::collections::HashSet<String>,
+    ) {
         if selected.is_empty() {
             self.remove_column_filter(tab, &col);
         } else {
@@ -6864,30 +7375,132 @@ impl App {
             .count()
     }
 
-    /// Files marked as reviewed for an MR/PR, restored from the project cache.
-    pub fn reviewed_files_for_mr(&self, mr_iid: u64) -> HashSet<String> {
+    /// Reviewed-file marks of an MR/PR (path → fingerprint of the reviewed
+    /// version), restored from the project cache.
+    pub fn review_marks_for_mr(&self, project_path: &str, mr_iid: u64) -> HashMap<String, String> {
         self.project_cache
-            .reviewed_files
-            .get(&mr_iid)
-            .map(|paths| paths.iter().cloned().collect())
+            .prefs
+            .review_marks
+            .get(project_path)
+            .and_then(|marks| marks.get(&mr_iid))
+            .cloned()
             .unwrap_or_default()
     }
 
-    /// Writes the reviewed-file marks of an MR/PR back into the project cache.
-    /// The caller persists the cache to disk.
-    pub fn store_reviewed_files_for_mr(&mut self, mr_iid: u64, reviewed: &HashSet<String>) {
-        if reviewed.is_empty() {
-            self.project_cache.reviewed_files.remove(&mr_iid);
-            return;
+    /// Writes the reviewed-file marks of an MR/PR into the project cache and
+    /// persists it.
+    pub fn store_review_marks(
+        &mut self,
+        project_path: &str,
+        mr_iid: u64,
+        marks: HashMap<String, String>,
+    ) {
+        let all_marks = &mut self.project_cache.prefs.review_marks;
+        if marks.is_empty() {
+            if let Some(project_marks) = all_marks.get_mut(project_path) {
+                project_marks.remove(&mr_iid);
+                if project_marks.is_empty() {
+                    all_marks.remove(project_path);
+                }
+            }
+        } else {
+            all_marks
+                .entry(project_path.to_string())
+                .or_default()
+                .insert(mr_iid, marks);
         }
-        let mut paths: Vec<String> = reviewed.iter().cloned().collect();
-        paths.sort();
-        self.project_cache.reviewed_files.insert(mr_iid, paths);
+        crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+    }
+
+    /// Makes the GitHub state `diff_view` loaded the pull request's confirmed
+    /// state, then lays over it what that state may predate: requests settled
+    /// after `fetched_at`, then intents not settled yet.
+    pub fn reload_viewed_sync(&mut self, diff_view: &mut DiffView, fetched_at: SettleCount) {
+        let (Some(pull_request_id), Some(client)) = (
+            diff_view.pull_request_id.clone(),
+            self.gitlab_client.as_ref(),
+        ) else {
+            return;
+        };
+        let confirmed = diff_view.reviewed_files.clone();
+        let entry =
+            self.viewed_syncs
+                .entry(pull_request_id)
+                .or_insert_with(|| PullRequestViewedSync {
+                    sync: ViewedSync::default(),
+                    client: client.clone(),
+                    scopes: HashSet::new(),
+                    project_path: diff_view.project_path.clone(),
+                    mr_iid: diff_view.mr_iid,
+                });
+        entry.scopes.insert(self.scope.clone());
+        let mut corrections = entry.sync.reload(confirmed, fetched_at);
+        corrections.extend(entry.sync.unsettled());
+        diff_view.apply_review_corrections(&corrections);
+    }
+
+    /// Queues a reviewed-state change for a pull request's GitHub sync.
+    /// Returns true when the caller must schedule a flush.
+    pub fn queue_viewed_sync(
+        &mut self,
+        pull_request_id: &str,
+        paths: &[String],
+        viewed: bool,
+    ) -> bool {
+        self.viewed_syncs
+            .get_mut(pull_request_id)
+            .is_some_and(|entry| entry.sync.queue(paths, viewed))
+    }
+
+    /// Brings the reviewed marks of an MR/PR in line with what a settled
+    /// viewed-sync request left on GitHub. Its open diff takes every
+    /// correction, even one opened without GitHub's state. Without an open
+    /// diff only the saved marks GitHub does not hold are dropped: saving a
+    /// mark takes the file's fingerprint, which only a diff has. The caches
+    /// of `saved_in`, the scopes the marks were saved in, drop them too when
+    /// the user has switched away from them.
+    pub fn apply_viewed_corrections(
+        &mut self,
+        saved_in: &HashSet<crate::scope::Scope>,
+        project_path: &str,
+        mr_iid: u64,
+        corrections: &[(String, bool)],
+    ) {
+        for scope in saved_in.iter().filter(|scope| **scope != self.scope) {
+            let mut cache = crate::utils::cache::load_cache(scope.as_str());
+            if drop_unviewed_marks(
+                &mut cache.prefs.review_marks,
+                project_path,
+                mr_iid,
+                corrections,
+            ) {
+                crate::utils::cache::save_cache(scope.as_str(), &cache);
+            }
+        }
+        match self
+            .diff_view_mut()
+            .filter(|view| view.project_path == project_path && view.mr_iid == mr_iid)
+        {
+            Some(diff_view) => {
+                if diff_view.apply_review_corrections(corrections) == 0 {
+                    return;
+                }
+                let marks = diff_view.review_marks();
+                self.store_review_marks(project_path, mr_iid, marks);
+            }
+            None => {
+                let review_marks = &mut self.project_cache.prefs.review_marks;
+                if drop_unviewed_marks(review_marks, project_path, mr_iid, corrections) {
+                    crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+                }
+            }
+        }
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
     pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
         self.project_cache
+            .prefs
             .draft_comments
             .get(project_path)
             .and_then(|drafts| drafts.get(&mr_iid))
@@ -6912,7 +7525,7 @@ impl App {
     /// drafts of an MR/PR and writes the project cache to disk, so drafts
     /// outlive the diff view and the process.
     pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
-        let drafts = &mut self.project_cache.draft_comments;
+        let drafts = &mut self.project_cache.prefs.draft_comments;
         if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
             if let Some(project_drafts) = drafts.get_mut(project_path) {
                 project_drafts.remove(&mr_iid);
@@ -8239,24 +8852,27 @@ impl App {
             }
             return false;
         }
-        let Some(field_type) = self.selector().map(|s| s.field_type.clone()) else {
+        let Some(purpose) = self.selector().map(|s| s.purpose.clone()) else {
             return false;
         };
-        match field_type.as_str() {
-            "labels" => {
+        match &purpose {
+            SelectorPurpose::Field(SelectorField::Labels) => {
                 self.cached_labels = items.clone();
-                self.project_cache.labels = items.clone();
+                self.project_cache.data.labels = items.clone();
             }
-            "assignees" | "reviewers" => {
+            SelectorPurpose::Field(SelectorField::Assignees | SelectorField::Reviewers) => {
                 self.cached_members = items.clone();
-                self.project_cache.members = items.clone();
+                self.project_cache.data.members = items.clone();
             }
             _ => {}
         }
         let Some(selector) = self.selector_mut() else {
             return false;
         };
-        if matches!(selector.field_type.as_str(), "project" | "tag") {
+        if matches!(
+            purpose,
+            SelectorPurpose::Field(SelectorField::Project | SelectorField::Tag)
+        ) {
             selector.all_items.extend(items);
             selector.all_items.sort();
             selector.all_items.dedup();
@@ -8269,22 +8885,29 @@ impl App {
 
     /// The open selector's options known without a fetch, if any.
     fn cached_selector_items(&self) -> Option<Vec<String>> {
-        let cached: Vec<String> = match self.selector()?.field_type.as_str() {
-            "labels" => self.cached_labels.clone(),
-            "assignees" | "reviewers" => self.cached_members.clone(),
-            "milestone" => self
+        let cached: Vec<String> = match self.selector()?.purpose {
+            SelectorPurpose::Field(SelectorField::Labels) => self.cached_labels.clone(),
+            SelectorPurpose::Field(SelectorField::Assignees | SelectorField::Reviewers) => {
+                self.cached_members.clone()
+            }
+            SelectorPurpose::Field(SelectorField::Milestone) => self
                 .milestones
                 .items
                 .iter()
                 .map(|m| m.title.clone())
                 .collect(),
-            "source_branch" | "target_branch" | "pipeline_branch" | "create_from" => self
+            SelectorPurpose::Field(
+                SelectorField::SourceBranch
+                | SelectorField::TargetBranch
+                | SelectorField::PipelineBranch
+                | SelectorField::CreateFrom,
+            ) => self
                 .branches
                 .items()
                 .iter()
                 .map(|b| b.name.clone())
                 .collect(),
-            "project" => {
+            SelectorPurpose::Field(SelectorField::Project) => {
                 let mut known: Vec<String> = self
                     .issues
                     .items
@@ -8590,6 +9213,21 @@ impl App {
             table,
             is_focused,
         });
+    }
+
+    /// Shows the cached deployments of `environment` until its fetch lands,
+    /// unless its deployments are already shown.
+    pub fn show_cached_deployments(&mut self, environment: &str) {
+        let is_shown = self
+            .environment_deployments
+            .as_ref()
+            .is_some_and(|shown| shown.environment == environment);
+        if is_shown {
+            return;
+        }
+        if let Some(cached) = self.project_cache.data.deployments.get(environment) {
+            self.show_deployments(environment.to_string(), cached.clone());
+        }
     }
 
     /// The shown deployments, when the navigation keys belong to them.
@@ -11084,6 +11722,21 @@ mod tests {
         assert_eq!(dp.value_string(), "2026-05-29");
     }
 
+    fn merge_methods(
+        allowed: &[crate::domain::mr::MergeMethod],
+        preferred: crate::domain::mr::MergeMethod,
+    ) -> crate::domain::mr::MergeMethods {
+        crate::domain::mr::MergeMethods::new(allowed, Some(preferred)).unwrap()
+    }
+
+    fn method_labels(dialog: &SubmitDialog) -> Vec<String> {
+        dialog
+            .form
+            .radio(SubmitDialog::METHODS)
+            .map(|radio| radio.choices.clone())
+            .unwrap_or_default()
+    }
+
     fn press_in_form(dialog: &mut SubmitDialog, keys: &[crossterm::event::KeyCode]) {
         for &code in keys {
             dialog.form.handle_key(&crossterm::event::KeyEvent::new(
@@ -11094,17 +11747,64 @@ mod tests {
     }
 
     #[test]
-    fn the_merge_dialog_sends_the_strategy_and_options_the_user_picked() {
+    fn a_merge_dialog_offers_only_the_methods_the_project_allows() {
+        use crate::domain::mr::MergeMethod::{Merge, Rebase};
+        let mut app = App::default();
+        app.merge_methods
+            .insert("g/p".to_string(), merge_methods(&[Merge, Rebase], Rebase));
+
+        let dialog =
+            SubmitDialog::build_with_project(ConfirmAction::MergeMr(9), "g/p".to_string(), &app);
+
+        assert_eq!(method_labels(&dialog), ["Merge commit", "Rebase"]);
+        assert_eq!(dialog.merge_method(), Some(Rebase));
+        assert_eq!(dialog.merge_blocker(), None);
+        assert!(dialog.is_on_submit());
+    }
+
+    #[test]
+    fn a_merge_dialog_preselects_squash_for_an_mr_whose_author_asked_for_it() {
+        use crate::domain::mr::MergeMethod::{Merge, Squash};
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("g/p".to_string()),
+            ..App::default()
+        };
+        app.merge_methods
+            .insert("g/p".to_string(), merge_methods(&[Merge, Squash], Merge));
+        let mut flagged = mr_fixture(9, "opened", "alice", false, "Flagged");
+        flagged.squash = true;
+        app.mrs.items = vec![flagged, mr_fixture(10, "opened", "alice", false, "Plain")];
+
+        let picked = |action| {
+            SubmitDialog::build_with_project(action, "g/p".to_string(), &app).merge_method()
+        };
+
+        assert_eq!(picked(ConfirmAction::MergeMr(9)), Some(Squash));
+        assert_eq!(picked(ConfirmAction::MergeMr(10)), Some(Merge));
+        assert_eq!(
+            picked(ConfirmAction::BulkMergeMrs(vec![(String::new(), 9)])),
+            Some(Merge)
+        );
+    }
+
+    #[test]
+    fn the_merge_dialog_sends_the_method_and_options_the_user_picked() {
+        use crate::domain::mr::MergeMethod::{Merge, Rebase, Squash};
         use crossterm::event::KeyCode::{Char, Tab};
-        let app = App::default();
-        let mut dialog = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
+        let mut app = App::default();
+        app.merge_methods.insert(
+            "g/p".to_string(),
+            merge_methods(&[Merge, Squash, Rebase], Squash),
+        );
+        let mut dialog =
+            SubmitDialog::build_with_project(ConfirmAction::MergeMr(99), "g/p".to_string(), &app);
         assert_eq!(
             dialog.merge_choices(),
-            MergeChoices {
-                method: MergeMethod::Squash,
+            Some(MergeChoices {
+                method: Squash,
                 delete_branch: true,
                 auto_merge: false,
-            }
+            })
         );
 
         press_in_form(
@@ -11120,25 +11820,99 @@ mod tests {
             ],
         );
 
-        let choices = dialog.merge_choices();
+        let choices = dialog.merge_choices().expect("a method is picked");
         assert_eq!(
             choices,
             MergeChoices {
-                method: MergeMethod::Merge,
+                method: Merge,
                 delete_branch: false,
                 auto_merge: true,
             }
         );
         assert_eq!(
-            choices.options(Some("abc123")),
+            choices.options(Some("abc123"), false),
             crate::backend::MergeOptions {
-                squash: false,
+                method: Merge,
                 delete_branch: false,
-                strategy: Some("merge"),
                 auto_merge: true,
                 sha: Some("abc123"),
+                squashes_every_merge: false,
             }
         );
+    }
+
+    #[test]
+    fn merge_methods_arriving_late_keep_the_toggles_the_user_already_flipped() {
+        use crate::domain::mr::MergeMethod::{Merge, Squash};
+        use crossterm::event::KeyCode::Char;
+        let mut app = App::default();
+        let mut dialog =
+            SubmitDialog::build_with_project(ConfirmAction::MergeMr(9), "g/p".to_string(), &app);
+        assert_eq!(
+            dialog.merge_blocker().as_deref(),
+            Some("The merge methods are still loading.")
+        );
+        assert!(dialog.is_waiting_for_merge_methods());
+        press_in_form(&mut dialog, &[Char('k'), Char('k'), Char(' ')]);
+        let options = dialog.form.focus();
+        app.open_submit_dialog(dialog);
+        assert_eq!(app.take_merge_methods_to_fetch(), ["g/p"]);
+        assert_eq!(app.take_merge_methods_to_fetch(), Vec::<String>::new());
+
+        app.apply_merge_methods(
+            "g/p".to_string(),
+            Ok(merge_methods(&[Merge, Squash], Squash)),
+        );
+
+        let dialog = app.submit_dialog().unwrap();
+        assert_eq!(
+            dialog.merge_choices(),
+            Some(MergeChoices {
+                method: Squash,
+                delete_branch: false,
+                auto_merge: false,
+            })
+        );
+        assert_eq!(dialog.form.focus(), options);
+    }
+
+    #[test]
+    fn a_bulk_merge_offers_the_methods_every_project_shares() {
+        use crate::domain::mr::MergeMethod::{Merge, Rebase, Squash};
+        let mut app = App::default();
+        app.merge_methods
+            .insert("a/one".to_string(), merge_methods(&[Merge, Squash], Merge));
+        app.merge_methods.insert(
+            "b/two".to_string(),
+            merge_methods(&[Squash, Rebase], Rebase),
+        );
+        let items = vec![("a/one".to_string(), 1), ("b/two".to_string(), 2)];
+
+        let dialog = SubmitDialog::build(ConfirmAction::BulkMergeMrs(items), &app);
+
+        assert_eq!(dialog.merge_projects, ["a/one", "b/two"]);
+        assert_eq!(method_labels(&dialog), ["Squash"]);
+        assert_eq!(dialog.merge_method(), Some(Squash));
+    }
+
+    #[test]
+    fn an_unreadable_merge_setting_refuses_the_merge_and_is_not_read_again() {
+        let mut app = App::default();
+        app.open_submit_dialog(SubmitDialog::build_with_project(
+            ConfirmAction::MergeMr(9),
+            "g/p".to_string(),
+            &app,
+        ));
+        assert_eq!(app.take_merge_methods_to_fetch(), ["g/p"]);
+
+        app.apply_merge_methods("g/p".to_string(), Err("HTTP 404".to_string()));
+
+        let dialog = app.submit_dialog().unwrap();
+        assert_eq!(
+            dialog.merge_blocker().as_deref(),
+            Some("Could not read the merge methods g/p allows: HTTP 404")
+        );
+        assert_eq!(app.take_merge_methods_to_fetch(), Vec::<String>::new());
     }
 
     #[test]
@@ -11148,21 +11922,11 @@ mod tests {
         assert!(close.is_on_cancel());
         assert_eq!(close.form.tone(), crate::form::FormTone::Danger);
         assert_eq!(close.form.buttons()[0].label, "Close");
+        assert!(close.merge_projects.is_empty());
 
         let merge = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
         assert!(merge.is_on_submit());
         assert_eq!(merge.form.tone(), crate::form::FormTone::Normal);
-        assert_eq!(
-            merge
-                .form
-                .radio(SubmitDialog::STRATEGY)
-                .map(|r| r.choices.clone()),
-            Some(vec![
-                "Merge commit".to_string(),
-                "Squash".to_string(),
-                "Rebase".to_string()
-            ])
-        );
 
         let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
         assert!(rebase.is_on_submit());
@@ -11505,7 +12269,7 @@ diff --git a/VERSION b/VERSION
             is_loading: true,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
             multi_select: true,
             state: ListState::default(),
             request: Some(request),
@@ -11554,7 +12318,7 @@ diff --git a/VERSION b/VERSION
         assert!(!selector.is_loading);
         assert_eq!(selector.all_items, labels);
         assert_eq!(app.cached_labels, labels);
-        assert_eq!(app.project_cache.labels, labels);
+        assert_eq!(app.project_cache.data.labels, labels);
     }
 
     #[test]
@@ -11562,7 +12326,7 @@ diff --git a/VERSION b/VERSION
         let mut app = App::default();
         let request = app.next_request_tag();
         app.open_selector(Selector {
-            field_type: "tag".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Tag),
             all_items: vec!["v1.0.0".to_string(), "v1.1.0".to_string()],
             multi_select: false,
             ..loading_labels_selector(request)
@@ -11600,7 +12364,7 @@ diff --git a/VERSION b/VERSION
     #[test]
     fn failed_selector_fetch_without_a_cache_reports_inside_and_leaves_the_cache() {
         let mut app = App::default();
-        app.project_cache.labels = vec!["persisted".to_string()];
+        app.project_cache.data.labels = vec!["persisted".to_string()];
         let request = app.next_request_tag();
         app.open_selector(loading_labels_selector(request));
 
@@ -11616,7 +12380,7 @@ diff --git a/VERSION b/VERSION
         );
         assert_eq!(app.toast_notice(), None);
         assert!(app.cached_labels.is_empty());
-        assert_eq!(app.project_cache.labels, ["persisted"]);
+        assert_eq!(app.project_cache.data.labels, ["persisted"]);
     }
 
     #[test]
@@ -11631,7 +12395,7 @@ diff --git a/VERSION b/VERSION
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
             multi_select: true,
             state: ListState::default(),
             request: None,
@@ -11652,28 +12416,34 @@ diff --git a/VERSION b/VERSION
 
     #[test]
     fn test_selector_has_filter_bar() {
-        let make = |field_type: &str| Selector {
-            title: "Test".to_string(),
-            all_items: vec![],
-            selected_items: std::collections::HashSet::new(),
-            cursor_idx: 0,
-            search_query: String::new(),
-            is_filtering: false,
-            is_loading: false,
-            entity_iid: 1,
-            entity_type: "issue".to_string(),
-            field_type: field_type.to_string(),
-            multi_select: false,
-            state: ListState::default(),
-            request: None,
-        };
+        assert!(!SelectorPurpose::LinkedIssues.has_filter_bar());
+        assert!(
+            !SelectorPurpose::CommentActions {
+                comment_id: 1,
+                mr_iid: 1
+            }
+            .has_filter_bar()
+        );
+        assert!(!SelectorPurpose::DraftActions { index: 0 }.has_filter_bar());
+        assert!(!SelectorPurpose::RelatedMrs.has_filter_bar());
+        assert!(SelectorPurpose::Field(SelectorField::Labels).has_filter_bar());
+        assert!(SelectorPurpose::Field(SelectorField::Assignees).has_filter_bar());
+        assert!(SelectorPurpose::Field(SelectorField::Milestone).has_filter_bar());
+    }
 
-        assert!(!make("linked_issues").has_filter_bar());
-        assert!(!make("comment_action_select").has_filter_bar());
-        assert!(!make("related_mrs").has_filter_bar());
-        assert!(make("labels").has_filter_bar());
-        assert!(make("assignees").has_filter_bar());
-        assert!(make("milestone").has_filter_bar());
+    #[test]
+    fn selector_field_label_round_trips() {
+        let fields = SelectorField::FIXED
+            .into_iter()
+            .chain([SelectorField::WorkflowInput("version".to_string())]);
+        for field in fields {
+            assert_eq!(
+                SelectorField::from_label(&field.label()),
+                Some(field.clone()),
+                "label {:?} did not round-trip",
+                field.label()
+            );
+        }
     }
 
     #[test]
@@ -11693,7 +12463,7 @@ diff --git a/VERSION b/VERSION
             is_loading: false,
             entity_iid: 1,
             entity_type: "issue".to_string(),
-            field_type: "labels".to_string(),
+            purpose: SelectorPurpose::Field(SelectorField::Labels),
             multi_select: true,
             state: ListState::default(),
             request: None,
@@ -11722,6 +12492,7 @@ diff --git a/VERSION b/VERSION
             title: "Some MR title".to_string(),
             state: "opened".to_string(),
             draft: true,
+            squash: false,
             author: author.clone(),
             updated_at: "2026-06-02T21:00:00Z".to_string(),
             target_branch: "main".to_string(),
@@ -11749,6 +12520,7 @@ diff --git a/VERSION b/VERSION
             title: "WIP: Another MR title".to_string(),
             state: "opened".to_string(),
             draft: false,
+            squash: false,
             author: author.clone(),
             updated_at: "2026-06-02T21:00:00Z".to_string(),
             target_branch: "main".to_string(),
@@ -11776,6 +12548,7 @@ diff --git a/VERSION b/VERSION
             title: "Finished MR title".to_string(),
             state: "opened".to_string(),
             draft: false,
+            squash: false,
             author: author.clone(),
             updated_at: "2026-06-02T21:00:00Z".to_string(),
             target_branch: "main".to_string(),
@@ -12050,7 +12823,8 @@ index abcdef..ffffff 100644
     fn jump_to_anchor_unfolds_a_directory_folded_by_review_marks() {
         let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
         diff_view.restore_review_state(
-            HashSet::from(["src/app.rs".to_string(), "src/main.rs".to_string()]),
+            &diff_view.marks_on_this_diff(&["src/app.rs", "src/main.rs"]),
+            None,
             false,
         );
         assert!(
@@ -12072,7 +12846,7 @@ index abcdef..ffffff 100644
     #[test]
     fn jump_to_anchor_reveals_a_file_hidden_by_the_reviewed_filter() {
         let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
-        diff_view.restore_review_state(HashSet::from(["src/main.rs".to_string()]), true);
+        diff_view.restore_review_state(&diff_view.marks_on_this_diff(&["src/main.rs"]), None, true);
         assert!(!tree_shows_file(&diff_view, "src/main.rs"));
 
         assert!(diff_view.jump_to_anchor(&note_position("src/main.rs", Some(21), None)));
@@ -13612,11 +14386,11 @@ index 123456..789012 100644
     #[test]
     fn test_restore_review_state_opens_completed_directories_folded() {
         let mut view = review_fixture();
-        let cached: HashSet<String> = ["src/app.rs", "src/main.rs"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        view.restore_review_state(cached, false);
+        view.restore_review_state(
+            &view.marks_on_this_diff(&["src/app.rs", "src/main.rs"]),
+            None,
+            false,
+        );
 
         let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, vec!["src", "README.md"]);
@@ -13626,17 +14400,211 @@ index 123456..789012 100644
     #[test]
     fn test_restore_review_state_drops_paths_no_longer_in_the_diff() {
         let mut view = review_fixture();
-        let cached: HashSet<String> = ["src/app.rs", "deleted/elsewhere.rs"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        view.restore_review_state(cached, false);
+        view.restore_review_state(
+            &view.marks_on_this_diff(&["src/app.rs", "deleted/elsewhere.rs"]),
+            None,
+            false,
+        );
 
         assert_eq!(
             view.reviewed_files,
             ["src/app.rs".to_string()].into_iter().collect()
         );
         assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    /// `review_fixture` after a push that changed README.md only.
+    fn review_fixture_after_push() -> DiffView {
+        let diff = review_fixture().raw_diff.replace(
+            "+++ b/README.md\n@@ -1,1 +1,1 @@\n- old\n+ new",
+            "+++ b/README.md\n@@ -1,1 +1,1 @@\n- old\n+ newer",
+        );
+        assert!(diff.contains("+ newer"));
+        DiffView::new(42, "owner/repo".to_string(), diff)
+    }
+
+    fn select_file(view: &mut DiffView, path: &str) {
+        view.selected_visible_idx = view
+            .visible_nodes
+            .iter()
+            .position(|n| n.file_path.as_deref() == Some(path))
+            .expect("file in tree");
+    }
+
+    fn app_with_github_client() -> App {
+        App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        }
+    }
+
+    #[test]
+    fn marks_reset_only_on_files_whose_diff_changed() {
+        let mut reviewed = review_fixture();
+        reviewed.restore_review_state(
+            &reviewed.marks_on_this_diff(&["src/app.rs", "README.md"]),
+            None,
+            false,
+        );
+        let saved = reviewed.review_marks();
+
+        let mut view = review_fixture_after_push();
+        view.restore_review_state(&saved, None, false);
+
+        assert_eq!(
+            view.reviewed_files,
+            HashSet::from(["src/app.rs".to_string()])
+        );
+        assert_eq!(
+            view.changed_since_review,
+            HashSet::from(["README.md".to_string()])
+        );
+        assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    #[test]
+    fn a_changed_mark_survives_refetches_until_the_file_is_toggled() {
+        let mut reviewed = review_fixture();
+        reviewed.restore_review_state(&reviewed.marks_on_this_diff(&["README.md"]), None, false);
+        let saved = reviewed.review_marks();
+
+        let mut view = review_fixture_after_push();
+        view.restore_review_state(&saved, None, false);
+        let resaved = view.review_marks();
+        let mut refetched = review_fixture_after_push();
+        refetched.restore_review_state(&resaved, None, false);
+        assert!(refetched.changed_since_review.contains("README.md"));
+        assert!(!refetched.reviewed_files.contains("README.md"));
+
+        // Re-reviewing the new version records its fingerprint and clears the flag.
+        select_file(&mut refetched, "README.md");
+        assert_eq!(refetched.toggle_reviewed(), Some((1, true)));
+        assert!(refetched.changed_since_review.is_empty());
+        let mut reopened = review_fixture_after_push();
+        reopened.restore_review_state(&refetched.review_marks(), None, false);
+        assert!(reopened.reviewed_files.contains("README.md"));
+        assert!(reopened.changed_since_review.is_empty());
+    }
+
+    #[test]
+    fn fingerprints_see_tab_and_line_ending_changes_the_display_hides() {
+        let diff = |added: &str| {
+            DiffView::new(
+                42,
+                "owner/repo".to_string(),
+                format!("--- a/Makefile\n+++ b/Makefile\n@@ -1,1 +1,1 @@\n-old\n{added}\n"),
+            )
+        };
+        let fingerprint = |view: &DiffView| view.file_fingerprints["Makefile"].clone();
+        let tab = diff("+\tbuild");
+        let spaces = diff("+    build");
+        assert_eq!(tab.all_lines[4].content, spaces.all_lines[4].content);
+        assert_ne!(fingerprint(&tab), fingerprint(&spaces));
+
+        let crlf = diff("+build\r");
+        let lf = diff("+build");
+        assert_eq!(crlf.all_lines[4].content, "+build");
+        assert_ne!(fingerprint(&crlf), fingerprint(&lf));
+    }
+
+    #[test]
+    fn server_viewed_state_replaces_local_marks() {
+        let mut view = review_fixture();
+        let local = view.marks_on_this_diff(&["src/main.rs"]);
+        let server = PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::from([
+                ("src/app.rs".to_string(), FileViewedState::Viewed),
+                ("src/main.rs".to_string(), FileViewedState::Unviewed),
+                ("README.md".to_string(), FileViewedState::Dismissed),
+                ("not/in/diff.rs".to_string(), FileViewedState::Viewed),
+            ]),
+        };
+        view.restore_review_state(&local, Some(server), true);
+
+        assert_eq!(
+            view.reviewed_files,
+            HashSet::from(["src/app.rs".to_string()])
+        );
+        assert_eq!(
+            view.changed_since_review,
+            HashSet::from(["README.md".to_string()])
+        );
+        // A dismissed file is unreviewed, so the reviewed filter keeps it.
+        assert!(tree_shows_file(&view, "README.md"));
+        assert!(!tree_shows_file(&view, "src/app.rs"));
+        assert_eq!(view.pull_request_id.as_deref(), Some("PR_1"));
+    }
+
+    #[test]
+    fn unsent_sync_intents_survive_closing_and_reopening_the_diff() {
+        let server = || PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::new(),
+        };
+        let mut app = app_with_github_client();
+        let mut before = review_fixture();
+        before.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut before, SettleCount::default());
+        select_file(&mut before, "README.md");
+        before.toggle_reviewed();
+        assert!(app.queue_viewed_sync("PR_1", &["README.md".to_string()], true));
+        drop(before);
+
+        // Reopened before the flush: the server does not have the mark yet.
+        let mut after = review_fixture();
+        after.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut after, SettleCount::default());
+
+        assert!(after.reviewed_files.contains("README.md"));
+        let entry = app.viewed_syncs.get_mut("PR_1").unwrap();
+        assert_eq!(
+            entry.sync.take_changes(),
+            vec![("README.md".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn a_mark_carried_over_a_refetch_takes_a_dismissed_file_out_of_the_changed_set() {
+        let server = || PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::from([("README.md".to_string(), FileViewedState::Dismissed)]),
+        };
+        let mut app = app_with_github_client();
+        let mut before = review_fixture();
+        before.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut before, SettleCount::default());
+        select_file(&mut before, "README.md");
+        before.toggle_reviewed();
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+
+        // A mutation refetches the diff before the flush.
+        let mut after = review_fixture();
+        after.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut after, SettleCount::default());
+
+        assert_eq!(
+            after.reviewed_files,
+            HashSet::from(["README.md".to_string()])
+        );
+        assert!(after.changed_since_review.is_empty());
+
+        let mut reverted = review_fixture();
+        reverted.restore_review_state(&HashMap::new(), Some(server()), false);
+        reverted.apply_review_corrections(&[("README.md".to_string(), false)]);
+        assert_eq!(
+            reverted.changed_since_review,
+            HashSet::from(["README.md".to_string()]),
+            "an unreviewed correction keeps the server's flag"
+        );
     }
 
     #[test]
@@ -13675,6 +14643,7 @@ index 123456..789012 100644
             source_branch: "feature".to_string(),
             sha: None,
             draft,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,
@@ -14865,16 +15834,15 @@ index 123456..789012 100644
 
         // Drive the same code path the picker Enter key triggers in
         // `src/main.rs` (now factored through `apply_column_filter_picker`).
-        app.column_filter_context = Some((Tab::MergeRequests, "Project".to_string()));
-        app.apply_column_filter_picker(std::collections::HashSet::new());
+        app.apply_column_filter_picker(
+            Tab::MergeRequests,
+            "Project".to_string(),
+            std::collections::HashSet::new(),
+        );
 
         assert!(
             !app.has_column_filter(Tab::MergeRequests, "Project"),
             "filter for Project column should be cleared after picker reset"
-        );
-        assert!(
-            app.column_filter_context.is_none(),
-            "picker context must be taken"
         );
         let filtered = app.filtered_mrs();
         assert_eq!(
@@ -14903,13 +15871,11 @@ index 123456..789012 100644
         app.mrs.items = vec![issue1, issue2];
 
         // Reopen the picker for `Project`, keep `repo-a` selected, confirm.
-        app.column_filter_context = Some((Tab::MergeRequests, "Project".to_string()));
         let mut selected = std::collections::HashSet::new();
         selected.insert("group/repo-a".to_string());
-        app.apply_column_filter_picker(selected);
+        app.apply_column_filter_picker(Tab::MergeRequests, "Project".to_string(), selected);
 
         assert!(app.has_column_filter(Tab::MergeRequests, "Project"));
-        assert!(app.column_filter_context.is_none());
         let filtered = app.filtered_mrs();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
@@ -14945,17 +15911,19 @@ index 123456..789012 100644
 
         // Seed a Status = SUCCESS filter via the picker helper, narrowing
         // the table to the success row.
-        app.column_filter_context = Some((Tab::Pipelines, "Status".to_string()));
         let mut selected = std::collections::HashSet::new();
         selected.insert("SUCCESS".to_string());
-        app.apply_column_filter_picker(selected);
+        app.apply_column_filter_picker(Tab::Pipelines, "Status".to_string(), selected);
         assert_eq!(app.filtered_pipelines().len(), 1);
 
         // Empty-selection reset — `apply_column_filters` short-circuits on
         // an empty set, so removing the entry (not inserting an empty set)
         // is what restores every row.
-        app.column_filter_context = Some((Tab::Pipelines, "Status".to_string()));
-        app.apply_column_filter_picker(std::collections::HashSet::new());
+        app.apply_column_filter_picker(
+            Tab::Pipelines,
+            "Status".to_string(),
+            std::collections::HashSet::new(),
+        );
 
         assert!(!app.has_column_filter(Tab::Pipelines, "Status"));
         assert_eq!(
@@ -16092,6 +17060,7 @@ index 123456..789012 100644
             source_branch: "feat".into(),
             sha: None,
             draft: false,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,
@@ -16125,6 +17094,7 @@ index 123456..789012 100644
             source_branch: "feat2".into(),
             sha: None,
             draft: false,
+            squash: false,
             description: None,
             head_pipeline: None,
             blocking_discussions_resolved: None,

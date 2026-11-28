@@ -58,14 +58,31 @@ if [[ -n "$TEST_GLAB_FAIL_MATCH" && "$*" == *"$TEST_GLAB_FAIL_MATCH"* ]]; then
 fi
 
 # A second pattern, for two calls that must both fail in one run.
+# TEST_GLAB_FAIL_DETAIL_2 adds a second stderr line to that failure.
 if [[ -n "$TEST_GLAB_FAIL_MATCH_2" && "$*" == *"$TEST_GLAB_FAIL_MATCH_2"* ]]; then
     echo "mock: 500 Internal Server Error" >&2
+    if [[ -n "$TEST_GLAB_FAIL_DETAIL_2" ]]; then
+        echo "$TEST_GLAB_FAIL_DETAIL_2" >&2
+    fi
     exit 1
 fi
 
 # Hang injection: never answer a call whose arguments contain the value.
 if [[ -n "$TEST_GLAB_HANG_MATCH" && "$*" == *"$TEST_GLAB_HANG_MATCH"* ]]; then
     exec sleep 300
+fi
+
+# Merge settings the merge dialog reads: merge commits unless
+# TEST_GLAB_MERGE_METHOD names another merge_method, squash preselected
+# unless TEST_GLAB_SQUASH_OPTION names another squash_option. The project
+# named by TEST_GLAB_ALWAYS_SQUASH_PROJECT squashes every merge instead.
+if [[ "$*" == "repo view --output json"* ]]; then
+    squash_option="${TEST_GLAB_SQUASH_OPTION:-default_on}"
+    if [[ -n "$TEST_GLAB_ALWAYS_SQUASH_PROJECT" && "$*" == *" -- $TEST_GLAB_ALWAYS_SQUASH_PROJECT" ]]; then
+        squash_option="always"
+    fi
+    echo "{\"id\":1,\"merge_method\":\"${TEST_GLAB_MERGE_METHOD:-merge}\",\"squash_option\":\"$squash_option\"}"
+    exit 0
 fi
 
 # The branch list: the fixture, plus the branch a repository/branches POST
@@ -218,7 +235,9 @@ elif [[ "$*" == *"mr list"* && "$*" == *"--source-branch"* ]]; then
 elif [[ "$*" == *"mr list"* ]]; then
     # Pages are requested concurrently; only the first carries the fixture so
     # the MR is not duplicated once per page.
-    if [[ " $* " == *" --page 1 "* ]]; then
+    if [[ " $* " == *" --page 1 "* && -n "$TEST_GLAB_MR_SQUASH" ]]; then
+        sed 's/"squash": false/"squash": true/' "$FIXTURES_DIR/mrs.json"
+    elif [[ " $* " == *" --page 1 "* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
     else
         echo "[]"
@@ -232,6 +251,9 @@ elif [[ "$*" == *"issue list"* ]]; then
     fi
 elif [[ "$*" == *"mr diff"* ]]; then
     cat "$FIXTURES_DIR/mr_diff.txt"
+elif [[ "$*" == *"mr view"* && -n "$TEST_GLAB_MR_SQUASH" ]]; then
+    # The MR's own squash flag, which GitLab follows on merge.
+    sed 's/"squash": false/"squash": true/' "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then

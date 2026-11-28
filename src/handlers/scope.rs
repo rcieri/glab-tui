@@ -21,21 +21,21 @@ pub(crate) fn sync_after_scope_change(
 
     let cache = crate::utils::cache::load_cache(app.scope.as_str());
     app.project_cache = cache.clone();
-    app.restore_cached_issues(cache.issues, cache.issues_state_query);
-    app.restore_cached_mrs(cache.mrs, cache.mrs_state_query);
+    app.restore_cached_issues(cache.data.issues, cache.data.issues_state_query);
+    app.restore_cached_mrs(cache.data.mrs, cache.data.mrs_state_query);
     crate::fetch::derive_workflow(&mut app.mrs.items);
-    app.pipelines.items = cache.pipelines;
-    app.runners.set_items(cache.runners);
-    app.releases.set_items(cache.releases);
-    app.todos.items = cache.todos;
-    app.milestones.items = cache.milestones;
-    app.pipeline_jobs = cache.pipeline_jobs;
-    app.branches.set_items(cache.branches);
-    app.environments.set_items(cache.environments);
-    app.milestone_issues_cache = cache.milestone_issues;
+    app.pipelines.items = cache.data.pipelines;
+    app.runners.set_items(cache.data.runners);
+    app.releases.set_items(cache.data.releases);
+    app.todos.items = cache.data.todos;
+    app.milestones.items = cache.data.milestones;
+    app.pipeline_jobs = cache.data.pipeline_jobs;
+    app.branches.set_items(cache.data.branches);
+    app.environments.set_items(cache.data.environments);
+    app.milestone_issues_cache = cache.data.milestone_issues;
     app.rebuild_milestone_progress_cache();
-    app.cached_labels = cache.labels;
-    app.cached_members = cache.members;
+    app.cached_labels = cache.data.labels;
+    app.cached_members = cache.data.members;
 
     spawn_client_for_scope(app, tx, fx);
     app.start_loading_tab(app.active_tab);

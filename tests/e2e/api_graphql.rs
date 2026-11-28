@@ -9,9 +9,9 @@
 //! lists, so a field it lacks is either absent from the schema or not listed
 //! yet; the generator fails when a listed field is absent from the schema,
 //! and the message names both causes. The generator lists fields from the
-//! query root down through objects and interfaces only, so a field of the
-//! mutation root or of a union member is always reported, and a type condition
-//! is not checked against the type it sits in. A field or argument the schema marks
+//! query root and the mutation root down through objects and interfaces only,
+//! so a field of a union member is always reported, and a type condition is
+//! not checked against the type it sits in. A field or argument the schema marks
 //! deprecated is excused through the shared `Ledger`, by the key
 //! `<host> graphql <Type>.<field> deprecated` or
 //! `<host> graphql <Type>.<field>(<argument>) deprecated`, as finding or

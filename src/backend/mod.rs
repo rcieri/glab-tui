@@ -109,13 +109,16 @@ pub struct NewMr<'a> {
 /// that require it for the merge API. GitLab-only: `GhBackend` ignores it.
 /// `None` skips the flag and lets `glab` fall back to its own heuristic on
 /// legacy installs (older GitLab returns 400 otherwise).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// `sha` is never sent with `Rebase`, which replaces the head commit.
+/// `squashes_every_merge` says the project squashes whatever is asked, so a
+/// GitLab merge leaves the MR's squash flag alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MergeOptions<'a> {
-    pub squash: bool,
+    pub method: crate::domain::mr::MergeMethod,
     pub delete_branch: bool,
-    pub strategy: Option<&'a str>,
     pub auto_merge: bool,
     pub sha: Option<&'a str>,
+    pub squashes_every_merge: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -451,6 +454,8 @@ pub trait MrOps: Send + Sync {
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Merge the MR/PR.
     async fn merge_mr(&self, project: &str, iid: u64, options: &MergeOptions<'_>) -> Result<()>;
+    /// The merge methods `project` accepts, read from its settings.
+    async fn list_merge_methods(&self, project: &str) -> Result<crate::domain::mr::MergeMethods>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
     async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()>;
     async fn update_mr(&self, project: &str, iid: u64, update: &MrUpdate) -> Result<()>;
@@ -613,6 +618,21 @@ pub trait MrOps: Send + Sync {
 #[async_trait]
 pub trait ReviewOps: Send + Sync {
     async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
+    /// The viewer's "Viewed" state of every file of a pull request. GitHub
+    /// only: GitLab keeps it in browser storage, out of reach of the API.
+    async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles>;
+    /// Marks (`true`) or unmarks files as viewed in one request and returns
+    /// the changes GitHub refused. `Err` when the reply carries no per-file
+    /// result, whatever GitHub applied. GitHub only.
+    async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>>;
     /// Posts `comments` and `body` as one review carrying `event`.
     async fn submit_review(
         &self,

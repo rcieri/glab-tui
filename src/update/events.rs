@@ -43,7 +43,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
             }
 
-            app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
+            app.project_cache.data.set_pipeline_jobs(&app.pipeline_jobs);
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::JobsTabFetched(source, pipeline_id, jobs) => {
@@ -166,8 +166,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.rebuild_milestone_progress_cache();
             app.update_filter_selection();
             crate::handlers::tabs::maybe_fetch_related_mrs(app, tx);
-            app.project_cache.issues = app.issues.items.clone();
-            app.project_cache.issues_state_query = listed;
+            app.project_cache.data.issues = app.issues.items.clone();
+            app.project_cache.data.issues_state_query = listed;
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MrsFetched(listed, mrs) => {
@@ -194,8 +194,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 );
             }
             crate::handlers::tabs::maybe_fetch_mr_related_issues(app, tx);
-            app.project_cache.mrs = app.mrs.items.clone();
-            app.project_cache.mrs_state_query = listed;
+            app.project_cache.data.mrs = app.mrs.items.clone();
+            app.project_cache.data.mrs_state_query = listed;
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::IssueFetched(iid, Ok(issue)) => {
@@ -211,7 +211,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
             app.focus_issue(Some(&project), iid);
             crate::handlers::tabs::maybe_fetch_related_mrs(app, tx);
-            app.project_cache.issues = app.issues.items.clone();
+            app.project_cache.data.issues = app.issues.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::IssueFetched(iid, Err(err)) => {
@@ -231,11 +231,14 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
             app.focus_mr(Some(&project), iid);
             crate::handlers::tabs::maybe_fetch_mr_related_issues(app, tx);
-            app.project_cache.mrs = app.mrs.items.clone();
+            app.project_cache.data.mrs = app.mrs.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MrFetched(iid, Err(err)) => {
             app.show_error(format!("Failed to fetch MR #{iid}: {err}"));
+        }
+        Event::MergeMethodsFetched { project, result } => {
+            app.apply_merge_methods(project, result);
         }
         Event::PrStackFetched {
             pr_number,
@@ -303,8 +306,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.pipelines.items.iter().map(|p| p.id()).collect();
             app.pipeline_jobs.retain(|id, _| new_ids.contains(id));
             app.fetching_pipelines.clear();
-            app.project_cache.pipelines = app.pipelines.items.clone();
-            app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
+            app.project_cache.data.pipelines = app.pipelines.items.clone();
+            app.project_cache.data.set_pipeline_jobs(&app.pipeline_jobs);
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodosFetched { show_read, .. } if show_read != app.shows_read_todos() => {}
@@ -315,12 +318,12 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Todos);
             app.set_todos(notifications);
             app.update_filter_selection();
-            app.project_cache.todos = app.todos.items.clone();
+            app.project_cache.data.todos = app.todos.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodoChanged(change, Ok(())) => {
             app.apply_todo_change(&change);
-            app.project_cache.todos = app.todos.items.clone();
+            app.project_cache.data.todos = app.todos.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodoChanged(change, Err(err)) => {
@@ -340,7 +343,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Runners);
             app.runners.set_items(runners);
             app.update_filter_selection();
-            app.project_cache.runners = app.runners.items().to_vec();
+            app.project_cache.data.runners = app.runners.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleasesFetched(releases) => {
@@ -350,7 +353,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Releases);
             app.releases.set_items(releases);
             app.update_filter_selection();
-            app.project_cache.releases = app.releases.items().to_vec();
+            app.project_cache.data.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestonesFetched(milestones) => {
@@ -360,12 +363,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Milestones);
             app.milestones.items = milestones;
             app.update_filter_selection();
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             let listed_iids: std::collections::HashSet<u64> =
                 app.milestones.items.iter().map(|m| m.iid).collect();
             app.milestone_issues_cache
                 .retain(|iid, _| listed_iids.contains(iid));
             app.project_cache
+                .data
                 .milestone_issues
                 .retain(|iid, _| listed_iids.contains(iid));
             app.rebuild_milestone_progress_cache();
@@ -436,11 +440,11 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if app.selected_milestone_iid == Some(iid) {
                 app.selected_milestone_issues = Some(issues.clone());
             }
-            app.project_cache.milestone_issues.insert(iid, issues);
+            app.project_cache.data.milestone_issues.insert(iid, issues);
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestoneDeleted => {
@@ -450,18 +454,18 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.milestones.items.remove(pos);
                 }
                 app.milestone_issues_cache.remove(&iid);
-                app.project_cache.milestone_issues.remove(&iid);
+                app.project_cache.data.milestone_issues.remove(&iid);
                 if app.selected_milestone_iid == Some(iid) {
                     app.selected_milestone_iid = None;
                     app.selected_milestone_issues = None;
                 }
             }
             app.rebuild_milestone_progress_cache();
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleaseUpdated => {
-            app.project_cache.releases = app.releases.items().to_vec();
+            app.project_cache.data.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleaseDeleted => {
@@ -470,7 +474,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.releases
                     .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
             }
-            app.project_cache.releases = app.releases.items().to_vec();
+            app.project_cache.data.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::IssueDeleted => {
@@ -515,7 +519,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Branches);
             app.branches.set_items(branches);
             app.update_filter_selection();
-            app.project_cache.branches = app.branches.items().to_vec();
+            app.project_cache.data.branches = app.branches.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::EnvironmentsFetched(envs) => {
@@ -525,7 +529,9 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Environments);
             app.environments.set_items(envs);
             app.update_filter_selection();
-            app.project_cache.environments = app.environments.items().to_vec();
+            app.project_cache
+                .data
+                .set_environments(app.environments.items());
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::SelectorItemsFetched { request, items } => {
@@ -537,13 +543,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if !labels.is_empty() {
                 let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
                 app.cached_labels = names.clone();
-                app.project_cache.labels = names;
+                app.project_cache.data.labels = names;
                 if app.config.fetch_label_colors {
                     let colors: std::collections::HashMap<String, String> = labels
                         .iter()
                         .filter_map(|l| l.color.as_ref().map(|c| (l.name.clone(), c.clone())))
                         .collect();
-                    app.project_cache.label_colors = colors.clone();
+                    app.project_cache.data.label_colors = colors.clone();
                     app.label_colors = colors
                         .iter()
                         .filter_map(|(name, hex)| {
@@ -554,7 +560,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
             if !members.is_empty() {
                 app.cached_members = members.clone();
-                app.project_cache.members = members;
+                app.project_cache.data.members = members;
             }
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
@@ -570,22 +576,22 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
 
             if !labels.is_empty() {
                 let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
-                proj_cache.labels = names;
+                proj_cache.data.labels = names;
                 if app.config.fetch_label_colors {
                     let colors: std::collections::HashMap<String, String> = labels
                         .iter()
                         .filter_map(|l| l.color.as_ref().map(|c| (l.name.clone(), c.clone())))
                         .collect();
-                    proj_cache.label_colors = colors;
+                    proj_cache.data.label_colors = colors;
                 }
                 cache_updated = true;
             }
             if !members.is_empty() {
-                proj_cache.members = members.clone();
+                proj_cache.data.members = members.clone();
                 cache_updated = true;
             }
             if !milestones.is_empty() {
-                proj_cache.milestones = milestones
+                proj_cache.data.milestones = milestones
                     .iter()
                     .map(|title| crate::domain::milestones::Milestone {
                         id: 0,
@@ -603,7 +609,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 cache_updated = true;
             }
             if !branches.is_empty() {
-                proj_cache.branches = branches
+                proj_cache.data.branches = branches
                     .iter()
                     .map(|name| crate::domain::branches::Branch {
                         name: name.clone(),
@@ -622,22 +628,31 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
 
             if let Some(sel) = app.selector_mut() {
-                let updated = match sel.field_type.as_str() {
-                    "labels" if !labels.is_empty() => {
+                let updated = match &sel.purpose {
+                    crate::app::SelectorPurpose::Field(crate::app::SelectorField::Labels)
+                        if !labels.is_empty() =>
+                    {
                         sel.all_items = labels.into_iter().map(|l| l.name).collect();
                         true
                     }
-                    "assignees" | "reviewers" if !members.is_empty() => {
+                    crate::app::SelectorPurpose::Field(
+                        crate::app::SelectorField::Assignees | crate::app::SelectorField::Reviewers,
+                    ) if !members.is_empty() => {
                         sel.all_items = members;
                         true
                     }
-                    "milestone" if !milestones.is_empty() => {
+                    crate::app::SelectorPurpose::Field(crate::app::SelectorField::Milestone)
+                        if !milestones.is_empty() =>
+                    {
                         sel.all_items = milestones;
                         true
                     }
-                    "source_branch" | "target_branch" | "pipeline_branch" | "create_from"
-                        if !branches.is_empty() =>
-                    {
+                    crate::app::SelectorPurpose::Field(
+                        crate::app::SelectorField::SourceBranch
+                        | crate::app::SelectorField::TargetBranch
+                        | crate::app::SelectorField::PipelineBranch
+                        | crate::app::SelectorField::CreateFrom,
+                    ) if !branches.is_empty() => {
                         sel.all_items = branches;
                         true
                     }
@@ -655,6 +670,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if deployments.is_empty() {
                 app.show_notice(format!("No deployments for {environment}"));
             }
+            app.project_cache
+                .data
+                .set_deployments(&environment, &deployments);
+            crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
             app.show_deployments(environment, deployments);
             app.update_filter_selection();
         }
@@ -683,7 +702,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if let Some(issue) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid) {
                 issue.related_mrs = Some(new_state);
                 crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
-                app.project_cache.issues = app.issues.items.clone();
+                app.project_cache.data.issues = app.issues.items.clone();
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
             }
         }
@@ -702,7 +721,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if let Some(mr) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
                 mr.related_issues = Some(new_state);
                 crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
-                app.project_cache.mrs = app.mrs.items.clone();
+                app.project_cache.data.mrs = app.mrs.items.clone();
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
             }
         }
@@ -717,30 +736,67 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::DiffFetched {
             diff_view,
             comments,
+            viewed_files,
+            fetched_at,
         } => {
             app.diff_loading = false;
             let mut diff_view = *diff_view;
             let mr_iid = diff_view.mr_iid;
             let held_back = app.restore_draft_comments(&diff_view);
-            // Restore the files marked as reviewed on an earlier pass.
-            diff_view
-                .restore_review_state(app.reviewed_files_for_mr(mr_iid), app.hide_reviewed_files);
-            app.open_diff_view(diff_view);
-            if held_back > 0 {
-                app.raise_error_toast(if held_back == 1 {
-                    "1 draft comment no longer matches the diff and was set aside".to_string()
-                } else {
-                    format!(
-                        "{held_back} draft comments no longer match the diff and were set aside"
-                    )
-                });
+            let reopened = app.diff_view().is_none_or(|v| v.mr_iid != mr_iid);
+            let (server_state, viewed_error) = match viewed_files {
+                Some(Ok(server_state)) => (Some(*server_state), None),
+                Some(Err(err)) => (None, Some(err)),
+                None => (None, None),
+            };
+            diff_view.restore_review_state(
+                &app.review_marks_for_mr(&diff_view.project_path, mr_iid),
+                server_state,
+                app.hide_reviewed_files,
+            );
+            app.reload_viewed_sync(&mut diff_view, fetched_at);
+            app.store_review_marks(&diff_view.project_path, mr_iid, diff_view.review_marks());
+            let changed = diff_view.changed_since_review.len();
+            if reopened && changed > 0 {
+                app.show_notice(format!(
+                    "{changed} reviewed file(s) changed since you reviewed them"
+                ));
             }
+            app.open_diff_view(diff_view);
+            let set_aside = match held_back {
+                0 => None,
+                1 => {
+                    Some("1 draft comment no longer matches the diff and was set aside".to_string())
+                }
+                _ => Some(format!(
+                    "{held_back} draft comments no longer match the diff and were set aside"
+                )),
+            };
+            let mut failures = Vec::new();
             match comments {
                 Ok(comments) => app.current_comments = comments,
                 Err(err) => {
                     app.current_comments.clear();
-                    app.show_cli_error(format!("Failed to load review comments: {err}"));
+                    failures.push(format!("Failed to load review comments: {err}"));
                 }
+            }
+            if let Some(err) = viewed_error {
+                failures.push(format!(
+                    "Failed to load GitHub viewed state, so marks stay local until the next \
+                     open replaces them with GitHub's (sync_viewed_files = false keeps them \
+                     local): {err}"
+                ));
+            }
+            // One toast for all of them: a second would replace the first
+            // unseen. Drafts set aside ran no CLI call, so alone they neither
+            // point at the terminal log nor mark an entry failed.
+            if failures.is_empty() {
+                if let Some(set_aside) = set_aside {
+                    app.raise_error_toast(set_aside);
+                }
+            } else {
+                let messages: Vec<String> = set_aside.into_iter().chain(failures).collect();
+                app.show_cli_error(messages.join(". "));
             }
             let mut diff_ref: Option<&crate::app::DiffView> = None;
             let mut overview_mut: Option<&mut crate::app::ReviewThreadsOverview> = None;
@@ -769,6 +825,67 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::DiffFetchFailed(err_msg) => {
             app.diff_loading = false;
             app.show_cli_error(err_msg);
+        }
+        Event::ViewedSyncFlush(pull_request_id) => {
+            let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) else {
+                return;
+            };
+            let changes = entry.sync.take_changes();
+            if !changes.is_empty() {
+                crate::fetch::spawn_viewed_files_sync(
+                    fx,
+                    &entry.client,
+                    pull_request_id,
+                    changes,
+                    tx.clone(),
+                );
+            }
+        }
+        Event::ViewedFilesSynced {
+            pull_request_id,
+            changes,
+            result,
+        } => {
+            let rejected: std::collections::HashSet<&str> = match &result {
+                Ok(refused) => refused.iter().map(|r| r.path.as_str()).collect(),
+                Err(_) => changes.iter().map(|(path, _)| path.as_str()).collect(),
+            };
+            app.viewed_settles = app.viewed_settles.next();
+            let settled_at = app.viewed_settles;
+            let mut settled = None;
+            if let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) {
+                let corrections = entry.sync.settle(&changes, &rejected, settled_at);
+                if entry.sync.claim_follow_up_flush() {
+                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), tx.clone());
+                }
+                settled = Some((
+                    entry.scopes.clone(),
+                    entry.project_path.clone(),
+                    entry.mr_iid,
+                    corrections,
+                ));
+            }
+            if let Some((saved_in, project_path, mr_iid, corrections)) = settled {
+                app.apply_viewed_corrections(&saved_in, &project_path, mr_iid, &corrections);
+            }
+            match result {
+                Err(err) => app.show_cli_error(format!(
+                    "Could not sync the viewed state of {} file(s) with GitHub; reverted: {err}",
+                    changes.len()
+                )),
+                Ok(refused) => {
+                    if let Some(first) = refused.first() {
+                        app.show_cli_error(format!(
+                            "GitHub refused the viewed state of {} of {} file(s), reverted: \
+                             {}: {}",
+                            refused.len(),
+                            changes.len(),
+                            first.path,
+                            first.reason
+                        ));
+                    }
+                }
+            }
         }
         Event::ReviewSubmitted { mr_iid, result } => {
             if crate::handlers::review_submit::finish(app, mr_iid, result) {
@@ -857,14 +974,18 @@ fn refetch_after_mutation(
     ) else {
         return;
     };
+    let sync_viewed = app.syncs_viewed_files();
+    let fetched_at = app.viewed_settles;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
-        if let Ok((diff_view, comments)) =
-            crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await
+        if let Ok((diff_view, comments, viewed_files)) =
+            crate::fetch::fetch_diff_view(&client, &project_context, mr_iid, sync_viewed).await
         {
             let _ = tx.send(Event::DiffFetched {
                 diff_view,
                 comments,
+                viewed_files,
+                fetched_at,
             });
         }
     });

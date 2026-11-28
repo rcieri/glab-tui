@@ -13,8 +13,8 @@ use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, Trace
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{
-    DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NoteKind, NotePosition, ReviewState,
-    ensure_complete_diff,
+    DiscussionNote, MR_DIFF_MAX_BYTES, MergeMethod, MergeMethods, MergeRequest, NoteKind,
+    NotePosition, ReviewState, ensure_complete_diff,
 };
 use crate::domain::notifications::{Notification, NotificationDetail};
 use crate::domain::pipelines::{CommitSummary, Job, Pipeline};
@@ -563,12 +563,13 @@ impl GhBackend {
         name.replace('/', "%2F")
     }
 
+    /// The method is always passed explicitly so `gh pr merge` never falls
+    /// back to the repository's default.
     pub(crate) fn merge_args(
         project: &str,
         iid: u64,
-        squash: bool,
+        method: MergeMethod,
         delete_branch: bool,
-        strategy: Option<&str>,
         auto_merge: bool,
     ) -> Vec<String> {
         let mut args: Vec<String> = vec![
@@ -578,16 +579,14 @@ impl GhBackend {
             "-R".into(),
             project.into(),
         ];
-        if squash {
-            args.push("--squash".into());
-        } else if matches!(strategy, Some("rebase")) {
-            args.push("--rebase".into());
-        } else {
-            // "Strategy: Merge commit" is the default and is always sent
-            // explicitly so gh pr merge doesn't silently fall back to whatever
-            // the repo's default merge method happens to be.
-            args.push("--merge".into());
-        }
+        args.push(
+            match method {
+                MergeMethod::Merge => "--merge",
+                MergeMethod::Squash => "--squash",
+                MergeMethod::Rebase => "--rebase",
+            }
+            .into(),
+        );
         if delete_branch {
             args.push("--delete-branch".into());
         }
@@ -1164,6 +1163,50 @@ fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
     }
 }
 
+/// `viewerDefaultMergeMethod` of a GitHub repository. A method this build
+/// does not know leaves the dialog without a preselection instead of failing.
+#[derive(Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ViewerDefaultMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+    #[serde(other)]
+    Unknown,
+}
+
+fn parse_repo_merge_methods(raw: &str) -> Result<MergeMethods> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RepoMergeSettings {
+        merge_commit_allowed: bool,
+        squash_merge_allowed: bool,
+        rebase_merge_allowed: bool,
+        #[serde(default)]
+        viewer_default_merge_method: Option<ViewerDefaultMergeMethod>,
+    }
+    let settings: RepoMergeSettings =
+        serde_json::from_str(raw.trim()).context("parsing `gh repo view` merge settings")?;
+    let allowed: Vec<MergeMethod> = [
+        (MergeMethod::Merge, settings.merge_commit_allowed),
+        (MergeMethod::Squash, settings.squash_merge_allowed),
+        (MergeMethod::Rebase, settings.rebase_merge_allowed),
+    ]
+    .into_iter()
+    .filter_map(|(method, is_allowed)| is_allowed.then_some(method))
+    .collect();
+    let preferred = settings
+        .viewer_default_merge_method
+        .and_then(|method| match method {
+            ViewerDefaultMergeMethod::Merge => Some(MergeMethod::Merge),
+            ViewerDefaultMergeMethod::Squash => Some(MergeMethod::Squash),
+            ViewerDefaultMergeMethod::Rebase => Some(MergeMethod::Rebase),
+            ViewerDefaultMergeMethod::Unknown => None,
+        });
+    MergeMethods::new(&allowed, preferred)
+        .ok_or_else(|| anyhow::anyhow!("the repository allows no merge method"))
+}
+
 /// How many of an environment's newest deployments a stop searches for the
 /// one GitHub still serves.
 const STOP_DEPLOYMENT_LOOKBACK: usize = 30;
@@ -1341,9 +1384,7 @@ fn parse_review_thread_resolution(raw: &str) -> Result<HashMap<u64, bool>> {
     let mut resolution = HashMap::new();
     for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
         let page = page.context("parsing review threads")?;
-        if let Some(error) = page.errors.first() {
-            anyhow::bail!("GraphQL error: {}", error.message);
-        }
+        first_graphql_error(&page.errors)?;
         let threads = page
             .data
             .and_then(|d| d.repository)
@@ -1571,11 +1612,7 @@ mod review_threads_types {
     pub(super) struct GhResponse {
         pub(super) data: Option<GhData>,
         #[serde(default)]
-        pub(super) errors: Vec<GhError>,
-    }
-    #[derive(Deserialize)]
-    pub(super) struct GhError {
-        pub(super) message: String,
+        pub(super) errors: Vec<super::GraphqlError>,
     }
     #[derive(Deserialize)]
     pub(super) struct GhData {
@@ -1605,6 +1642,170 @@ mod review_threads_types {
     pub(super) struct GhComment {
         #[serde(rename = "databaseId")]
         pub(super) database_id: u64,
+    }
+}
+
+/// Values travel as GraphQL variables (`gh api graphql -f name=value`), so
+/// paths and repository names need no escaping. 100 is the connection's
+/// page-size cap. `gh api graphql --paginate` feeds `$endCursor` back in until
+/// `pageInfo.hasNextPage` is false.
+const VIEWED_FILES_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!,$endCursor:String){\
+     repository(owner:$owner,name:$name){pullRequest(number:$number){id \
+     files(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} \
+     nodes{path viewerViewedState}}}}}";
+
+/// The pull request's node id and every file's viewed state, across every page
+/// `gh api graphql --paginate` printed (one JSON object per page, back to back).
+fn parse_viewed_files(raw: &str) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+    use viewed_files_types::*;
+    let mut viewed = crate::domain::viewed_files::PrViewedFiles::default();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
+        let page = page.context("parsing viewed files")?;
+        first_graphql_error(&page.errors)?;
+        let pr = page
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .context("pull request not found")?;
+        viewed.pull_request_id = pr.id;
+        viewed.files.extend(
+            pr.files
+                .unwrap_or_default()
+                .nodes
+                .into_iter()
+                .map(|f| (f.path, f.viewer_viewed_state)),
+        );
+    }
+    anyhow::ensure!(!viewed.pull_request_id.is_empty(), "pull request not found");
+    Ok(viewed)
+}
+
+/// One aliased mutation per file, `markFileAsViewed` or `unmarkFileAsViewed`,
+/// all in a single request. `$pr` is the pull request's node ID and `$p<i>`
+/// the path of `changes[i]`.
+fn set_files_viewed_mutation(changes: &[(String, bool)]) -> String {
+    use std::fmt::Write;
+    let mut declarations = String::from("$pr:ID!");
+    let mut fields = String::new();
+    for (i, (_, viewed)) in changes.iter().enumerate() {
+        let mutation = if *viewed {
+            "markFileAsViewed"
+        } else {
+            "unmarkFileAsViewed"
+        };
+        let _ = write!(declarations, ",$p{i}:String!");
+        let _ = write!(
+            fields,
+            "f{i}:{mutation}(input:{{pullRequestId:$pr,path:$p{i}}}){{clientMutationId}} "
+        );
+    }
+    format!("mutation({declarations}){{{}}}", fields.trim_end())
+}
+
+#[derive(Deserialize)]
+struct GraphqlError {
+    message: String,
+    /// Response path of the field the error belongs to; its first entry is
+    /// the alias of an aliased root field.
+    #[serde(default)]
+    path: Vec<serde_json::Value>,
+}
+
+impl GraphqlError {
+    fn is_about(&self, alias: &str) -> bool {
+        self.path.first().and_then(serde_json::Value::as_str) == Some(alias)
+    }
+}
+
+fn first_graphql_error(errors: &[GraphqlError]) -> Result<()> {
+    match errors.first() {
+        Some(error) => anyhow::bail!("GraphQL error: {}", error.message),
+        None => Ok(()),
+    }
+}
+
+/// Whether a GraphQL reply carries results: `gh api graphql` exits 1 on any
+/// `errors` entry, also when `data` holds the aliases that did run.
+fn has_graphql_data(stdout: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Reply {
+        data: Option<serde::de::IgnoredAny>,
+    }
+    serde_json::from_slice::<Reply>(stdout).is_ok_and(|reply| reply.data.is_some())
+}
+
+/// The changes of a `set_files_viewed_mutation` reply GitHub did not apply:
+/// alias `f<i>` is `changes[i]`, null (or missing) when refused. `Err` when
+/// the reply carries no data at all.
+fn rejected_viewed_paths(
+    raw: &str,
+    changes: &[(String, bool)],
+) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+    #[derive(Deserialize)]
+    struct Reply {
+        data: Option<HashMap<String, Option<serde::de::IgnoredAny>>>,
+        #[serde(default)]
+        errors: Vec<GraphqlError>,
+    }
+    let reply: Reply = serde_json::from_str(raw).context("parsing the viewed-state reply")?;
+    let Some(data) = reply.data else {
+        first_graphql_error(&reply.errors)?;
+        anyhow::bail!("the viewed-state reply carries no data");
+    };
+    Ok(changes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (path, _))| {
+            let alias = format!("f{i}");
+            if matches!(data.get(&alias), Some(Some(_))) {
+                return None;
+            }
+            let reason = reply
+                .errors
+                .iter()
+                .find(|error| error.is_about(&alias))
+                .map_or_else(|| "not applied".to_string(), |error| error.message.clone());
+            Some(crate::domain::viewed_files::RejectedViewedPath {
+                path: path.clone(),
+                reason,
+            })
+        })
+        .collect())
+}
+
+mod viewed_files_types {
+    use crate::domain::viewed_files::FileViewedState;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+        #[serde(default)]
+        pub(super) errors: Vec<super::GraphqlError>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhPr>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPr {
+        pub(super) id: String,
+        pub(super) files: Option<GhFiles>,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhFiles {
+        pub(super) nodes: Vec<GhFile>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhFile {
+        pub(super) path: String,
+        #[serde(rename = "viewerViewedState")]
+        pub(super) viewer_viewed_state: FileViewedState,
     }
 }
 
@@ -2166,6 +2367,7 @@ impl MrOps for GhBackend {
                             // plumbing simply ignores this at the backend.
                             sha: None,
                             draft: gp.is_draft.unwrap_or(false),
+                            squash: false,
                             description: gp.body,
                             head_pipeline: None,
                             blocking_discussions_resolved: None,
@@ -2281,6 +2483,7 @@ impl MrOps for GhBackend {
                             // GitHub has no equivalent of GitLab's diff head SHA.
                             sha: None,
                             draft: item.draft,
+                            squash: false,
                             description: item.body,
                             head_pipeline: None,
                             blocking_discussions_resolved: None,
@@ -2414,6 +2617,7 @@ impl MrOps for GhBackend {
             // GitHub has no equivalent of GitLab's diff head SHA.
             sha: None,
             draft: gp.is_draft.unwrap_or(false),
+            squash: false,
             description: gp.body,
             head_pipeline: None,
             blocking_discussions_resolved: None,
@@ -2646,17 +2850,36 @@ impl MrOps for GhBackend {
     ) -> Result<()> {
         // GitHub's `gh pr merge` has no `--sha` equivalent — the CLI works
         // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
+        // GitHub has no project-wide forced squash either.
         let super::MergeOptions {
-            squash,
+            method,
             delete_branch,
-            strategy,
             auto_merge,
             sha: _,
+            squashes_every_merge: _,
         } = *options;
-        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
+        let args = Self::merge_args(project, iid, method, delete_branch, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.cli.run(&args_refs, "MERGING PR").await?;
         Ok(())
+    }
+
+    async fn list_merge_methods(&self, project: &str) -> Result<MergeMethods> {
+        let raw = self
+            .cli
+            .run(
+                &[
+                    "repo",
+                    "view",
+                    "--json",
+                    "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod",
+                    "--",
+                    project,
+                ],
+                "Reading Merge Settings",
+            )
+            .await?;
+        parse_repo_merge_methods(&raw)
     }
 
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
@@ -2838,6 +3061,58 @@ impl ReviewOps for GhBackend {
         let mut notes = parse_pr_review_comments(&raw_comments, &resolution)?;
         notes.extend(parse_pr_conversation(&raw_conversation)?);
         Ok(notes)
+    }
+
+    async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = format!("query={VIEWED_FILES_QUERY}");
+        let owner = format!("owner={owner}");
+        let name = format!("name={repo}");
+        let number = format!("number={iid}");
+        let args = [
+            "api",
+            "graphql",
+            "--paginate",
+            "-f",
+            &query,
+            "-f",
+            &owner,
+            "-f",
+            &name,
+            "-F",
+            &number,
+        ];
+        parse_viewed_files(&self.cli.run(&args, "Fetching Viewed Files").await?)
+    }
+
+    /// A failed reply that still carries `data` is read too: aliased
+    /// mutations run independently, so some of them may have been applied.
+    async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+        let query = format!("query={}", set_files_viewed_mutation(changes));
+        let pr = format!("pr={pull_request_id}");
+        let paths: Vec<String> = changes
+            .iter()
+            .enumerate()
+            .map(|(i, (path, _))| format!("p{i}={path}"))
+            .collect();
+        let mut args = vec!["api", "graphql", "-f", &query, "-f", &pr];
+        for path in &paths {
+            args.extend(["-f", path.as_str()]);
+        }
+        let raw = self
+            .cli
+            .run_keeping_failed_stdout(&args, "Syncing Viewed Files", has_graphql_data)
+            .await?;
+        rejected_viewed_paths(&raw, changes)
     }
 
     async fn submit_review(
@@ -4447,12 +4722,118 @@ mod tests {
     }
 
     #[test]
+    fn viewed_files_reads_the_states_of_every_paginated_page() {
+        use crate::domain::viewed_files::FileViewedState;
+        let raw = r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
+            "pageInfo":{"hasNextPage":true,"endCursor":"MTAw"},
+            "nodes":[{"path":"a.rs","viewerViewedState":"VIEWED"},
+                     {"path":"b.rs","viewerViewedState":"DISMISSED"}]}}}}}
+            {"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
+            "pageInfo":{"hasNextPage":false,"endCursor":null},
+            "nodes":[{"path":"c.rs","viewerViewedState":"UNVIEWED"}]}}}}}"#;
+        let viewed = parse_viewed_files(raw).unwrap();
+        assert_eq!(viewed.pull_request_id, "PR_kw1");
+        assert_eq!(
+            viewed.files,
+            HashMap::from([
+                ("a.rs".to_string(), FileViewedState::Viewed),
+                ("b.rs".to_string(), FileViewedState::Dismissed),
+                ("c.rs".to_string(), FileViewedState::Unviewed),
+            ])
+        );
+    }
+
+    #[test]
     fn github_milestone_url_without_a_project_is_an_error() {
         assert!(github_milestone_url("", 3).is_err());
         assert_eq!(
             github_milestone_url("o/r", 3).unwrap(),
             "https://github.com/o/r/milestone/3"
         );
+    }
+
+    #[test]
+    fn viewed_files_query_takes_the_cursor_gh_paginate_feeds_back() {
+        assert!(VIEWED_FILES_QUERY.contains("$endCursor:String"));
+        assert!(VIEWED_FILES_QUERY.contains("after:$endCursor"));
+    }
+
+    #[test]
+    fn viewed_files_errors_and_missing_pull_request_are_errors() {
+        assert!(parse_viewed_files(r#"{"errors":[{"message":"nope"}]}"#).is_err());
+        assert!(parse_viewed_files(r#"{"data":{"repository":null}}"#).is_err());
+        assert!(parse_viewed_files("").is_err());
+        let good =
+            r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{"nodes":[]}}}}}"#;
+        let error_on_page_two = format!(r#"{good}{{"errors":[{{"message":"nope"}}]}}"#);
+        assert_eq!(
+            parse_viewed_files(&error_on_page_two)
+                .unwrap_err()
+                .to_string(),
+            "GraphQL error: nope"
+        );
+    }
+
+    #[test]
+    fn set_files_viewed_mutation_aliases_each_file_by_its_variable() {
+        let changes = vec![("a.rs".to_string(), true), ("b.rs".to_string(), false)];
+        assert_eq!(
+            set_files_viewed_mutation(&changes),
+            "mutation($pr:ID!,$p0:String!,$p1:String!){\
+             f0:markFileAsViewed(input:{pullRequestId:$pr,path:$p0}){clientMutationId} \
+             f1:unmarkFileAsViewed(input:{pullRequestId:$pr,path:$p1}){clientMutationId}}"
+        );
+    }
+
+    #[test]
+    fn viewed_state_reply_names_each_refused_change_with_its_reason() {
+        use crate::domain::viewed_files::RejectedViewedPath;
+        let changes = vec![
+            ("a.rs".to_string(), true),
+            ("gone.rs".to_string(), true),
+            ("c.rs".to_string(), false),
+        ];
+        let all_applied = r#"{"data":{"f0":{"clientMutationId":null},
+            "f1":{"clientMutationId":null},"f2":{"clientMutationId":null}}}"#;
+        assert_eq!(
+            rejected_viewed_paths(all_applied, &changes).unwrap(),
+            vec![]
+        );
+
+        let partial = r#"{"data":{"f0":{"clientMutationId":null},"f1":null},
+            "errors":[{"message":"Path is not part of the pull request","path":["f1"]}]}"#;
+        assert_eq!(
+            rejected_viewed_paths(partial, &changes).unwrap(),
+            vec![
+                RejectedViewedPath {
+                    path: "gone.rs".to_string(),
+                    reason: "Path is not part of the pull request".to_string(),
+                },
+                RejectedViewedPath {
+                    path: "c.rs".to_string(),
+                    reason: "not applied".to_string(),
+                },
+            ]
+        );
+
+        let rate_limited = r#"{"data":null,"errors":[{"message":"API rate limit exceeded"}]}"#;
+        assert_eq!(
+            rejected_viewed_paths(rate_limited, &changes)
+                .unwrap_err()
+                .to_string(),
+            "GraphQL error: API rate limit exceeded"
+        );
+    }
+
+    #[test]
+    fn a_failed_graphql_call_is_kept_only_when_its_reply_carries_data() {
+        assert!(has_graphql_data(
+            br#"{"data":{"f0":null},"errors":[{"message":"x"}]}"#
+        ));
+        assert!(!has_graphql_data(
+            br#"{"data":null,"errors":[{"message":"x"}]}"#
+        ));
+        assert!(!has_graphql_data(b"gh: HTTP 502"));
     }
 
     #[test]
@@ -5763,36 +6144,72 @@ mod tests {
     }
 
     #[test]
-    fn gh_merge_args_strategy_and_auto_merge() {
-        // auto + squash + delete
-        let args = GhBackend::merge_args("owner/repo", 42, true, true, None, true);
-        assert!(args.contains(&"42".to_string()), "iid must be present");
-        assert!(
-            args.contains(&"owner/repo".to_string()),
-            "project must be present"
+    fn merge_args_pass_exactly_one_explicit_method_flag() {
+        assert_eq!(
+            GhBackend::merge_args("owner/repo", 42, MergeMethod::Squash, true, true),
+            vec![
+                "pr",
+                "merge",
+                "42",
+                "-R",
+                "owner/repo",
+                "--squash",
+                "--delete-branch",
+                "--auto"
+            ]
         );
-        assert!(args.contains(&"--auto".to_string()));
-        assert!(args.contains(&"--squash".to_string()));
-        assert!(args.contains(&"--delete-branch".to_string()));
-        // squash takes priority — no --merge alongside it
-        assert!(!args.contains(&"--merge".to_string()));
-
-        // rebase, no auto-merge
-        let args_rebase =
-            GhBackend::merge_args("owner/repo", 42, false, false, Some("rebase"), false);
-        assert!(!args_rebase.contains(&"--auto".to_string()));
-        assert!(args_rebase.contains(&"--rebase".to_string()));
-        assert!(!args_rebase.contains(&"--merge".to_string()));
-
-        // strategy=None (merge commit) → explicit --merge, not relying on repo default
-        let args_merge_commit = GhBackend::merge_args("owner/repo", 42, false, false, None, false);
-        assert!(
-            args_merge_commit.contains(&"--merge".to_string()),
-            "merge commit strategy must send --merge explicitly"
+        assert_eq!(
+            GhBackend::merge_args("owner/repo", 42, MergeMethod::Rebase, false, false),
+            vec!["pr", "merge", "42", "-R", "owner/repo", "--rebase"]
         );
-        assert!(!args_merge_commit.contains(&"--squash".to_string()));
-        assert!(!args_merge_commit.contains(&"--rebase".to_string()));
-        assert!(!args_merge_commit.contains(&"--auto".to_string()));
+        assert_eq!(
+            GhBackend::merge_args("owner/repo", 42, MergeMethod::Merge, false, false),
+            vec!["pr", "merge", "42", "-R", "owner/repo", "--merge"]
+        );
+    }
+
+    #[test]
+    fn repo_merge_settings_list_only_the_allowed_methods_and_keep_the_viewer_default() {
+        let methods = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"REBASE"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            methods.allowed(),
+            &[MergeMethod::Squash, MergeMethod::Rebase]
+        );
+        assert_eq!(methods.preferred(), MergeMethod::Rebase);
+    }
+
+    #[test]
+    fn a_viewer_default_the_repo_no_longer_allows_falls_back_to_squash() {
+        let methods = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":false,"viewerDefaultMergeMethod":"REBASE"}"#,
+        )
+        .unwrap();
+        assert_eq!(methods.preferred(), MergeMethod::Squash);
+    }
+
+    #[test]
+    fn a_viewer_default_this_build_does_not_know_is_no_preference() {
+        let methods = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":true,"squashMergeAllowed":false,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"AUTO"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            methods.allowed(),
+            &[MergeMethod::Merge, MergeMethod::Rebase]
+        );
+        assert_eq!(methods.preferred(), MergeMethod::Merge);
+    }
+
+    #[test]
+    fn a_repo_allowing_no_merge_method_is_an_error() {
+        let error = parse_repo_merge_methods(
+            r#"{"mergeCommitAllowed":false,"squashMergeAllowed":false,"rebaseMergeAllowed":false}"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "the repository allows no merge method");
     }
 
     #[test]

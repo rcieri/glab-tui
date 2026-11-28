@@ -46,11 +46,15 @@ pub fn create_owned_dir(path: &Path) -> io::Result<()> {
 /// Writes `contents` to `path` with mode `0600`, tightening an existing file
 /// before truncating it, so a refused chmod leaves the old contents intact.
 pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    use std::io::Write;
+    open_truncated(path)?.write_all(contents.as_ref())
+}
+
+fn open_truncated(path: &Path) -> io::Result<std::fs::File> {
     #[cfg(unix)]
     {
-        use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
@@ -58,12 +62,40 @@ pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
             .open(path)?;
         file.set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
         file.set_len(0)?;
-        file.write_all(contents.as_ref())
+        Ok(file)
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(path, contents)
+        std::fs::File::create(path)
     }
+}
+
+/// Writes `contents` to a `0600` file beside `path` and renames it over
+/// `path`, so neither a reader nor an interrupted write can leave `path`
+/// holding part of the contents. The temporary file's name carries the
+/// process id: two glab-tui processes saving the same file must not write
+/// into one temporary file. `TEMP_FILE_SUFFIX` ends it.
+pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    let mut temp_name = path.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(format!(".{}{TEMP_FILE_SUFFIX}", std::process::id()));
+    let temp_path = path.with_file_name(temp_name);
+    let result = write_synced(&temp_path, contents.as_ref())
+        .and_then(|()| std::fs::rename(&temp_path, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
+}
+
+/// Ends the temporary files `write_atomic` creates. One outlives its write
+/// only when the process died before the rename.
+pub const TEMP_FILE_SUFFIX: &str = ".tmp";
+
+fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = open_truncated(path)?;
+    file.write_all(contents)?;
+    file.sync_all()
 }
 
 #[cfg(all(test, unix))]
@@ -139,5 +171,23 @@ mod tests {
 
         assert_eq!(mode_of(&file), 0o600);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "{}");
+    }
+
+    #[test]
+    fn atomic_write_replaces_the_file_owner_only_and_leaves_no_temporary_file() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("cache.json");
+        std::fs::write(&file, "previous contents that are longer").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_atomic(&file, "{}").unwrap();
+
+        let names: Vec<_> = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(mode_of(&file), 0o600);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{}");
+        assert_eq!(names, ["cache.json"]);
     }
 }

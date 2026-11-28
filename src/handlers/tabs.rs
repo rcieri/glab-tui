@@ -189,7 +189,7 @@ pub(crate) async fn run_optimistic_mutation<F, Fut>(
         }
     }
     if let Some(message) = mutation_failure_message(action, &failures) {
-        let _ = tx.send(Event::CommandCompleted(table.tab(), Err(message)));
+        let _ = tx.send_unscoped(Event::CommandCompleted(table.tab(), Err(message)));
     }
 }
 
@@ -3570,6 +3570,35 @@ pub(crate) mod tests {
         .await;
         drop(tx);
         assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_mutation_still_reports_after_a_scope_switch_but_drops_its_revert() {
+        let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
+        run_optimistic_mutation(
+            OptimisticTable::Jobs,
+            "cancel job",
+            vec![(7, Some("running".to_string()))],
+            &tx,
+            |_| async { Err(anyhow::anyhow!("offline")) },
+        )
+        .await;
+        drop(tx);
+
+        let after_switch = ScopeGeneration::default().next();
+        let mut delivered = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let Some(event) = event.for_scope(after_switch) {
+                delivered.push(event);
+            }
+        }
+        match delivered.as_slice() {
+            [Event::CommandCompleted(Tab::Jobs, Err(message))] => {
+                assert_eq!(message, "Failed to cancel job #7: offline");
+            }
+            other => panic!("unexpected events {other:?}"),
+        }
     }
 
     #[test]

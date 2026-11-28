@@ -3571,7 +3571,7 @@ impl Backend for GlabBackend {
                 format!(
                     "https://{}/{project}/-/tree/{}",
                     gitlab_host_or_default(),
-                    url_encode_branch(branch),
+                    super::encode_path_segment(branch),
                 )
             }
             WebTarget::Environment { project, name } => {
@@ -3581,7 +3581,7 @@ impl Backend for GlabBackend {
                 format!(
                     "https://{}/{project}/-/environments/{}",
                     gitlab_host_or_default(),
-                    url_encode_branch(name),
+                    super::encode_path_segment(name),
                 )
             }
             WebTarget::Job { web_url } => web_url.to_string(),
@@ -3646,11 +3646,8 @@ fn gitlab_host_or_default() -> String {
     crate::git_helpers::remote_host("origin").unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }
 
-/// Percent-encode a branch or environment name for use in a GitLab URL
-/// path segment. We keep `/` as `%2F` (so `feature/foo` becomes
-/// `feature%2Ffoo`) and pass through everything else verbatim — GitLab
-/// URLs do their own escaping of `%` and other reserved characters at
-/// the edge, so we avoid double-encoding.
+/// Branch name for a GitLab API path segment: only `/` is escaped, the
+/// rest is passed through as the API request checks expect.
 fn url_encode_branch(name: &str) -> String {
     name.replace('/', "%2F")
 }

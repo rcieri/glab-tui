@@ -4223,18 +4223,10 @@ impl Backend for GhBackend {
                     .await;
             }
             WebTarget::Milestone { project, milestone } => {
-                format!("https://github.com/{project}/milestone/{}", milestone.iid)
+                github_milestone_url(project, milestone.iid)?
             }
             WebTarget::Runner { scope, runner_id } => github_runner_url(scope.as_str(), runner_id),
-            WebTarget::Branch { project, branch } => {
-                if project.is_empty() {
-                    anyhow::bail!("project path required to open branch in browser");
-                }
-                format!(
-                    "https://github.com/{project}/tree/{}",
-                    branch.replace('/', "%2F")
-                )
-            }
+            WebTarget::Branch { project, branch } => github_branch_url(project, branch)?,
             WebTarget::Environment { project, .. } => {
                 if project.is_empty() {
                     anyhow::bail!("project path required to open environment in browser");
@@ -4279,6 +4271,23 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
 /// The self-hosted runner's settings page in `repository` (`owner/repo`).
 fn github_runner_url(repository: &str, runner_id: u64) -> String {
     format!("https://github.com/{repository}/settings/actions/runners/{runner_id}")
+}
+
+fn github_branch_url(project: &str, branch: &str) -> Result<String> {
+    if project.is_empty() {
+        anyhow::bail!("project path required to open branch in browser");
+    }
+    Ok(format!(
+        "https://github.com/{project}/tree/{}",
+        super::encode_path_segment(branch)
+    ))
+}
+
+fn github_milestone_url(project: &str, iid: u64) -> Result<String> {
+    if project.is_empty() {
+        anyhow::bail!("project path required to open milestone in browser");
+    }
+    Ok(format!("https://github.com/{project}/milestone/{iid}"))
 }
 
 /// Why a failed GitHub job failed: its timeout, else the first failed step.
@@ -4428,6 +4437,23 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_branch_url_encodes_hash_slash_and_percent() {
+        assert_eq!(
+            github_branch_url("o/r", "fix#12/100%").unwrap(),
+            "https://github.com/o/r/tree/fix%2312%2F100%25"
+        );
+    }
+
+    #[test]
+    fn github_milestone_url_without_a_project_is_an_error() {
+        assert!(github_milestone_url("", 3).is_err());
+        assert_eq!(
+            github_milestone_url("o/r", 3).unwrap(),
+            "https://github.com/o/r/milestone/3"
+        );
+    }
 
     #[test]
     fn a_github_notification_links_its_page_and_its_latest_comment() {

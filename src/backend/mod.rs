@@ -862,3 +862,35 @@ pub fn create_backend(project_url_contains_github: bool) -> Box<dyn Backend> {
         Box::new(glab::GlabBackend::new())
     }
 }
+
+/// Percent-encodes `s` for one URL path segment: every byte outside RFC 3986
+/// unreserved characters, `/` included, becomes `%XX`.
+pub(crate) fn encode_path_segment(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0F)]));
+        }
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_path_segment;
+
+    #[test]
+    fn path_segment_encoding_escapes_everything_but_unreserved_bytes() {
+        assert_eq!(encode_path_segment("feat/x"), "feat%2Fx");
+        assert_eq!(encode_path_segment("a b"), "a%20b");
+        assert_eq!(encode_path_segment("fix#1"), "fix%231");
+        assert_eq!(encode_path_segment("100%"), "100%25");
+        assert_eq!(encode_path_segment("v1.2_x-y~z"), "v1.2_x-y~z");
+        assert_eq!(encode_path_segment("é"), "%C3%A9");
+    }
+}

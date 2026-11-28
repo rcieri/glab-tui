@@ -1,59 +1,12 @@
+mod schema;
+mod writer;
+
+pub use schema::ProjectCache;
+pub use writer::flush as flush_cache_writes;
+
 use super::private_fs;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-
-#[derive(Serialize, Deserialize, Default, Clone)]
-pub struct ProjectCache {
-    pub issues: Vec<crate::domain::issues::Issue>,
-    /// The states `issues` were listed for. Caches written before this field
-    /// existed always listed every state.
-    #[serde(default)]
-    pub issues_state_query: crate::domain::state_query::StateQuery,
-    pub mrs: Vec<crate::domain::mr::MergeRequest>,
-    /// The states `mrs` were listed for.
-    #[serde(default)]
-    pub mrs_state_query: crate::domain::state_query::StateQuery,
-    pub pipelines: Vec<crate::domain::pipelines::Pipeline>,
-    pub runners: Vec<crate::domain::runners::Runner>,
-    pub releases: Vec<crate::domain::releases::Release>,
-    pub todos: Vec<crate::domain::notifications::Notification>,
-    pub milestones: Vec<crate::domain::milestones::Milestone>,
-    pub pipeline_jobs: HashMap<u64, Vec<crate::domain::pipelines::Job>>,
-    pub branches: Vec<crate::domain::branches::Branch>,
-    pub environments: Vec<crate::domain::deployments::Environment>,
-    #[serde(default)]
-    pub milestone_issues: HashMap<u64, Vec<crate::domain::issues::Issue>>,
-    #[serde(default)]
-    pub labels: Vec<String>,
-    #[serde(default)]
-    pub label_colors: HashMap<String, String>,
-    #[serde(default)]
-    pub members: Vec<String>,
-    /// Files marked as reviewed in the diff view, by project path, then MR/PR
-    /// iid, then path, mapped to the fingerprint of the diff the mark was made
-    /// on. A group-scope cache is shared by every project in the group, and the
-    /// same iid recurs across them. The path-only `reviewed_files` map of older
-    /// versions is ignored on load and dropped on the next save: which version
-    /// those marks covered is unknown.
-    #[serde(default)]
-    pub review_marks: HashMap<String, HashMap<u64, HashMap<String, String>>>,
-    /// Draft review comments not yet submitted, by project path, then MR/PR
-    /// iid. A group-scope cache is shared by every project in the group, and
-    /// the same iid recurs across them.
-    #[serde(default)]
-    pub draft_comments: HashMap<String, HashMap<u64, Vec<crate::domain::review::DraftComment>>>,
-    #[serde(default)]
-    pub enabled_columns: HashMap<crate::app::Tab, std::collections::HashSet<String>>,
-    #[serde(default)]
-    pub group_by_column: HashMap<crate::app::Tab, Option<String>>,
-    #[serde(default)]
-    pub group_ascending: HashMap<crate::app::Tab, bool>,
-    #[serde(default)]
-    pub column_filters:
-        HashMap<crate::app::Tab, HashMap<String, std::collections::HashSet<String>>>,
-}
 
 fn prepare_cache_dir() -> PathBuf {
     let dir = get_cache_dir();
@@ -67,21 +20,22 @@ fn get_cache_file_path(project_context: &str) -> PathBuf {
     path
 }
 
+/// The cache last saved for `project_context`, whether or not it is on disk
+/// yet.
 pub fn load_cache(project_context: &str) -> ProjectCache {
     let path = get_cache_file_path(project_context);
-    if let Ok(content) = fs::read_to_string(path)
-        && let Ok(cache) = serde_json::from_str(&content)
-    {
-        return cache;
+    if let Some(pending) = writer::pending(&path) {
+        return ProjectCache::clone(&pending);
     }
-    ProjectCache::default()
+    fs::read_to_string(path)
+        .map(|content| ProjectCache::from_json(&content))
+        .unwrap_or_default()
 }
 
+/// Queues `cache` to be written off the calling thread. `load_cache` returns
+/// it at once, and `flush_cache_writes` waits until it is on disk.
 pub fn save_cache(project_context: &str, cache: &ProjectCache) {
-    let path = get_cache_file_path(project_context);
-    if let Ok(content) = serde_json::to_string(cache) {
-        let _ = private_fs::write(&path, content);
-    }
+    writer::enqueue(get_cache_file_path(project_context), cache.clone());
 }
 
 fn get_recent_repos_file_path() -> PathBuf {
@@ -260,6 +214,11 @@ pub struct CleanCacheResult {
     pub total_removed_size: u64,
 }
 
+/// How old a temporary file must be before `clean_cache` takes it for one an
+/// interrupted write left behind, not one a running glab-tui is about to
+/// rename over its cache file.
+const LEFTOVER_TEMP_FILE_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
     let mut result = CleanCacheResult {
         kept_repos: Vec::new(),
@@ -309,10 +268,22 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
-            // Skip non-JSON files and special files
+            // Skip special files and anything glab-tui did not write. A
+            // temporary file old enough to be left over from an interrupted
+            // write is never a valid cache file, so it is removed below.
+            let is_cache_file = file_name.ends_with(".json");
+            let is_leftover_temp_file = file_name.ends_with(private_fs::TEMP_FILE_SUFFIX)
+                && entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| {
+                        modified
+                            .elapsed()
+                            .is_ok_and(|age| age > LEFTOVER_TEMP_FILE_AGE)
+                    });
             if file_name == "recent_repos.json"
                 || file_name == "recent_groups.json"
-                || !file_name.ends_with(".json")
+                || !(is_cache_file || is_leftover_temp_file)
             {
                 continue;
             }
@@ -445,6 +416,7 @@ pub struct RepoEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     #[test]
@@ -496,57 +468,41 @@ mod tests {
     }
 
     #[test]
-    fn test_project_cache_roundtrip() {
-        let cache = ProjectCache {
-            labels: vec!["bug".to_string(), "enhancement".to_string()],
-            members: vec!["@user1".to_string(), "@user2".to_string()],
-            ..ProjectCache::default()
-        };
+    fn the_last_save_loads_back_before_and_after_it_reaches_the_disk() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut first = ProjectCache::default();
+        first.data.labels = vec!["first".to_string()];
+        let mut last = ProjectCache::default();
+        last.data.labels = vec!["last".to_string()];
+        last.prefs.review_marks = HashMap::from([(
+            "group/project".to_string(),
+            HashMap::from([(
+                7,
+                HashMap::from([("src/lib.rs".to_string(), "fp".to_string())]),
+            )]),
+        )]);
 
-        let serialized = serde_json::to_string(&cache).unwrap();
-        let deserialized: ProjectCache = serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(deserialized.labels[0], "bug");
-        assert_eq!(deserialized.members[1], "@user2");
-    }
-
-    #[test]
-    fn legacy_path_only_review_marks_load_and_are_dropped_on_save() {
-        let mut legacy = serde_json::to_value(ProjectCache::default()).unwrap();
-        legacy["labels"] = serde_json::json!(["bug"]);
-        legacy["reviewed_files"] = serde_json::json!({"42": ["src/app.rs"]});
-
-        let cache: ProjectCache = serde_json::from_value(legacy).unwrap();
-        assert_eq!(
-            cache.labels,
-            vec!["bug".to_string()],
-            "the rest still loads"
+        save_cache("group/project", &first);
+        save_cache("group/project", &last);
+        let before_flush = load_cache("group/project");
+        flush_cache_writes();
+        let cache_dir = get_cache_dir();
+        let on_disk = ProjectCache::from_json(
+            &fs::read_to_string(cache_dir.join("group_project.json")).unwrap(),
         );
-        assert!(cache.review_marks.is_empty());
-        let saved = serde_json::to_value(&cache).unwrap();
-        assert!(saved.get("reviewed_files").is_none());
-    }
+        let mut files: Vec<String> = fs::read_dir(&cache_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        files.sort();
 
-    #[test]
-    fn listed_state_queries_survive_a_save_and_old_caches_read_as_every_state() {
-        use crate::domain::state_query::StateQuery;
-
-        let cache = ProjectCache {
-            issues_state_query: StateQuery::Closed,
-            mrs_state_query: StateQuery::Merged,
-            ..ProjectCache::default()
-        };
-        let reloaded: ProjectCache =
-            serde_json::from_str(&serde_json::to_string(&cache).unwrap()).unwrap();
-        assert_eq!(reloaded.issues_state_query, StateQuery::Closed);
-        assert_eq!(reloaded.mrs_state_query, StateQuery::Merged);
-
-        let before_state_queries = r#"{"issues":[],"mrs":[],"pipelines":[],"runners":[],
-            "releases":[],"todos":[],"milestones":[],"pipeline_jobs":{},"branches":[],
-            "environments":[]}"#;
-        let old: ProjectCache = serde_json::from_str(before_state_queries).unwrap();
-        assert_eq!(old.issues_state_query, StateQuery::All);
-        assert_eq!(old.mrs_state_query, StateQuery::All);
+        assert_eq!(before_flush.data.labels, ["last"]);
+        assert_eq!(on_disk.data.labels, ["last"]);
+        assert_eq!(on_disk.prefs.review_marks, last.prefs.review_marks);
+        assert_eq!(load_cache("group/project").data.labels, ["last"]);
+        assert_eq!(files, ["group_project.json"]);
     }
 
     #[test]
@@ -685,6 +641,7 @@ mod tests {
         fs::create_dir_all(repo.join(".git")).unwrap();
 
         save_cache("group/project", &ProjectCache::default());
+        flush_cache_writes();
         add_recent_repo(&repo.to_string_lossy());
         add_recent_group("group");
 
@@ -710,5 +667,27 @@ mod tests {
         load_cache("group/project");
 
         assert_eq!(mode_of(&cache_dir), 0o700);
+    }
+
+    #[test]
+    fn clean_cache_removes_only_temporary_files_old_enough_to_be_leftovers() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let cache_dir = get_cache_dir();
+        fs::create_dir_all(&cache_dir).unwrap();
+        let being_written = cache_dir.join("group_project.json.111.tmp");
+        let left_over = cache_dir.join("group_project.json.222.tmp");
+        fs::write(&being_written, "{").unwrap();
+        fs::File::create(&left_over)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * LEFTOVER_TEMP_FILE_AGE)
+            .unwrap();
+
+        let result = clean_cache(false);
+
+        assert!(being_written.exists());
+        assert!(!left_over.exists());
+        assert_eq!(result.removed_files, ["group_project.json.222.tmp"]);
     }
 }

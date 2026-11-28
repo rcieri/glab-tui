@@ -567,6 +567,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     fn saved_drafts(app: &App, project_path: &str, mr_iid: u64) -> Vec<String> {
         crate::utils::cache::load_cache(app.scope.as_str())
+            .prefs
             .draft_comments
             .get(project_path)
             .and_then(|drafts| drafts.get(&mr_iid))

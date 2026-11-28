@@ -36,6 +36,16 @@ fn run_effects(app: &mut App, terminal: &mut AppTerminal, effects: Vec<Effect>) 
     true
 }
 
+/// Writes the queued cache saves however `main` returns: through `Quit`, a
+/// terminal error, or a panic unwinding out of the event loop.
+struct FlushCacheOnExit;
+
+impl Drop for FlushCacheOnExit {
+    fn drop(&mut self) {
+        crate::utils::cache::flush_cache_writes();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     use clap::Parser;
@@ -163,33 +173,34 @@ async fn main() -> Result<()> {
     // Load offline cache
     let cache = crate::utils::cache::load_cache(app.scope.as_str());
     app.project_cache = cache.clone();
-    app.restore_cached_issues(cache.issues, cache.issues_state_query);
+    app.restore_cached_issues(cache.data.issues, cache.data.issues_state_query);
     app.rebuild_milestone_progress_cache();
-    app.restore_cached_mrs(cache.mrs, cache.mrs_state_query);
+    app.restore_cached_mrs(cache.data.mrs, cache.data.mrs_state_query);
     // workflow is #[serde(skip)] — cached rows arrive with it unset even
     // though the approval state it derives from was persisted and just
     // loaded above.
     crate::fetch::derive_workflow(&mut app.mrs.items);
     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
-    app.pipelines.items = cache.pipelines;
-    app.runners.set_items(cache.runners);
-    app.releases.set_items(cache.releases);
-    app.todos.items = cache.todos;
-    app.milestones.items = cache.milestones;
-    app.pipeline_jobs = cache.pipeline_jobs;
-    app.branches.set_items(cache.branches);
-    app.environments.set_items(cache.environments);
-    app.milestone_issues_cache = cache.milestone_issues;
+    app.pipelines.items = cache.data.pipelines;
+    app.runners.set_items(cache.data.runners);
+    app.releases.set_items(cache.data.releases);
+    app.todos.items = cache.data.todos;
+    app.milestones.items = cache.data.milestones;
+    app.pipeline_jobs = cache.data.pipeline_jobs;
+    app.branches.set_items(cache.data.branches);
+    app.environments.set_items(cache.data.environments);
+    app.milestone_issues_cache = cache.data.milestone_issues;
     app.rebuild_milestone_progress_cache();
-    app.cached_labels = cache.labels;
+    app.cached_labels = cache.data.labels;
     if app.config.fetch_label_colors {
         app.label_colors = cache
+            .data
             .label_colors
             .iter()
             .filter_map(|(name, hex)| crate::config::parse_color(hex).map(|c| (name.clone(), c)))
             .collect();
     }
-    app.cached_members = cache.members;
+    app.cached_members = cache.data.members;
 
     app.mark_cached_tabs_stale();
 
@@ -309,6 +320,7 @@ async fn main() -> Result<()> {
     let tx = app.tx.clone();
     fetch::prefetch_highlighted(&mut app, &tx, &mut fx);
     let mut effects = fx.into_vec();
+    let _flush_cache = FlushCacheOnExit;
     loop {
         if !run_effects(&mut app, &mut terminal, effects) {
             break;

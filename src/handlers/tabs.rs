@@ -422,6 +422,7 @@ fn handle_environments_key(
         if let Some(shown) = app.environment_deployments.as_mut() {
             shown.is_focused = !shown.table.items.is_empty();
         }
+        app.show_cached_deployments(&environment.name);
         spawn_fetch_deployments(app, tx, environment.name, fx);
     } else if app.is_deployments_focus_key(key_event) {
         if let Some(shown) = app.environment_deployments.as_mut() {
@@ -4930,6 +4931,25 @@ pub(crate) mod tests {
         let mut app = app_with_focused_deployments(two_deployments());
 
         dispatch(&mut app, &key(KeyCode::Esc));
+        dispatch(&mut app, &key(KeyCode::Enter));
+        dispatch(&mut app, &key(KeyCode::Char('j')));
+
+        assert_eq!(app.selected_deployment().map(|d| d.id), Some(10));
+        assert_eq!(highlighted_environment(&app), Some("production"));
+    }
+
+    #[tokio::test]
+    async fn view_key_shows_the_cached_deployments_until_the_fetch_lands() {
+        let mut app = app_with_focused_deployments(serde_json::json!([]));
+        app.environment_deployments = None;
+        let cached = &mut app.project_cache.data;
+        cached.set_environments(app.environments.items());
+        cached.set_deployments(
+            "production",
+            &serde_json::from_value::<Vec<_>>(two_deployments())
+                .expect("deployment fixture parses"),
+        );
+
         dispatch(&mut app, &key(KeyCode::Enter));
         dispatch(&mut app, &key(KeyCode::Char('j')));
 

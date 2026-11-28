@@ -7340,6 +7340,7 @@ impl App {
     /// version), restored from the project cache.
     pub fn review_marks_for_mr(&self, project_path: &str, mr_iid: u64) -> HashMap<String, String> {
         self.project_cache
+            .prefs
             .review_marks
             .get(project_path)
             .and_then(|marks| marks.get(&mr_iid))
@@ -7355,7 +7356,7 @@ impl App {
         mr_iid: u64,
         marks: HashMap<String, String>,
     ) {
-        let all_marks = &mut self.project_cache.review_marks;
+        let all_marks = &mut self.project_cache.prefs.review_marks;
         if marks.is_empty() {
             if let Some(project_marks) = all_marks.get_mut(project_path) {
                 project_marks.remove(&mr_iid);
@@ -7428,7 +7429,12 @@ impl App {
     ) {
         for scope in saved_in.iter().filter(|scope| **scope != self.scope) {
             let mut cache = crate::utils::cache::load_cache(scope.as_str());
-            if drop_unviewed_marks(&mut cache.review_marks, project_path, mr_iid, corrections) {
+            if drop_unviewed_marks(
+                &mut cache.prefs.review_marks,
+                project_path,
+                mr_iid,
+                corrections,
+            ) {
                 crate::utils::cache::save_cache(scope.as_str(), &cache);
             }
         }
@@ -7444,7 +7450,7 @@ impl App {
                 self.store_review_marks(project_path, mr_iid, marks);
             }
             None => {
-                let review_marks = &mut self.project_cache.review_marks;
+                let review_marks = &mut self.project_cache.prefs.review_marks;
                 if drop_unviewed_marks(review_marks, project_path, mr_iid, corrections) {
                     crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
                 }
@@ -7455,6 +7461,7 @@ impl App {
     /// Draft review comments saved for an MR/PR, restored from the project cache.
     pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
         self.project_cache
+            .prefs
             .draft_comments
             .get(project_path)
             .and_then(|drafts| drafts.get(&mr_iid))
@@ -7479,7 +7486,7 @@ impl App {
     /// drafts of an MR/PR and writes the project cache to disk, so drafts
     /// outlive the diff view and the process.
     pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
-        let drafts = &mut self.project_cache.draft_comments;
+        let drafts = &mut self.project_cache.prefs.draft_comments;
         if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
             if let Some(project_drafts) = drafts.get_mut(project_path) {
                 project_drafts.remove(&mr_iid);
@@ -8812,11 +8819,11 @@ impl App {
         match &purpose {
             SelectorPurpose::Field(SelectorField::Labels) => {
                 self.cached_labels = items.clone();
-                self.project_cache.labels = items.clone();
+                self.project_cache.data.labels = items.clone();
             }
             SelectorPurpose::Field(SelectorField::Assignees | SelectorField::Reviewers) => {
                 self.cached_members = items.clone();
-                self.project_cache.members = items.clone();
+                self.project_cache.data.members = items.clone();
             }
             _ => {}
         }
@@ -9164,6 +9171,21 @@ impl App {
             table,
             is_focused,
         });
+    }
+
+    /// Shows the cached deployments of `environment` until its fetch lands,
+    /// unless its deployments are already shown.
+    pub fn show_cached_deployments(&mut self, environment: &str) {
+        let is_shown = self
+            .environment_deployments
+            .as_ref()
+            .is_some_and(|shown| shown.environment == environment);
+        if is_shown {
+            return;
+        }
+        if let Some(cached) = self.project_cache.data.deployments.get(environment) {
+            self.show_deployments(environment.to_string(), cached.clone());
+        }
     }
 
     /// The shown deployments, when the navigation keys belong to them.
@@ -12213,7 +12235,7 @@ diff --git a/VERSION b/VERSION
         assert!(!selector.is_loading);
         assert_eq!(selector.all_items, labels);
         assert_eq!(app.cached_labels, labels);
-        assert_eq!(app.project_cache.labels, labels);
+        assert_eq!(app.project_cache.data.labels, labels);
     }
 
     #[test]
@@ -12240,7 +12262,7 @@ diff --git a/VERSION b/VERSION
     #[test]
     fn failed_selector_fetch_without_a_cache_reports_inside_and_leaves_the_cache() {
         let mut app = App::default();
-        app.project_cache.labels = vec!["persisted".to_string()];
+        app.project_cache.data.labels = vec!["persisted".to_string()];
         let request = app.next_request_tag();
         app.open_selector(loading_labels_selector(request));
 
@@ -12256,7 +12278,7 @@ diff --git a/VERSION b/VERSION
         );
         assert_eq!(app.toast_notice(), None);
         assert!(app.cached_labels.is_empty());
-        assert_eq!(app.project_cache.labels, ["persisted"]);
+        assert_eq!(app.project_cache.data.labels, ["persisted"]);
     }
 
     #[test]

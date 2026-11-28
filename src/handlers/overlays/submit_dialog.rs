@@ -213,7 +213,7 @@ fn run_submit_action(
             if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "closed".to_string();
             }
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
             let tx2 = tx.clone();
             fx.spawn(async move {
@@ -241,7 +241,7 @@ fn run_submit_action(
             if let Some(pos) = app.milestone_index(&project_path, milestone.iid) {
                 app.milestones.items[pos].state = "active".to_string();
             }
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
             let tx2 = tx.clone();
             fx.spawn(async move {

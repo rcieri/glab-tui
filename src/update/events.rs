@@ -43,7 +43,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
             }
 
-            app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
+            app.project_cache.data.set_pipeline_jobs(&app.pipeline_jobs);
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::JobsTabFetched(source, pipeline_id, jobs) => {
@@ -166,8 +166,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.rebuild_milestone_progress_cache();
             app.update_filter_selection();
             crate::handlers::tabs::maybe_fetch_related_mrs(app, tx);
-            app.project_cache.issues = app.issues.items.clone();
-            app.project_cache.issues_state_query = listed;
+            app.project_cache.data.issues = app.issues.items.clone();
+            app.project_cache.data.issues_state_query = listed;
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MrsFetched(listed, mrs) => {
@@ -194,8 +194,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 );
             }
             crate::handlers::tabs::maybe_fetch_mr_related_issues(app, tx);
-            app.project_cache.mrs = app.mrs.items.clone();
-            app.project_cache.mrs_state_query = listed;
+            app.project_cache.data.mrs = app.mrs.items.clone();
+            app.project_cache.data.mrs_state_query = listed;
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::IssueFetched(iid, Ok(issue)) => {
@@ -211,7 +211,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
             app.focus_issue(Some(&project), iid);
             crate::handlers::tabs::maybe_fetch_related_mrs(app, tx);
-            app.project_cache.issues = app.issues.items.clone();
+            app.project_cache.data.issues = app.issues.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::IssueFetched(iid, Err(err)) => {
@@ -231,7 +231,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
             app.focus_mr(Some(&project), iid);
             crate::handlers::tabs::maybe_fetch_mr_related_issues(app, tx);
-            app.project_cache.mrs = app.mrs.items.clone();
+            app.project_cache.data.mrs = app.mrs.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MrFetched(iid, Err(err)) => {
@@ -306,8 +306,8 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.pipelines.items.iter().map(|p| p.id()).collect();
             app.pipeline_jobs.retain(|id, _| new_ids.contains(id));
             app.fetching_pipelines.clear();
-            app.project_cache.pipelines = app.pipelines.items.clone();
-            app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
+            app.project_cache.data.pipelines = app.pipelines.items.clone();
+            app.project_cache.data.set_pipeline_jobs(&app.pipeline_jobs);
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodosFetched { show_read, .. } if show_read != app.shows_read_todos() => {}
@@ -318,12 +318,12 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Todos);
             app.set_todos(notifications);
             app.update_filter_selection();
-            app.project_cache.todos = app.todos.items.clone();
+            app.project_cache.data.todos = app.todos.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodoChanged(change, Ok(())) => {
             app.apply_todo_change(&change);
-            app.project_cache.todos = app.todos.items.clone();
+            app.project_cache.data.todos = app.todos.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::TodoChanged(change, Err(err)) => {
@@ -343,7 +343,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Runners);
             app.runners.set_items(runners);
             app.update_filter_selection();
-            app.project_cache.runners = app.runners.items().to_vec();
+            app.project_cache.data.runners = app.runners.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleasesFetched(releases) => {
@@ -353,7 +353,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Releases);
             app.releases.set_items(releases);
             app.update_filter_selection();
-            app.project_cache.releases = app.releases.items().to_vec();
+            app.project_cache.data.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestonesFetched(milestones) => {
@@ -363,12 +363,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Milestones);
             app.milestones.items = milestones;
             app.update_filter_selection();
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             let listed_iids: std::collections::HashSet<u64> =
                 app.milestones.items.iter().map(|m| m.iid).collect();
             app.milestone_issues_cache
                 .retain(|iid, _| listed_iids.contains(iid));
             app.project_cache
+                .data
                 .milestone_issues
                 .retain(|iid, _| listed_iids.contains(iid));
             app.rebuild_milestone_progress_cache();
@@ -439,11 +440,11 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if app.selected_milestone_iid == Some(iid) {
                 app.selected_milestone_issues = Some(issues.clone());
             }
-            app.project_cache.milestone_issues.insert(iid, issues);
+            app.project_cache.data.milestone_issues.insert(iid, issues);
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::MilestoneDeleted => {
@@ -453,18 +454,18 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                     app.milestones.items.remove(pos);
                 }
                 app.milestone_issues_cache.remove(&iid);
-                app.project_cache.milestone_issues.remove(&iid);
+                app.project_cache.data.milestone_issues.remove(&iid);
                 if app.selected_milestone_iid == Some(iid) {
                     app.selected_milestone_iid = None;
                     app.selected_milestone_issues = None;
                 }
             }
             app.rebuild_milestone_progress_cache();
-            app.project_cache.milestones = app.milestones.items.clone();
+            app.project_cache.data.milestones = app.milestones.items.clone();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleaseUpdated => {
-            app.project_cache.releases = app.releases.items().to_vec();
+            app.project_cache.data.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::ReleaseDeleted => {
@@ -473,7 +474,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 app.releases
                     .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
             }
-            app.project_cache.releases = app.releases.items().to_vec();
+            app.project_cache.data.releases = app.releases.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::IssueDeleted => {
@@ -518,7 +519,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Branches);
             app.branches.set_items(branches);
             app.update_filter_selection();
-            app.project_cache.branches = app.branches.items().to_vec();
+            app.project_cache.data.branches = app.branches.items().to_vec();
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::EnvironmentsFetched(envs) => {
@@ -528,7 +529,9 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             app.stale_tabs.remove(&app::Tab::Environments);
             app.environments.set_items(envs);
             app.update_filter_selection();
-            app.project_cache.environments = app.environments.items().to_vec();
+            app.project_cache
+                .data
+                .set_environments(app.environments.items());
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
         Event::SelectorItemsFetched { request, items } => {
@@ -540,13 +543,13 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if !labels.is_empty() {
                 let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
                 app.cached_labels = names.clone();
-                app.project_cache.labels = names;
+                app.project_cache.data.labels = names;
                 if app.config.fetch_label_colors {
                     let colors: std::collections::HashMap<String, String> = labels
                         .iter()
                         .filter_map(|l| l.color.as_ref().map(|c| (l.name.clone(), c.clone())))
                         .collect();
-                    app.project_cache.label_colors = colors.clone();
+                    app.project_cache.data.label_colors = colors.clone();
                     app.label_colors = colors
                         .iter()
                         .filter_map(|(name, hex)| {
@@ -557,7 +560,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             }
             if !members.is_empty() {
                 app.cached_members = members.clone();
-                app.project_cache.members = members;
+                app.project_cache.data.members = members;
             }
             crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
         }
@@ -573,22 +576,22 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
 
             if !labels.is_empty() {
                 let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
-                proj_cache.labels = names;
+                proj_cache.data.labels = names;
                 if app.config.fetch_label_colors {
                     let colors: std::collections::HashMap<String, String> = labels
                         .iter()
                         .filter_map(|l| l.color.as_ref().map(|c| (l.name.clone(), c.clone())))
                         .collect();
-                    proj_cache.label_colors = colors;
+                    proj_cache.data.label_colors = colors;
                 }
                 cache_updated = true;
             }
             if !members.is_empty() {
-                proj_cache.members = members.clone();
+                proj_cache.data.members = members.clone();
                 cache_updated = true;
             }
             if !milestones.is_empty() {
-                proj_cache.milestones = milestones
+                proj_cache.data.milestones = milestones
                     .iter()
                     .map(|title| crate::domain::milestones::Milestone {
                         id: 0,
@@ -606,7 +609,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 cache_updated = true;
             }
             if !branches.is_empty() {
-                proj_cache.branches = branches
+                proj_cache.data.branches = branches
                     .iter()
                     .map(|name| crate::domain::branches::Branch {
                         name: name.clone(),
@@ -667,6 +670,10 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if deployments.is_empty() {
                 app.show_notice(format!("No deployments for {environment}"));
             }
+            app.project_cache
+                .data
+                .set_deployments(&environment, &deployments);
+            crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
             app.show_deployments(environment, deployments);
             app.update_filter_selection();
         }
@@ -695,7 +702,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if let Some(issue) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid) {
                 issue.related_mrs = Some(new_state);
                 crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
-                app.project_cache.issues = app.issues.items.clone();
+                app.project_cache.data.issues = app.issues.items.clone();
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
             }
         }
@@ -714,7 +721,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
             if let Some(mr) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
                 mr.related_issues = Some(new_state);
                 crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
-                app.project_cache.mrs = app.mrs.items.clone();
+                app.project_cache.data.mrs = app.mrs.items.clone();
                 crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
             }
         }

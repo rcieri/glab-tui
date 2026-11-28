@@ -366,7 +366,7 @@ mod tests {
         update(&mut app, readme_mark_failed());
 
         let saved = crate::utils::cache::load_cache(saved_in.as_str());
-        assert_eq!(saved.review_marks, std::collections::HashMap::new());
+        assert_eq!(saved.prefs.review_marks, std::collections::HashMap::new());
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod tests {
         update(&mut app, readme_mark_failed());
 
         let saved = crate::utils::cache::load_cache(reopened_in.as_str());
-        assert_eq!(saved.review_marks, std::collections::HashMap::new());
+        assert_eq!(saved.prefs.review_marks, std::collections::HashMap::new());
     }
 
     #[test]

@@ -382,10 +382,12 @@ The `[layout]` section decides which tabs show and in what order, and where the 
 # every tab. A name that is no tab is skipped and reported in the Terminal tab,
 # and so is any [layout] value its key cannot hold, which keeps the default.
 tabs = ["mrs", "issues", "pipelines", "todos", "terminal"]
-nav_visible = true             # navigation sidebar, toggled with Alt+n (toggle_nav)
-nav_width = 22
-nav_min_width = 80             # the sidebar hides on narrower terminals
-preview = "auto"               # auto (right, below the list when narrow) | right | bottom | off; with no place, the Pipelines inspector opens full screen
+nav_position = "left"        # left (default) | top (horizontal clickable bar across top)
+nav_visible = true           # navigation sidebar or top bar, toggled with Alt+n (toggle_nav)
+nav_width = 22               # left nav only
+nav_min_width = 80           # left nav sidebar hides on narrower terminals
+tab_switch_in_zoom = true    # false: ←/→ (and h/l) do nothing in a zoomed preview
+preview = "auto"             # auto (right, below the list when narrow) | right | bottom | off; with no place, the Pipelines inspector opens full screen
 preview_width = "auto"         # "auto" (30, 45 or 35% by terminal width), cells (40) or "35%"
 preview_height = "auto"        # height of a bottom preview: "auto" (half), cells or a percentage
 preview_min_width = 68         # columns beside the sidebar; narrower: an auto preview moves below, a right preview hides

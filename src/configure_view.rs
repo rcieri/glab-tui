@@ -3,7 +3,7 @@
 //! means the same thing to each of them.
 
 use crate::app::{App, Tab};
-use crate::config::{LayoutConfig, PaneSize, PreviewPlacement};
+use crate::config::{LayoutConfig, NavPosition, PaneSize, PreviewPlacement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigureSection {
@@ -33,6 +33,7 @@ impl ConfigureSection {
 /// A `[layout]` pane setting the LAYOUT section edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutSetting {
+    NavPosition,
     NavVisible,
     NavWidth,
     Preview,
@@ -64,7 +65,8 @@ const NAV_WIDTH_STEP: u16 = 2;
 const TERMINAL_PANE_HEIGHT_RANGE: std::ops::RangeInclusive<u16> = 3..=20;
 
 impl LayoutSetting {
-    pub const ALL: [LayoutSetting; 7] = [
+    pub const ALL: [LayoutSetting; 8] = [
+        LayoutSetting::NavPosition,
         LayoutSetting::NavVisible,
         LayoutSetting::NavWidth,
         LayoutSetting::Preview,
@@ -76,6 +78,7 @@ impl LayoutSetting {
 
     pub fn label(self) -> &'static str {
         match self {
+            LayoutSetting::NavPosition => "Navigation position",
             LayoutSetting::NavVisible => "Navigation",
             LayoutSetting::NavWidth => "Navigation width",
             LayoutSetting::Preview => "Preview",
@@ -98,6 +101,7 @@ impl LayoutSetting {
     pub fn value(self, layout: &LayoutConfig) -> String {
         let shown = |is_shown: bool| if is_shown { "shown" } else { "hidden" }.to_string();
         match self {
+            LayoutSetting::NavPosition => layout.nav_position.to_string(),
             LayoutSetting::NavVisible => shown(layout.nav_visible),
             LayoutSetting::NavWidth => layout.nav_width.to_string(),
             LayoutSetting::Preview => layout.preview.label().to_string(),
@@ -112,6 +116,12 @@ impl LayoutSetting {
     /// Switches flip, choices wrap around, numbers stop at their range.
     pub fn step(self, layout: &mut LayoutConfig, forward: bool) {
         match self {
+            LayoutSetting::NavPosition => {
+                layout.nav_position = match layout.nav_position {
+                    NavPosition::Left => NavPosition::Top,
+                    NavPosition::Top => NavPosition::Left,
+                };
+            }
             LayoutSetting::NavVisible => layout.nav_visible = !layout.nav_visible,
             LayoutSetting::TerminalPaneVisible => {
                 layout.terminal_pane_visible = !layout.terminal_pane_visible;

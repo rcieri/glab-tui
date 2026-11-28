@@ -249,6 +249,17 @@ pub fn handle_mouse_event(
                 return;
             }
 
+            // Top navigation clicks
+            for &(rect, tab) in &app.top_nav_hits {
+                if rect_contains(rect, row, col) {
+                    if tab != app.active_tab {
+                        app.switch_to_tab(tab);
+                        crate::handlers::tabs::load_entered_tab(app, tx, fx);
+                    }
+                    return;
+                }
+            }
+
             // Fallback: sidebar / content clicks
             let sidebar_rect = app.layout.and_then(|l| l.sidebar_rect_opt());
             if let Some(sidebar_rect) = sidebar_rect

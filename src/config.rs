@@ -1,6 +1,8 @@
 pub(crate) mod layout;
 
-pub use layout::{DEFAULT_PREVIEW_MIN_WIDTH, LayoutConfig, PaneSize, PreviewPlacement};
+pub use layout::{
+    DEFAULT_PREVIEW_MIN_WIDTH, LayoutConfig, NavPosition, PaneSize, PreviewPlacement,
+};
 
 use crate::utils::private_fs;
 use ratatui::style::Color;

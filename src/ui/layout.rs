@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::Tab;
-use crate::config::{LayoutConfig, PaneSize, PreviewPlacement};
+use crate::config::{LayoutConfig, NavPosition, PaneSize, PreviewPlacement};
 use crate::ui::compaction::{self, PreviewPlacement as Placement};
 
 pub const MIN_TERMINAL_WIDTH: u16 = 54;
@@ -27,9 +27,11 @@ pub const MIN_SQUEEZED_LIST_WIDTH: u16 = 30;
 /// The pane settings of `[layout]`, everything but the tab list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PaneSettings {
+    pub nav_position: NavPosition,
     pub nav_visible: bool,
     pub nav_width: u16,
     pub nav_min_width: u16,
+    pub tab_switch_in_zoom: bool,
     pub preview: PreviewPlacement,
     pub preview_width: PaneSize,
     pub preview_height: PaneSize,
@@ -42,9 +44,11 @@ pub struct PaneSettings {
 impl From<&LayoutConfig> for PaneSettings {
     fn from(config: &LayoutConfig) -> Self {
         Self {
+            nav_position: config.nav_position,
             nav_visible: config.nav_visible,
             nav_width: config.nav_width,
             nav_min_width: config.nav_min_width,
+            tab_switch_in_zoom: config.tab_switch_in_zoom,
             preview: config.preview,
             preview_width: config.preview_width,
             preview_height: config.preview_height,
@@ -84,6 +88,8 @@ pub struct LayoutPlan {
     pub banner_title: Rect,
     /// Right portion of the header bar (mode indicator, [`BANNER_MODE_WIDTH`] columns).
     pub banner_mode: Rect,
+    /// Top horizontal tab navigation strip area (height 1 across workspace top when nav_position is Top and visible).
+    pub top_nav_area: Rect,
     /// Middle workspace area (between header and bottom).
     pub workspace_area: Rect,
     /// Sidebar navigation rectangle (width 0 if hidden or below width threshold).
@@ -112,29 +118,52 @@ impl LayoutPlan {
             .constraints([Constraint::Length(HEADER_HEIGHT), Constraint::Min(0)])
             .split(size);
         let header_area = chunks[0];
-        let workspace_area = chunks[1];
+        let raw_workspace_area = chunks[1];
+
+        let header_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(header_area);
 
         let banner = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(0), Constraint::Length(BANNER_MODE_WIDTH)])
-            .split(header_area);
+            .split(header_rows[0]);
+
+        let state = inputs.state;
+        let panes = inputs.panes;
+        let is_top_nav = panes.nav_position == NavPosition::Top && panes.nav_visible;
+
+        let show_top_nav =
+            is_top_nav && !state.edit_zoomed && (!state.details_zoomed || panes.tab_switch_in_zoom);
+
+        let (top_nav_area, workspace_area) = if show_top_nav {
+            let v = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(raw_workspace_area);
+            (v[0], v[1])
+        } else {
+            (Rect::default(), raw_workspace_area)
+        };
 
         let plan = Self {
             is_too_small: false,
             header_area,
             banner_title: banner[0],
             banner_mode: banner[1],
+            top_nav_area,
             workspace_area,
             ..Default::default()
         };
 
-        let state = inputs.state;
-        if (state.details_zoomed && state.active_tab.can_zoom_preview()) || state.edit_zoomed {
+        let is_zoomed =
+            (state.details_zoomed && state.active_tab.can_zoom_preview()) || state.edit_zoomed;
+        if is_zoomed {
             return plan.zoomed();
         }
 
-        let panes = inputs.panes;
-        let nav_width = if panes.nav_visible && size.width >= panes.nav_min_width {
+        let nav_width = if !is_top_nav && panes.nav_visible && size.width >= panes.nav_min_width {
             panes.nav_width
         } else {
             0
@@ -231,6 +260,14 @@ impl LayoutPlan {
         }
     }
 
+    pub fn has_top_nav(&self) -> bool {
+        self.top_nav_area.height > 0 && self.top_nav_area.width > 0
+    }
+
+    pub fn top_nav_area_opt(&self) -> Option<Rect> {
+        self.has_top_nav().then_some(self.top_nav_area)
+    }
+
     pub fn has_sidebar(&self) -> bool {
         self.sidebar_rect.width > 0
     }
@@ -262,7 +299,7 @@ impl LayoutPlan {
 /// while the sidebar leaving on its own under `nav_min_width` never moves
 /// the preview back beside the list.
 fn place_preview(panes: PaneSettings, workspace: Rect, terminal_rows: u16) -> Placement {
-    let nav_width = if panes.nav_visible {
+    let nav_width = if panes.nav_position == NavPosition::Left && panes.nav_visible {
         panes.nav_width
     } else {
         0
@@ -354,8 +391,8 @@ mod tests {
     fn header_and_banner_geometry() {
         let plan = LayoutPlan::compute(base_inputs(100, 30));
         assert_eq!(plan.header_area, Rect::new(0, 0, 100, 2));
-        assert_eq!(plan.banner_mode, Rect::new(88, 0, 12, 2));
-        assert_eq!(plan.banner_title, Rect::new(0, 0, 88, 2));
+        assert_eq!(plan.banner_mode, Rect::new(88, 0, 12, 1));
+        assert_eq!(plan.banner_title, Rect::new(0, 0, 88, 1));
         assert_eq!(plan.workspace_area, Rect::new(0, 2, 100, 28));
     }
 
@@ -371,6 +408,55 @@ mod tests {
         let mut inputs_hidden = base_inputs(120, 30);
         inputs_hidden.panes.nav_visible = false;
         assert!(!LayoutPlan::compute(inputs_hidden).has_sidebar());
+    }
+
+    #[test]
+    fn top_nav_geometry() {
+        let mut inputs = base_inputs(120, 30);
+        inputs.panes.nav_position = NavPosition::Top;
+        let plan = LayoutPlan::compute(inputs);
+
+        assert!(plan.has_top_nav());
+        assert_eq!(plan.top_nav_area, Rect::new(0, 2, 120, 1));
+        assert!(!plan.has_sidebar());
+        assert_eq!(plan.sidebar_rect.width, 0);
+        // Table content starts below top nav (y = 3)
+        assert_eq!(plan.content_area.y, 3);
+        assert_eq!(plan.content_area.x, 0);
+
+        // When nav is hidden, top nav is not computed
+        inputs.panes.nav_visible = false;
+        let plan_hidden = LayoutPlan::compute(inputs);
+        assert!(!plan_hidden.has_top_nav());
+        assert_eq!(plan_hidden.top_nav_area, Rect::default());
+        assert_eq!(plan_hidden.content_area.y, 2);
+    }
+
+    #[test]
+    fn top_nav_in_zoomed_preview() {
+        let mut inputs = base_inputs(120, 30);
+        inputs.panes.nav_position = NavPosition::Top;
+        inputs.state.details_zoomed = true;
+
+        let plan = LayoutPlan::compute(inputs);
+        assert!(plan.has_top_nav());
+        assert_eq!(plan.top_nav_area, Rect::new(0, 2, 120, 1));
+        assert_eq!(plan.detail_rect, Rect::new(0, 3, 120, 27));
+
+        // When tab switching in zoom is disabled, top nav is hidden during zoom
+        inputs.panes.tab_switch_in_zoom = false;
+        let plan_no_switch = LayoutPlan::compute(inputs);
+        assert!(!plan_no_switch.has_top_nav());
+        assert_eq!(plan_no_switch.top_nav_area, Rect::default());
+        assert_eq!(plan_no_switch.detail_rect, Rect::new(0, 2, 120, 28));
+
+        // When edit is zoomed, top nav is always hidden
+        inputs.panes.tab_switch_in_zoom = true;
+        inputs.state.edit_zoomed = true;
+        let plan_edit = LayoutPlan::compute(inputs);
+        assert!(!plan_edit.has_top_nav());
+        assert_eq!(plan_edit.top_nav_area, Rect::default());
+        assert_eq!(plan_edit.detail_rect, Rect::new(0, 2, 120, 28));
     }
 
     #[test]

@@ -128,6 +128,23 @@ impl<'de> Deserialize<'de> for PaneSize {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NavPosition {
+    #[default]
+    Left,
+    Top,
+}
+
+impl std::fmt::Display for NavPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Left => write!(f, "left"),
+            Self::Top => write!(f, "top"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
@@ -135,10 +152,14 @@ pub struct LayoutConfig {
     /// tab in the built-in order.
     #[serde(with = "tab_names", skip_serializing_if = "Option::is_none")]
     pub tabs: Option<Vec<Tab>>,
+    pub nav_position: NavPosition,
     pub nav_visible: bool,
     pub nav_width: u16,
     /// The navigation sidebar hides while the terminal is narrower.
     pub nav_min_width: u16,
+    /// When true, next/prev tab keys switch tabs from a zoomed preview (and un-zoom).
+    /// When false, tab switching keys do nothing while zoomed.
+    pub tab_switch_in_zoom: bool,
     pub preview: PreviewPlacement,
     /// Width of a preview right of the list.
     pub preview_width: PaneSize,
@@ -172,9 +193,11 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             tabs: None,
+            nav_position: NavPosition::default(),
             nav_visible: true,
             nav_width: DEFAULT_NAV_WIDTH,
             nav_min_width: DEFAULT_NAV_MIN_WIDTH,
+            tab_switch_in_zoom: true,
             preview: PreviewPlacement::default(),
             preview_width: PaneSize::Auto,
             preview_height: PaneSize::Auto,
@@ -344,9 +367,11 @@ mod tab_names {
 /// release, from a file whose `[layout]` does not set the same thing.
 const LEGACY_DISABLED_TABS: &str = "disabled_tabs";
 const LEGACY_UI: &str = "ui";
-const LEGACY_UI_KEYS: [(&str, &str); 3] = [
+const LEGACY_UI_KEYS: [(&str, &str); 5] = [
     ("sidebar_visible", "nav_visible"),
     ("sidebar_width", "nav_width"),
+    ("nav_position", "nav_position"),
+    ("tab_switch_in_zoom", "tab_switch_in_zoom"),
     ("terminal_pane_visible", "terminal_pane_visible"),
 ];
 

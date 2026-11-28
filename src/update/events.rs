@@ -717,30 +717,67 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::DiffFetched {
             diff_view,
             comments,
+            viewed_files,
+            fetched_at,
         } => {
             app.diff_loading = false;
             let mut diff_view = *diff_view;
             let mr_iid = diff_view.mr_iid;
             let held_back = app.restore_draft_comments(&diff_view);
-            // Restore the files marked as reviewed on an earlier pass.
-            diff_view
-                .restore_review_state(app.reviewed_files_for_mr(mr_iid), app.hide_reviewed_files);
-            app.open_diff_view(diff_view);
-            if held_back > 0 {
-                app.raise_error_toast(if held_back == 1 {
-                    "1 draft comment no longer matches the diff and was set aside".to_string()
-                } else {
-                    format!(
-                        "{held_back} draft comments no longer match the diff and were set aside"
-                    )
-                });
+            let reopened = app.diff_view().is_none_or(|v| v.mr_iid != mr_iid);
+            let (server_state, viewed_error) = match viewed_files {
+                Some(Ok(server_state)) => (Some(*server_state), None),
+                Some(Err(err)) => (None, Some(err)),
+                None => (None, None),
+            };
+            diff_view.restore_review_state(
+                &app.review_marks_for_mr(&diff_view.project_path, mr_iid),
+                server_state,
+                app.hide_reviewed_files,
+            );
+            app.reload_viewed_sync(&mut diff_view, fetched_at);
+            app.store_review_marks(&diff_view.project_path, mr_iid, diff_view.review_marks());
+            let changed = diff_view.changed_since_review.len();
+            if reopened && changed > 0 {
+                app.show_notice(format!(
+                    "{changed} reviewed file(s) changed since you reviewed them"
+                ));
             }
+            app.open_diff_view(diff_view);
+            let set_aside = match held_back {
+                0 => None,
+                1 => {
+                    Some("1 draft comment no longer matches the diff and was set aside".to_string())
+                }
+                _ => Some(format!(
+                    "{held_back} draft comments no longer match the diff and were set aside"
+                )),
+            };
+            let mut failures = Vec::new();
             match comments {
                 Ok(comments) => app.current_comments = comments,
                 Err(err) => {
                     app.current_comments.clear();
-                    app.show_cli_error(format!("Failed to load review comments: {err}"));
+                    failures.push(format!("Failed to load review comments: {err}"));
                 }
+            }
+            if let Some(err) = viewed_error {
+                failures.push(format!(
+                    "Failed to load GitHub viewed state, so marks stay local until the next \
+                     open replaces them with GitHub's (sync_viewed_files = false keeps them \
+                     local): {err}"
+                ));
+            }
+            // One toast for all of them: a second would replace the first
+            // unseen. Drafts set aside ran no CLI call, so alone they neither
+            // point at the terminal log nor mark an entry failed.
+            if failures.is_empty() {
+                if let Some(set_aside) = set_aside {
+                    app.raise_error_toast(set_aside);
+                }
+            } else {
+                let messages: Vec<String> = set_aside.into_iter().chain(failures).collect();
+                app.show_cli_error(messages.join(". "));
             }
             let mut diff_ref: Option<&crate::app::DiffView> = None;
             let mut overview_mut: Option<&mut crate::app::ReviewThreadsOverview> = None;
@@ -769,6 +806,67 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
         Event::DiffFetchFailed(err_msg) => {
             app.diff_loading = false;
             app.show_cli_error(err_msg);
+        }
+        Event::ViewedSyncFlush(pull_request_id) => {
+            let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) else {
+                return;
+            };
+            let changes = entry.sync.take_changes();
+            if !changes.is_empty() {
+                crate::fetch::spawn_viewed_files_sync(
+                    fx,
+                    &entry.client,
+                    pull_request_id,
+                    changes,
+                    tx.clone(),
+                );
+            }
+        }
+        Event::ViewedFilesSynced {
+            pull_request_id,
+            changes,
+            result,
+        } => {
+            let rejected: std::collections::HashSet<&str> = match &result {
+                Ok(refused) => refused.iter().map(|r| r.path.as_str()).collect(),
+                Err(_) => changes.iter().map(|(path, _)| path.as_str()).collect(),
+            };
+            app.viewed_settles = app.viewed_settles.next();
+            let settled_at = app.viewed_settles;
+            let mut settled = None;
+            if let Some(entry) = app.viewed_syncs.get_mut(&pull_request_id) {
+                let corrections = entry.sync.settle(&changes, &rejected, settled_at);
+                if entry.sync.claim_follow_up_flush() {
+                    crate::fetch::spawn_viewed_sync_flush(fx, pull_request_id.clone(), tx.clone());
+                }
+                settled = Some((
+                    entry.scopes.clone(),
+                    entry.project_path.clone(),
+                    entry.mr_iid,
+                    corrections,
+                ));
+            }
+            if let Some((saved_in, project_path, mr_iid, corrections)) = settled {
+                app.apply_viewed_corrections(&saved_in, &project_path, mr_iid, &corrections);
+            }
+            match result {
+                Err(err) => app.show_cli_error(format!(
+                    "Could not sync the viewed state of {} file(s) with GitHub; reverted: {err}",
+                    changes.len()
+                )),
+                Ok(refused) => {
+                    if let Some(first) = refused.first() {
+                        app.show_cli_error(format!(
+                            "GitHub refused the viewed state of {} of {} file(s), reverted: \
+                             {}: {}",
+                            refused.len(),
+                            changes.len(),
+                            first.path,
+                            first.reason
+                        ));
+                    }
+                }
+            }
         }
         Event::ReviewSubmitted { mr_iid, result } => {
             if crate::handlers::review_submit::finish(app, mr_iid, result) {
@@ -867,14 +965,18 @@ fn refetch_after_mutation(
     ) else {
         return;
     };
+    let sync_viewed = app.syncs_viewed_files();
+    let fetched_at = app.viewed_settles;
     let tx = app.scoped_sender(tx.clone());
     fx.spawn(async move {
-        if let Ok((diff_view, comments)) =
-            crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await
+        if let Ok((diff_view, comments, viewed_files)) =
+            crate::fetch::fetch_diff_view(&client, &project_context, mr_iid, sync_viewed).await
         {
             let _ = tx.send(Event::DiffFetched {
                 diff_view,
                 comments,
+                viewed_files,
+                fetched_at,
             });
         }
     });

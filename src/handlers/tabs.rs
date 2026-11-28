@@ -1,5 +1,4 @@
 use crate::app::{App, Tab};
-use crate::backend::Capabilities;
 use crate::effect::{Effects, ForegroundJob};
 use crate::event::{CommandOutcome, Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
@@ -817,6 +816,11 @@ pub fn handle_active_tab_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
+    if Action::in_context(KeyContext::Tab(app.active_tab))
+        .any(|a| !app.offers(a) && app.config.keybindings.matches(a, key_event))
+    {
+        return true;
+    }
     if let Some(action) = Action::in_context(KeyContext::Tab(app.active_tab))
         .find(|a| a.is_destructive() && app.config.keybindings.matches(*a, key_event))
     {
@@ -2223,7 +2227,6 @@ pub fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Runners => {
-            let can_manage_runners = app.capabilities().contains(Capabilities::MANAGE_RUNNERS);
             if app
                 .config
                 .keybindings
@@ -2233,17 +2236,6 @@ pub fn handle_active_tab_key(
             } else if let Some(item) = app.runners.cursor_row() {
                 let runner_id = item.id;
                 match key_event.code {
-                    // Where the backend cannot pause, resume or rename a runner the keys
-                    // are still taken, so a rebinding never reaches a list-view or custom
-                    // binding.
-                    _ if !can_manage_runners
-                        && [
-                            Action::RunnersPause,
-                            Action::RunnersResume,
-                            Action::RunnersEditDescription,
-                        ]
-                        .into_iter()
-                        .any(|action| app.config.keybindings.matches(action, key_event)) => {}
                     _ if app
                         .config
                         .keybindings
@@ -3971,6 +3963,48 @@ pub(crate) mod tests {
             app.pipelines.items[0].status, "running",
             "the remapped key retries"
         );
+    }
+
+    fn group_app_with_gitlab_client(tab: crate::app::Tab) -> App {
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.active_tab = tab;
+        app
+    }
+
+    #[tokio::test]
+    async fn trigger_pipeline_key_spawns_nothing_on_the_group_pipelines_placeholder() {
+        let mut app = group_app_with_gitlab_client(crate::app::Tab::Pipelines);
+        let press = KeyPress::from(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        let tx = app.tx.clone();
+        let mut fx = crate::effect::Effects::default();
+
+        let consumed = handle_active_tab_key(&mut app, &press, &tx, &mut fx);
+
+        assert!(consumed);
+        assert!(fx.into_vec().is_empty());
+    }
+
+    #[tokio::test]
+    async fn n_on_the_group_releases_placeholder_still_opens_the_create_release_form() {
+        let mut app = group_app_with_gitlab_client(crate::app::Tab::Releases);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+
+        let menu = app.edit_menu().expect("create release form opened");
+        assert_eq!(menu.title, "Create Release");
     }
 
     #[tokio::test]

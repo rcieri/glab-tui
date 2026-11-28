@@ -1045,7 +1045,7 @@ pub(crate) fn render_help(f: &mut Frame, ctx: &RenderCtx<'_>, app: &mut App, siz
 
     let mut shortcuts: Vec<Shortcut> = Action::ALL
         .iter()
-        .filter(|action| action.spec().support.includes(ctx.kind))
+        .filter(|action| action.spec().support.includes(ctx.kind) && app.offers(**action))
         .map(|&action| {
             let spec = action.spec();
             Shortcut {
@@ -1516,6 +1516,40 @@ mod tests {
         assert!(
             !text.contains("Toggle trace auto-follow mode"),
             "trace follow is not offered on GitHub: {text:?}"
+        );
+    }
+
+    #[test]
+    fn render_help_in_a_gitlab_group_omits_pipeline_actions_the_placeholder_cannot_run() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 80)).unwrap();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: create_backend(false),
+            tx: None,
+            page_size: 50,
+            api_per_page: 50,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.open_help();
+        app.active_tab = Tab::Pipelines;
+
+        let icons = std::sync::Arc::clone(&app.icons);
+        let ctx = &crate::ui::render_ctx::RenderCtx::new(&app, &icons);
+        terminal
+            .draw(|f| render_help(f, ctx, &mut app, f.area()))
+            .unwrap();
+        let text = buffer_text(&terminal);
+
+        assert!(
+            !text.contains("Trigger a new pipeline from the current branch"),
+            "{text:?}"
+        );
+        assert!(
+            text.contains("Create pipeline with interactive form"),
+            "{text:?}"
         );
     }
 

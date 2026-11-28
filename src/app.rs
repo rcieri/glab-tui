@@ -6200,6 +6200,25 @@ impl App {
         self.kind().capabilities(&self.scope)
     }
 
+    /// Whether `action` can act in the current scope: a tab action needs its
+    /// tab listable (bar `UNLISTED_TAB_ACTIONS`), and runner edits need
+    /// `MANAGE_RUNNERS`.
+    pub fn offers(&self, action: crate::keymap::Action) -> bool {
+        use crate::keymap::{Action, KeyContext, UNLISTED_TAB_ACTIONS};
+        let capabilities = self.capabilities();
+        let KeyContext::Tab(tab) = action.context() else {
+            return true;
+        };
+        if !tab.is_listable_with(capabilities) {
+            return UNLISTED_TAB_ACTIONS.contains(&action);
+        }
+        let edits_runner = matches!(
+            action,
+            Action::RunnersPause | Action::RunnersResume | Action::RunnersEditDescription
+        );
+        !edits_runner || capabilities.contains(Capabilities::MANAGE_RUNNERS)
+    }
+
     /// Table state of a tab not yet backed by a `ListTab`.
     fn legacy_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
         match self.active_tab {

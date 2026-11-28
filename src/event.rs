@@ -69,8 +69,27 @@ pub enum Event {
     DiffFetched {
         diff_view: Box<crate::app::DiffView>,
         comments: Result<Vec<crate::domain::mr::DiscussionNote>, String>,
+        /// GitHub's viewed state of the PR's files; `None` when sync is off or
+        /// on GitLab, `Err` when the fetch failed (local marks apply instead).
+        viewed_files: Option<Result<Box<crate::domain::viewed_files::PrViewedFiles>, String>>,
+        /// `App::viewed_settles` when the fetch started. A viewed-sync request
+        /// settled since is newer than `viewed_files`, however late it arrives.
+        fetched_at: crate::domain::viewed_files::SettleCount,
     },
     DiffFetchFailed(String),
+    /// The debounce window of the GitHub "Viewed" sync of this pull request,
+    /// named by its GraphQL node id, closed.
+    ViewedSyncFlush(String),
+    /// One GitHub "Viewed" sync request finished. `changes` maps paths to the
+    /// viewed state that was sent, and `result` holds the ones GitHub refused,
+    /// or `Err` when the reply carried no per-file result, whatever GitHub
+    /// applied. The pull request is named by its GraphQL node id, since its
+    /// number recurs across the projects of a group.
+    ViewedFilesSynced {
+        pull_request_id: String,
+        changes: Vec<(String, bool)>,
+        result: Result<Vec<crate::domain::viewed_files::RejectedViewedPath>, String>,
+    },
     /// `show_read` is the filter the list was requested with. A result for a
     /// filter the user has since toggled away from is stale.
     TodosFetched {

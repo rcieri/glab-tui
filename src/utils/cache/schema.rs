@@ -41,9 +41,12 @@ pub struct ProjectCache {
 #[derive(Serialize, Deserialize, Default, Clone)]
 #[serde(default)]
 pub struct CachePrefs {
-    /// Files marked as reviewed in the diff view, keyed by MR/PR iid.
+    /// Files marked as reviewed in the diff view, by project path, then MR/PR
+    /// iid, then path, mapped to the fingerprint of the diff the mark was made
+    /// on. A group-scope cache is shared by every project in the group, and the
+    /// same iid recurs across them.
     #[serde(deserialize_with = "or_default")]
-    pub reviewed_files: HashMap<u64, Vec<String>>,
+    pub review_marks: HashMap<String, HashMap<u64, HashMap<String, String>>>,
     /// Draft review comments not yet submitted, by project path, then MR/PR
     /// iid. A group-scope cache is shared by every project in the group, and
     /// the same iid recurs across them.
@@ -176,9 +179,12 @@ where
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
-/// Version 0 kept every field at the top level of the file.
+/// Version 0 kept every field at the top level of the file. Its path-only
+/// `reviewed_files` marks are dropped: which version of a file they covered is
+/// unknown.
 fn split_prefs_from_data(mut file: Map<String, Value>) -> Map<String, Value> {
-    let prefs: Map<String, Value> = ["reviewed_files", "draft_comments"]
+    file.remove("reviewed_files");
+    let prefs: Map<String, Value> = ["review_marks", "draft_comments"]
         .into_iter()
         .filter_map(|key| file.remove_entry(key))
         .collect();
@@ -194,6 +200,7 @@ mod tests {
     use crate::domain::state_query::StateQuery;
 
     const DRAFT: &str = r#"{"file_path":"src/lib.rs","line_num":3,"body":"typo"}"#;
+    const MARKS: &str = r#"{"group/project":{"7":{"src/lib.rs":"fp"}}}"#;
 
     fn draft_bodies(cache: &ProjectCache) -> Vec<&str> {
         cache.prefs.draft_comments["group/project"][&7]
@@ -202,13 +209,17 @@ mod tests {
             .collect()
     }
 
+    fn marked_files(cache: &ProjectCache) -> Vec<(&str, &str)> {
+        cache.prefs.review_marks["group/project"][&7]
+            .iter()
+            .map(|(path, fingerprint)| (path.as_str(), fingerprint.as_str()))
+            .collect()
+    }
+
     #[test]
     fn a_saved_cache_reads_back_with_the_current_schema_version() {
         let mut cache = ProjectCache::default();
-        cache
-            .prefs
-            .reviewed_files
-            .insert(7, vec!["src/lib.rs".to_string()]);
+        cache.prefs.review_marks = serde_json::from_str(MARKS).unwrap();
         cache.data.labels = vec!["bug".to_string()];
         cache.data.mrs_state_query = StateQuery::Merged;
 
@@ -217,7 +228,7 @@ mod tests {
         let reloaded = ProjectCache::from_json(std::str::from_utf8(&json).unwrap());
 
         assert_eq!(file["schema_version"], SCHEMA_VERSION);
-        assert_eq!(reloaded.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(marked_files(&reloaded), [("src/lib.rs", "fp")]);
         assert_eq!(reloaded.data.labels, ["bug"]);
         assert_eq!(reloaded.data.mrs_state_query, StateQuery::Merged);
     }
@@ -227,30 +238,43 @@ mod tests {
         let legacy = format!(
             r#"{{"issues":[],"mrs":[],"pipelines":[],"runners":[],"releases":[],"todos":[],
             "milestones":[],"pipeline_jobs":{{}},"branches":[],"environments":[],
-            "labels":["bug"],"reviewed_files":{{"7":["src/lib.rs"]}},
+            "labels":["bug"],"review_marks":{MARKS},
             "draft_comments":{{"group/project":{{"7":[{DRAFT}]}}}},
             "enabled_columns":{{}},"group_by_column":{{}}}}"#
         );
 
         let cache = ProjectCache::from_json(&legacy);
 
-        assert_eq!(cache.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(marked_files(&cache), [("src/lib.rs", "fp")]);
         assert_eq!(draft_bodies(&cache), ["typo"]);
         assert_eq!(cache.data.labels, ["bug"]);
         assert_eq!(cache.data.issues_state_query, StateQuery::All);
     }
 
     #[test]
+    fn path_only_review_marks_of_version_0_are_dropped() {
+        let legacy = r#"{"labels":["bug"],"reviewed_files":{"42":["src/app.rs"]}}"#;
+
+        let cache = ProjectCache::from_json(legacy);
+        let saved: Value = serde_json::from_slice(&cache.to_json().unwrap()).unwrap();
+
+        assert!(cache.prefs.review_marks.is_empty());
+        assert_eq!(cache.data.labels, ["bug"], "the rest still loads");
+        assert!(saved["prefs"].get("reviewed_files").is_none());
+        assert!(saved["data"].get("reviewed_files").is_none());
+    }
+
+    #[test]
     fn a_version_0_file_whose_data_no_longer_parses_keeps_its_prefs() {
         let legacy = format!(
             r#"{{"issues":"no longer a list","labels":["bug"],
-            "reviewed_files":{{"7":["src/lib.rs"]}},
+            "review_marks":{MARKS},
             "draft_comments":{{"group/project":{{"7":[{DRAFT}]}}}}}}"#
         );
 
         let cache = ProjectCache::from_json(&legacy);
 
-        assert_eq!(cache.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(marked_files(&cache), [("src/lib.rs", "fp")]);
         assert_eq!(draft_bodies(&cache), ["typo"]);
         assert!(cache.data.issues.is_empty());
         assert!(cache.data.labels.is_empty());
@@ -260,14 +284,14 @@ mod tests {
     fn a_data_field_changing_shape_keeps_the_prefs() {
         let file = format!(
             r#"{{"schema_version":1,
-            "prefs":{{"reviewed_files":{{"7":["src/lib.rs"]}},
+            "prefs":{{"review_marks":{MARKS},
                      "draft_comments":{{"group/project":{{"7":[{DRAFT}]}}}}}},
             "data":{{"pipelines":{{"was":"a list"}},"labels":["bug"]}}}}"#
         );
 
         let cache = ProjectCache::from_json(&file);
 
-        assert_eq!(cache.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(marked_files(&cache), [("src/lib.rs", "fp")]);
         assert_eq!(draft_bodies(&cache), ["typo"]);
         assert!(cache.data.pipelines.is_empty());
         assert!(cache.data.labels.is_empty());
@@ -275,26 +299,30 @@ mod tests {
 
     #[test]
     fn an_unreadable_pref_leaves_the_other_prefs_alone() {
-        let file = r#"{"schema_version":1,
-            "prefs":{"reviewed_files":{"7":["src/lib.rs"]},"draft_comments":["not a map"]},
-            "data":{"labels":["bug"]}}"#;
+        let file = format!(
+            r#"{{"schema_version":1,
+            "prefs":{{"review_marks":{MARKS},"draft_comments":["not a map"]}},
+            "data":{{"labels":["bug"]}}}}"#
+        );
 
-        let cache = ProjectCache::from_json(file);
+        let cache = ProjectCache::from_json(&file);
 
-        assert_eq!(cache.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(marked_files(&cache), [("src/lib.rs", "fp")]);
         assert!(cache.prefs.draft_comments.is_empty());
         assert_eq!(cache.data.labels, ["bug"]);
     }
 
     #[test]
     fn a_file_from_a_newer_schema_keeps_its_prefs_and_drops_its_data() {
-        let file = r#"{"schema_version":99,
-            "prefs":{"reviewed_files":{"7":["src/lib.rs"]}},
-            "data":{"labels":["bug"]}}"#;
+        let file = format!(
+            r#"{{"schema_version":99,
+            "prefs":{{"review_marks":{MARKS}}},
+            "data":{{"labels":["bug"]}}}}"#
+        );
 
-        let cache = ProjectCache::from_json(file);
+        let cache = ProjectCache::from_json(&file);
 
-        assert_eq!(cache.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(marked_files(&cache), [("src/lib.rs", "fp")]);
         assert!(cache.data.labels.is_empty());
     }
 
@@ -302,7 +330,7 @@ mod tests {
     fn a_file_that_is_not_json_reads_as_an_empty_cache() {
         let cache = ProjectCache::from_json("{\"schema_version\":1,\"prefs\":");
 
-        assert!(cache.prefs.reviewed_files.is_empty());
+        assert!(cache.prefs.review_marks.is_empty());
         assert!(cache.data.labels.is_empty());
     }
 

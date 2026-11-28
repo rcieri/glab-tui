@@ -802,13 +802,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let files_list = if file_tree_visible {
                 let (reviewed_count, total_files) = diff_view.review_progress();
-                let files_title = if reviewed_count > 0 {
+                let changed_count = diff_view.changed_since_review.len();
+                let changed_suffix = if changed_count > 0 {
+                    format!(" {} {}", icons.file_changed_since_review, changed_count)
+                } else {
+                    String::new()
+                };
+                let files_title = if reviewed_count > 0 || changed_count > 0 {
                     format!(
-                        " {} {} {}/{}{} ",
+                        " {} {} {}/{}{}{} ",
                         icons.label_files,
                         ctx.icons.file_reviewed,
                         reviewed_count,
                         total_files,
+                        changed_suffix,
                         if diff_view.hide_reviewed {
                             " (hidden)"
                         } else {
@@ -844,6 +851,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     } else if node.is_reviewed {
                         format!("{} ", ctx.icons.file_reviewed)
+                    } else if node
+                        .file_path
+                        .as_ref()
+                        .is_some_and(|p| diff_view.changed_since_review.contains(p))
+                    {
+                        format!("{} ", ctx.icons.file_changed_since_review)
                     } else {
                         "  ".to_string()
                     };

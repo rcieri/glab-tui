@@ -42,6 +42,12 @@
     "DeploymentStatusState": {
       "kind": "enum"
     },
+    "FileViewedState": {
+      "kind": "enum"
+    },
+    "ID": {
+      "kind": "scalar"
+    },
     "Int": {
       "kind": "scalar"
     },
@@ -83,6 +89,31 @@
     "IssueState": {
       "kind": "enum"
     },
+    "MarkFileAsViewedPayload": {
+      "fields": {
+        "clientMutationId": {
+          "type": "String"
+        }
+      },
+      "kind": "object"
+    },
+    "Mutation": {
+      "fields": {
+        "markFileAsViewed": {
+          "args": [
+            "input"
+          ],
+          "type": "MarkFileAsViewedPayload"
+        },
+        "unmarkFileAsViewed": {
+          "args": [
+            "input"
+          ],
+          "type": "UnmarkFileAsViewedPayload"
+        }
+      },
+      "kind": "object"
+    },
     "PageInfo": {
       "fields": {
         "endCursor": {
@@ -107,6 +138,18 @@
             "userLinkedOnly"
           ],
           "type": "IssueConnection"
+        },
+        "files": {
+          "args": [
+            "after",
+            "before",
+            "first",
+            "last"
+          ],
+          "type": "PullRequestChangedFileConnection"
+        },
+        "id": {
+          "type": "ID!"
         },
         "isDraft": {
           "type": "Boolean!"
@@ -134,6 +177,28 @@
         },
         "title": {
           "type": "String!"
+        }
+      },
+      "kind": "object"
+    },
+    "PullRequestChangedFile": {
+      "fields": {
+        "path": {
+          "type": "String!"
+        },
+        "viewerViewedState": {
+          "type": "FileViewedState!"
+        }
+      },
+      "kind": "object"
+    },
+    "PullRequestChangedFileConnection": {
+      "fields": {
+        "nodes": {
+          "type": "[PullRequestChangedFile]"
+        },
+        "pageInfo": {
+          "type": "PageInfo!"
         }
       },
       "kind": "object"
@@ -277,6 +342,14 @@
     },
     "String": {
       "kind": "scalar"
+    },
+    "UnmarkFileAsViewedPayload": {
+      "fields": {
+        "clientMutationId": {
+          "type": "String"
+        }
+      },
+      "kind": "object"
     }
   }
 }

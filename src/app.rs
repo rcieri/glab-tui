@@ -6,6 +6,9 @@ use crate::domain::mr::{DiscussionNote, MergeMethod, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::state_query::{StateQueries, StateQuery};
+use crate::domain::viewed_files::{
+    FileViewedState, Fingerprint, PrViewedFiles, SettleCount, ViewedSync,
+};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::form::{
     Button, ButtonRow, ButtonTone, Form, Group, GroupId, GroupKind, ItemList, ListEntry, NoteLevel,
@@ -26,7 +29,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::ListState;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
@@ -1458,6 +1461,20 @@ pub struct DiffView {
     /// Paths of files the user marked as reviewed (`m`), persisted per MR/PR in
     /// the project cache.
     pub reviewed_files: HashSet<String>,
+    /// Fingerprint of each file's diff text. A cached mark only survives a
+    /// re-fetch while the file's fingerprint still matches the reviewed one.
+    pub file_fingerprints: HashMap<String, String>,
+    /// Files reviewed in an earlier version that changed since — a local mark
+    /// whose fingerprint no longer matches, or GitHub's `DISMISSED` state.
+    /// They count as unreviewed.
+    pub changed_since_review: HashSet<String>,
+    /// The mismatching local marks, kept with the reviewed version's
+    /// fingerprint so the indicator survives re-fetches until the file is
+    /// toggled.
+    stale_marks: HashMap<String, String>,
+    /// GraphQL node id of the pull request, set once GitHub's viewed state
+    /// loaded; it keys the session's `App::viewed_syncs` entry.
+    pub pull_request_id: Option<String>,
     /// Filter reviewed files out of the tree (`M`).
     pub hide_reviewed: bool,
 }
@@ -1534,12 +1551,21 @@ impl DiffView {
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
         // strings, so expanding at the single point where they are produced
-        // keeps all of them agreeing on where a character sits.
-        let cleaned_diff = strip_ansi_escapes(&raw_diff)
-            .lines()
-            .map(expand_diff_line_tabs)
-            .collect::<Vec<_>>()
-            .join("\n");
+        // keeps all of them agreeing on where a character sits. Fingerprints
+        // hash the raw lines instead: a push that only swaps a tab for spaces,
+        // or flips CRLF and LF, still changes the file.
+        let stripped_diff = strip_ansi_escapes(&raw_diff);
+        let mut raw_lines: Vec<&str> = stripped_diff.split_terminator('\n').collect();
+        if raw_lines
+            .last()
+            .is_some_and(|line| line.trim_end_matches('\r').is_empty())
+        {
+            raw_lines.pop();
+        }
+        let expanded_lines: Vec<String> = raw_lines
+            .iter()
+            .map(|line| expand_diff_line_tabs(line.strip_suffix('\r').unwrap_or(line)))
+            .collect();
         let mut all_lines = Vec::new();
         let mut current_file = String::new();
         let mut old_line_num = None;
@@ -1576,7 +1602,7 @@ impl DiffView {
             Context,
         }
 
-        let diff_lines: Vec<&str> = cleaned_diff.lines().collect();
+        let diff_lines: Vec<&str> = expanded_lines.iter().map(String::as_str).collect();
         for (index, &line) in diff_lines.iter().enumerate() {
             let starts_file = line.starts_with("diff --git ")
                 || (line.starts_with("--- ")
@@ -1827,6 +1853,20 @@ impl DiffView {
 
         let number_width = line_number_width(&all_lines);
 
+        let mut fingerprints: HashMap<&str, Fingerprint> = HashMap::new();
+        for (line, raw) in all_lines.iter().zip(&raw_lines) {
+            if !line.file_path.is_empty() {
+                fingerprints
+                    .entry(line.file_path.as_str())
+                    .or_default()
+                    .update(raw);
+            }
+        }
+        let file_fingerprints = fingerprints
+            .into_iter()
+            .map(|(path, fingerprint)| (path.to_string(), fingerprint.finish()))
+            .collect();
+
         let mut view = Self {
             mr_iid,
             project_path,
@@ -1854,6 +1894,10 @@ impl DiffView {
             file_tree_visible: true,
             line_number_width: number_width,
             reviewed_files: HashSet::new(),
+            file_fingerprints,
+            changed_since_review: HashSet::new(),
+            stale_marks: HashMap::new(),
+            pull_request_id: None,
             hide_reviewed: false,
         };
 
@@ -1861,20 +1905,114 @@ impl DiffView {
         view
     }
 
-    /// Seeds the reviewed-file marks (restored from the project cache) and the
-    /// hide-reviewed filter, then rebuilds the tree around them.
-    pub fn restore_review_state(&mut self, reviewed: HashSet<String>, hide_reviewed: bool) {
-        // Drop marks for files no longer in the diff so stale paths never leak
-        // back into the cache.
-        let mut known = Vec::new();
-        self.root_node.collect_file_paths(&mut known);
-        let known: HashSet<String> = known.into_iter().collect();
-        self.reviewed_files = reviewed.into_iter().filter(|p| known.contains(p)).collect();
+    /// Seeds the review state and the hide-reviewed filter, then rebuilds the
+    /// tree around them.
+    ///
+    /// `saved` maps each locally reviewed path to the fingerprint of the
+    /// version reviewed; a mark whose file changed since comes back
+    /// unreviewed, flagged in `changed_since_review`. `server`, GitHub's
+    /// viewed state when synced, replaces the local marks altogether. Paths no
+    /// longer in the diff are dropped either way.
+    pub fn restore_review_state(
+        &mut self,
+        saved: &HashMap<String, String>,
+        server: Option<PrViewedFiles>,
+        hide_reviewed: bool,
+    ) {
+        self.reviewed_files.clear();
+        self.changed_since_review.clear();
+        self.stale_marks.clear();
+        self.pull_request_id = None;
+        match server {
+            Some(server) => {
+                for (path, state) in server.files {
+                    if !self.file_fingerprints.contains_key(&path) {
+                        continue;
+                    }
+                    match state {
+                        FileViewedState::Viewed => {
+                            self.reviewed_files.insert(path);
+                        }
+                        FileViewedState::Dismissed => {
+                            self.changed_since_review.insert(path);
+                        }
+                        FileViewedState::Unviewed => {}
+                    }
+                }
+                self.pull_request_id = Some(server.pull_request_id);
+            }
+            None => {
+                for (path, reviewed_fingerprint) in saved {
+                    match self.file_fingerprints.get(path) {
+                        Some(current) if current == reviewed_fingerprint => {
+                            self.reviewed_files.insert(path.clone());
+                        }
+                        Some(_) => {
+                            self.changed_since_review.insert(path.clone());
+                            self.stale_marks
+                                .insert(path.clone(), reviewed_fingerprint.clone());
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
         self.hide_reviewed = hide_reviewed;
         // Directories already fully reviewed on a previous pass open folded.
         self.root_node
             .sync_expansion_to_review(&HashSet::new(), &self.reviewed_files);
         self.rebuild_visible_nodes_keep_position();
+    }
+
+    /// The marks to persist: each reviewed file with its current fingerprint,
+    /// plus the marks that went stale, with the fingerprint they were made on.
+    pub fn review_marks(&self) -> HashMap<String, String> {
+        let mut marks = self.stale_marks.clone();
+        for path in &self.reviewed_files {
+            if let Some(fingerprint) = self.file_fingerprints.get(path) {
+                marks.insert(path.clone(), fingerprint.clone());
+            }
+        }
+        marks
+    }
+
+    /// Marks for `paths` as if they had been reviewed on this exact diff.
+    #[cfg(test)]
+    pub(crate) fn marks_on_this_diff(&self, paths: &[&str]) -> HashMap<String, String> {
+        paths
+            .iter()
+            .map(|path| {
+                let fingerprint = self.file_fingerprints.get(*path).cloned();
+                (path.to_string(), fingerprint.unwrap_or_default())
+            })
+            .collect()
+    }
+
+    /// Forces the reviewed state of the given files (sync results); returns how
+    /// many actually changed. A file forced to reviewed loses its "changed
+    /// since review" flag, as a toggle does. One forced back to unreviewed (a
+    /// failed sync) keeps whatever flag the server state gave it.
+    pub fn apply_review_corrections(&mut self, corrections: &[(String, bool)]) -> usize {
+        let before = self.reviewed_files.clone();
+        for (path, reviewed) in corrections {
+            if !self.file_fingerprints.contains_key(path) {
+                continue;
+            }
+            if *reviewed {
+                self.reviewed_files.insert(path.clone());
+                self.changed_since_review.remove(path);
+                self.stale_marks.remove(path);
+            } else {
+                self.reviewed_files.remove(path);
+            }
+        }
+        let changed = before.symmetric_difference(&self.reviewed_files).count();
+        if changed > 0 {
+            self.root_node
+                .sync_expansion_to_review(&before, &self.reviewed_files);
+            self.rebuild_visible_nodes_keep_position();
+        }
+        changed
     }
 
     /// Files covered by the current tree selection: the selected file itself, or
@@ -1896,7 +2034,8 @@ impl DiffView {
     }
 
     /// Marks or unmarks the current selection. A directory flips as a whole:
-    /// fully reviewed → unmark everything, otherwise mark everything.
+    /// fully reviewed → unmark everything, otherwise mark everything. Either
+    /// way the files lose their "changed since review" flag.
     /// Returns the affected file count and the new state.
     pub fn toggle_reviewed(&mut self) -> Option<(usize, bool)> {
         let paths = self.selected_file_paths();
@@ -1911,6 +2050,8 @@ impl DiffView {
             } else {
                 self.reviewed_files.remove(path);
             }
+            self.changed_since_review.remove(path);
+            self.stale_marks.remove(path);
         }
         self.root_node
             .sync_expansion_to_review(&before, &self.reviewed_files);
@@ -4078,6 +4219,52 @@ impl EnvironmentDeployments {
     }
 }
 
+/// A pull request's GitHub "Viewed" sync with what it needs once its diff is
+/// closed or the scope switched. Batches go out through the client that
+/// opened the diff: after a scope switch `App::gitlab_client` is being
+/// rebuilt, or reaches another host. `project_path` and `mr_iid` name the
+/// saved marks a settled request corrects, and `scopes` every cache a diff
+/// of the pull request saved them in.
+pub struct PullRequestViewedSync {
+    pub sync: ViewedSync,
+    pub client: crate::domain::client::GitlabClient,
+    pub scopes: HashSet<crate::scope::Scope>,
+    pub project_path: String,
+    pub mr_iid: u64,
+}
+
+/// Drops the marks of an MR/PR that a settled viewed sync left unviewed on
+/// GitHub. Returns whether any was dropped.
+fn drop_unviewed_marks(
+    review_marks: &mut HashMap<String, HashMap<u64, HashMap<String, String>>>,
+    project_path: &str,
+    mr_iid: u64,
+    corrections: &[(String, bool)],
+) -> bool {
+    let Some(project_marks) = review_marks.get_mut(project_path) else {
+        return false;
+    };
+    let Some(marks) = project_marks.get_mut(&mr_iid) else {
+        return false;
+    };
+    let saved = marks.len();
+    for (path, viewed) in corrections {
+        if !viewed {
+            marks.remove(path);
+        }
+    }
+    if marks.len() == saved {
+        return false;
+    }
+    if marks.is_empty() {
+        project_marks.remove(&mr_iid);
+        if project_marks.is_empty() {
+            review_marks.remove(project_path);
+        }
+    }
+    true
+}
+
 pub struct App {
     pub config: Config,
     /// Resolved from `config.theme_preset`, `config.theme` and
@@ -4271,6 +4458,15 @@ pub struct App {
     pub hide_reviewed_files: bool,
     /// Session-wide diff layout, `Auto` until a layout key pins one.
     pub diff_layout: DiffLayout,
+    /// GitHub "Viewed" sync of each pull request opened this session, by
+    /// GraphQL node id. It outlives the diff view and the scope it was opened
+    /// in, so intents queued just before closing the diff or switching scope
+    /// still go out, and a reopened diff waits for the request the closed one
+    /// sent.
+    pub viewed_syncs: HashMap<String, PullRequestViewedSync>,
+    /// Viewed-sync requests settled this session, across pull requests. A
+    /// diff fetch carries the count it started at back on `DiffFetched`.
+    pub viewed_settles: SettleCount,
     pub draft_comments: Vec<DraftComment>,
     /// Saved drafts of the open diff whose lines are no longer in it. They
     /// are never shown or submitted, and are written back with
@@ -4442,6 +4638,8 @@ impl App {
             in_review_mode: false,
             hide_reviewed_files: false,
             diff_layout: DiffLayout::Auto,
+            viewed_syncs: HashMap::new(),
+            viewed_settles: SettleCount::default(),
             draft_comments: Vec::new(),
             stale_draft_comments: Vec::new(),
             page_size: config.page_size,
@@ -6304,6 +6502,12 @@ impl App {
         self.kind().is_github()
     }
 
+    /// Whether a diff fetch should load GitHub's viewed state: GitLab has no
+    /// API for it.
+    pub fn syncs_viewed_files(&self) -> bool {
+        self.config.sync_viewed_files && self.is_github()
+    }
+
     pub fn start_loading_tab(&mut self, tab: Tab) {
         if !self.loading_tabs.contains(&tab) {
             self.loading_tabs.insert(tab);
@@ -6825,29 +7029,126 @@ impl App {
             .count()
     }
 
-    /// Files marked as reviewed for an MR/PR, restored from the project cache.
-    pub fn reviewed_files_for_mr(&self, mr_iid: u64) -> HashSet<String> {
+    /// Reviewed-file marks of an MR/PR (path → fingerprint of the reviewed
+    /// version), restored from the project cache.
+    pub fn review_marks_for_mr(&self, project_path: &str, mr_iid: u64) -> HashMap<String, String> {
         self.project_cache
             .prefs
-            .reviewed_files
-            .get(&mr_iid)
-            .map(|paths| paths.iter().cloned().collect())
+            .review_marks
+            .get(project_path)
+            .and_then(|marks| marks.get(&mr_iid))
+            .cloned()
             .unwrap_or_default()
     }
 
-    /// Writes the reviewed-file marks of an MR/PR back into the project cache.
-    /// The caller persists the cache to disk.
-    pub fn store_reviewed_files_for_mr(&mut self, mr_iid: u64, reviewed: &HashSet<String>) {
-        if reviewed.is_empty() {
-            self.project_cache.prefs.reviewed_files.remove(&mr_iid);
-            return;
+    /// Writes the reviewed-file marks of an MR/PR into the project cache and
+    /// persists it.
+    pub fn store_review_marks(
+        &mut self,
+        project_path: &str,
+        mr_iid: u64,
+        marks: HashMap<String, String>,
+    ) {
+        let all_marks = &mut self.project_cache.prefs.review_marks;
+        if marks.is_empty() {
+            if let Some(project_marks) = all_marks.get_mut(project_path) {
+                project_marks.remove(&mr_iid);
+                if project_marks.is_empty() {
+                    all_marks.remove(project_path);
+                }
+            }
+        } else {
+            all_marks
+                .entry(project_path.to_string())
+                .or_default()
+                .insert(mr_iid, marks);
         }
-        let mut paths: Vec<String> = reviewed.iter().cloned().collect();
-        paths.sort();
-        self.project_cache
-            .prefs
-            .reviewed_files
-            .insert(mr_iid, paths);
+        crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+    }
+
+    /// Makes the GitHub state `diff_view` loaded the pull request's confirmed
+    /// state, then lays over it what that state may predate: requests settled
+    /// after `fetched_at`, then intents not settled yet.
+    pub fn reload_viewed_sync(&mut self, diff_view: &mut DiffView, fetched_at: SettleCount) {
+        let (Some(pull_request_id), Some(client)) = (
+            diff_view.pull_request_id.clone(),
+            self.gitlab_client.as_ref(),
+        ) else {
+            return;
+        };
+        let confirmed = diff_view.reviewed_files.clone();
+        let entry =
+            self.viewed_syncs
+                .entry(pull_request_id)
+                .or_insert_with(|| PullRequestViewedSync {
+                    sync: ViewedSync::default(),
+                    client: client.clone(),
+                    scopes: HashSet::new(),
+                    project_path: diff_view.project_path.clone(),
+                    mr_iid: diff_view.mr_iid,
+                });
+        entry.scopes.insert(self.scope.clone());
+        let mut corrections = entry.sync.reload(confirmed, fetched_at);
+        corrections.extend(entry.sync.unsettled());
+        diff_view.apply_review_corrections(&corrections);
+    }
+
+    /// Queues a reviewed-state change for a pull request's GitHub sync.
+    /// Returns true when the caller must schedule a flush.
+    pub fn queue_viewed_sync(
+        &mut self,
+        pull_request_id: &str,
+        paths: &[String],
+        viewed: bool,
+    ) -> bool {
+        self.viewed_syncs
+            .get_mut(pull_request_id)
+            .is_some_and(|entry| entry.sync.queue(paths, viewed))
+    }
+
+    /// Brings the reviewed marks of an MR/PR in line with what a settled
+    /// viewed-sync request left on GitHub. Its open diff takes every
+    /// correction, even one opened without GitHub's state. Without an open
+    /// diff only the saved marks GitHub does not hold are dropped: saving a
+    /// mark takes the file's fingerprint, which only a diff has. The caches
+    /// of `saved_in`, the scopes the marks were saved in, drop them too when
+    /// the user has switched away from them.
+    pub fn apply_viewed_corrections(
+        &mut self,
+        saved_in: &HashSet<crate::scope::Scope>,
+        project_path: &str,
+        mr_iid: u64,
+        corrections: &[(String, bool)],
+    ) {
+        for scope in saved_in.iter().filter(|scope| **scope != self.scope) {
+            let mut cache = crate::utils::cache::load_cache(scope.as_str());
+            if drop_unviewed_marks(
+                &mut cache.prefs.review_marks,
+                project_path,
+                mr_iid,
+                corrections,
+            ) {
+                crate::utils::cache::save_cache(scope.as_str(), &cache);
+            }
+        }
+        match self
+            .diff_view_mut()
+            .filter(|view| view.project_path == project_path && view.mr_iid == mr_iid)
+        {
+            Some(diff_view) => {
+                if diff_view.apply_review_corrections(corrections) == 0 {
+                    return;
+                }
+                let marks = diff_view.review_marks();
+                self.store_review_marks(project_path, mr_iid, marks);
+            }
+            None => {
+                let review_marks = &mut self.project_cache.prefs.review_marks;
+                if drop_unviewed_marks(review_marks, project_path, mr_iid, corrections) {
+                    crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
+                }
+            }
+        }
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
@@ -11971,7 +12272,8 @@ index abcdef..ffffff 100644
     fn jump_to_anchor_unfolds_a_directory_folded_by_review_marks() {
         let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
         diff_view.restore_review_state(
-            HashSet::from(["src/app.rs".to_string(), "src/main.rs".to_string()]),
+            &diff_view.marks_on_this_diff(&["src/app.rs", "src/main.rs"]),
+            None,
             false,
         );
         assert!(
@@ -11993,7 +12295,7 @@ index abcdef..ffffff 100644
     #[test]
     fn jump_to_anchor_reveals_a_file_hidden_by_the_reviewed_filter() {
         let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
-        diff_view.restore_review_state(HashSet::from(["src/main.rs".to_string()]), true);
+        diff_view.restore_review_state(&diff_view.marks_on_this_diff(&["src/main.rs"]), None, true);
         assert!(!tree_shows_file(&diff_view, "src/main.rs"));
 
         assert!(diff_view.jump_to_anchor(&note_position("src/main.rs", Some(21), None)));
@@ -13533,11 +13835,11 @@ index 123456..789012 100644
     #[test]
     fn test_restore_review_state_opens_completed_directories_folded() {
         let mut view = review_fixture();
-        let cached: HashSet<String> = ["src/app.rs", "src/main.rs"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        view.restore_review_state(cached, false);
+        view.restore_review_state(
+            &view.marks_on_this_diff(&["src/app.rs", "src/main.rs"]),
+            None,
+            false,
+        );
 
         let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, vec!["src", "README.md"]);
@@ -13547,17 +13849,211 @@ index 123456..789012 100644
     #[test]
     fn test_restore_review_state_drops_paths_no_longer_in_the_diff() {
         let mut view = review_fixture();
-        let cached: HashSet<String> = ["src/app.rs", "deleted/elsewhere.rs"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        view.restore_review_state(cached, false);
+        view.restore_review_state(
+            &view.marks_on_this_diff(&["src/app.rs", "deleted/elsewhere.rs"]),
+            None,
+            false,
+        );
 
         assert_eq!(
             view.reviewed_files,
             ["src/app.rs".to_string()].into_iter().collect()
         );
         assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    /// `review_fixture` after a push that changed README.md only.
+    fn review_fixture_after_push() -> DiffView {
+        let diff = review_fixture().raw_diff.replace(
+            "+++ b/README.md\n@@ -1,1 +1,1 @@\n- old\n+ new",
+            "+++ b/README.md\n@@ -1,1 +1,1 @@\n- old\n+ newer",
+        );
+        assert!(diff.contains("+ newer"));
+        DiffView::new(42, "owner/repo".to_string(), diff)
+    }
+
+    fn select_file(view: &mut DiffView, path: &str) {
+        view.selected_visible_idx = view
+            .visible_nodes
+            .iter()
+            .position(|n| n.file_path.as_deref() == Some(path))
+            .expect("file in tree");
+    }
+
+    fn app_with_github_client() -> App {
+        App {
+            gitlab_client: Some(crate::domain::client::GitlabClient {
+                is_github: true,
+                backend: crate::backend::create_backend(true),
+                tx: None,
+                page_size: 30,
+                api_per_page: 30,
+                show_read_notifications: false,
+                opened_pipeline: None,
+            }),
+            ..App::default()
+        }
+    }
+
+    #[test]
+    fn marks_reset_only_on_files_whose_diff_changed() {
+        let mut reviewed = review_fixture();
+        reviewed.restore_review_state(
+            &reviewed.marks_on_this_diff(&["src/app.rs", "README.md"]),
+            None,
+            false,
+        );
+        let saved = reviewed.review_marks();
+
+        let mut view = review_fixture_after_push();
+        view.restore_review_state(&saved, None, false);
+
+        assert_eq!(
+            view.reviewed_files,
+            HashSet::from(["src/app.rs".to_string()])
+        );
+        assert_eq!(
+            view.changed_since_review,
+            HashSet::from(["README.md".to_string()])
+        );
+        assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    #[test]
+    fn a_changed_mark_survives_refetches_until_the_file_is_toggled() {
+        let mut reviewed = review_fixture();
+        reviewed.restore_review_state(&reviewed.marks_on_this_diff(&["README.md"]), None, false);
+        let saved = reviewed.review_marks();
+
+        let mut view = review_fixture_after_push();
+        view.restore_review_state(&saved, None, false);
+        let resaved = view.review_marks();
+        let mut refetched = review_fixture_after_push();
+        refetched.restore_review_state(&resaved, None, false);
+        assert!(refetched.changed_since_review.contains("README.md"));
+        assert!(!refetched.reviewed_files.contains("README.md"));
+
+        // Re-reviewing the new version records its fingerprint and clears the flag.
+        select_file(&mut refetched, "README.md");
+        assert_eq!(refetched.toggle_reviewed(), Some((1, true)));
+        assert!(refetched.changed_since_review.is_empty());
+        let mut reopened = review_fixture_after_push();
+        reopened.restore_review_state(&refetched.review_marks(), None, false);
+        assert!(reopened.reviewed_files.contains("README.md"));
+        assert!(reopened.changed_since_review.is_empty());
+    }
+
+    #[test]
+    fn fingerprints_see_tab_and_line_ending_changes_the_display_hides() {
+        let diff = |added: &str| {
+            DiffView::new(
+                42,
+                "owner/repo".to_string(),
+                format!("--- a/Makefile\n+++ b/Makefile\n@@ -1,1 +1,1 @@\n-old\n{added}\n"),
+            )
+        };
+        let fingerprint = |view: &DiffView| view.file_fingerprints["Makefile"].clone();
+        let tab = diff("+\tbuild");
+        let spaces = diff("+    build");
+        assert_eq!(tab.all_lines[4].content, spaces.all_lines[4].content);
+        assert_ne!(fingerprint(&tab), fingerprint(&spaces));
+
+        let crlf = diff("+build\r");
+        let lf = diff("+build");
+        assert_eq!(crlf.all_lines[4].content, "+build");
+        assert_ne!(fingerprint(&crlf), fingerprint(&lf));
+    }
+
+    #[test]
+    fn server_viewed_state_replaces_local_marks() {
+        let mut view = review_fixture();
+        let local = view.marks_on_this_diff(&["src/main.rs"]);
+        let server = PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::from([
+                ("src/app.rs".to_string(), FileViewedState::Viewed),
+                ("src/main.rs".to_string(), FileViewedState::Unviewed),
+                ("README.md".to_string(), FileViewedState::Dismissed),
+                ("not/in/diff.rs".to_string(), FileViewedState::Viewed),
+            ]),
+        };
+        view.restore_review_state(&local, Some(server), true);
+
+        assert_eq!(
+            view.reviewed_files,
+            HashSet::from(["src/app.rs".to_string()])
+        );
+        assert_eq!(
+            view.changed_since_review,
+            HashSet::from(["README.md".to_string()])
+        );
+        // A dismissed file is unreviewed, so the reviewed filter keeps it.
+        assert!(tree_shows_file(&view, "README.md"));
+        assert!(!tree_shows_file(&view, "src/app.rs"));
+        assert_eq!(view.pull_request_id.as_deref(), Some("PR_1"));
+    }
+
+    #[test]
+    fn unsent_sync_intents_survive_closing_and_reopening_the_diff() {
+        let server = || PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::new(),
+        };
+        let mut app = app_with_github_client();
+        let mut before = review_fixture();
+        before.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut before, SettleCount::default());
+        select_file(&mut before, "README.md");
+        before.toggle_reviewed();
+        assert!(app.queue_viewed_sync("PR_1", &["README.md".to_string()], true));
+        drop(before);
+
+        // Reopened before the flush: the server does not have the mark yet.
+        let mut after = review_fixture();
+        after.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut after, SettleCount::default());
+
+        assert!(after.reviewed_files.contains("README.md"));
+        let entry = app.viewed_syncs.get_mut("PR_1").unwrap();
+        assert_eq!(
+            entry.sync.take_changes(),
+            vec![("README.md".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn a_mark_carried_over_a_refetch_takes_a_dismissed_file_out_of_the_changed_set() {
+        let server = || PrViewedFiles {
+            pull_request_id: "PR_1".to_string(),
+            files: HashMap::from([("README.md".to_string(), FileViewedState::Dismissed)]),
+        };
+        let mut app = app_with_github_client();
+        let mut before = review_fixture();
+        before.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut before, SettleCount::default());
+        select_file(&mut before, "README.md");
+        before.toggle_reviewed();
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+
+        // A mutation refetches the diff before the flush.
+        let mut after = review_fixture();
+        after.restore_review_state(&HashMap::new(), Some(server()), false);
+        app.reload_viewed_sync(&mut after, SettleCount::default());
+
+        assert_eq!(
+            after.reviewed_files,
+            HashSet::from(["README.md".to_string()])
+        );
+        assert!(after.changed_since_review.is_empty());
+
+        let mut reverted = review_fixture();
+        reverted.restore_review_state(&HashMap::new(), Some(server()), false);
+        reverted.apply_review_corrections(&[("README.md".to_string(), false)]);
+        assert_eq!(
+            reverted.changed_since_review,
+            HashSet::from(["README.md".to_string()]),
+            "an unreviewed correction keeps the server's flag"
+        );
     }
 
     #[test]

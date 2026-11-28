@@ -416,6 +416,7 @@ pub struct RepoEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     #[test]
@@ -475,9 +476,13 @@ mod tests {
         first.data.labels = vec!["first".to_string()];
         let mut last = ProjectCache::default();
         last.data.labels = vec!["last".to_string()];
-        last.prefs
-            .reviewed_files
-            .insert(7, vec!["src/lib.rs".to_string()]);
+        last.prefs.review_marks = HashMap::from([(
+            "group/project".to_string(),
+            HashMap::from([(
+                7,
+                HashMap::from([("src/lib.rs".to_string(), "fp".to_string())]),
+            )]),
+        )]);
 
         save_cache("group/project", &first);
         save_cache("group/project", &last);
@@ -495,7 +500,7 @@ mod tests {
 
         assert_eq!(before_flush.data.labels, ["last"]);
         assert_eq!(on_disk.data.labels, ["last"]);
-        assert_eq!(on_disk.prefs.reviewed_files[&7], ["src/lib.rs"]);
+        assert_eq!(on_disk.prefs.review_marks, last.prefs.review_marks);
         assert_eq!(load_cache("group/project").data.labels, ["last"]);
         assert_eq!(files, ["group_project.json"]);
     }

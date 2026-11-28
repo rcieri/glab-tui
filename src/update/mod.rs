@@ -84,6 +84,384 @@ mod tests {
         Event::KeyPress(KeyPress::from(KeyEvent::new(code, modifiers)))
     }
 
+    const README_DIFF: &str = "diff --git a/README.md b/README.md\n--- a/README.md\n\
+                               +++ b/README.md\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+
+    fn readme_diff() -> crate::app::DiffView {
+        crate::app::DiffView::new(42, "org/project".to_string(), README_DIFF.to_string())
+    }
+
+    fn diff_fetched(
+        viewed_files: Option<Result<Box<crate::domain::viewed_files::PrViewedFiles>, String>>,
+    ) -> Event {
+        Event::DiffFetched {
+            diff_view: Box::new(readme_diff()),
+            comments: Ok(vec![]),
+            viewed_files,
+            fetched_at: crate::domain::viewed_files::SettleCount::default(),
+        }
+    }
+
+    fn github_diff_fetched(pull_request_id: &str) -> Event {
+        diff_fetched_with(README_DIFF, pull_request_id)
+    }
+
+    fn diff_fetched_with(raw_diff: &str, pull_request_id: &str) -> Event {
+        Event::DiffFetched {
+            diff_view: Box::new(crate::app::DiffView::new(
+                42,
+                "org/project".to_string(),
+                raw_diff.to_string(),
+            )),
+            comments: Ok(vec![]),
+            viewed_files: Some(Ok(Box::new(crate::domain::viewed_files::PrViewedFiles {
+                pull_request_id: pull_request_id.to_string(),
+                files: std::collections::HashMap::new(),
+            }))),
+            fetched_at: crate::domain::viewed_files::SettleCount::default(),
+        }
+    }
+
+    #[test]
+    fn a_failed_viewed_state_fetch_raises_one_error_and_keeps_the_local_marks() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = App::default();
+        let marks = readme_diff().marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project", 42, marks);
+
+        update(&mut app, diff_fetched(Some(Err("HTTP 403".to_string()))));
+
+        let diff_view = app.diff_view().expect("diff opens");
+        assert!(diff_view.reviewed_files.contains("README.md"));
+        assert_eq!(diff_view.pull_request_id, None);
+        assert!(app.viewed_syncs.is_empty());
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some(
+                "Failed to load GitHub viewed state, so marks stay local until the next open \
+                 replaces them with GitHub's (sync_viewed_files = false keeps them local): \
+                 HTTP 403"
+            )
+        );
+    }
+
+    fn app_with_a_draft_off_the_readme_diff() -> App {
+        let mut app = App::default();
+        app.draft_comments = vec![crate::domain::review::DraftComment {
+            file_path: "README.md".to_string(),
+            line_num: Some(9),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "nit".to_string(),
+        }];
+        app.persist_draft_comments("org/project", 42);
+        app
+    }
+
+    #[test]
+    fn a_failed_viewed_state_fetch_keeps_the_held_back_drafts_in_its_toast() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_draft_off_the_readme_diff();
+
+        update(&mut app, diff_fetched(Some(Err("HTTP 403".to_string()))));
+
+        let toast = app.toast_notice().expect("an error toast");
+        assert_eq!(
+            toast.text(),
+            "1 draft comment no longer matches the diff and was set aside. Failed to load \
+             GitHub viewed state, so marks stay local until the next open replaces them with \
+             GitHub's (sync_viewed_files = false keeps them local): HTTP 403"
+        );
+        assert_eq!(toast.detail(), Some(crate::notice::CLI_LOG_HINT));
+    }
+
+    #[test]
+    fn held_back_drafts_alone_do_not_point_at_the_terminal_log() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_draft_off_the_readme_diff();
+
+        update(&mut app, diff_fetched(None));
+
+        let toast = app.toast_notice().expect("an error toast");
+        assert_eq!(
+            toast.text(),
+            "1 draft comment no longer matches the diff and was set aside"
+        );
+        assert_eq!(toast.detail(), None);
+    }
+
+    fn flush(app: &mut App, pull_request_id: &str) -> usize {
+        spawned(&update(
+            app,
+            Event::ViewedSyncFlush(pull_request_id.to_string()),
+        ))
+    }
+
+    #[test]
+    fn a_viewed_mark_queued_just_before_closing_the_diff_still_reaches_github() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        assert!(app.queue_viewed_sync("PR_1", &["README.md".to_string()], true));
+
+        app.close_diff_view();
+
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+    }
+
+    #[test]
+    fn a_request_sent_before_closing_the_diff_still_holds_back_the_reopened_ones() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        app.close_diff_view();
+
+        update(&mut app, github_diff_fetched("PR_1"));
+        assert!(
+            app.diff_view()
+                .unwrap()
+                .reviewed_files
+                .contains("README.md"),
+            "the mark in flight shows on the reopened diff"
+        );
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], false);
+        assert_eq!(flush(&mut app, "PR_1"), 0, "the first request is in flight");
+
+        let effects = update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: vec![("README.md".to_string(), true)],
+                result: Ok(vec![]),
+            },
+        );
+        assert_eq!(spawned(&effects), 1, "the follow-up flush");
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+    }
+
+    #[test]
+    fn a_diff_fetched_before_a_viewed_request_settled_keeps_the_mark_it_left() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        // A refetch reads GitHub before the mark lands and arrives after it.
+        let fetched_before_the_mark = github_diff_fetched("PR_1");
+        update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: vec![("README.md".to_string(), true)],
+                result: Ok(vec![]),
+            },
+        );
+
+        update(&mut app, fetched_before_the_mark);
+
+        assert_eq!(
+            app.diff_view().expect("diff stays open").reviewed_files,
+            std::collections::HashSet::from(["README.md".to_string()])
+        );
+        assert_eq!(
+            app.review_marks_for_mr("org/project", 42),
+            readme_diff().marks_on_this_diff(&["README.md"])
+        );
+    }
+
+    #[test]
+    fn viewed_marks_queued_before_a_scope_switch_still_reach_github() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        let paths: Vec<String> = (0..=crate::domain::viewed_files::VIEWED_SYNC_BATCH)
+            .map(|i| format!("f{i:03}.rs"))
+            .collect();
+        app.queue_viewed_sync("PR_1", &paths, true);
+        assert_eq!(flush(&mut app, "PR_1"), 1, "the first batch");
+        app.close_diff_view();
+
+        app.drill_into("org/other".to_string());
+        // The new scope's client is still being built.
+        app.gitlab_client = None;
+
+        let first_batch = paths[..crate::domain::viewed_files::VIEWED_SYNC_BATCH]
+            .iter()
+            .map(|path| (path.clone(), true))
+            .collect();
+        let effects = update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: first_batch,
+                result: Ok(vec![]),
+            },
+        );
+        assert_eq!(spawned(&effects), 1, "the follow-up flush");
+        assert_eq!(flush(&mut app, "PR_1"), 1, "the batch left over");
+    }
+
+    fn app_with_a_readme_mark_on_its_way_and_the_diff_closed() -> App {
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        let marks = readme_diff().marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project", 42, marks);
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        app.close_diff_view();
+        app
+    }
+
+    fn readme_mark_failed() -> Event {
+        Event::ViewedFilesSynced {
+            pull_request_id: "PR_1".to_string(),
+            changes: vec![("README.md".to_string(), true)],
+            result: Err("HTTP 502".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_viewed_mark_that_failed_after_its_diff_closed_drops_its_saved_mark() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_readme_mark_on_its_way_and_the_diff_closed();
+
+        update(&mut app, readme_mark_failed());
+
+        assert_eq!(
+            app.review_marks_for_mr("org/project", 42),
+            std::collections::HashMap::new()
+        );
+    }
+
+    #[test]
+    fn a_viewed_mark_that_failed_after_a_scope_switch_drops_it_from_the_scope_it_was_saved_in() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_readme_mark_on_its_way_and_the_diff_closed();
+        let saved_in = app.scope.clone();
+        app.drill_into("org/other".to_string());
+        app.project_cache = crate::utils::cache::load_cache(app.scope.as_str());
+
+        update(&mut app, readme_mark_failed());
+
+        let saved = crate::utils::cache::load_cache(saved_in.as_str());
+        assert_eq!(saved.prefs.review_marks, std::collections::HashMap::new());
+    }
+
+    #[test]
+    fn a_viewed_mark_that_failed_drops_it_from_the_scope_its_reopened_diff_saved_it_in() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(&mut app, github_diff_fetched("PR_1"));
+        app.close_diff_view();
+        app.drill_into("org/project".to_string());
+        app.project_cache = crate::utils::cache::load_cache(app.scope.as_str());
+        let reopened_in = app.scope.clone();
+        update(&mut app, github_diff_fetched("PR_1"));
+        let marks = readme_diff().marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project", 42, marks);
+        app.queue_viewed_sync("PR_1", &["README.md".to_string()], true);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+        app.close_diff_view();
+        app.drill_into("org/other".to_string());
+        app.project_cache = crate::utils::cache::load_cache(app.scope.as_str());
+
+        update(&mut app, readme_mark_failed());
+
+        let saved = crate::utils::cache::load_cache(reopened_in.as_str());
+        assert_eq!(saved.prefs.review_marks, std::collections::HashMap::new());
+    }
+
+    #[test]
+    fn a_viewed_mark_that_failed_reverts_on_a_diff_reopened_without_github_state() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_a_readme_mark_on_its_way_and_the_diff_closed();
+        update(&mut app, diff_fetched(Some(Err("HTTP 403".to_string()))));
+        let reopened = app.diff_view().expect("diff opens");
+        assert_eq!(reopened.pull_request_id, None);
+        assert!(reopened.reviewed_files.contains("README.md"));
+
+        update(&mut app, readme_mark_failed());
+
+        let diff_view = app.diff_view().expect("diff stays open");
+        assert_eq!(diff_view.reviewed_files, std::collections::HashSet::new());
+        assert_eq!(
+            app.review_marks_for_mr("org/project", 42),
+            std::collections::HashMap::new()
+        );
+    }
+
+    #[test]
+    fn a_partly_refused_viewed_sync_reverts_only_the_refused_marks() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        update(
+            &mut app,
+            diff_fetched_with(
+                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n\
+                 diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+                "PR_1",
+            ),
+        );
+        let both = vec!["a.rs".to_string(), "b.rs".to_string()];
+        app.queue_viewed_sync("PR_1", &both, true);
+        app.diff_view_mut()
+            .expect("diff opens")
+            .apply_review_corrections(&[("a.rs".to_string(), true), ("b.rs".to_string(), true)]);
+        assert_eq!(flush(&mut app, "PR_1"), 1);
+
+        update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_1".to_string(),
+                changes: vec![("a.rs".to_string(), true), ("b.rs".to_string(), true)],
+                result: Ok(vec![crate::domain::viewed_files::RejectedViewedPath {
+                    path: "b.rs".to_string(),
+                    reason: "Path is not part of the pull request".to_string(),
+                }]),
+            },
+        );
+
+        let diff_view = app.diff_view().expect("diff stays open");
+        assert_eq!(
+            diff_view.reviewed_files,
+            std::collections::HashSet::from(["a.rs".to_string()])
+        );
+        assert_eq!(
+            app.toast_notice().map(crate::notice::Notice::text),
+            Some(
+                "GitHub refused the viewed state of 1 of 2 file(s), reverted: b.rs: Path is not \
+                 part of the pull request"
+            )
+        );
+    }
+
     #[test]
     fn opening_a_page_in_the_browser_refetches_neither_the_tab_nor_the_diff() {
         let mut app = with_open_diff(app_with_client());
@@ -111,6 +489,90 @@ mod tests {
     }
 
     #[test]
+    fn a_viewed_sync_result_for_another_projects_pull_request_with_the_same_number_is_dropped() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = app_with_client();
+        let mut diff_view = crate::app::DiffView::new(
+            42,
+            "org/project-b".to_string(),
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+             @@ -1,1 +1,1 @@\n-old\n+new\n"
+                .to_string(),
+        );
+        diff_view.restore_review_state(
+            &std::collections::HashMap::new(),
+            Some(crate::domain::viewed_files::PrViewedFiles {
+                pull_request_id: "PR_B".to_string(),
+                files: std::collections::HashMap::new(),
+            }),
+            false,
+        );
+        app.reload_viewed_sync(
+            &mut diff_view,
+            crate::domain::viewed_files::SettleCount::default(),
+        );
+        app.open_diff_view(diff_view);
+
+        // Project A's #42 marked README.md and was closed before it landed.
+        update(
+            &mut app,
+            Event::ViewedFilesSynced {
+                pull_request_id: "PR_A".to_string(),
+                changes: vec![("README.md".to_string(), true)],
+                result: Ok(vec![]),
+            },
+        );
+
+        let diff_view = app.diff_view().expect("diff stays open");
+        assert!(diff_view.reviewed_files.is_empty());
+        let entry = app.viewed_syncs.get_mut("PR_B").expect("GitHub sync");
+        entry.sync.queue(&["README.md".to_string()], true);
+        assert_eq!(
+            entry.sync.take_changes(),
+            vec![("README.md".to_string(), true)],
+            "project B's own mark still reaches GitHub"
+        );
+    }
+
+    #[test]
+    fn opening_another_projects_pull_request_with_the_same_number_leaves_its_marks_alone() {
+        let _guard = crate::config::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let mut app = App::default();
+        let diff = |added: &str| {
+            format!(
+                "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+                 @@ -1,1 +1,1 @@\n-old\n+{added}\n"
+            )
+        };
+        let reviewed = crate::app::DiffView::new(42, "org/project-a".to_string(), diff("new"));
+        let marks = reviewed.marks_on_this_diff(&["README.md"]);
+        app.store_review_marks("org/project-a", 42, marks.clone());
+
+        update(
+            &mut app,
+            Event::DiffFetched {
+                diff_view: Box::new(crate::app::DiffView::new(
+                    42,
+                    "org/project-b".to_string(),
+                    diff("other"),
+                )),
+                comments: Ok(vec![]),
+                viewed_files: None,
+                fetched_at: crate::domain::viewed_files::SettleCount::default(),
+            },
+        );
+
+        assert_eq!(app.review_marks_for_mr("org/project-a", 42), marks);
+        let diff_view = app.diff_view().expect("diff opens");
+        assert!(diff_view.reviewed_files.is_empty());
+        assert!(diff_view.changed_since_review.is_empty());
+    }
+
+    #[test]
     fn diff_fetched_updates_diff_in_place_without_lifting_it_above_review_threads() {
         let mut app = with_open_diff(app_with_client());
         let overview = crate::app::ReviewThreadsOverview::new(&[], app.diff_view().unwrap());
@@ -130,6 +592,8 @@ mod tests {
             Event::DiffFetched {
                 diff_view: Box::new(updated_diff),
                 comments: Ok(vec![]),
+                viewed_files: None,
+                fetched_at: crate::domain::viewed_files::SettleCount::default(),
             },
         );
 
@@ -160,6 +624,8 @@ mod tests {
             Event::DiffFetched {
                 diff_view: Box::new(diff),
                 comments: Ok(vec![]),
+                viewed_files: None,
+                fetched_at: crate::domain::viewed_files::SettleCount::default(),
             },
         );
 

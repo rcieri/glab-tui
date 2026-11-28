@@ -1727,7 +1727,18 @@ pub fn handle_key(
 
                 let mut all_items = Vec::new();
                 let mut is_loading = true;
-                let mut reads_local_branches = false;
+                let target_scope = if field_type != "project" && target_project.contains('/') {
+                    crate::scope::Scope::Repository(target_project.clone())
+                } else {
+                    app.scope.clone()
+                };
+                let reads_checkout = matches!(
+                    field_type,
+                    "source_branch" | "target_branch" | "pipeline_branch" | "create_from" | "tag"
+                ) && reads_checkout_refs(
+                    &target_scope,
+                    crate::domain::client::get_project_context().ok().as_deref(),
+                );
 
                 if field_type == "confidential" {
                     all_items = vec!["Public".to_string(), "Confidential".to_string()];
@@ -1825,9 +1836,6 @@ pub fn handle_key(
                             .map(|b| b.name.clone())
                             .collect()
                     };
-                    reads_local_branches = branch_names.is_empty()
-                        && !app.scope.is_group()
-                        && target_project.is_empty();
                     if field_type == "pipeline_branch"
                         || field_type == "target_branch"
                         || field_type == "source_branch"
@@ -1880,7 +1888,7 @@ pub fn handle_key(
                         .map(|r| r.tag_name.clone())
                         .collect();
                     all_items.sort();
-                    is_loading = app.gitlab_client.is_some();
+                    is_loading = reads_checkout && app.gitlab_client.is_some();
                     let current_val = menu.fields[menu.selected_idx].value.clone();
                     if !current_val.is_empty() {
                         current_set.insert(current_val);
@@ -2052,14 +2060,7 @@ pub fn handle_key(
 
                 if let (Some(request), Some(client)) = (request, &app.gitlab_client) {
                     let client = client.clone();
-                    let scope = if field_type != "project"
-                        && !target_project.is_empty()
-                        && target_project.contains('/')
-                    {
-                        crate::scope::Scope::Repository(target_project)
-                    } else {
-                        app.scope.clone()
-                    };
+                    let scope = target_scope;
                     let field_type = field_type.to_string();
                     let tx = app.scoped_sender(tx.clone());
                     fx.spawn(async move {
@@ -2072,22 +2073,15 @@ pub fn handle_key(
                             "milestone" => client.fetch_milestones(&scope).await,
                             "source_branch" | "target_branch" | "pipeline_branch"
                             | "create_from" => {
-                                // A failed local read falls back to the host's
-                                // branches, like an empty checkout does.
-                                let local = if reads_local_branches {
-                                    client.list_local_branches().await.unwrap_or_default()
+                                let remote = client.fetch_branches(&scope).await;
+                                if reads_checkout {
+                                    let local =
+                                        client.list_local_branches().await.unwrap_or_default();
+                                    merge_branches(remote, local)
                                 } else {
-                                    Vec::new()
-                                };
-                                if local.is_empty() {
-                                    client.fetch_branches(&scope).await
-                                } else {
-                                    Ok(local)
+                                    remote
                                 }
                             }
-                            // Outside a git checkout there are no local tags; the
-                            // failed call stays in the Terminal tab and the release
-                            // tags already listed remain.
                             "tag" => Ok(client.list_local_tags().await.unwrap_or_default()),
                             "project" => client.fetch_projects(&scope).await,
                             _ => Ok(Vec::new()),
@@ -2346,6 +2340,37 @@ pub fn handle_key(
     }
 }
 
+/// Only the checkout glab-tui runs in has local refs worth offering, and only
+/// when the target is that same repository.
+fn reads_checkout_refs(target: &crate::scope::Scope, checkout: Option<&str>) -> bool {
+    match (target, checkout) {
+        (crate::scope::Scope::Repository(project), Some(checkout)) => {
+            project.eq_ignore_ascii_case(checkout)
+        }
+        _ => false,
+    }
+}
+
+/// Host branches first, then checkout branches the host does not list. A host
+/// failure still yields the checkout's branches when it has any.
+fn merge_branches(
+    remote: anyhow::Result<Vec<String>>,
+    local: Vec<String>,
+) -> anyhow::Result<Vec<String>> {
+    match remote {
+        Ok(mut names) => {
+            let local_only: Vec<String> = local
+                .into_iter()
+                .filter(|name| !names.contains(name))
+                .collect();
+            names.extend(local_only);
+            Ok(names)
+        }
+        Err(_) if !local.is_empty() => Ok(local),
+        Err(err) => Err(err),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2454,5 +2479,124 @@ mod tests {
             app.toast_notice().map(|n| n.text()),
             Some("A release needs a tag")
         );
+    }
+
+    fn names(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn checkout_refs_are_read_for_the_matching_repository_ignoring_case() {
+        let target = crate::scope::Scope::Repository("Acme/Alpha".to_string());
+
+        assert!(reads_checkout_refs(&target, Some("acme/alpha")));
+    }
+
+    #[test]
+    fn checkout_refs_are_not_read_for_a_group_a_different_repository_or_no_checkout() {
+        let repo = crate::scope::Scope::Repository("acme/alpha".to_string());
+        let group = crate::scope::Scope::Group("acme/alpha".to_string());
+
+        assert!(!reads_checkout_refs(&group, Some("acme/alpha")));
+        assert!(!reads_checkout_refs(&repo, Some("acme/beta")));
+        assert!(!reads_checkout_refs(&repo, None));
+    }
+
+    #[test]
+    fn merged_branches_list_host_branches_then_local_only_ones() {
+        let merged = merge_branches(
+            Ok(names(&["main", "release"])),
+            names(&["wip", "main", "fix"]),
+        )
+        .unwrap();
+
+        assert_eq!(merged, names(&["main", "release", "wip", "fix"]));
+    }
+
+    #[test]
+    fn merged_branches_fall_back_to_local_when_the_host_fails() {
+        let merged = merge_branches(Err(anyhow::anyhow!("HTTP 502")), names(&["wip"])).unwrap();
+
+        assert_eq!(merged, names(&["wip"]));
+    }
+
+    #[test]
+    fn merged_branches_propagate_the_host_error_without_local_branches() {
+        let err = merge_branches(Err(anyhow::anyhow!("HTTP 502")), Vec::new()).unwrap_err();
+
+        assert_eq!(err.to_string(), "HTTP 502");
+    }
+
+    fn open_tag_selector(scope: crate::scope::Scope, entity_project: &str) -> (App, Effects) {
+        let mut app = App::default();
+        app.scope = scope;
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.releases.set_items(vec![
+            serde_json::from_value(serde_json::json!({
+                "name": "v1.0.0",
+                "tag_name": "v1.0.0",
+                "released_at": "2026-01-01T00:00:00Z",
+                "description": "",
+            }))
+            .unwrap(),
+        ]);
+        app.push_modal(crate::app::Modal::EditMenu(Box::new(
+            crate::app::EditMenu {
+                title: "New Release".to_string(),
+                entity_project: entity_project.to_string(),
+                fields: vec![crate::app::Field::ref_field("Tag", String::new())],
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx: 0,
+                entity_iid: 0,
+                entity_kind: crate::app::EditEntityKind::CreateRelease,
+                state: ratatui::widgets::ListState::default(),
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+                source_on_forge: false,
+            },
+        )));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut fx = Effects::default();
+        let enter = KeyPress::from(crossterm::event::KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ));
+
+        handle_key(&mut app, &enter, &tx, &mut fx);
+
+        (app, fx)
+    }
+
+    #[tokio::test]
+    async fn tag_selector_outside_the_checkout_repository_lists_only_release_tags() {
+        let (app, fx) = open_tag_selector(
+            crate::scope::Scope::Repository("acme/not-this-checkout".to_string()),
+            "acme/not-this-checkout",
+        );
+
+        let selector = app.selector().expect("tag selector open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, names(&["v1.0.0"]));
+        assert!(fx.into_vec().is_empty(), "no local tag read may be queued");
+    }
+
+    #[tokio::test]
+    async fn tag_selector_in_group_scope_lists_only_release_tags() {
+        let (app, fx) = open_tag_selector(crate::scope::Scope::Group("acme".to_string()), "");
+
+        let selector = app.selector().expect("tag selector open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, names(&["v1.0.0"]));
+        assert!(fx.into_vec().is_empty(), "no local tag read may be queued");
     }
 }

@@ -7,10 +7,7 @@ use super::cli_runner::CliRunner;
 pub(crate) async fn list_branches(cli: &CliRunner) -> Result<Vec<String>> {
     let raw = cli
         .git()
-        .run(
-            &["branch", "-a", "--format=%(refname)"],
-            "Listing Local Branches",
-        )
+        .run(&["branch", "--format=%(refname)"], "Listing Local Branches")
         .await?;
     Ok(branch_names(&raw))
 }
@@ -20,14 +17,12 @@ pub(crate) async fn list_tags(cli: &CliRunner) -> Result<Vec<String>> {
     Ok(distinct_lines(raw.lines()))
 }
 
-/// Local and `origin` branch names, each listed once.
+/// The checkout's own branches. `origin/*` refs are left out: the host lists them.
 fn branch_names(raw: &str) -> Vec<String> {
-    distinct_lines(raw.lines().filter_map(|line| {
-        let line = line.trim();
-        line.strip_prefix("refs/heads/")
-            .or_else(|| line.strip_prefix("refs/remotes/origin/"))
-            .filter(|name| *name != "HEAD")
-    }))
+    distinct_lines(
+        raw.lines()
+            .filter_map(|line| line.trim().strip_prefix("refs/heads/")),
+    )
 }
 
 fn distinct_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
@@ -45,10 +40,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn origin_branches_fold_into_their_local_name_without_head_or_a_detached_checkout() {
+    fn branch_names_keep_only_local_heads_without_a_detached_checkout() {
         let raw = "(HEAD detached at abc1234)\nrefs/heads/main\nrefs/heads/feature/x\n\
                    refs/remotes/origin/HEAD\nrefs/remotes/origin/main\n\
                    refs/remotes/origin/release\nrefs/remotes/upstream/other\n";
-        assert_eq!(branch_names(raw), ["main", "feature/x", "release"]);
+        assert_eq!(branch_names(raw), ["main", "feature/x"]);
     }
 }

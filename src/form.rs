@@ -1,5 +1,7 @@
 //! A dialog built from typed groups of fields and a row of buttons, with one
-//! focus model for all of them. `ui::form` draws it.
+//! focus model for all of them. `ui::form` draws it. An overlay that draws a
+//! list, a table or a calendar itself puts a [`GroupKind::Custom`] region in
+//! its form and reads the region's rect back from [`FormLayout::groups`].
 
 use crate::app::TextBuffer;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -161,6 +163,9 @@ impl Toggles {
 pub struct LineInput {
     pub buffer: TextBuffer,
     pub soft_char_limit: Option<usize>,
+    /// Wraps the whole text over as many rows as it needs instead of
+    /// scrolling one row sideways.
+    pub is_wrapped: bool,
 }
 
 impl LineInput {
@@ -168,6 +173,14 @@ impl LineInput {
         Self {
             buffer: TextBuffer::new(value),
             soft_char_limit,
+            is_wrapped: false,
+        }
+    }
+
+    pub fn wrapped(self) -> Self {
+        Self {
+            is_wrapped: true,
+            ..self
         }
     }
 
@@ -258,6 +271,17 @@ pub struct Note {
     pub text: String,
 }
 
+/// The rows a [`GroupKind::Custom`] region asks the layout for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rows {
+    /// This many rows, fewer when the form runs out of room.
+    Fixed(u16),
+    /// This share of the body's rows.
+    Percent(u16),
+    /// Every row the other groups leave.
+    Fill,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GroupKind {
     Radio(Radio),
@@ -267,6 +291,9 @@ pub enum GroupKind {
     Collapsible(Collapsible),
     ItemList(ItemList),
     Note(Note),
+    /// A region the form's owner draws itself into the rect the last draw
+    /// recorded for it in [`FormLayout::groups`].
+    Custom(Rows),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -296,6 +323,11 @@ impl Group {
         }))
     }
 
+    /// A [`GroupKind::Custom`] region `rows` tall.
+    pub fn region(rows: Rows) -> Self {
+        Self::new(GroupKind::Custom(rows))
+    }
+
     pub fn with_id(mut self, id: GroupId) -> Self {
         self.id = Some(id);
         self
@@ -322,7 +354,10 @@ impl Group {
             GroupKind::Radio(radio) => radio.choices.len() > 1,
             GroupKind::Toggles(toggles) => !toggles.items.is_empty(),
             GroupKind::LineInput(_) | GroupKind::Collapsible(_) => true,
-            GroupKind::Preview(_) | GroupKind::ItemList(_) | GroupKind::Note(_) => false,
+            GroupKind::Preview(_)
+            | GroupKind::ItemList(_)
+            | GroupKind::Note(_)
+            | GroupKind::Custom(_) => false,
         }
     }
 
@@ -352,9 +387,14 @@ impl Group {
     }
 }
 
-/// Where the last draw put each clickable row and button.
+/// Where the last draw put the form, each top-level group and each
+/// clickable row and button.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FormLayout {
+    pub area: Rect,
+    /// The rows each top-level group got, in order; empty for a group left
+    /// without room. A [`GroupKind::Custom`] region is drawn into its rect.
+    pub groups: Vec<Rect>,
     pub targets: Vec<(Rect, ClickTarget)>,
 }
 
@@ -389,8 +429,9 @@ pub struct Form {
     tone: FormTone,
     groups: Vec<Group>,
     buttons: Vec<Button>,
-    primary: usize,
-    cancel: usize,
+    /// `None` in a panel, which has no buttons, so no key can activate one.
+    primary: Option<usize>,
+    cancel: Option<usize>,
     focus: Focus,
     /// First body row on screen, moved by each draw to keep the focus visible.
     pub scroll: usize,
@@ -408,9 +449,27 @@ impl Form {
             tone: FormTone::Normal,
             groups,
             buttons,
-            primary: 0,
-            cancel,
+            primary: Some(0),
+            cancel: Some(cancel),
             focus: Focus::Button(0),
+            scroll: 0,
+            layout: None,
+        }
+    }
+
+    /// A form without buttons, for an overlay that handles its own keys and
+    /// draws its content into [`GroupKind::Custom`] regions. Its title is the
+    /// one the overlay's `FormFrame` draws. It opens on its first group and
+    /// never returns [`FormAction::Activate`].
+    pub fn panel(groups: Vec<Group>) -> Self {
+        Self {
+            title: String::new(),
+            tone: FormTone::Normal,
+            groups,
+            buttons: Vec::new(),
+            primary: None,
+            cancel: None,
+            focus: Focus::Group(GroupPath::top(0)),
             scroll: 0,
             layout: None,
         }
@@ -419,7 +478,9 @@ impl Form {
     pub fn danger(mut self) -> Self {
         self.tone = FormTone::Danger;
         self.primary = self.cancel;
-        self.focus = Focus::Button(self.cancel);
+        if let Some(cancel) = self.cancel {
+            self.focus = Focus::Button(cancel);
+        }
         self
     }
 
@@ -435,12 +496,16 @@ impl Form {
         &self.buttons
     }
 
-    pub fn primary(&self) -> usize {
+    pub fn primary(&self) -> Option<usize> {
         self.primary
     }
 
-    pub fn cancel(&self) -> usize {
+    pub fn cancel(&self) -> Option<usize> {
         self.cancel
+    }
+
+    fn activate_primary(&self) -> FormAction {
+        self.primary.map_or(FormAction::None, FormAction::Activate)
     }
 
     pub fn focus(&self) -> Focus {
@@ -503,6 +568,30 @@ impl Form {
         match &self.group(id)?.kind {
             GroupKind::Toggles(toggles) => Some(toggles),
             _ => None,
+        }
+    }
+
+    pub fn line_input(&self, id: GroupId) -> Option<&LineInput> {
+        match &self.group(id)?.kind {
+            GroupKind::LineInput(input) => Some(input),
+            _ => None,
+        }
+    }
+
+    pub fn line_input_mut(&mut self, id: GroupId) -> Option<&mut LineInput> {
+        let path = self.path_of(id)?;
+        match &mut self.group_at_mut(path)?.kind {
+            GroupKind::LineInput(input) => Some(input),
+            _ => None,
+        }
+    }
+
+    /// Starts typing into the line input `id`.
+    pub fn edit(&mut self, id: GroupId) {
+        if self.line_input(id).is_some()
+            && let Some(path) = self.path_of(id)
+        {
+            self.focus = Focus::Editing(path);
         }
     }
 
@@ -615,19 +704,18 @@ impl Form {
             }
             Action::DialogActivate => match self.focus {
                 Focus::Button(button) => FormAction::Activate(button),
-                _ if self.focused_line_input().is_some() => FormAction::Activate(self.primary),
+                _ if self.focused_line_input().is_some() => self.activate_primary(),
                 _ => {
                     self.press_focused();
                     FormAction::None
                 }
             },
-            Action::DialogSubmit => {
-                if self.focus == Focus::Button(self.primary) {
-                    FormAction::Activate(self.primary)
-                } else {
-                    FormAction::None
+            Action::DialogSubmit => match self.focus {
+                Focus::Button(button) if Some(button) == self.primary => {
+                    FormAction::Activate(button)
                 }
-            }
+                _ => FormAction::None,
+            },
             _ => FormAction::None,
         }
     }
@@ -669,9 +757,7 @@ impl Form {
             KeyCode::Char(' ') => self.press_focused(),
             KeyCode::Enter => match self.focus {
                 Focus::Button(button) => return FormAction::Activate(button),
-                _ if self.focused_line_input().is_some() => {
-                    return FormAction::Activate(self.primary);
-                }
+                _ if self.focused_line_input().is_some() => return self.activate_primary(),
                 _ => self.press_focused(),
             },
             KeyCode::Esc => return FormAction::Cancel,
@@ -685,7 +771,7 @@ impl Form {
 
     fn handle_editing_key(&mut self, key: &KeyEvent) -> FormAction {
         match key.code {
-            KeyCode::Enter => return FormAction::Activate(self.primary),
+            KeyCode::Enter => return self.activate_primary(),
             KeyCode::Esc => self.stop_editing(),
             KeyCode::Tab => self.step_stop(1),
             KeyCode::BackTab => self.step_stop(-1),
@@ -841,7 +927,7 @@ impl Form {
             self.step_across(step);
             return;
         }
-        let count = stops.len() + 1;
+        let count = stops.len() + usize::from(self.cancel.is_some());
         let current = match self.focus {
             Focus::Group(path) | Focus::Editing(path) => {
                 stops.iter().position(|&p| p == path).unwrap_or(0)
@@ -854,7 +940,7 @@ impl Form {
                 self.enter_group(path, step);
                 self.start_editing();
             }
-            None => self.focus = Focus::Button(self.cancel),
+            None => self.focus_cancel(),
         }
     }
 
@@ -878,7 +964,7 @@ impl Form {
                 let position = stops.iter().position(|&p| p == path).unwrap_or(0);
                 match position.checked_add_signed(step) {
                     Some(next) if next < stops.len() => self.enter_group(stops[next], step),
-                    Some(_) => self.focus = Focus::Button(self.cancel),
+                    Some(_) => self.focus_cancel(),
                     None => {}
                 }
             }
@@ -888,6 +974,13 @@ impl Form {
                 }
             }
             Focus::Button(_) => {}
+        }
+    }
+
+    /// Moves the focus onto Cancel, which a panel does not have.
+    fn focus_cancel(&mut self) {
+        if let Some(cancel) = self.cancel {
+            self.focus = Focus::Button(cancel);
         }
     }
 
@@ -911,7 +1004,7 @@ impl Form {
     fn step_across(&mut self, step: isize) {
         match self.focus {
             Focus::Button(button) => {
-                let last = self.buttons.len() - 1;
+                let last = self.buttons.len().saturating_sub(1);
                 self.focus = Focus::Button(button.saturating_add_signed(step).min(last));
             }
             Focus::Group(path) | Focus::Editing(path) => {
@@ -1040,9 +1133,13 @@ impl Form {
     }
 
     /// The keys the focused group answers to, then the form-wide ones, for
-    /// the footer.
+    /// the footer. A panel without buttons only names `Esc`: its owner
+    /// names its own keys.
     pub fn key_hints(&self) -> Vec<KeyHint> {
-        let primary = self.buttons[self.primary].label.to_lowercase();
+        let Some(primary) = self.primary.and_then(|primary| self.buttons.get(primary)) else {
+            return vec![KeyHint::new("Esc", "close")];
+        };
+        let primary = primary.label.to_lowercase();
         let mut hints = match self.focus {
             Focus::Editing(_) => {
                 return vec![
@@ -1079,7 +1176,7 @@ impl Form {
         }
         hints.push(KeyHint::new("Tab", "next"));
         let enter = match self.focus {
-            Focus::Button(button) => Some(self.buttons[button].label.to_lowercase()),
+            Focus::Button(button) => self.buttons.get(button).map(|b| b.label.to_lowercase()),
             _ if self.focused_line_input().is_some() => Some(primary),
             _ => None,
         };
@@ -1309,6 +1406,22 @@ mod tests {
         assert_eq!(press(&mut form, KeyCode::Enter), FormAction::Activate(0));
     }
 
+    #[test]
+    fn a_panel_never_activates_a_button_it_does_not_have() {
+        let mut form = Form::panel(vec![
+            Group::new(GroupKind::LineInput(LineInput::new("Fix".into(), None))).with_id(SUBJECT),
+        ]);
+        form.edit(SUBJECT);
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
+        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::Down] {
+            press(&mut form, code);
+            assert_eq!(form.focused_button(), None, "{code:?}");
+        }
+        press(&mut form, KeyCode::Esc);
+        assert_eq!(press(&mut form, KeyCode::Enter), FormAction::None);
+        assert_eq!(form.key_hints(), vec![KeyHint::new("Esc", "close")]);
+    }
+
     fn message_form() -> Form {
         Form::new(
             "Merge",
@@ -1524,7 +1637,7 @@ mod tests {
         press(&mut form, KeyCode::Char('a'));
         press(&mut form, KeyCode::Tab);
         press(&mut form, KeyCode::Tab);
-        assert_eq!(form.focus(), Focus::Button(form.cancel()));
+        assert_eq!(form.focused_button(), form.cancel());
         press(&mut form, KeyCode::Char('a'));
         assert_eq!(form.focus(), Focus::Group(GroupPath::top(1)));
         assert_eq!(

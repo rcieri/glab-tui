@@ -46,6 +46,12 @@ if [[ -n "$TEST_GH_HANG_MATCH" && "$*" == *"$TEST_GH_HANG_MATCH"* ]]; then
     exec sleep 300
 fi
 
+# Merge settings the merge dialog reads: every method, squash preselected.
+if [[ "$*" == "repo view --json mergeCommitAllowed"* ]]; then
+    echo '{"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"SQUASH"}'
+    exit 0
+fi
+
 # The branch list: the fixture, plus the branch a `git/refs` POST created.
 branches_json() {
     if [[ -f "$LOG_FILE.created_branch" ]]; then

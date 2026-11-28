@@ -280,7 +280,6 @@ fn open_column_filter(app: &mut App, column: &str) {
         .and_then(|f| f.get(column))
         .cloned()
         .unwrap_or_default();
-    app.column_filter_context = Some((app.active_tab, column.to_string()));
     app.open_selector(crate::app::Selector {
         title: format!("Filter by {column}"),
         all_items: all_values,
@@ -291,7 +290,10 @@ fn open_column_filter(app: &mut App, column: &str) {
         is_loading: false,
         entity_iid: 0,
         entity_type: String::new(),
-        field_type: "column_filter".to_string(),
+        purpose: crate::app::SelectorPurpose::ColumnFilter {
+            tab: app.active_tab,
+            column: column.to_string(),
+        },
         multi_select: true,
         state: {
             let mut s = ListState::default();

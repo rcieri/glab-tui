@@ -196,7 +196,7 @@ pub(crate) async fn run_optimistic_mutation<F, Fut>(
         }
     }
     if let Some(message) = mutation_failure_message(action, &failures) {
-        let _ = tx.send(Event::CommandCompleted(table.tab(), Err(message)));
+        let _ = tx.send_unscoped(Event::CommandCompleted(table.tab(), Err(message)));
     }
 }
 
@@ -406,7 +406,10 @@ fn handle_environments_key(
                 return;
             };
             let result = client
-                .open_environment_in_browser(&project_path, &environment.name)
+                .open_in_browser(crate::backend::WebTarget::Environment {
+                    project: &project_path,
+                    name: &environment.name,
+                })
                 .await;
             let _ = tx.send(Event::CommandCompleted(
                 crate::app::Tab::Environments,
@@ -480,21 +483,23 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
 /// After the user moved to another tab: fetch it unless it is loading or
 /// fresh, and the related items its highlighted row previews.
 pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if let Some(client) = &app.gitlab_client
+    if app.gitlab_client.is_some()
         && !app.loading_tabs.contains(&app.active_tab)
         && !app.refreshed_tabs.contains(&app.active_tab)
     {
         if !app.loaded_tabs.contains(&app.active_tab) {
-            app.loading_tabs.insert(app.active_tab);
+            app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(
-            fx,
-            client,
-            &app.scope,
-            app.requested_state_queries(),
-            app.active_tab,
-            app.scoped_sender(tx.clone()),
-        );
+        if let Some(client) = &app.gitlab_client {
+            spawn_refresh_active_tab(
+                fx,
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
     }
     if app.active_tab == Tab::Issues {
         maybe_fetch_related_mrs(app, tx);
@@ -819,6 +824,11 @@ pub fn handle_active_tab_key(
     tx: &UnboundedSender<Event>,
     fx: &mut Effects,
 ) -> bool {
+    if Action::in_context(KeyContext::Tab(app.active_tab))
+        .any(|a| !app.offers(a) && app.config.keybindings.matches(a, key_event))
+    {
+        return true;
+    }
     if let Some(action) = Action::in_context(KeyContext::Tab(app.active_tab))
         .find(|a| a.is_destructive() && app.config.keybindings.matches(*a, key_event))
     {
@@ -1073,7 +1083,11 @@ pub fn handle_active_tab_key(
                     let tx2 = tx.clone();
                     fx.spawn(async move {
                         let result = client
-                            .open_in_browser(&project_path, "issue", &iid_str)
+                            .open_in_browser(crate::backend::WebTarget::View {
+                                project: &project_path,
+                                entity: crate::backend::ViewEntity::Issue,
+                                id: &iid_str,
+                            })
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Issues,
@@ -1457,8 +1471,6 @@ pub fn handle_active_tab_key(
                             .keybindings
                             .matches(Action::MrsOpenInBrowser, key_event) =>
                         {
-                            let is_github = app.is_github();
-                            let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
@@ -1471,7 +1483,11 @@ pub fn handle_active_tab_key(
                             let iid_str = mr_iid.to_string();
                             fx.spawn(async move {
                                 let result = client
-                                    .open_in_browser(&project_path, entity, &iid_str)
+                                    .open_in_browser(crate::backend::WebTarget::View {
+                                        project: &project_path,
+                                        entity: crate::backend::ViewEntity::MergeRequest,
+                                        id: &iid_str,
+                                    })
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::MergeRequests,
@@ -1807,8 +1823,10 @@ pub fn handle_active_tab_key(
                             let tx2 = tx.clone();
                             fx.spawn(async move {
                                 let result = client
-                                    .backend
-                                    .open_workflow_in_browser(&project_context, &workflow)
+                                    .open_in_browser(crate::backend::WebTarget::Workflow {
+                                        project: &project_context,
+                                        workflow: &workflow,
+                                    })
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Pipelines,
@@ -1833,7 +1851,10 @@ pub fn handle_active_tab_key(
                             let tx2 = tx.clone();
                             fx.spawn(async move {
                                 let result = client
-                                    .open_pipeline_in_browser(&project_path, &pid_str)
+                                    .open_in_browser(crate::backend::WebTarget::Pipeline {
+                                        project: &project_path,
+                                        id: &pid_str,
+                                    })
                                     .await;
                                 let _ = tx2.send(Event::CommandCompleted(
                                     crate::app::Tab::Pipelines,
@@ -2105,7 +2126,11 @@ pub fn handle_active_tab_key(
                                 Ok(url) => {
                                     let tx2 = tx.clone();
                                     fx.spawn(async move {
-                                        let result = client.open_job_url(&url).await;
+                                        let result = client
+                                            .open_in_browser(crate::backend::WebTarget::Job {
+                                                web_url: &url,
+                                            })
+                                            .await;
                                         let _ = tx2.send(Event::CommandCompleted(
                                             crate::app::Tab::Jobs,
                                             CommandOutcome::read_only(result),
@@ -2210,7 +2235,6 @@ pub fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Runners => {
-            let can_manage_runners = app.kind().supports_runner_management();
             if app
                 .config
                 .keybindings
@@ -2220,40 +2244,19 @@ pub fn handle_active_tab_key(
             } else if let Some(item) = app.runners.cursor_row() {
                 let runner_id = item.id;
                 match key_event.code {
-                    // GitHub cannot pause, resume or rename a runner. The keys are still
-                    // taken there, so a rebinding never reaches a list-view or custom binding.
-                    _ if !can_manage_runners
-                        && [
-                            Action::RunnersPause,
-                            Action::RunnersResume,
-                            Action::RunnersEditDescription,
-                        ]
-                        .into_iter()
-                        .any(|action| app.config.keybindings.matches(action, key_event)) => {}
                     _ if app
                         .config
                         .keybindings
                         .matches(Action::RunnersPause, key_event) =>
                     {
-                        let prev = item.status.clone();
-                        let prev_active = item.active;
-                        app.runners.update(&runner_id, |runner| {
-                            runner.status = "paused".to_string();
-                            runner.active = false;
-                        });
                         if let Some(client) = app.gitlab_client.clone() {
                             let scope = app.scope.clone();
                             let tx = tx.clone();
-                            let scoped_tx = app.scoped_sender(tx.clone());
+                            let _ = tx.send(Event::CommandStarted(format!(
+                                "Pausing runner #{runner_id}"
+                            )));
                             fx.spawn(async move {
                                 let result = client.pause_runner(&scope, runner_id).await;
-                                if result.is_err() {
-                                    let _ = scoped_tx.send(Event::RunnerStateRevert {
-                                        runner_id,
-                                        status: prev,
-                                        active: prev_active,
-                                    });
-                                }
                                 let _ = tx.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
                                     CommandOutcome::mutation(result),
@@ -2266,25 +2269,14 @@ pub fn handle_active_tab_key(
                         .keybindings
                         .matches(Action::RunnersResume, key_event) =>
                     {
-                        let prev = item.status.clone();
-                        let prev_active = item.active;
-                        app.runners.update(&runner_id, |runner| {
-                            runner.status = "online".to_string();
-                            runner.active = true;
-                        });
                         if let Some(client) = app.gitlab_client.clone() {
                             let scope = app.scope.clone();
                             let tx = tx.clone();
-                            let scoped_tx = app.scoped_sender(tx.clone());
+                            let _ = tx.send(Event::CommandStarted(format!(
+                                "Resuming runner #{runner_id}"
+                            )));
                             fx.spawn(async move {
                                 let result = client.resume_runner(&scope, runner_id).await;
-                                if result.is_err() {
-                                    let _ = scoped_tx.send(Event::RunnerStateRevert {
-                                        runner_id,
-                                        status: prev,
-                                        active: prev_active,
-                                    });
-                                }
                                 let _ = tx.send(Event::CommandCompleted(
                                     crate::app::Tab::Runners,
                                     CommandOutcome::mutation(result),
@@ -2321,8 +2313,12 @@ pub fn handle_active_tab_key(
                             let Some(client) = client else {
                                 return;
                             };
-                            let result =
-                                client.open_runner_in_browser(&scope, runner_id_local).await;
+                            let result = client
+                                .open_in_browser(crate::backend::WebTarget::Runner {
+                                    scope: &scope,
+                                    runner_id: runner_id_local,
+                                })
+                                .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Runners,
                                 CommandOutcome::read_only(result),
@@ -2417,7 +2413,11 @@ pub fn handle_active_tab_key(
 
                     fx.spawn(async move {
                         let result = client
-                            .open_in_browser(&project_path, "release", tag_name.as_str())
+                            .open_in_browser(crate::backend::WebTarget::View {
+                                project: &project_path,
+                                entity: crate::backend::ViewEntity::Release,
+                                id: tag_name.as_str(),
+                            })
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Releases,
@@ -2623,7 +2623,10 @@ pub fn handle_active_tab_key(
 
                         fx.spawn(async move {
                             let result = client
-                                .open_milestone_in_browser(&project_path, &milestone)
+                                .open_in_browser(crate::backend::WebTarget::Milestone {
+                                    project: &project_path,
+                                    milestone: &milestone,
+                                })
                                 .await;
                             let _ = tx2.send(Event::CommandCompleted(
                                 crate::app::Tab::Milestones,
@@ -2757,7 +2760,10 @@ pub fn handle_active_tab_key(
                             return;
                         };
                         let result = client
-                            .open_branch_in_browser(&project_path, &branch_local)
+                            .open_in_browser(crate::backend::WebTarget::Branch {
+                                project: &project_path,
+                                branch: &branch_local,
+                            })
                             .await;
                         let _ = tx2.send(Event::CommandCompleted(
                             crate::app::Tab::Branches,
@@ -3574,6 +3580,35 @@ pub(crate) mod tests {
         assert!(rx.recv().await.is_none());
     }
 
+    #[tokio::test]
+    async fn failed_mutation_still_reports_after_a_scope_switch_but_drops_its_revert() {
+        let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
+        run_optimistic_mutation(
+            OptimisticTable::Jobs,
+            "cancel job",
+            vec![(7, Some("running".to_string()))],
+            &tx,
+            |_| async { Err(anyhow::anyhow!("offline")) },
+        )
+        .await;
+        drop(tx);
+
+        let after_switch = ScopeGeneration::default().next();
+        let mut delivered = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let Some(event) = event.for_scope(after_switch) {
+                delivered.push(event);
+            }
+        }
+        match delivered.as_slice() {
+            [Event::CommandCompleted(Tab::Jobs, Err(message))] => {
+                assert_eq!(message, "Failed to cancel job #7: offline");
+            }
+            other => panic!("unexpected events {other:?}"),
+        }
+    }
+
     #[test]
     fn second_flip_while_in_flight_keeps_the_revert_with_the_first() {
         let mut app = App::default();
@@ -3965,6 +4000,48 @@ pub(crate) mod tests {
             app.pipelines.items[0].status, "running",
             "the remapped key retries"
         );
+    }
+
+    fn group_app_with_gitlab_client(tab: crate::app::Tab) -> App {
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        });
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.active_tab = tab;
+        app
+    }
+
+    #[tokio::test]
+    async fn trigger_pipeline_key_spawns_nothing_on_the_group_pipelines_placeholder() {
+        let mut app = group_app_with_gitlab_client(crate::app::Tab::Pipelines);
+        let press = KeyPress::from(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        let tx = app.tx.clone();
+        let mut fx = crate::effect::Effects::default();
+
+        let consumed = handle_active_tab_key(&mut app, &press, &tx, &mut fx);
+
+        assert!(consumed);
+        assert!(fx.into_vec().is_empty());
+    }
+
+    #[tokio::test]
+    async fn n_on_the_group_releases_placeholder_still_opens_the_create_release_form() {
+        let mut app = group_app_with_gitlab_client(crate::app::Tab::Releases);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+
+        let menu = app.edit_menu().expect("create release form opened");
+        assert_eq!(menu.title, "Create Release");
     }
 
     #[tokio::test]

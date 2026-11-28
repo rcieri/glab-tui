@@ -322,7 +322,7 @@
       "method": "delete",
       "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
       "code": [
-        "overlays::selector::handle_key"
+        "GhBackend::delete_comment, github_comment_endpoint"
       ],
       "read": {}
     },
@@ -349,7 +349,7 @@
       "method": "patch",
       "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
       "code": [
-        "editor_result::spawn_comment_edit, --input - -X PATCH (response unread)"
+        "GhBackend::edit_comment, github_comment_endpoint, -X PATCH --input - (response unread)"
       ],
       "read": {}
     },
@@ -397,7 +397,7 @@
       "method": "delete",
       "path": "/repos/{owner}/{repo}/pulls/comments/{comment_id}",
       "code": [
-        "overlays::selector::handle_key"
+        "GhBackend::delete_comment, github_comment_endpoint"
       ],
       "read": {}
     },
@@ -424,7 +424,7 @@
       "method": "patch",
       "path": "/repos/{owner}/{repo}/pulls/comments/{comment_id}",
       "code": [
-        "editor_result::spawn_comment_edit, --input - -X PATCH (response unread)"
+        "GhBackend::edit_comment, github_comment_endpoint, -X PATCH --input - (response unread)"
       ],
       "read": {}
     },

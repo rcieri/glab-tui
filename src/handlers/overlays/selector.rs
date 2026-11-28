@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::effect::{EditPurpose, Effects, ForegroundJob};
 use crate::entity_editor::{apply_selector_changes, rebuild_edit_menu};
-use crate::event::{CommandOutcome, Event};
+use crate::event::Event;
 use crate::git_helpers::slugify;
 use crate::keybinding::KeyPress;
 use crate::keymap::{Action, KeyContext};
@@ -788,78 +788,21 @@ pub fn handle_key(
                                         });
                                     }
                                     "Delete Comment" => {
-                                        let client = app.gitlab_client.clone();
-                                        let project_context = app.project_path_for_open_mr(mr_iid);
-                                        let tx = tx.clone();
-                                        let is_github =
-                                            client.as_ref().is_some_and(|c| c.is_github);
-
-                                        let _ = tx.send(Event::CommandStarted(format!(
-                                            "Deleting comment MR #{mr_iid}"
-                                        )));
-
-                                        fx.spawn(async move {
-                                        if client.is_some() {
-                                            let output = if is_github {
-                                                let endpoint = if comment
-                                                    .position
-                                                    .is_some()
-                                                {
-                                                    format!(
-                                                        "repos/{project_context}/pulls/comments/{comment_id}"
-                                                    )
-                                                } else {
-                                                    format!(
-                                                        "repos/{project_context}/issues/comments/{comment_id}"
-                                                    )
-                                                };
-                                                crate::backend::subprocess::output(
-                                                    tokio::process::Command::new("gh")
-                                                        .args(["api", &endpoint, "-X", "DELETE"]),
-                                                    None,
-                                                )
-                                                .await
-                                            } else {
-                                                let encoded_path =
-                                                    project_context
-                                                        .replace("/", "%2F");
-                                                crate::backend::subprocess::output(
-                                                    tokio::process::Command::new("glab").args([
-                                                        "api",
-                                                        &format!("projects/{encoded_path}/merge_requests/{mr_iid}/notes/{comment_id}"),
-                                                        "-X",
-                                                        "DELETE"
-                                                    ]),
-                                                    None,
-                                                )
-                                                .await
-                                            };
-
-                                            match output {
-                                                Ok(out)
-                                                    if out.status.success() =>
-                                                {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Ok(CommandOutcome::Mutated),
-                                                    ));
-                                                }
-                                                Ok(out) => {
-                                                    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Err(err),
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Err(e.to_string()),
-                                                    ));
-                                                }
-                                            }
+                                        if let Some(client) = app.gitlab_client.clone() {
+                                            let project = app.project_path_for_open_mr(mr_iid);
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Deleting comment MR #{mr_iid}"
+                                            )));
+                                            handlers::diff_view::spawn_mr_review_task(
+                                                fx,
+                                                tx,
+                                                async move {
+                                                    client
+                                                        .delete_comment(&project, mr_iid, &comment)
+                                                        .await
+                                                },
+                                            );
                                         }
-                                    });
                                     }
                                     _ => {}
                                 }
@@ -1092,41 +1035,32 @@ pub fn handle_key(
                                     // When a workflow file is selected, parse
                                     // its workflow_dispatch inputs and rebuild
                                     // the edit menu fields to show per-input fields.
-                                    if is_workflow_file {
-                                        // Safe on the UI thread: pure local
-                                        // git object-DB resolve, no network.
-                                        let repo_root = std::process::Command::new("git")
-                                            .args(["rev-parse", "--show-toplevel"])
-                                            .output()
-                                            .ok()
-                                            .and_then(|o| String::from_utf8(o.stdout).ok())
-                                            .map(|s| s.trim().to_string());
-
-                                        if let Some(root) = repo_root {
-                                            let yaml_path =
-                                                format!("{root}/.github/workflows/{display_val}");
-                                            if let Some(inputs) =
-                                        crate::domain::workflow_inputs::parse_workflow_inputs(
-                                            &yaml_path,
-                                        )
+                                    if is_workflow_file
+                                        && let Some(root) = crate::git_helpers::repo_root()
                                     {
-                                        menu.workflow_inputs = inputs.clone();
-                                        menu.fields.retain(|f| f.label != "Inputs");
-                                        let insert_pos = menu
-                                            .fields
-                                            .iter()
-                                            .position(|f| f.label == "Variables")
-                                            .unwrap_or(menu.fields.len());
-                                        for input in inputs.iter().rev() {
-                                            let label = format!("Input: {}", input.name);
-                                            let default_val =
-                                                input.default.clone().unwrap_or_default();
-                                            menu.fields.insert(
-                                                insert_pos,
-                                                crate::app::Field::text(&label, default_val),
-                                            );
-                                        }
-                                    }
+                                        let yaml_path =
+                                            format!("{root}/.github/workflows/{display_val}");
+                                        if let Some(inputs) =
+                                            crate::domain::workflow_inputs::parse_workflow_inputs(
+                                                &yaml_path,
+                                            )
+                                        {
+                                            menu.workflow_inputs = inputs.clone();
+                                            menu.fields.retain(|f| f.label != "Inputs");
+                                            let insert_pos = menu
+                                                .fields
+                                                .iter()
+                                                .position(|f| f.label == "Variables")
+                                                .unwrap_or(menu.fields.len());
+                                            for input in inputs.iter().rev() {
+                                                let label = format!("Input: {}", input.name);
+                                                let default_val =
+                                                    input.default.clone().unwrap_or_default();
+                                                menu.fields.insert(
+                                                    insert_pos,
+                                                    crate::app::Field::text(&label, default_val),
+                                                );
+                                            }
                                         }
                                     }
                                 }

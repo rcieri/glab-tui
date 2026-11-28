@@ -1,6 +1,10 @@
-use crate::backend::{Backend, BackendKind, IssueUpdate, MergeOptions, MrUpdate, NewIssue, NewMr};
+use crate::backend::{
+    Backend, BackendKind, Capabilities, IssueUpdate, MergeOptions, MrUpdate, NewIssue, NewMr,
+    WebTarget,
+};
 use crate::config::Config;
 use crate::domain::milestones::Milestone;
+use crate::domain::mr::DiscussionNote;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -42,6 +46,10 @@ impl GitlabClient {
         self.backend.kind()
     }
 
+    pub fn capabilities(&self, scope: &Scope) -> Capabilities {
+        self.backend.capabilities(scope)
+    }
+
     /// The pipeline the Jobs tab shows and refreshes.
     pub fn jobs_source(&self) -> JobsSource {
         match &self.opened_pipeline {
@@ -78,12 +86,9 @@ impl GitlabClient {
         })
     }
 
-    pub fn program(&self) -> &'static str {
-        self.backend.program()
-    }
-
     pub fn muted(mut self) -> Self {
         self.tx = None;
+        self.backend = crate::backend::create_backend(self.is_github);
         self
     }
 
@@ -145,16 +150,6 @@ impl GitlabClient {
             }
             crate::scope::Scope::Repository(project) => Ok(vec![project.clone()]),
         }
-    }
-
-    pub async fn raw_api(
-        &self,
-        endpoint: &str,
-        method: &str,
-        body: Option<&str>,
-        desc: &str,
-    ) -> Result<String> {
-        self.backend.raw_api(endpoint, method, body, desc).await
     }
 
     // ── Issue mutations ──
@@ -339,6 +334,27 @@ impl GitlabClient {
         self.backend
             .set_thread_resolved(project, iid, thread_id, resolved)
             .await
+    }
+
+    pub async fn edit_comment(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        comment: &DiscussionNote,
+        body: &str,
+    ) -> Result<()> {
+        self.backend
+            .edit_comment(project, mr_iid, comment, body)
+            .await
+    }
+
+    pub async fn delete_comment(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        comment: &DiscussionNote,
+    ) -> Result<()> {
+        self.backend.delete_comment(project, mr_iid, comment).await
     }
 
     // ── Pipeline mutations ──
@@ -563,6 +579,14 @@ impl GitlabClient {
             .await
     }
 
+    pub async fn list_local_branches(&self) -> Result<Vec<String>> {
+        self.backend.list_local_branches().await
+    }
+
+    pub async fn list_local_tags(&self) -> Result<Vec<String>> {
+        self.backend.list_local_tags().await
+    }
+
     pub async fn update_milestone(
         &self,
         project: &str,
@@ -576,35 +600,8 @@ impl GitlabClient {
             .update_milestone(project, milestone, title, description, start_date, due_date)
             .await
     }
-    pub async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
-        self.backend.open_in_browser(project, entity, id).await
-    }
-
-    pub async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        self.backend.open_pipeline_in_browser(project, id).await
-    }
-    pub async fn open_job_url(&self, url: &str) -> Result<()> {
-        crate::backend::browser::open_url(url, self.tx.clone(), "OPENING JOB IN BROWSER").await
-    }
-    pub async fn open_milestone_in_browser(
-        &self,
-        project: &str,
-        milestone: &Milestone,
-    ) -> Result<()> {
-        self.backend
-            .open_milestone_in_browser(project, milestone)
-            .await
-    }
-    pub async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        self.backend.open_runner_in_browser(scope, runner_id).await
-    }
-    pub async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
-        self.backend.open_branch_in_browser(project, branch).await
-    }
-    pub async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()> {
-        self.backend
-            .open_environment_in_browser(project, name)
-            .await
+    pub async fn open_in_browser(&self, target: WebTarget<'_>) -> Result<()> {
+        self.backend.open_in_browser(target).await
     }
 
     pub async fn bulk_update_issues_labels(
@@ -811,5 +808,29 @@ pub fn get_project_context() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    // Tests moved to domain files and backend modules.
+    use super::*;
+    use crate::event::Event;
+
+    #[tokio::test]
+    async fn muted_clone_does_not_log_cli_calls() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut backend = crate::backend::create_backend(false);
+        backend.set_tx(tx.clone());
+        let client = GitlabClient {
+            is_github: false,
+            backend,
+            tx: Some(tx),
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        };
+
+        let _ = client.clone().muted().list_local_tags().await;
+
+        assert!(!matches!(
+            rx.try_recv(),
+            Ok(Event::TerminalCommandLogged(_))
+        ));
+    }
 }

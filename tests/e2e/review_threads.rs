@@ -145,6 +145,33 @@ fn test_review_threads_jump_reaches_a_reviewed_and_hidden_file() {
 }
 
 #[test]
+fn test_deleting_a_comment_calls_the_notes_api_for_that_comment() {
+    let mut session = session_in_diff_view();
+
+    session.send_input(b"T");
+    session
+        .wait_for_screen_contains("Review Threads", 5000)
+        .expect("T should open the overlay");
+    press_keys(&session, b"a");
+    session
+        .wait_for_screen_contains("Select Comment to Interact", 5000)
+        .expect("a on a thread with a reply asks which comment");
+    press_keys(&session, b"\r");
+    session
+        .wait_for_screen_contains("Actions for Comment 101", 5000)
+        .expect("a offers the actions of the anchored thread's first comment");
+    // Reply, Resolve, Edit, Delete.
+    press_keys(&session, b"jjj\r");
+
+    session
+        .wait_for_cli_call(
+            "glab api -X DELETE projects/test-owner%2Ftest-repo/merge_requests/2/notes/101",
+            5000,
+        )
+        .expect("Delete Comment removes the note through the API");
+}
+
+#[test]
 fn test_review_threads_on_github_list_conversation_comments_and_review_summaries() {
     let mut session = TestSession::new(true, 40, 140);
     session

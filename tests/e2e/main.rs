@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 mod api_graphql;
 mod api_lists;
 mod api_requests;
+mod branch_selector;
 mod cli_contract;
 mod config;
 mod custom_keybindings;

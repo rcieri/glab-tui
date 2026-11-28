@@ -1253,6 +1253,17 @@ mod tests {
     }
 
     #[test]
+    fn refreshing_a_tab_the_scope_cannot_list_leaves_no_loading_mark() {
+        let mut app = app_with_client();
+        app.scope = crate::scope::Scope::Group("grp".to_string());
+        app.active_tab = Tab::Branches;
+
+        update(&mut app, press(KeyCode::F(5), KeyModifiers::NONE));
+
+        assert!(!app.loading_tabs.contains(&Tab::Branches));
+    }
+
+    #[test]
     fn a_branch_reply_dropped_after_opening_a_pipeline_leaves_the_tab_refreshable() {
         let mut app = app_with_client();
         app.start_loading_tab(Tab::Jobs);

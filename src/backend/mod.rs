@@ -1,10 +1,14 @@
 mod bounded_output;
-pub(crate) mod browser;
+mod capabilities;
+mod cli_runner;
 pub mod gh;
 pub mod glab;
+mod local_git;
 pub(crate) mod logged_command;
 pub mod rate_limit;
 pub mod subprocess;
+
+pub use capabilities::Capabilities;
 
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
@@ -41,10 +45,12 @@ impl BackendKind {
         matches!(self, BackendKind::GitLab)
     }
 
-    /// Pausing, resuming and renaming runners. GitHub's runner API has no
-    /// pause, resume or description endpoint, so only GitLab can do it.
-    pub fn supports_runner_management(self) -> bool {
-        self.is_gitlab()
+    /// What this host's backend can do in `scope`, without building one.
+    pub fn capabilities(self, scope: &Scope) -> Capabilities {
+        match self {
+            BackendKind::GitLab => glab::capabilities(scope),
+            BackendKind::GitHub => gh::capabilities(scope),
+        }
     }
 
     pub fn term(self, key: &str) -> &'static str {
@@ -175,12 +181,94 @@ impl MrUpdate {
     }
 }
 
+/// What `WebTarget::View` opens. Each backend maps it to its CLI's
+/// subcommand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewEntity {
+    Issue,
+    MergeRequest,
+    Release,
+}
+
+/// A page `Backend::open_in_browser` opens.
+#[derive(Clone, Copy, Debug)]
+pub enum WebTarget<'a> {
+    /// An issue, MR/PR or release, opened by the CLI's `view` subcommand.
+    View {
+        project: &'a str,
+        entity: ViewEntity,
+        id: &'a str,
+    },
+    Pipeline {
+        project: &'a str,
+        id: &'a str,
+    },
+    Workflow {
+        project: &'a str,
+        workflow: &'a str,
+    },
+    Milestone {
+        project: &'a str,
+        milestone: &'a Milestone,
+    },
+    Runner {
+        scope: &'a Scope,
+        runner_id: u64,
+    },
+    Branch {
+        project: &'a str,
+        branch: &'a str,
+    },
+    Environment {
+        project: &'a str,
+        name: &'a str,
+    },
+    /// A job's page, whose URL the host listed with the job.
+    Job {
+        web_url: &'a str,
+    },
+}
+
+impl WebTarget<'_> {
+    /// How the Terminal tab labels the call that opens it.
+    pub fn log_label(&self) -> &'static str {
+        match self {
+            WebTarget::View { .. } => "Opening in Browser",
+            WebTarget::Pipeline { .. } => "Opening Pipeline in Browser",
+            WebTarget::Workflow { .. } => "Opening Workflow in Browser",
+            WebTarget::Milestone { .. } => "Opening Milestone in Browser",
+            WebTarget::Runner { .. } => "Opening Runner in Browser",
+            WebTarget::Branch { .. } => "Opening Branch in Browser",
+            WebTarget::Environment { .. } => "Opening Environment in Browser",
+            WebTarget::Job { .. } => "Opening Job in Browser",
+        }
+    }
+}
+
+/// Everything one host's CLI can do. Each area is its own sub-trait, so a
+/// feature adds methods to the area it belongs to.
 #[async_trait]
-pub trait Backend: Send + Sync {
+pub trait Backend:
+    IssueOps
+    + MrOps
+    + ReviewOps
+    + CiOps
+    + DeploymentOps
+    + RunnerOps
+    + ReleaseOps
+    + MilestoneOps
+    + NotificationOps
+    + RepoOps
+    + Send
+    + Sync
+{
     fn kind(&self) -> BackendKind;
-    fn program(&self) -> &'static str;
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
+
+    /// What this backend can do in `scope`. A method outside it returns an
+    /// error there.
+    fn capabilities(&self, scope: &Scope) -> Capabilities;
 
     /// The states to list from the server for a tab whose State column
     /// filter shows `filtered`. Rows of other states are filtered out on the
@@ -189,7 +277,11 @@ pub trait Backend: Send + Sync {
         StateQuery::All
     }
 
-    // ── Issues ──
+    async fn open_in_browser(&self, target: WebTarget<'_>) -> Result<()>;
+}
+
+#[async_trait]
+pub trait IssueOps: Send + Sync {
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
     /// in the group/org. A backend may return more states than `state` asks for.
@@ -328,8 +420,10 @@ pub trait Backend: Send + Sync {
         )
         .await
     }
+}
 
-    // ── Merge Requests ──
+#[async_trait]
+pub trait MrOps: Send + Sync {
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
     /// in the group/org. A backend may return more states than `state` asks for.
@@ -343,22 +437,6 @@ pub trait Backend: Send + Sync {
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
-    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
-    /// The viewer's "Viewed" state of every file of a pull request. GitHub
-    /// only: GitLab keeps it in browser storage, out of reach of the API.
-    async fn list_viewed_files(
-        &self,
-        project: &str,
-        iid: u64,
-    ) -> Result<crate::domain::viewed_files::PrViewedFiles>;
-    /// Marks (`true`) or unmarks files as viewed in one request and returns
-    /// the changes GitHub refused. `Err` when the reply carries no per-file
-    /// result, whatever GitHub applied. GitHub only.
-    async fn set_files_viewed(
-        &self,
-        pull_request_id: &str,
-        changes: &[(String, bool)],
-    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>>;
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;
@@ -380,32 +458,6 @@ pub trait Backend: Send + Sync {
     async fn list_merge_methods(&self, project: &str) -> Result<crate::domain::mr::MergeMethods>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
     async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()>;
-    /// Posts `comments` and `body` as one review carrying `event`.
-    async fn submit_review(
-        &self,
-        project: &str,
-        iid: u64,
-        event: ReviewEvent,
-        body: &str,
-        comments: &[DraftComment],
-    ) -> Result<()>;
-    /// `thread_id` is a GitLab discussion id, or the id of a GitHub thread's
-    /// first review comment.
-    async fn reply_to_thread(
-        &self,
-        project: &str,
-        iid: u64,
-        thread_id: &str,
-        body: &str,
-    ) -> Result<()>;
-    /// Resolve or reopen a discussion. GitLab only — see the GhBackend impl.
-    async fn set_thread_resolved(
-        &self,
-        project: &str,
-        iid: u64,
-        thread_id: &str,
-        resolved: bool,
-    ) -> Result<()>;
     async fn update_mr(&self, project: &str, iid: u64, update: &MrUpdate) -> Result<()>;
     async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
         self.update_mr(
@@ -510,17 +562,121 @@ pub trait Backend: Send + Sync {
         )
         .await
     }
+    /// For GitHub stacked PRs (`gh stack`), fetch one PR's stack: its own
+    /// position plus every entry. `Ok(None)` means the PR is not in a stack;
+    /// backends without stacked PR support (GitLab) always return it.
+    async fn get_pr_stack(
+        &self,
+        _project: &str,
+        _pr_number: u64,
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
+        Ok(None)
+    }
 
-    // ── Browser ──
-    async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()>;
-    async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()>;
-    async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()>;
-    async fn open_milestone_in_browser(&self, project: &str, milestone: &Milestone) -> Result<()>;
-    async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()>;
-    async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()>;
-    async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()>;
+    /// Stack position of each listed PR, in one query. A PR absent from the
+    /// map is not in a stack. Backends without stacked PRs return an empty map.
+    async fn list_pr_stack_summaries(
+        &self,
+        _project: &str,
+        _pr_numbers: &[u64],
+    ) -> Result<HashMap<u64, crate::domain::mr::StackInfo>> {
+        Ok(HashMap::new())
+    }
 
-    // ── Pipelines ──
+    /// Merge a stacked PR together with every open PR below it in its stack,
+    /// all or nothing. On a base branch with a merge queue the PRs are queued
+    /// instead, and the queue picks the merge method.
+    async fn merge_pr_stack(
+        &self,
+        _project: &str,
+        _pr_number: u64,
+        _method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        anyhow::bail!("stacked merge requests are GitHub-only")
+    }
+
+    // ── MR review state (approval + mergeability) ──
+    /// Bulk-fetch both readiness axes for the given MR iids.
+    ///
+    /// Returns a per-iid pair; either element may be `None`, meaning *unknown*.
+    /// An absent map entry likewise means unknown for that MR.
+    async fn list_mr_state(
+        &self,
+        project: &str,
+        iids: &[u64],
+    ) -> Result<
+        HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    >;
+}
+
+#[async_trait]
+pub trait ReviewOps: Send + Sync {
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
+    /// The viewer's "Viewed" state of every file of a pull request. GitHub
+    /// only: GitLab keeps it in browser storage, out of reach of the API.
+    async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles>;
+    /// Marks (`true`) or unmarks files as viewed in one request and returns
+    /// the changes GitHub refused. `Err` when the reply carries no per-file
+    /// result, whatever GitHub applied. GitHub only.
+    async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>>;
+    /// Posts `comments` and `body` as one review carrying `event`.
+    async fn submit_review(
+        &self,
+        project: &str,
+        iid: u64,
+        event: ReviewEvent,
+        body: &str,
+        comments: &[DraftComment],
+    ) -> Result<()>;
+    /// `thread_id` is a GitLab discussion id, or the id of a GitHub thread's
+    /// first review comment.
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()>;
+    /// Resolve or reopen a discussion. GitLab only — see the GhBackend impl.
+    async fn set_thread_resolved(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<()>;
+    /// Replaces the body of a pushed comment of MR/PR `mr_iid`.
+    async fn edit_comment(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        comment: &DiscussionNote,
+        body: &str,
+    ) -> Result<()>;
+    async fn delete_comment(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        comment: &DiscussionNote,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait CiOps: Send + Sync {
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for. For `Scope::Group`, GitHub aggregates across the
     /// org's repositories and GitLab returns `Err`.
@@ -563,40 +719,7 @@ pub trait Backend: Send + Sync {
         cursor: &TraceCursor,
     ) -> Result<TraceUpdate>;
 
-    /// For GitHub stacked PRs (`gh stack`), fetch one PR's stack: its own
-    /// position plus every entry. `Ok(None)` means the PR is not in a stack;
-    /// backends without stacked PR support (GitLab) always return it.
-    async fn get_pr_stack(
-        &self,
-        _project: &str,
-        _pr_number: u64,
-    ) -> Result<Option<crate::domain::mr::PrStack>> {
-        Ok(None)
-    }
-
-    /// Stack position of each listed PR, in one query. A PR absent from the
-    /// map is not in a stack. Backends without stacked PRs return an empty map.
-    async fn list_pr_stack_summaries(
-        &self,
-        _project: &str,
-        _pr_numbers: &[u64],
-    ) -> Result<HashMap<u64, crate::domain::mr::StackInfo>> {
-        Ok(HashMap::new())
-    }
-
-    /// Merge a stacked PR together with every open PR below it in its stack,
-    /// all or nothing. On a base branch with a merge queue the PRs are queued
-    /// instead, and the queue picks the merge method.
-    async fn merge_pr_stack(
-        &self,
-        _project: &str,
-        _pr_number: u64,
-        _method: crate::domain::mr::MergeMethod,
-    ) -> Result<()> {
-        anyhow::bail!("stacked merge requests are GitHub-only")
-    }
-
-    // ── Pipeline / Job actions ──
+    // ── Actions ──
     /// Reruns the pipeline: on GitLab its failed and canceled jobs, on GitHub the whole run.
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     /// Reruns only the jobs of `pipeline_id` that failed; errors when none did.
@@ -615,8 +738,10 @@ pub trait Backend: Send + Sync {
         workflow_file: &str,
     ) -> Result<()>;
     async fn download_artifact(&self, project: &str, ref_name: &str, job_name: &str) -> Result<()>;
+}
 
-    // ── Runners ──
+#[async_trait]
+pub trait RunnerOps: Send + Sync {
     async fn list_runners(&self, scope: &Scope, page_size: usize) -> Result<Vec<Runner>>;
     async fn pause_runner(&self, scope: &Scope, runner_id: u64) -> Result<()>;
     async fn resume_runner(&self, scope: &Scope, runner_id: u64) -> Result<()>;
@@ -626,8 +751,10 @@ pub trait Backend: Send + Sync {
         runner_id: u64,
         description: &str,
     ) -> Result<()>;
+}
 
-    // ── Releases ──
+#[async_trait]
+pub trait ReleaseOps: Send + Sync {
     async fn list_releases(&self, scope: &Scope, page_size: usize) -> Result<Vec<Release>>;
     async fn create_release(
         &self,
@@ -644,8 +771,10 @@ pub trait Backend: Send + Sync {
         description: &str,
     ) -> Result<()>;
     async fn delete_release(&self, project: &str, tag_name: &str) -> Result<()>;
+}
 
-    // ── Milestones ──
+#[async_trait]
+pub trait MilestoneOps: Send + Sync {
     async fn list_milestones(&self, scope: &Scope, page_size: usize) -> Result<Vec<Milestone>>;
     async fn list_milestone_issues(
         &self,
@@ -678,8 +807,10 @@ pub trait Backend: Send + Sync {
         due_date: Option<&str>,
     ) -> Result<()>;
     async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()>;
+}
 
-    // ── Notifications ──
+#[async_trait]
+pub trait NotificationOps: Send + Sync {
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>>;
     /// GitLab todos have no read state, so on GitLab this marks the todo done.
     async fn mark_notification_as_read(&self, id: &str) -> Result<()>;
@@ -692,14 +823,10 @@ pub trait Backend: Send + Sync {
     /// `detail_api_path`. Only GitHub notifications need it: GitLab todos
     /// carry their body in the list.
     async fn get_notification_detail(&self, detail_api_path: &str) -> Result<NotificationDetail>;
+}
 
-    // ── Branches ──
-    async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;
-    async fn create_branch(&self, project: &str, branch_name: &str, ref_branch: &str)
-    -> Result<()>;
-    async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()>;
-
-    // ── Environments / Deployments ──
+#[async_trait]
+pub trait DeploymentOps: Send + Sync {
     async fn list_environments(&self, scope: &Scope, page_size: usize) -> Result<Vec<Environment>>;
     async fn list_deployments(
         &self,
@@ -720,8 +847,20 @@ pub trait Backend: Send + Sync {
         environment: &str,
         deployment: &Deployment,
     ) -> Result<()>;
+}
 
-    // ── Labels / Members / Misc ──
+#[async_trait]
+pub trait RepoOps: Send + Sync {
+    /// Branches of the checkout glab-tui runs in, remote-tracking ones included.
+    async fn list_local_branches(&self) -> Result<Vec<String>>;
+    /// Tags of the checkout glab-tui runs in.
+    async fn list_local_tags(&self) -> Result<Vec<String>>;
+
+    async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;
+    async fn create_branch(&self, project: &str, branch_name: &str, ref_branch: &str)
+    -> Result<()>;
+    async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()>;
+
     async fn fetch_labels(
         &self,
         scope: &Scope,
@@ -734,34 +873,6 @@ pub trait Backend: Send + Sync {
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<String>>;
-
-    // ── MR review state (approval + mergeability) ──
-    /// Bulk-fetch both readiness axes for the given MR iids.
-    ///
-    /// Returns a per-iid pair; either element may be `None`, meaning *unknown*.
-    /// An absent map entry likewise means unknown for that MR.
-    async fn list_mr_state(
-        &self,
-        project: &str,
-        iids: &[u64],
-    ) -> Result<
-        HashMap<
-            u64,
-            (
-                Option<crate::domain::mr_state::ApprovalState>,
-                Option<crate::domain::mr_state::MergeabilityState>,
-            ),
-        >,
-    >;
-
-    // ── Raw API fallback ──
-    async fn raw_api(
-        &self,
-        endpoint: &str,
-        method: &str,
-        body: Option<&str>,
-        desc: &str,
-    ) -> Result<String>;
 }
 
 pub fn create_backend(project_url_contains_github: bool) -> Box<dyn Backend> {
@@ -769,5 +880,37 @@ pub fn create_backend(project_url_contains_github: bool) -> Box<dyn Backend> {
         Box::new(gh::GhBackend::new())
     } else {
         Box::new(glab::GlabBackend::new())
+    }
+}
+
+/// Percent-encodes `s` for one URL path segment: every byte outside RFC 3986
+/// unreserved characters, `/` included, becomes `%XX`.
+pub(crate) fn encode_path_segment(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0F)]));
+        }
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_path_segment;
+
+    #[test]
+    fn path_segment_encoding_escapes_everything_but_unreserved_bytes() {
+        assert_eq!(encode_path_segment("feat/x"), "feat%2Fx");
+        assert_eq!(encode_path_segment("a b"), "a%20b");
+        assert_eq!(encode_path_segment("fix#1"), "fix%231");
+        assert_eq!(encode_path_segment("100%"), "100%25");
+        assert_eq!(encode_path_segment("v1.2_x-y~z"), "v1.2_x-y~z");
+        assert_eq!(encode_path_segment("é"), "%C3%A9");
     }
 }

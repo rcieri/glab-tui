@@ -196,14 +196,6 @@ pub enum Event {
         project: String,
         result: Result<crate::domain::mr::MergeMethods, String>,
     },
-    /// A optimistic UI mutation for `runner_id` failed; restore the row's
-    /// prior `status`/`active` fields. Sender fills `status`/`active` with
-    /// the values that were on screen before the user pressed pause/resume.
-    RunnerStateRevert {
-        runner_id: u64,
-        status: String,
-        active: bool,
-    },
     /// An optimistic pipeline retry/cancel failed; restore the row's prior status.
     PipelineStatusRevert {
         pipeline_id: u64,
@@ -283,6 +275,13 @@ impl ScopedSender {
     pub fn send(&self, event: Event) -> Result<(), mpsc::error::SendError<Event>> {
         self.tx
             .send(Event::Scoped(self.generation, Box::new(event)))
+    }
+
+    /// Sends `event` untagged, so it lands after a scope switch too. For the
+    /// outcome of a mutation, which settles its Terminal-tab row and reports
+    /// its failure whatever scope is open by then.
+    pub fn send_unscoped(&self, event: Event) -> Result<(), mpsc::error::SendError<Event>> {
+        self.tx.send(event)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::backend::BackendKind;
+use crate::backend::{BackendKind, Capabilities};
 use crate::command_log::{CommandLog, Invocation, LogRow, StatusFilter, TerminalCommand};
 use crate::config::{Config, Icons, Theme};
 use crate::custom_commands::ConfigProblem;
@@ -139,14 +139,25 @@ impl Tab {
         }
     }
 
-    /// Whether this tab's list can be fetched in `scope` on `kind`.
-    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope, kind: BackendKind) -> bool {
+    /// What listing this tab's rows takes. Every backend lists the tabs
+    /// that take nothing in every scope.
+    pub fn listing_capability(&self) -> Capabilities {
         match self {
-            Tab::Runners => scope.is_repository(),
-            // GitLab has no group pipelines endpoint.
-            Tab::Pipelines => scope.is_repository() || kind.is_github(),
-            _ => true,
+            Tab::Pipelines => Capabilities::LIST_PIPELINES,
+            Tab::Runners => Capabilities::LIST_RUNNERS,
+            Tab::Releases => Capabilities::LIST_RELEASES,
+            Tab::Milestones => Capabilities::LIST_MILESTONES,
+            Tab::Branches => Capabilities::LIST_BRANCHES,
+            Tab::Environments => Capabilities::LIST_ENVIRONMENTS,
+            Tab::Issues | Tab::MergeRequests | Tab::Jobs | Tab::Todos | Tab::Terminal => {
+                Capabilities::empty()
+            }
         }
+    }
+
+    /// Whether a backend with `capabilities` can list this tab's rows.
+    pub fn is_listable_with(&self, capabilities: Capabilities) -> bool {
+        capabilities.contains(self.listing_capability())
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
@@ -6288,7 +6299,7 @@ impl App {
     }
 
     fn runner_status_cycle(&self) -> &'static [crate::domain::runners::RunnerStatus] {
-        if self.kind().supports_runner_management() {
+        if self.capabilities().contains(Capabilities::MANAGE_RUNNERS) {
             RUNNER_STATUS_CYCLE
         } else {
             UNPAUSABLE_RUNNER_STATUS_CYCLE
@@ -6689,6 +6700,30 @@ impl App {
             .unwrap_or(BackendKind::GitLab)
     }
 
+    /// What the backend can do in the current scope.
+    pub fn capabilities(&self) -> Capabilities {
+        self.kind().capabilities(&self.scope)
+    }
+
+    /// Whether `action` can act in the current scope: a tab action needs its
+    /// tab listable (bar `UNLISTED_TAB_ACTIONS`), and runner edits need
+    /// `MANAGE_RUNNERS`.
+    pub fn offers(&self, action: crate::keymap::Action) -> bool {
+        use crate::keymap::{Action, KeyContext, UNLISTED_TAB_ACTIONS};
+        let capabilities = self.capabilities();
+        let KeyContext::Tab(tab) = action.context() else {
+            return true;
+        };
+        if !tab.is_listable_with(capabilities) {
+            return UNLISTED_TAB_ACTIONS.contains(&action);
+        }
+        let edits_runner = matches!(
+            action,
+            Action::RunnersPause | Action::RunnersResume | Action::RunnersEditDescription
+        );
+        !edits_runner || capabilities.contains(Capabilities::MANAGE_RUNNERS)
+    }
+
     /// Table state of a tab not yet backed by a `ListTab`.
     fn legacy_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
         match self.active_tab {
@@ -6816,7 +6851,11 @@ impl App {
     }
 
     pub fn start_loading_tab(&mut self, tab: Tab) {
-        if !self.loading_tabs.contains(&tab) {
+        let client_cannot_list = self
+            .gitlab_client
+            .as_ref()
+            .is_some_and(|client| !tab.is_listable_with(client.capabilities(&self.scope)));
+        if !client_cannot_list {
             self.loading_tabs.insert(tab);
         }
     }
@@ -8830,7 +8869,10 @@ impl App {
         let Some(selector) = self.selector_mut() else {
             return false;
         };
-        if purpose == SelectorPurpose::Field(SelectorField::Project) {
+        if matches!(
+            purpose,
+            SelectorPurpose::Field(SelectorField::Project | SelectorField::Tag)
+        ) {
             selector.all_items.extend(items);
             selector.all_items.sort();
             selector.all_items.dedup();
@@ -10014,13 +10056,54 @@ mod tests {
     use crate::domain::milestones::Milestone;
 
     #[test]
-    fn pipelines_are_not_fetched_in_gitlab_group_scope() {
+    fn group_scope_lists_only_the_tabs_its_host_serves() {
         let group = crate::scope::Scope::Group("acme".to_string());
+        let listable = |kind: BackendKind| -> Vec<Tab> {
+            let capabilities = kind.capabilities(&group);
+            Tab::ALL
+                .into_iter()
+                .filter(|tab| tab.is_listable_with(capabilities))
+                .collect()
+        };
+        assert_eq!(
+            listable(BackendKind::GitLab),
+            [
+                Tab::Issues,
+                Tab::MergeRequests,
+                Tab::Jobs,
+                Tab::Todos,
+                Tab::Milestones,
+                Tab::Terminal
+            ]
+        );
+        assert_eq!(
+            listable(BackendKind::GitHub),
+            [
+                Tab::Issues,
+                Tab::MergeRequests,
+                Tab::Pipelines,
+                Tab::Jobs,
+                Tab::Todos,
+                Tab::Terminal
+            ]
+        );
+    }
+
+    #[test]
+    fn a_repository_lists_every_tab_and_only_gitlab_manages_runners() {
         let repo = crate::scope::Scope::Repository("acme/app".to_string());
-        assert!(!Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitLab));
-        assert!(Tab::Pipelines.is_fetchable_in(&group, BackendKind::GitHub));
-        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitLab));
-        assert!(Tab::Pipelines.is_fetchable_in(&repo, BackendKind::GitHub));
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            let capabilities = kind.capabilities(&repo);
+            assert!(
+                Tab::ALL
+                    .iter()
+                    .all(|tab| tab.is_listable_with(capabilities))
+            );
+            assert_eq!(
+                capabilities.contains(Capabilities::MANAGE_RUNNERS),
+                kind.is_gitlab()
+            );
+        }
     }
 
     #[test]
@@ -12236,6 +12319,25 @@ diff --git a/VERSION b/VERSION
         assert_eq!(selector.all_items, labels);
         assert_eq!(app.cached_labels, labels);
         assert_eq!(app.project_cache.data.labels, labels);
+    }
+
+    #[test]
+    fn local_tags_join_the_release_tags_the_tag_selector_opened_with() {
+        let mut app = App::default();
+        let request = app.next_request_tag();
+        app.open_selector(Selector {
+            purpose: SelectorPurpose::Field(SelectorField::Tag),
+            all_items: vec!["v1.0.0".to_string(), "v1.1.0".to_string()],
+            multi_select: false,
+            ..loading_labels_selector(request)
+        });
+
+        let local = vec!["v0.9.0".to_string(), "v1.1.0".to_string()];
+        assert!(app.apply_selector_items(request, Ok(local)));
+
+        let selector = app.selector().expect("selector stays open");
+        assert!(!selector.is_loading);
+        assert_eq!(selector.all_items, ["v0.9.0", "v1.0.0", "v1.1.0"]);
     }
 
     #[test]

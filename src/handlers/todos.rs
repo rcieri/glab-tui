@@ -156,9 +156,8 @@ pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>, fx: 
         return;
     };
     let entity = match todo.target() {
-        Some(NotificationTarget::MergeRequest) if app.is_github() => "pr",
-        Some(NotificationTarget::MergeRequest) => "mr",
-        _ => "issue",
+        Some(NotificationTarget::MergeRequest) => crate::backend::ViewEntity::MergeRequest,
+        _ => crate::backend::ViewEntity::Issue,
     };
     let project_path = if todo.project_path.is_empty() {
         app.scope.as_str().to_string()
@@ -172,7 +171,11 @@ pub fn open_selected_in_browser(app: &mut App, tx: &UnboundedSender<Event>, fx: 
     let tx = tx.clone();
     fx.spawn(async move {
         let result = client
-            .open_in_browser(&project_path, entity, &target_iid)
+            .open_in_browser(crate::backend::WebTarget::View {
+                project: &project_path,
+                entity,
+                id: &target_iid,
+            })
             .await;
         let _ = tx.send(Event::CommandCompleted(
             Tab::Todos,

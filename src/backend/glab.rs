@@ -1,8 +1,10 @@
-use super::Backend;
-use super::bounded_output::{CapturedStdout, output_bounded};
-use super::browser::open_url;
-use super::logged_command::{ChildOutput, LoggedCommand};
-use crate::command_log::{Invocation, Program};
+use super::bounded_output::CapturedStdout;
+use super::cli_runner::CliRunner;
+use super::{
+    Backend, Capabilities, CiOps, DeploymentOps, IssueOps, MilestoneOps, MrOps, NotificationOps,
+    ReleaseOps, RepoOps, ReviewOps, RunnerOps, ViewEntity, WebTarget,
+};
+use crate::command_log::Program;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
@@ -26,9 +28,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
-use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::task::JoinSet;
 
 /// GitLab rejects a job log `byte_limit` above 500 KiB.
 const GITLAB_TRACE_RANGE_MAX_BYTES: usize = 500 * 1024;
@@ -538,113 +538,6 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
     Ok(out)
 }
 
-/// Run one `glab` invocation and log it to the terminal pane.
-///
-/// Free-standing rather than a method so its future is `'static` and can be
-/// spawned: `tx` is the only state a command needs from `GlabBackend`.
-async fn run_glab_command(
-    tx: Option<UnboundedSender<Event>>,
-    args: Vec<String>,
-    desc: String,
-) -> Result<String> {
-    let stdout = run_glab_bounded(tx, args, desc, None).await?;
-    Ok(String::from_utf8(stdout.bytes)?)
-}
-
-/// `run_glab_command` keeping at most `max_stdout_bytes` of its output.
-async fn run_glab_bounded(
-    tx: Option<UnboundedSender<Event>>,
-    args: Vec<String>,
-    desc: String,
-    max_stdout_bytes: Option<usize>,
-) -> Result<CapturedStdout> {
-    super::rate_limit::execute_with_retry(|| {
-        let tx = tx.clone();
-        let args = args.clone();
-        let desc = desc.clone();
-        async move { run_glab_command_inner(tx, args, desc, max_stdout_bytes).await }
-    })
-    .await
-}
-
-async fn run_glab_command_inner(
-    tx: Option<UnboundedSender<Event>>,
-    args: Vec<String>,
-    desc: String,
-    max_stdout_bytes: Option<usize>,
-) -> Result<CapturedStdout> {
-    let logged = LoggedCommand::start(&desc, Invocation::new(Program::Glab, &args));
-
-    let output = match output_bounded(Command::new("glab").args(&args), max_stdout_bytes).await {
-        Ok(output) => output,
-        Err(e) => {
-            logged.finish(
-                tx.as_ref(),
-                format!("Failed: {e}"),
-                ChildOutput::NOT_STARTED,
-            );
-            return Err(e.into());
-        }
-    };
-
-    if output.succeeded() {
-        logged.finish(tx.as_ref(), "Success".to_string(), output.child_output());
-        Ok(output.stdout)
-    } else {
-        let child_output = output.child_output();
-        let reason = logged.failure_reason(&child_output);
-        logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
-        anyhow::bail!("glab command failed: {reason}")
-    }
-}
-
-/// Issue every request concurrently and return each response paired with the
-/// index of the request that produced it, in ascending index order.
-///
-/// At most `MAX_CONCURRENT_REQUESTS` subprocesses run at once; beyond that the
-/// fetch degrades to waves rather than a subprocess storm. A task that panics
-/// or is cancelled yields an `Err` for its index rather than a silently
-/// missing response, so no caller can mistake it for a short page.
-async fn run_glab_concurrent(
-    tx: Option<UnboundedSender<Event>>,
-    requests: Vec<Vec<String>>,
-    desc: &str,
-) -> Vec<(usize, Result<String>)> {
-    let total = requests.len();
-    let mut tasks = JoinSet::new();
-
-    for (index, args) in requests.into_iter().enumerate() {
-        let tx = tx.clone();
-        let desc = desc.to_string();
-        tasks.spawn(async move { (index, run_glab_command(tx, args, desc).await) });
-    }
-
-    let mut slots: Vec<Option<Result<String>>> = (0..total).map(|_| None).collect();
-    let mut join_failure: Option<String> = None;
-    while let Some(joined) = tasks.join_next().await {
-        match joined {
-            Ok((index, response)) => slots[index] = Some(response),
-            // A panicked or cancelled task never reports its index; the empty
-            // slot it leaves behind is filled in below.
-            Err(e) => join_failure = Some(e.to_string()),
-        }
-    }
-
-    slots
-        .into_iter()
-        .enumerate()
-        .map(|(index, slot)| {
-            let response = slot.unwrap_or_else(|| {
-                let cause = join_failure
-                    .clone()
-                    .unwrap_or_else(|| "task did not complete".to_string());
-                Err(anyhow::anyhow!("request {} failed: {}", index + 1, cause))
-            });
-            (index, response)
-        })
-        .collect()
-}
-
 /// Assemble indexed responses into index order, failing on the first error.
 ///
 /// Mirrors the `?` the sequential page loops used: one failed page fails the
@@ -773,7 +666,7 @@ fn parse_gitlab_todos(raw: &str) -> Result<Vec<Notification>> {
 }
 
 pub struct GlabBackend {
-    tx: Option<UnboundedSender<Event>>,
+    cli: CliRunner,
 }
 
 /// Projects whose GitLab answered a ranged job log read with the whole log:
@@ -835,20 +728,13 @@ fn classify_ranged_reply<'a>(
 
 impl GlabBackend {
     pub fn new() -> Self {
-        Self { tx: None }
+        Self {
+            cli: CliRunner::new(Program::Glab),
+        }
     }
 
     fn encode_path(project: &str) -> String {
         project.replace('/', "%2F")
-    }
-
-    async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
-        run_glab_command(
-            self.tx.clone(),
-            args.iter().map(|a| (*a).to_string()).collect(),
-            desc.to_string(),
-        )
-        .await
     }
 
     /// Fill tags, version, last contact and IP from one GraphQL query over the
@@ -870,7 +756,8 @@ impl GlabBackend {
              }} }} }} }}"
         );
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &["api", "graphql", "-f", &format!("query={query}")],
                 "Fetching Runner Details",
             )
@@ -911,8 +798,10 @@ impl GlabBackend {
                 ]
             })
             .collect();
-        let responses =
-            run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipeline Details").await;
+        let responses = self
+            .cli
+            .run_concurrent(requests, "Fetching Pipeline Details")
+            .await;
 
         let details: HashMap<u64, GiPipelineDetails> = responses
             .into_iter()
@@ -939,7 +828,8 @@ impl GlabBackend {
             id: u64,
         }
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "ci",
                     "list",
@@ -966,7 +856,8 @@ impl GlabBackend {
             iid: u64,
         }
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "mr",
                     "list",
@@ -986,21 +877,6 @@ impl GlabBackend {
         Ok(mr.map(|m| m.iid))
     }
 
-    async fn run_glab_capped(
-        &self,
-        args: &[&str],
-        desc: &str,
-        max_stdout_bytes: usize,
-    ) -> Result<CapturedStdout> {
-        run_glab_bounded(
-            self.tx.clone(),
-            args.iter().map(|a| (*a).to_string()).collect(),
-            desc.to_string(),
-            Some(max_stdout_bytes),
-        )
-        .await
-    }
-
     fn job_trace_endpoint(project: &str, job_id: u64) -> String {
         format!(
             "/projects/{}/jobs/{}/trace",
@@ -1010,7 +886,8 @@ impl GlabBackend {
     }
 
     async fn read_job_trace(&self, endpoint: &str) -> Result<CapturedStdout> {
-        self.run_glab_capped(&["api", endpoint], "Fetching Job Log", JOB_TRACE_MAX_BYTES)
+        self.cli
+            .run_capped(&["api", endpoint], "Fetching Job Log", JOB_TRACE_MAX_BYTES)
             .await
     }
 
@@ -1038,7 +915,8 @@ impl GlabBackend {
                 read_to.resume_offset()
             );
             let reply = self
-                .run_glab_capped(&["api", &ranged], "Following Job Log", limit)
+                .cli
+                .run_capped(&["api", &ranged], "Following Job Log", limit)
                 .await?;
             match classify_ranged_reply(&read_to, &reply, limit) {
                 RangedReply::Chunk(chunk) => {
@@ -1170,7 +1048,8 @@ impl GlabBackend {
             diff_refs: Option<GiDiffRefs>,
         }
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "mr",
                     "view",
@@ -1197,7 +1076,8 @@ impl GlabBackend {
             squash: bool,
         }
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "mr",
                     "view",
@@ -1218,19 +1098,20 @@ impl GlabBackend {
     /// Flips the MR's squash flag: glab's `--squash-before-merge` toggles it
     /// and cannot set a value.
     async fn toggle_mr_squash(&self, project: &str, iid: u64, label: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--squash-before-merge",
-                "-R",
-                project,
-            ],
-            label,
-        )
-        .await
-        .map(drop)
+        self.cli
+            .run(
+                &[
+                    "mr",
+                    "update",
+                    &iid.to_string(),
+                    "--squash-before-merge",
+                    "-R",
+                    project,
+                ],
+                label,
+            )
+            .await
+            .map(drop)
     }
 
     /// Creates one draft note per comment, then publishes them. `created`
@@ -1250,19 +1131,21 @@ impl GlabBackend {
         for comment in comments {
             let payload = gitlab_draft_note_payload(comment, diff_refs).to_string();
             let id = self
+                .cli
                 .raw_api(endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
                 .await
                 .and_then(|out| Ok(serde_json::from_str::<GiDraftNote>(&out)?.id))
                 .with_context(|| format!("draft note on {} failed", comment.file_path))?;
             created.push(id);
         }
-        self.raw_api(
-            &format!("{endpoint}/bulk_publish"),
-            "POST",
-            None,
-            "PUBLISHING DRAFT NOTES",
-        )
-        .await?;
+        self.cli
+            .raw_api(
+                &format!("{endpoint}/bulk_publish"),
+                "POST",
+                None,
+                "PUBLISHING DRAFT NOTES",
+            )
+            .await?;
         Ok(())
     }
 
@@ -1274,6 +1157,7 @@ impl GlabBackend {
         let mut undeleted = 0;
         for id in ids {
             let deleted = self
+                .cli
                 .raw_api(
                     &format!("{endpoint}/{id}"),
                     "DELETE",
@@ -1423,21 +1307,7 @@ fn parse_mr_discussions(raw: &str) -> Result<Vec<DiscussionNote>> {
 }
 
 #[async_trait]
-impl Backend for GlabBackend {
-    fn kind(&self) -> super::BackendKind {
-        super::BackendKind::GitLab
-    }
-
-    fn program(&self) -> &'static str {
-        "glab"
-    }
-
-    fn set_tx(&mut self, tx: UnboundedSender<Event>) {
-        self.tx = Some(tx);
-    }
-
-    // ── Issues ──
-
+impl IssueOps for GlabBackend {
     async fn list_issues(
         &self,
         scope: &Scope,
@@ -1472,7 +1342,7 @@ impl Backend for GlabBackend {
                     })
                     .collect();
                 let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "Fetching Issues").await,
+                    self.cli.run_concurrent(requests, "Fetching Issues").await,
                 )?;
 
                 let mut all: Vec<Issue> = Vec::new();
@@ -1502,7 +1372,9 @@ impl Backend for GlabBackend {
                     })
                     .collect();
                 let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "FETCHING GROUP ISSUES").await,
+                    self.cli
+                        .run_concurrent(requests, "FETCHING GROUP ISSUES")
+                        .await,
                 )?;
 
                 let mut all: Vec<Issue> = Vec::new();
@@ -1524,7 +1396,8 @@ impl Backend for GlabBackend {
 
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "issue",
                     "view",
@@ -1541,29 +1414,32 @@ impl Backend for GlabBackend {
     }
 
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["issue", "close", &iid.to_string(), "-R", project],
-            "CLOSING ISSUE",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["issue", "close", &iid.to_string(), "-R", project],
+                "CLOSING ISSUE",
+            )
+            .await?;
         Ok(())
     }
 
     async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["issue", "reopen", &iid.to_string(), "-R", project],
-            "REOPENING ISSUE",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["issue", "reopen", &iid.to_string(), "-R", project],
+                "REOPENING ISSUE",
+            )
+            .await?;
         Ok(())
     }
 
     async fn delete_issue(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["issue", "delete", &iid.to_string(), "-R", project, "-y"],
-            "DELETING ISSUE",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["issue", "delete", &iid.to_string(), "-R", project, "-y"],
+                "DELETING ISSUE",
+            )
+            .await?;
         Ok(())
     }
 
@@ -1577,6 +1453,7 @@ impl Backend for GlabBackend {
         let endpoint =
             format!("/projects/{encoded}/issues/{issue_iid}/closed_by?per_page={page_size}");
         let raw = self
+            .cli
             .raw_api(&endpoint, "GET", None, "Fetching Related MRs")
             .await?;
         let items: Vec<GiClosedBy> = serde_json::from_str(&raw)?;
@@ -1632,7 +1509,7 @@ impl Backend for GlabBackend {
             args.push(weight.into());
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "CREATING ISSUE").await?;
+        self.cli.run(&args_refs, "CREATING ISSUE").await?;
         Ok(())
     }
 
@@ -1694,12 +1571,13 @@ impl Backend for GlabBackend {
             }
         }
         let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-        self.run_glab(&args_refs, "UPDATING ISSUE").await?;
+        self.cli.run(&args_refs, "UPDATING ISSUE").await?;
         Ok(())
     }
+}
 
-    // ── Merge Requests ──
-
+#[async_trait]
+impl MrOps for GlabBackend {
     async fn list_mrs(
         &self,
         scope: &Scope,
@@ -1734,7 +1612,7 @@ impl Backend for GlabBackend {
                     })
                     .collect();
                 let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "Fetching MRs").await,
+                    self.cli.run_concurrent(requests, "Fetching MRs").await,
                 )?;
 
                 let mut all: Vec<MergeRequest> = Vec::new();
@@ -1881,7 +1759,8 @@ impl Backend for GlabBackend {
                     })
                     .collect();
                 let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "FETCHING GROUP MERGE REQUESTS")
+                    self.cli
+                        .run_concurrent(requests, "FETCHING GROUP MERGE REQUESTS")
                         .await,
                 )?;
 
@@ -1906,7 +1785,8 @@ impl Backend for GlabBackend {
 
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "mr",
                     "view",
@@ -2040,7 +1920,8 @@ impl Backend for GlabBackend {
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
         let diff = self
-            .run_glab_capped(
+            .cli
+            .run_capped(
                 &["mr", "diff", &iid.to_string(), "-R", project],
                 "Fetching MR Diff",
                 MR_DIFF_MAX_BYTES,
@@ -2050,85 +1931,53 @@ impl Backend for GlabBackend {
         Ok(String::from_utf8(diff.bytes)?)
     }
 
-    async fn list_viewed_files(
-        &self,
-        _project: &str,
-        _iid: u64,
-    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
-        // GitLab keeps "Viewed" checkboxes in browser localStorage only; no
-        // API exposes them.
-        anyhow::bail!("GitLab has no server-side viewed-file state")
-    }
-
-    async fn set_files_viewed(
-        &self,
-        _pull_request_id: &str,
-        _changes: &[(String, bool)],
-    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
-        anyhow::bail!("GitLab has no server-side viewed-file state")
-    }
-
-    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
-        let raw = self
-            .run_glab(
-                &[
-                    "mr",
-                    "note",
-                    "list",
-                    &mr_iid.to_string(),
-                    "--output",
-                    "json",
-                    "-R",
-                    project,
-                ],
-                "Fetching MR Notes",
+    async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.cli
+            .run(
+                &["mr", "close", &iid.to_string(), "-R", project],
+                "CLOSING MR",
             )
             .await?;
-        parse_mr_discussions(&raw)
-    }
-
-    async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["mr", "close", &iid.to_string(), "-R", project],
-            "CLOSING MR",
-        )
-        .await?;
         Ok(())
     }
 
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["mr", "reopen", &iid.to_string(), "-R", project],
-            "REOPENING MR",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["mr", "reopen", &iid.to_string(), "-R", project],
+                "REOPENING MR",
+            )
+            .await?;
         Ok(())
     }
 
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["mr", "delete", &iid.to_string(), "-R", project, "-y"],
-            "DELETING MR",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["mr", "delete", &iid.to_string(), "-R", project, "-y"],
+                "DELETING MR",
+            )
+            .await?;
         Ok(())
     }
 
     async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["mr", "approve", &iid.to_string(), "-R", project],
-            "APPROVING MR",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["mr", "approve", &iid.to_string(), "-R", project],
+                "APPROVING MR",
+            )
+            .await?;
         Ok(())
     }
 
     async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["mr", "revoke", &iid.to_string(), "-R", project],
-            "REVOKING MR APPROVAL",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["mr", "revoke", &iid.to_string(), "-R", project],
+                "REVOKING MR APPROVAL",
+            )
+            .await?;
         Ok(())
     }
 
@@ -2143,6 +1992,7 @@ impl Backend for GlabBackend {
             "/projects/{encoded}/merge_requests/{mr_iid}/closes_issues?per_page={page_size}"
         );
         let raw = self
+            .cli
             .raw_api(&endpoint, "GET", None, "Fetching Related Issues")
             .await?;
         #[derive(Deserialize)]
@@ -2164,11 +2014,12 @@ impl Backend for GlabBackend {
     }
 
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
-        self.run_glab(
-            &["mr", "rebase", &iid.to_string(), "-R", project],
-            "REBASING MR",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["mr", "rebase", &iid.to_string(), "-R", project],
+                "REBASING MR",
+            )
+            .await?;
         Ok(())
     }
 
@@ -2183,12 +2034,13 @@ impl Backend for GlabBackend {
             .map(|batch| Self::mr_state_batch_args(project, batch))
             .collect();
 
-        let parsed: Vec<(usize, Result<MrStateMap>)> =
-            run_glab_concurrent(self.tx.clone(), requests, "FETCHING MR STATE")
-                .await
-                .into_iter()
-                .map(|(index, raw)| (index, raw.and_then(|r| parse_mr_state_response(&r))))
-                .collect();
+        let parsed: Vec<(usize, Result<MrStateMap>)> = self
+            .cli
+            .run_concurrent(requests, "FETCHING MR STATE")
+            .await
+            .into_iter()
+            .map(|(index, raw)| (index, raw.and_then(|r| parse_mr_state_response(&r))))
+            .collect();
 
         // Unlike the paged list fetches, a single failed batch must not fail
         // the whole call — see `merge_tolerating_partial_failure`.
@@ -2221,7 +2073,7 @@ impl Backend for GlabBackend {
         }
         let args = Self::merge_args(project, iid, method, delete_branch, auto_merge, sha);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        if let Err(merge_error) = self.run_glab(&args_refs, "MERGING MR").await {
+        if let Err(merge_error) = self.cli.run(&args_refs, "MERGING MR").await {
             if clears_squash
                 && let Err(restore_error) = self
                     .toggle_mr_squash(project, iid, "RESTORING MR SQUASH")
@@ -2238,7 +2090,8 @@ impl Backend for GlabBackend {
 
     async fn list_merge_methods(&self, project: &str) -> Result<MergeMethods> {
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &["repo", "view", "--output", "json", "--", project],
                 "Reading Merge Settings",
             )
@@ -2259,7 +2112,7 @@ impl Backend for GlabBackend {
             args.extend(["-R".into(), project.into()]);
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, label).await?;
+        self.cli.run(&args_refs, label).await?;
         Ok(())
     }
 
@@ -2315,111 +2168,7 @@ impl Backend for GlabBackend {
             args.push(iid.to_string());
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "CREATING MR").await?;
-        Ok(())
-    }
-
-    async fn submit_review(
-        &self,
-        project: &str,
-        iid: u64,
-        event: ReviewEvent,
-        body: &str,
-        comments: &[DraftComment],
-    ) -> Result<()> {
-        if !comments.is_empty() {
-            let diff_refs = self.mr_diff_refs(project, iid).await?;
-            let endpoint = format!(
-                "/projects/{}/merge_requests/{}/draft_notes",
-                Self::encode_path(project),
-                iid
-            );
-            let mut created = Vec::with_capacity(comments.len());
-            if let Err(error) = self
-                .publish_draft_notes(&endpoint, comments, &diff_refs, &mut created)
-                .await
-            {
-                return Err(match self.delete_draft_notes(&endpoint, &created).await {
-                    0 => error,
-                    undeleted => error.context(format!(
-                        "{undeleted} draft note(s) of this review could not be deleted from !{iid}"
-                    )),
-                });
-            }
-        }
-        if event == ReviewEvent::Approve {
-            self.approve_mr(project, iid).await?;
-        }
-        if !body.trim().is_empty() {
-            self.run_glab(
-                &[
-                    "mr",
-                    "note",
-                    "create",
-                    &iid.to_string(),
-                    "-R",
-                    project,
-                    "-m",
-                    body,
-                ],
-                "ADDING REVIEW SUMMARY",
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
-    async fn reply_to_thread(
-        &self,
-        project: &str,
-        iid: u64,
-        thread_id: &str,
-        body: &str,
-    ) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "note",
-                "create",
-                &iid.to_string(),
-                "-R",
-                project,
-                "--reply",
-                thread_id,
-                "-m",
-                body,
-            ],
-            "REPLYING TO THREAD",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn set_thread_resolved(
-        &self,
-        project: &str,
-        iid: u64,
-        thread_id: &str,
-        resolved: bool,
-    ) -> Result<()> {
-        let (action, desc) = if resolved {
-            ("resolve", "RESOLVING THREAD")
-        } else {
-            ("reopen", "REOPENING THREAD")
-        };
-        self.run_glab(
-            &[
-                "mr",
-                "note",
-                action,
-                thread_id,
-                &iid.to_string(),
-                "-R",
-                project,
-            ],
-            desc,
-        )
-        .await?;
+        self.cli.run(&args_refs, "CREATING MR").await?;
         Ok(())
     }
 
@@ -2473,12 +2222,189 @@ impl Backend for GlabBackend {
             }
         }
         let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-        self.run_glab(&args_refs, "UPDATING MR").await?;
+        self.cli.run(&args_refs, "UPDATING MR").await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ReviewOps for GlabBackend {
+    async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
+        let raw = self
+            .cli
+            .run(
+                &[
+                    "mr",
+                    "note",
+                    "list",
+                    &mr_iid.to_string(),
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                ],
+                "Fetching MR Notes",
+            )
+            .await?;
+        parse_mr_discussions(&raw)
+    }
+
+    async fn list_viewed_files(
+        &self,
+        _project: &str,
+        _iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        // GitLab keeps "Viewed" checkboxes in browser localStorage only; no
+        // API exposes them.
+        anyhow::bail!("GitLab has no server-side viewed-file state")
+    }
+
+    async fn set_files_viewed(
+        &self,
+        _pull_request_id: &str,
+        _changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+        anyhow::bail!("GitLab has no server-side viewed-file state")
+    }
+
+    async fn submit_review(
+        &self,
+        project: &str,
+        iid: u64,
+        event: ReviewEvent,
+        body: &str,
+        comments: &[DraftComment],
+    ) -> Result<()> {
+        if !comments.is_empty() {
+            let diff_refs = self.mr_diff_refs(project, iid).await?;
+            let endpoint = format!(
+                "/projects/{}/merge_requests/{}/draft_notes",
+                Self::encode_path(project),
+                iid
+            );
+            let mut created = Vec::with_capacity(comments.len());
+            if let Err(error) = self
+                .publish_draft_notes(&endpoint, comments, &diff_refs, &mut created)
+                .await
+            {
+                return Err(match self.delete_draft_notes(&endpoint, &created).await {
+                    0 => error,
+                    undeleted => error.context(format!(
+                        "{undeleted} draft note(s) of this review could not be deleted from !{iid}"
+                    )),
+                });
+            }
+        }
+        if event == ReviewEvent::Approve {
+            self.approve_mr(project, iid).await?;
+        }
+        if !body.trim().is_empty() {
+            self.cli
+                .run(
+                    &[
+                        "mr",
+                        "note",
+                        "create",
+                        &iid.to_string(),
+                        "-R",
+                        project,
+                        "-m",
+                        body,
+                    ],
+                    "ADDING REVIEW SUMMARY",
+                )
+                .await?;
+        }
         Ok(())
     }
 
-    // ── Pipelines ──
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()> {
+        self.cli
+            .run(
+                &[
+                    "mr",
+                    "note",
+                    "create",
+                    &iid.to_string(),
+                    "-R",
+                    project,
+                    "--reply",
+                    thread_id,
+                    "-m",
+                    body,
+                ],
+                "REPLYING TO THREAD",
+            )
+            .await?;
+        Ok(())
+    }
 
+    async fn set_thread_resolved(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<()> {
+        let (action, desc) = if resolved {
+            ("resolve", "RESOLVING THREAD")
+        } else {
+            ("reopen", "REOPENING THREAD")
+        };
+        self.cli
+            .run(
+                &[
+                    "mr",
+                    "note",
+                    action,
+                    thread_id,
+                    &iid.to_string(),
+                    "-R",
+                    project,
+                ],
+                desc,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn edit_comment(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        comment: &DiscussionNote,
+        body: &str,
+    ) -> Result<()> {
+        let endpoint = gitlab_note_endpoint(project, mr_iid, comment)?;
+        let payload = serde_json::json!({ "body": body }).to_string();
+        self.cli
+            .raw_api(&endpoint, "PUT", Some(&payload), "Editing Comment")
+            .await
+            .map(|_| ())
+    }
+
+    async fn delete_comment(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        comment: &DiscussionNote,
+    ) -> Result<()> {
+        let endpoint = gitlab_note_endpoint(project, mr_iid, comment)?;
+        self.cli
+            .raw_api(&endpoint, "DELETE", None, "Deleting Comment")
+            .await
+            .map(|_| ())
+    }
+}
+
+#[async_trait]
+impl CiOps for GlabBackend {
     async fn list_pipelines(
         &self,
         scope: &Scope,
@@ -2501,7 +2427,9 @@ impl Backend for GlabBackend {
                     })
                     .collect();
                 let responses = ordered_or_first_error(
-                    run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
+                    self.cli
+                        .run_concurrent(requests, "Fetching Pipelines")
+                        .await,
                 )?;
 
                 #[derive(Deserialize)]
@@ -2571,6 +2499,7 @@ impl Backend for GlabBackend {
         let endpoint =
             format!("/projects/{encoded}/pipelines/{pipeline_id}/jobs?per_page={page_size}");
         let raw = self
+            .cli
             .raw_api(&endpoint, "GET", None, "Fetching Jobs")
             .await?;
         #[derive(Deserialize)]
@@ -2646,6 +2575,7 @@ impl Backend for GlabBackend {
         let endpoint =
             format!("/projects/{encoded}/pipelines/{pipeline_id}/bridges?per_page={page_size}");
         let raw = self
+            .cli
             .raw_api(&endpoint, "GET", None, "Fetching Bridges")
             .await?;
         Ok(serde_json::from_str(&raw)?)
@@ -2682,7 +2612,8 @@ impl Backend for GlabBackend {
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{encoded}/pipelines/{pipeline_id}/retry");
-        self.raw_api(&endpoint, "POST", None, "Retrying Pipeline")
+        self.cli
+            .raw_api(&endpoint, "POST", None, "Retrying Pipeline")
             .await?;
         Ok(())
     }
@@ -2703,6 +2634,7 @@ impl Backend for GlabBackend {
                 "/projects/{encoded}/pipelines/{pipeline_id}/jobs?scope[]=failed&per_page={GITLAB_MAX_PER_PAGE}&page={page}"
             );
             let raw = self
+                .cli
                 .raw_api(&endpoint, "GET", None, "Fetching Failed Jobs")
                 .await?;
             let batch: Vec<FailedJob> =
@@ -2737,43 +2669,47 @@ impl Backend for GlabBackend {
     }
 
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
-        self.run_glab(
-            &[
-                "ci",
-                "cancel",
-                "pipeline",
-                &pipeline_id.to_string(),
-                "-R",
-                project,
-            ],
-            "Cancelling Pipeline",
-        )
-        .await?;
+        self.cli
+            .run(
+                &[
+                    "ci",
+                    "cancel",
+                    "pipeline",
+                    &pipeline_id.to_string(),
+                    "-R",
+                    project,
+                ],
+                "Cancelling Pipeline",
+            )
+            .await?;
         Ok(())
     }
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
-        self.run_glab(
-            &["ci", "retry", &job_id.to_string(), "-R", project],
-            "Retrying Job",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["ci", "retry", &job_id.to_string(), "-R", project],
+                "Retrying Job",
+            )
+            .await?;
         Ok(())
     }
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
-        self.run_glab(
-            &["ci", "cancel", "job", &job_id.to_string(), "-R", project],
-            "Cancelling Job",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["ci", "cancel", "job", &job_id.to_string(), "-R", project],
+                "Cancelling Job",
+            )
+            .await?;
         Ok(())
     }
 
     async fn start_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{encoded}/jobs/{job_id}/play");
-        self.raw_api(&endpoint, "POST", None, "Starting Job")
+        self.cli
+            .raw_api(&endpoint, "POST", None, "Starting Job")
             .await?;
         Ok(())
     }
@@ -2808,26 +2744,28 @@ impl Backend for GlabBackend {
             args.push(format!("{k}:{v}"));
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "RUNNING PIPELINE").await?;
+        self.cli.run(&args_refs, "RUNNING PIPELINE").await?;
         Ok(())
     }
 
     async fn download_artifact(&self, project: &str, ref_name: &str, job_name: &str) -> Result<()> {
         let args = Self::download_artifact_args(project, ref_name, job_name);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "DOWNLOADING ARTIFACT").await?;
+        self.cli.run(&args_refs, "DOWNLOADING ARTIFACT").await?;
         Ok(())
     }
+}
 
-    // ── Runners ──
-
+#[async_trait]
+impl RunnerOps for GlabBackend {
     async fn list_runners(&self, scope: &Scope, page_size: usize) -> Result<Vec<Runner>> {
         let project = match scope {
             Scope::Repository(p) => p,
             Scope::Group(_) => return Err(anyhow::anyhow!("Group-level runners not supported")),
         };
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "runner",
                     "list",
@@ -2881,7 +2819,7 @@ impl Backend for GlabBackend {
             args.push("-R");
             args.push(proj);
         }
-        self.run_glab(&args, "PAUSING RUNNER").await?;
+        self.cli.run(&args, "PAUSING RUNNER").await?;
         Ok(())
     }
 
@@ -2896,7 +2834,7 @@ impl Backend for GlabBackend {
             args.push("-R");
             args.push(proj);
         }
-        self.run_glab(&args, "RESUMING RUNNER").await?;
+        self.cli.run(&args, "RESUMING RUNNER").await?;
         Ok(())
     }
 
@@ -2908,20 +2846,23 @@ impl Backend for GlabBackend {
     ) -> Result<()> {
         let endpoint = format!("runners/{runner_id}");
         let body = serde_json::json!({ "description": description }).to_string();
-        self.raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
+        self.cli
+            .raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
             .await?;
         Ok(())
     }
+}
 
-    // ── Releases ──
-
+#[async_trait]
+impl ReleaseOps for GlabBackend {
     async fn list_releases(&self, scope: &Scope, page_size: usize) -> Result<Vec<Release>> {
         let project = match scope {
             Scope::Repository(p) => p,
             Scope::Group(_) => return Err(anyhow::anyhow!("Group-level releases not supported")),
         };
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "release",
                     "list",
@@ -2988,21 +2929,22 @@ impl Backend for GlabBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
-        self.run_glab(
-            &[
-                "release",
-                "create",
-                tag,
-                "-R",
-                project,
-                "-n",
-                name,
-                "-N",
-                description,
-            ],
-            "CREATING RELEASE",
-        )
-        .await?;
+        self.cli
+            .run(
+                &[
+                    "release",
+                    "create",
+                    tag,
+                    "-R",
+                    project,
+                    "-n",
+                    name,
+                    "-N",
+                    description,
+                ],
+                "CREATING RELEASE",
+            )
+            .await?;
         Ok(())
     }
 
@@ -3013,63 +2955,68 @@ impl Backend for GlabBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
-        self.run_glab(
-            &[
-                "release",
-                "create",
-                tag_name,
-                "-R",
-                project,
-                "-n",
-                name,
-                "-N",
-                description,
-            ],
-            "Updating Release",
-        )
-        .await?;
+        self.cli
+            .run(
+                &[
+                    "release",
+                    "create",
+                    tag_name,
+                    "-R",
+                    project,
+                    "-n",
+                    name,
+                    "-N",
+                    description,
+                ],
+                "Updating Release",
+            )
+            .await?;
         Ok(())
     }
 
     async fn delete_release(&self, project: &str, tag_name: &str) -> Result<()> {
-        self.run_glab(
-            &["release", "delete", tag_name, "-R", project, "-y"],
-            "Deleting Release",
-        )
-        .await?;
+        self.cli
+            .run(
+                &["release", "delete", tag_name, "-R", project, "-y"],
+                "Deleting Release",
+            )
+            .await?;
         Ok(())
     }
+}
 
-    // ── Milestones ──
-
+#[async_trait]
+impl MilestoneOps for GlabBackend {
     async fn list_milestones(&self, scope: &Scope, page_size: usize) -> Result<Vec<Milestone>> {
         let raw = match scope {
             Scope::Repository(project) => {
-                self.run_glab(
-                    &[
-                        "milestone",
-                        "list",
-                        "--output",
-                        "json",
-                        "--project",
-                        project,
-                        "--per-page",
-                        &page_size.to_string(),
-                    ],
-                    "Fetching Milestones",
-                )
-                .await?
+                self.cli
+                    .run(
+                        &[
+                            "milestone",
+                            "list",
+                            "--output",
+                            "json",
+                            "--project",
+                            project,
+                            "--per-page",
+                            &page_size.to_string(),
+                        ],
+                        "Fetching Milestones",
+                    )
+                    .await?
             }
             Scope::Group(group) => {
                 let encoded_group = group.replace('/', "%2F");
-                self.run_glab(
-                    &[
-                        "api",
-                        &format!("groups/{encoded_group}/milestones?per_page={page_size}"),
-                    ],
-                    "Fetching Group Milestones",
-                )
-                .await?
+                self.cli
+                    .run(
+                        &[
+                            "api",
+                            &format!("groups/{encoded_group}/milestones?per_page={page_size}"),
+                        ],
+                        "Fetching Group Milestones",
+                    )
+                    .await?
             }
         };
         #[derive(Deserialize, Default)]
@@ -3123,7 +3070,8 @@ impl Backend for GlabBackend {
         // milestone progress render as 0%. The title is resolved at the call
         // site and passed through the domain layer.
         let raw = self
-            .run_glab(
+            .cli
+            .run(
                 &[
                     "issue",
                     "list",
@@ -3170,7 +3118,8 @@ impl Backend for GlabBackend {
             body_val["due_date"] = serde_json::Value::String(dd.to_string());
         }
         let body = body_val.to_string();
-        self.raw_api(&endpoint, "POST", Some(&body), "CREATING MILESTONE")
+        self.cli
+            .raw_api(&endpoint, "POST", Some(&body), "CREATING MILESTONE")
             .await?;
         Ok(())
     }
@@ -3187,19 +3136,20 @@ impl Backend for GlabBackend {
         } else {
             "REOPENING MILESTONE"
         };
-        self.run_glab(
-            &[
-                "milestone",
-                "edit",
-                &milestone.id.to_string(),
-                "--state",
-                state,
-                "-R",
-                project,
-            ],
-            desc,
-        )
-        .await?;
+        self.cli
+            .run(
+                &[
+                    "milestone",
+                    "edit",
+                    &milestone.id.to_string(),
+                    "--state",
+                    state,
+                    "-R",
+                    project,
+                ],
+                desc,
+            )
+            .await?;
         Ok(())
     }
 
@@ -3238,36 +3188,40 @@ impl Backend for GlabBackend {
             args.push(due.into());
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "Updating Milestone").await?;
+        self.cli.run(&args_refs, "Updating Milestone").await?;
         Ok(())
     }
 
     async fn delete_milestone(&self, project: &str, milestone: &Milestone) -> Result<()> {
-        self.run_glab(
-            &[
-                "milestone",
-                "delete",
-                &milestone.id.to_string(),
-                "-R",
-                project,
-            ],
-            "Deleting Milestone",
-        )
-        .await?;
+        self.cli
+            .run(
+                &[
+                    "milestone",
+                    "delete",
+                    &milestone.id.to_string(),
+                    "-R",
+                    project,
+                ],
+                "Deleting Milestone",
+            )
+            .await?;
         Ok(())
     }
+}
 
-    // ── Notifications ──
-
+#[async_trait]
+impl NotificationOps for GlabBackend {
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>> {
         // glab todo list does active todos; for "done" we use glab api
         let raw = self
-            .run_glab(&["todo", "list", "--output=json"], "Fetching Todos")
+            .cli
+            .run(&["todo", "list", "--output=json"], "Fetching Todos")
             .await?;
         let mut list = parse_gitlab_todos(&raw)?;
         if show_read {
             let endpoint = "todos?state=done";
             let raw = self
+                .cli
                 .raw_api(endpoint, "GET", None, "Fetching Done Todos")
                 .await?;
             list.extend(parse_gitlab_todos(&raw).unwrap_or_default());
@@ -3280,7 +3234,8 @@ impl Backend for GlabBackend {
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
-        self.run_glab(&["todo", "done", id], "Marking Todo Done")
+        self.cli
+            .run(&["todo", "done", id], "Marking Todo Done")
             .await?;
         Ok(())
     }
@@ -3290,7 +3245,8 @@ impl Backend for GlabBackend {
     }
 
     async fn mark_all_notifications_as_read(&self) -> Result<()> {
-        self.run_glab(&["todo", "done", "--all"], "Marking All Todos Done")
+        self.cli
+            .run(&["todo", "done", "--all"], "Marking All Todos Done")
             .await?;
         Ok(())
     }
@@ -3305,18 +3261,163 @@ impl Backend for GlabBackend {
             ),
         };
         let iid = notification.target_iid.to_string();
-        self.run_glab(
-            &[
-                entity,
-                "unsubscribe",
-                &iid,
-                "-R",
-                &notification.project_path,
-            ],
-            "Unsubscribing",
-        )
-        .await?;
+        self.cli
+            .run(
+                &[
+                    entity,
+                    "unsubscribe",
+                    &iid,
+                    "-R",
+                    &notification.project_path,
+                ],
+                "Unsubscribing",
+            )
+            .await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl DeploymentOps for GlabBackend {
+    async fn list_environments(&self, scope: &Scope, page_size: usize) -> Result<Vec<Environment>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!("Group-level environments not supported"));
+            }
+        };
+        let encoded = Self::encode_path(project);
+        let endpoint = format!("/projects/{encoded}/environments?per_page={page_size}");
+        let raw = self
+            .cli
+            .raw_api(&endpoint, "GET", None, "Fetching Environments")
+            .await?;
+        #[derive(Deserialize)]
+        struct GiEnv {
+            id: u64,
+            name: String,
+            state: String,
+            #[serde(default)]
+            external_url: Option<String>,
+        }
+        let envs: Vec<GiEnv> = serde_json::from_str(&raw)?;
+        // GitLab's environment list carries no `last_deployment`, so it is
+        // read from the project's newest deployments. An environment whose
+        // deployments are not among them has none, and so has every
+        // environment when that call fails.
+        let deployments = self
+            .list_deployments(scope, page_size.clamp(1, GITLAB_MAX_PER_PAGE), None)
+            .await
+            .unwrap_or_default();
+        Ok(envs
+            .into_iter()
+            .map(|e| Environment {
+                last_deployment: newest_deployment_of(&deployments, &e.name),
+                id: e.id,
+                name: e.name,
+                state: e.state,
+                external_url: e.external_url,
+            })
+            .collect())
+    }
+
+    async fn list_deployments(
+        &self,
+        scope: &Scope,
+        page_size: usize,
+        environment: Option<&str>,
+    ) -> Result<Vec<Deployment>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!("Group-level deployments not supported"));
+            }
+        };
+        let encoded = Self::encode_path(project);
+        let mut endpoint =
+            format!("/projects/{encoded}/deployments?per_page={page_size}&order_by=id&sort=desc");
+        if let Some(env) = environment {
+            endpoint.push_str(&format!("&environment={env}"));
+        }
+        let raw = self
+            .cli
+            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+            .await?;
+        #[derive(Deserialize)]
+        struct GiDeploy {
+            id: u64,
+            iid: u64,
+            #[serde(rename = "ref")]
+            ref_name: String,
+            sha: String,
+            status: String,
+            created_at: String,
+            updated_at: String,
+            #[serde(default)]
+            environment: Option<crate::domain::deployments::EnvironmentInfo>,
+            #[serde(default)]
+            deployable: Option<crate::domain::deployments::Deployable>,
+            #[serde(default)]
+            description: String,
+            #[serde(default)]
+            user: Option<crate::domain::deployments::DeploymentUser>,
+        }
+        let deploys: Vec<GiDeploy> = serde_json::from_str(&raw)?;
+        Ok(deploys
+            .into_iter()
+            .map(|d| Deployment {
+                id: d.id,
+                iid: d.iid,
+                ref_name: d.ref_name,
+                tag: d.deployable.as_ref().is_some_and(|job| job.tag),
+                sha: d.sha,
+                status: d.status,
+                created_at: d.created_at,
+                updated_at: d.updated_at,
+                environment: d.environment,
+                deployable: d.deployable,
+                description: d.description,
+                user: d.user,
+            })
+            .collect())
+    }
+
+    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!("/projects/{encoded}/environments/{}/stop", environment.id);
+        self.cli
+            .raw_api(&endpoint, "POST", None, "Stopping Environment")
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_deployment(
+        &self,
+        project: &str,
+        _environment: &str,
+        deployment: &Deployment,
+    ) -> Result<()> {
+        let job_id = deployment.job_id().ok_or_else(|| {
+            anyhow::anyhow!("deployment #{} has no deploy job to re-run", deployment.iid)
+        })?;
+        self.cli
+            .run(
+                &["ci", "retry", &job_id.to_string(), "-R", project],
+                "Rolling Back Deployment",
+            )
+            .await
+            .map(|_| ())
+    }
+}
+
+#[async_trait]
+impl RepoOps for GlabBackend {
+    async fn list_local_branches(&self) -> Result<Vec<String>> {
+        super::local_git::list_branches(&self.cli).await
+    }
+
+    async fn list_local_tags(&self) -> Result<Vec<String>> {
+        super::local_git::list_tags(&self.cli).await
     }
 
     async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>> {
@@ -3327,6 +3428,7 @@ impl Backend for GlabBackend {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{encoded}/repository/branches?per_page={page_size}");
         let raw = self
+            .cli
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
             .await?;
         #[derive(Deserialize)]
@@ -3394,6 +3496,7 @@ impl Backend for GlabBackend {
             }
             let proj_endpoint = format!("/projects/{encoded}");
             if let Ok(proj_raw) = self
+                .cli
                 .raw_api(&proj_endpoint, "GET", None, "Fetching Project Info")
                 .await
                 && let Ok(proj) = serde_json::from_str::<GiProj>(&proj_raw)
@@ -3402,6 +3505,7 @@ impl Backend for GlabBackend {
                 let br_encoded = url_encode_branch(&def);
                 let br_endpoint = format!("/projects/{encoded}/repository/branches/{br_encoded}");
                 if let Ok(br_raw) = self
+                    .cli
                     .raw_api(&br_endpoint, "GET", None, "Fetching Default Branch")
                     .await
                     && let Ok(b) = serde_json::from_str::<GiBr>(&br_raw)
@@ -3443,7 +3547,8 @@ impl Backend for GlabBackend {
         let endpoint = format!(
             "/projects/{encoded}/repository/branches?branch={branch_name}&ref={ref_branch}"
         );
-        self.raw_api(&endpoint, "POST", None, "Creating Branch")
+        self.cli
+            .raw_api(&endpoint, "POST", None, "Creating Branch")
             .await?;
         Ok(())
     }
@@ -3451,137 +3556,10 @@ impl Backend for GlabBackend {
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{encoded}/repository/branches/{branch_name}");
-        self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
+        self.cli
+            .raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
-    }
-
-    // ── Environments / Deployments ──
-
-    async fn list_environments(&self, scope: &Scope, page_size: usize) -> Result<Vec<Environment>> {
-        let project = match scope {
-            Scope::Repository(p) => p,
-            Scope::Group(_) => {
-                return Err(anyhow::anyhow!("Group-level environments not supported"));
-            }
-        };
-        let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{encoded}/environments?per_page={page_size}");
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Environments")
-            .await?;
-        #[derive(Deserialize)]
-        struct GiEnv {
-            id: u64,
-            name: String,
-            state: String,
-            #[serde(default)]
-            external_url: Option<String>,
-        }
-        let envs: Vec<GiEnv> = serde_json::from_str(&raw)?;
-        // GitLab's environment list carries no `last_deployment`, so it is
-        // read from the project's newest deployments. An environment whose
-        // deployments are not among them has none, and so has every
-        // environment when that call fails.
-        let deployments = self
-            .list_deployments(scope, page_size.clamp(1, GITLAB_MAX_PER_PAGE), None)
-            .await
-            .unwrap_or_default();
-        Ok(envs
-            .into_iter()
-            .map(|e| Environment {
-                last_deployment: newest_deployment_of(&deployments, &e.name),
-                id: e.id,
-                name: e.name,
-                state: e.state,
-                external_url: e.external_url,
-            })
-            .collect())
-    }
-
-    async fn list_deployments(
-        &self,
-        scope: &Scope,
-        page_size: usize,
-        environment: Option<&str>,
-    ) -> Result<Vec<Deployment>> {
-        let project = match scope {
-            Scope::Repository(p) => p,
-            Scope::Group(_) => {
-                return Err(anyhow::anyhow!("Group-level deployments not supported"));
-            }
-        };
-        let encoded = Self::encode_path(project);
-        let mut endpoint =
-            format!("/projects/{encoded}/deployments?per_page={page_size}&order_by=id&sort=desc");
-        if let Some(env) = environment {
-            endpoint.push_str(&format!("&environment={env}"));
-        }
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
-            .await?;
-        #[derive(Deserialize)]
-        struct GiDeploy {
-            id: u64,
-            iid: u64,
-            #[serde(rename = "ref")]
-            ref_name: String,
-            sha: String,
-            status: String,
-            created_at: String,
-            updated_at: String,
-            #[serde(default)]
-            environment: Option<crate::domain::deployments::EnvironmentInfo>,
-            #[serde(default)]
-            deployable: Option<crate::domain::deployments::Deployable>,
-            #[serde(default)]
-            description: String,
-            #[serde(default)]
-            user: Option<crate::domain::deployments::DeploymentUser>,
-        }
-        let deploys: Vec<GiDeploy> = serde_json::from_str(&raw)?;
-        Ok(deploys
-            .into_iter()
-            .map(|d| Deployment {
-                id: d.id,
-                iid: d.iid,
-                ref_name: d.ref_name,
-                tag: d.deployable.as_ref().is_some_and(|job| job.tag),
-                sha: d.sha,
-                status: d.status,
-                created_at: d.created_at,
-                updated_at: d.updated_at,
-                environment: d.environment,
-                deployable: d.deployable,
-                description: d.description,
-                user: d.user,
-            })
-            .collect())
-    }
-
-    async fn stop_environment(&self, project: &str, environment: &Environment) -> Result<()> {
-        let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{encoded}/environments/{}/stop", environment.id);
-        self.raw_api(&endpoint, "POST", None, "Stopping Environment")
-            .await
-            .map(|_| ())
-    }
-
-    async fn rollback_deployment(
-        &self,
-        project: &str,
-        _environment: &str,
-        deployment: &Deployment,
-    ) -> Result<()> {
-        let job_id = deployment.job_id().ok_or_else(|| {
-            anyhow::anyhow!("deployment #{} has no deploy job to re-run", deployment.iid)
-        })?;
-        self.run_glab(
-            &["ci", "retry", &job_id.to_string(), "-R", project],
-            "Rolling Back Deployment",
-        )
-        .await
-        .map(|_| ())
     }
 
     // ── Labels / Members / Misc ──
@@ -3589,31 +3567,33 @@ impl Backend for GlabBackend {
     async fn fetch_labels(&self, scope: &Scope, per_request: usize) -> Result<Vec<Label>> {
         let raw = match scope {
             Scope::Repository(project) => {
-                self.run_glab(
-                    &[
-                        "label",
-                        "list",
-                        "--output",
-                        "json",
-                        "-R",
-                        project,
-                        "--per-page",
-                        &per_request.to_string(),
-                    ],
-                    "Fetching Labels",
-                )
-                .await?
+                self.cli
+                    .run(
+                        &[
+                            "label",
+                            "list",
+                            "--output",
+                            "json",
+                            "-R",
+                            project,
+                            "--per-page",
+                            &per_request.to_string(),
+                        ],
+                        "Fetching Labels",
+                    )
+                    .await?
             }
             Scope::Group(group) => {
                 let encoded = Self::encode_path(group);
-                self.run_glab(
-                    &[
-                        "api",
-                        &format!("groups/{encoded}/labels?per_page={per_request}"),
-                    ],
-                    "Fetching Group Labels",
-                )
-                .await?
+                self.cli
+                    .run(
+                        &[
+                            "api",
+                            &format!("groups/{encoded}/labels?per_page={per_request}"),
+                        ],
+                        "Fetching Group Labels",
+                    )
+                    .await?
             }
         };
         #[derive(Deserialize)]
@@ -3643,6 +3623,7 @@ impl Backend for GlabBackend {
             }
         };
         let raw = self
+            .cli
             .raw_api(&endpoint, "GET", None, "Fetching Members")
             .await?;
         #[derive(Deserialize)]
@@ -3671,6 +3652,7 @@ impl Backend for GlabBackend {
                 "groups/{encoded}/projects?include_subgroups=true&per_page={per}&page={page}&archived=false"
             );
             let raw = self
+                .cli
                 .raw_api(&endpoint, "GET", None, "Fetching Group Projects")
                 .await?;
             let batch = parse_group_projects(&raw)?;
@@ -3683,156 +3665,118 @@ impl Backend for GlabBackend {
         out.truncate(page_size);
         Ok(out)
     }
+}
 
-    async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
-        if !project.is_empty() {
-            self.run_glab(
-                &[entity, "view", id, "-R", project, "-w"],
-                "OPENING IN BROWSER",
-            )
-            .await?;
-        } else {
-            self.run_glab(&[entity, "view", id, "-w"], "OPENING IN BROWSER")
-                .await?;
-        }
-        Ok(())
+#[async_trait]
+impl Backend for GlabBackend {
+    fn kind(&self) -> super::BackendKind {
+        super::BackendKind::GitLab
     }
 
-    /// Opened by URL: `glab ci view` refuses to run without a terminal, even
-    /// with `-w`.
-    async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        if project.is_empty() {
-            anyhow::bail!("project path required to open pipeline in browser");
-        }
-        let host = gitlab_host_or_default();
-        let url = format!("https://{host}/{project}/-/pipelines/{id}");
-        open_url(&url, self.tx.clone(), "OPENING PIPELINE IN BROWSER").await
+    fn set_tx(&mut self, tx: UnboundedSender<Event>) {
+        self.cli.set_tx(tx);
     }
 
-    async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()> {
-        self.run_glab(
-            &["ci", "view", workflow, "-R", project, "-w"],
-            "OPENING PIPELINE IN BROWSER",
-        )
-        .await?;
-        Ok(())
+    fn capabilities(&self, scope: &Scope) -> Capabilities {
+        capabilities(scope)
     }
 
-    async fn open_milestone_in_browser(&self, _project: &str, milestone: &Milestone) -> Result<()> {
-        let url = milestone
-            .web_url
-            .as_deref()
-            .filter(|url| !url.is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!("Milestone URL unavailable; refresh the Milestones tab")
-            })?;
-        open_url(url, self.tx.clone(), "OPENING MILESTONE IN BROWSER").await
-    }
-
-    async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let host = gitlab_host_or_default();
-        let url = gitlab_runner_url(&host, scope, runner_id);
-        open_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
-    }
-
-    async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
-        if project.is_empty() {
-            anyhow::bail!("project path required to open branch in browser");
-        }
-        let host = gitlab_host_or_default();
-        let url = format!(
-            "https://{}/{}/-/tree/{}",
-            host,
-            project,
-            url_encode_branch(branch),
-        );
-        open_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
-    }
-
-    async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()> {
-        if project.is_empty() {
-            anyhow::bail!("project path required to open environment in browser");
-        }
-        let host = gitlab_host_or_default();
-        let url = format!(
-            "https://{}/{}/-/environments/{}",
-            host,
-            project,
-            url_encode_branch(name),
-        );
-        open_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
-    }
-    // ── Raw API ──
-
-    async fn raw_api(
-        &self,
-        endpoint: &str,
-        method: &str,
-        body: Option<&str>,
-        desc: &str,
-    ) -> Result<String> {
-        let tx = self.tx.clone();
-        let endpoint = endpoint.to_string();
-        let method = method.to_string();
-        let body = body.map(ToString::to_string);
-        let desc = desc.to_string();
-        super::rate_limit::execute_with_retry(|| {
-            let tx = tx.clone();
-            let endpoint = endpoint.clone();
-            let method = method.clone();
-            let body = body.clone();
-            let desc = desc.clone();
-            async move { run_glab_raw_api(tx, &endpoint, &method, body.as_deref(), &desc).await }
-        })
-        .await
+    async fn open_in_browser(&self, target: WebTarget<'_>) -> Result<()> {
+        let label = target.log_label();
+        let url = match target {
+            WebTarget::View {
+                project,
+                entity,
+                id,
+            } => {
+                let mut args = vec![view_subcommand(entity), "view", id];
+                if !project.is_empty() {
+                    args.extend(["-R", project]);
+                }
+                args.push("-w");
+                return self.cli.run(&args, label).await.map(|_| ());
+            }
+            // Opened by URL: `glab ci view` refuses to run without a
+            // terminal, even with `-w`.
+            WebTarget::Pipeline { project, id } => {
+                if project.is_empty() {
+                    anyhow::bail!("project path required to open pipeline in browser");
+                }
+                format!(
+                    "https://{}/{project}/-/pipelines/{id}",
+                    gitlab_host_or_default()
+                )
+            }
+            WebTarget::Workflow { project, workflow } => {
+                return self
+                    .cli
+                    .run(&["ci", "view", workflow, "-R", project, "-w"], label)
+                    .await
+                    .map(|_| ());
+            }
+            WebTarget::Milestone { milestone, .. } => milestone
+                .web_url
+                .clone()
+                .filter(|url| !url.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Milestone URL unavailable; refresh the Milestones tab")
+                })?,
+            WebTarget::Runner { scope, runner_id } => {
+                gitlab_runner_url(&gitlab_host_or_default(), scope, runner_id)
+            }
+            WebTarget::Branch { project, branch } => {
+                if project.is_empty() {
+                    anyhow::bail!("project path required to open branch in browser");
+                }
+                format!(
+                    "https://{}/{project}/-/tree/{}",
+                    gitlab_host_or_default(),
+                    super::encode_path_segment(branch),
+                )
+            }
+            WebTarget::Environment { project, name } => {
+                if project.is_empty() {
+                    anyhow::bail!("project path required to open environment in browser");
+                }
+                format!(
+                    "https://{}/{project}/-/environments/{}",
+                    gitlab_host_or_default(),
+                    super::encode_path_segment(name),
+                )
+            }
+            WebTarget::Job { web_url } => web_url.to_string(),
+        };
+        self.cli.open_url(&url, label).await
     }
 }
 
-async fn run_glab_raw_api(
-    tx: Option<UnboundedSender<Event>>,
-    endpoint: &str,
-    method: &str,
-    body: Option<&str>,
-    desc: &str,
-) -> Result<String> {
-    let input = body.filter(|b| !b.is_empty());
-    let mut args = vec!["api"];
-    if method != "GET" {
-        args.extend(["-X", method]);
+fn view_subcommand(entity: ViewEntity) -> &'static str {
+    match entity {
+        ViewEntity::Issue => "issue",
+        ViewEntity::MergeRequest => "mr",
+        ViewEntity::Release => "release",
     }
-    if input.is_some() {
-        args.extend(["--input", "-"]);
-    }
-    args.push(endpoint);
-    let logged = LoggedCommand::start(
-        desc,
-        Invocation::new(Program::Glab, &args).with_stdin(input),
-    );
+}
 
-    let output =
-        super::subprocess::output(Command::new("glab").args(&args), input.map(str::as_bytes)).await;
-
-    match output {
-        Ok(out) => {
-            if out.status.success() {
-                logged.finish(tx.as_ref(), "Success".to_string(), (&out).into());
-                Ok(String::from_utf8(out.stdout)?)
-            } else {
-                let child_output = ChildOutput::from(&out);
-                let reason = logged.failure_reason(&child_output);
-                logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
-                anyhow::bail!("glab api failed: {reason}")
-            }
-        }
-        Err(e) => {
-            logged.finish(
-                tx.as_ref(),
-                format!("Failed: {e}"),
-                ChildOutput::NOT_STARTED,
-            );
-            Err(e)
-        }
+/// Every listing works in a project. A group lists its milestones (plus
+/// issues, MRs, labels and members, which need no capability): GitLab has no
+/// group endpoint for the other lists glab-tui shows.
+pub(crate) fn capabilities(scope: &Scope) -> Capabilities {
+    match scope {
+        Scope::Repository(_) => Capabilities::all(),
+        Scope::Group(_) => Capabilities::LIST_MILESTONES,
     }
+}
+
+/// The REST path of a comment on MR `mr_iid`.
+fn gitlab_note_endpoint(project: &str, mr_iid: u64, comment: &DiscussionNote) -> Result<String> {
+    let id = comment
+        .id
+        .ok_or_else(|| anyhow::anyhow!("the comment has no REST id to address it by"))?;
+    Ok(format!(
+        "projects/{}/merge_requests/{mr_iid}/notes/{id}",
+        GlabBackend::encode_path(project)
+    ))
 }
 
 /// The GitLab instance assumed when `git remote get-url origin` cannot name
@@ -3862,11 +3806,8 @@ fn gitlab_host_or_default() -> String {
     crate::git_helpers::remote_host("origin").unwrap_or_else(|| DEFAULT_GITLAB_HOST.to_string())
 }
 
-/// Percent-encode a branch or environment name for use in a GitLab URL
-/// path segment. We keep `/` as `%2F` (so `feature/foo` becomes
-/// `feature%2Ffoo`) and pass through everything else verbatim — GitLab
-/// URLs do their own escaping of `%` and other reserved characters at
-/// the edge, so we avoid double-encoding.
+/// Branch name for a GitLab API path segment: only `/` is escaped, the
+/// rest is passed through as the API request checks expect.
 fn url_encode_branch(name: &str) -> String {
     name.replace('/', "%2F")
 }
@@ -5109,7 +5050,10 @@ mod tests {
             ..Milestone::default()
         };
         let error = GlabBackend::new()
-            .open_milestone_in_browser("test-group", &milestone)
+            .open_in_browser(WebTarget::Milestone {
+                project: "test-group",
+                milestone: &milestone,
+            })
             .await
             .expect_err("a milestone without a web_url has no page to open");
         assert_eq!(

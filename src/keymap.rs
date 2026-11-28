@@ -412,6 +412,15 @@ pub const DIFF_VIEW_GLOBAL_ACTIONS: &[Action] = &[
     Action::GlobalScrollHalfPageUp,
 ];
 
+/// Create forms that act while their tab cannot be listed, because they ask
+/// for the project themselves.
+pub const UNLISTED_TAB_ACTIONS: &[Action] = &[
+    Action::PipelinesRunNew,
+    Action::ReleasesCreateRelease,
+    Action::MilestonesCreateMilestone,
+    Action::BranchesCreateBranch,
+];
+
 impl Action {
     pub fn spec(self) -> &'static ActionSpec {
         &ACTIONS[self as usize]

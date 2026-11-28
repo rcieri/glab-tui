@@ -97,6 +97,50 @@ fn gitlab_group_scope_pipelines_tab_shows_placeholder_and_requests_no_pipelines(
     );
 }
 
+/// Opens `tab` in the group or organization `group` and returns the calls
+/// made once its placeholder is drawn.
+fn calls_behind_group_scope_placeholder(is_github: bool, group: &str, tab: &str) -> String {
+    let mut session = TestSession::launch_with_args(
+        Sandbox::new(is_github).unwrap(),
+        30,
+        140,
+        &["-g", group, "--tab", tab],
+        &[],
+    );
+    let title = format!("{}{}", tab[..1].to_uppercase(), &tab[1..]);
+    session
+        .wait_for_screen_contains(
+            &format!("{title} tab is not available in group scope"),
+            8000,
+        )
+        .expect("the tab shows the group-scope placeholder");
+    session.settle(1500);
+    let screen = session.emulator.get_text();
+    assert!(
+        !screen.contains("not supported") && !screen.contains("Failed to fetch"),
+        "no error toast: {screen}"
+    );
+    session.get_cli_calls()
+}
+
+#[test]
+fn gitlab_group_scope_branches_tab_requests_no_branches() {
+    let calls = calls_behind_group_scope_placeholder(false, "test-group", "branches");
+    assert!(
+        !calls.lines().any(|l| l.contains("/branches")),
+        "no branch is requested; calls:\n{calls}"
+    );
+}
+
+#[test]
+fn github_org_scope_milestones_tab_requests_no_milestones() {
+    let calls = calls_behind_group_scope_placeholder(true, "acme", "milestones");
+    assert!(
+        !calls.lines().any(|l| l.contains("/milestones")),
+        "no milestone is requested; calls:\n{calls}"
+    );
+}
+
 #[test]
 fn own_jobs_key_in_github_org_scope_fetches_from_the_runs_repository() {
     let mut session = TestSession::launch_with_args(

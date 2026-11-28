@@ -483,7 +483,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 }
                 spawn_refresh_active_tab(
                     fx,
-                    &client,
+                    &client.muted(),
                     &app.scope,
                     app.requested_state_queries(),
                     app::Tab::Issues,
@@ -500,7 +500,7 @@ pub(super) fn apply(app: &mut App, event: Event, tx: &UnboundedSender<Event>, fx
                 }
                 spawn_refresh_active_tab(
                     fx,
-                    &client,
+                    &client.muted(),
                     &app.scope,
                     app.requested_state_queries(),
                     app::Tab::MergeRequests,

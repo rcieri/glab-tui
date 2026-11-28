@@ -88,6 +88,7 @@ impl GitlabClient {
 
     pub fn muted(mut self) -> Self {
         self.tx = None;
+        self.backend = crate::backend::create_backend(self.is_github);
         self
     }
 
@@ -782,5 +783,29 @@ pub fn get_project_context() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    // Tests moved to domain files and backend modules.
+    use super::*;
+    use crate::event::Event;
+
+    #[tokio::test]
+    async fn muted_clone_does_not_log_cli_calls() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut backend = crate::backend::create_backend(false);
+        backend.set_tx(tx.clone());
+        let client = GitlabClient {
+            is_github: false,
+            backend,
+            tx: Some(tx),
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        };
+
+        let _ = client.clone().muted().list_local_tags().await;
+
+        assert!(!matches!(
+            rx.try_recv(),
+            Ok(Event::TerminalCommandLogged(_))
+        ));
+    }
 }

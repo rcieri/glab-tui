@@ -234,8 +234,7 @@ pub fn spawn_fetch_related_mrs(
     issue_iid: u64,
     tx: ScopedSender,
 ) {
-    let mut client = client.clone();
-    client.tx = None;
+    let client = client.clone().muted();
     let project_context = project_context.to_string();
     fx.spawn(async move {
         let result = domain::issues::fetch_related_mrs(&client, &project_context, issue_iid).await;
@@ -307,8 +306,7 @@ pub fn spawn_fetch_mr_related_issues(
     mr_iid: u64,
     tx: ScopedSender,
 ) {
-    let mut client = client.clone();
-    client.tx = None;
+    let client = client.clone().muted();
     let project_context = project_context.to_string();
     fx.spawn(async move {
         let result = domain::mr::fetch_related_issues(&client, &project_context, mr_iid).await;
@@ -369,8 +367,7 @@ pub fn spawn_refresh_child_level(
     parent_id: u64,
     tx: ScopedSender,
 ) {
-    let mut client = client.clone();
-    client.tx = None; // suppress terminal log for background fetches
+    let client = client.clone().muted();
     let project_context = project_context.to_string();
     fx.spawn(async move {
         if let Ok(bridges) =
@@ -464,7 +461,7 @@ pub fn spawn_refresh_active_tab(
 /// already running inside a task awaits it. Event handlers go through
 /// `spawn_refresh_active_tab`.
 pub async fn refresh_tab(
-    mut client: domain::client::GitlabClient,
+    client: domain::client::GitlabClient,
     scope: crate::scope::Scope,
     states: StateQueries,
     tab: app::Tab,
@@ -473,7 +470,7 @@ pub async fn refresh_tab(
     if !tab.is_listable_with(client.capabilities(&scope)) {
         return;
     }
-    client.tx = None; // suppress terminal log for background fetches
+
     let repo_path = scope.as_str().to_string();
     match tab {
         app::Tab::Issues => {
@@ -654,8 +651,7 @@ pub fn spawn_fetch_issue(
     iid: u64,
     tx: ScopedSender,
 ) {
-    let mut client = client.clone();
-    client.tx = None;
+    let client = client.clone().muted();
     let project_path = project_path.to_string();
     fx.spawn(async move {
         let result = domain::issues::get_issue(&client, &project_path, iid).await;
@@ -683,8 +679,7 @@ pub fn spawn_fetch_mr(
     iid: u64,
     tx: ScopedSender,
 ) {
-    let mut client = client.clone();
-    client.tx = None;
+    let client = client.clone().muted();
     let project_path = project_path.to_string();
     fx.spawn(async move {
         let result = domain::mr::get_mr(&client, &project_path, iid).await;

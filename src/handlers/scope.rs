@@ -37,8 +37,8 @@ pub(crate) fn sync_after_scope_change(
     app.cached_labels = cache.labels;
     app.cached_members = cache.members;
 
-    app.start_loading_tab(app.active_tab);
     spawn_client_for_scope(app, tx, fx);
+    app.start_loading_tab(app.active_tab);
 }
 
 /// Builds the client for `app.scope` off the event loop: backend detection
@@ -90,6 +90,9 @@ pub(crate) fn apply_client_ready(
     client.tx = Some(tx.clone());
     client.backend.set_tx(tx.clone());
     app.gitlab_client = Some(client.clone());
+    if !active_tab.is_listable_with(client.capabilities(&app.scope)) {
+        app.loading_tabs.remove(&active_tab);
+    }
     // Remember the group implied by a repository scope so the Switch view
     // accumulates every group worked in (see startup).
     if let Scope::Repository(r) = &app.scope
@@ -127,6 +130,29 @@ mod tests {
             &tx,
             &mut Effects::default(),
         );
+
+        assert!(app.loading_tabs.is_empty());
+    }
+
+    #[test]
+    fn installing_a_client_that_cannot_list_the_active_tab_clears_its_loading_mark() {
+        let mut app = App::default();
+        app.scope = Scope::Group("grp".to_string());
+        app.active_tab = crate::app::Tab::Branches;
+        app.loading_tabs.insert(crate::app::Tab::Branches);
+        let scope = app.scope.clone();
+        let tx = app.tx.clone();
+        let client = GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+            show_read_notifications: false,
+            opened_pipeline: None,
+        };
+
+        apply_client_ready(&mut app, scope, Ok(client), &tx, &mut Effects::default());
 
         assert!(app.loading_tabs.is_empty());
     }

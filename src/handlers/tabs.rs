@@ -476,21 +476,23 @@ fn spawn_deployment_log_fetch(app: &mut App, tx: &UnboundedSender<Event>, fx: &m
 /// After the user moved to another tab: fetch it unless it is loading or
 /// fresh, and the related items its highlighted row previews.
 pub fn load_entered_tab(app: &mut App, tx: &UnboundedSender<Event>, fx: &mut Effects) {
-    if let Some(client) = &app.gitlab_client
+    if app.gitlab_client.is_some()
         && !app.loading_tabs.contains(&app.active_tab)
         && !app.refreshed_tabs.contains(&app.active_tab)
     {
         if !app.loaded_tabs.contains(&app.active_tab) {
-            app.loading_tabs.insert(app.active_tab);
+            app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(
-            fx,
-            client,
-            &app.scope,
-            app.requested_state_queries(),
-            app.active_tab,
-            app.scoped_sender(tx.clone()),
-        );
+        if let Some(client) = &app.gitlab_client {
+            spawn_refresh_active_tab(
+                fx,
+                client,
+                &app.scope,
+                app.requested_state_queries(),
+                app.active_tab,
+                app.scoped_sender(tx.clone()),
+            );
+        }
     }
     if app.active_tab == Tab::Issues {
         maybe_fetch_related_mrs(app, tx);

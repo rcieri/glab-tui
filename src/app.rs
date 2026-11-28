@@ -6321,7 +6321,11 @@ impl App {
     }
 
     pub fn start_loading_tab(&mut self, tab: Tab) {
-        if !self.loading_tabs.contains(&tab) {
+        let client_cannot_list = self
+            .gitlab_client
+            .as_ref()
+            .is_some_and(|client| !tab.is_listable_with(client.capabilities(&self.scope)));
+        if !client_cannot_list {
             self.loading_tabs.insert(tab);
         }
     }

@@ -247,6 +247,24 @@ impl GitlabClient {
         self.backend.list_mr_notes(project, mr_iid).await
     }
 
+    pub async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        self.backend.list_viewed_files(project, iid).await
+    }
+
+    pub async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+        self.backend
+            .set_files_viewed(pull_request_id, changes)
+            .await
+    }
+
     pub async fn list_mr_state(
         &self,
         project: &str,

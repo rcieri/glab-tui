@@ -5,22 +5,34 @@ use crate::effect::Effects;
 use crate::event::{Event, ScopedSender};
 use crate::git_helpers::get_current_branch;
 
-/// Fetches an MR/PR diff with its review comments and builds the `DiffView`
-/// on a blocking thread, so the event loop keeps drawing (and the loading
-/// overlay stays up) while a large diff is parsed and highlighted. Comments
-/// that fail to load come back as their error beside the diff, which stays
-/// viewable without them.
+/// Fetches an MR/PR diff with its review comments and, when `sync_viewed`,
+/// GitHub's viewed state of its files, all concurrently so syncing does not
+/// make opening the diff slower. Only the diff itself is required: comments
+/// and viewed state that fail to load come back as their error beside the
+/// diff. The `DiffView` is built on a blocking thread, so the event loop keeps
+/// drawing (and the loading overlay stays up) while a large diff is parsed and
+/// highlighted.
 pub async fn fetch_diff_view(
     client: &domain::client::GitlabClient,
     project_path: &str,
     mr_iid: u64,
+    sync_viewed: bool,
 ) -> anyhow::Result<(
     Box<app::DiffView>,
     Result<Vec<domain::mr::DiscussionNote>, String>,
+    Option<Result<Box<domain::viewed_files::PrViewedFiles>, String>>,
 )> {
-    let (diff_res, comments_res) = tokio::join!(
+    let viewed_files = async {
+        if sync_viewed {
+            Some(client.list_viewed_files(project_path, mr_iid).await)
+        } else {
+            None
+        }
+    };
+    let (diff_res, comments_res, viewed_files) = tokio::join!(
         client.get_mr_diff(project_path, mr_iid),
-        client.list_mr_notes(project_path, mr_iid)
+        client.list_mr_notes(project_path, mr_iid),
+        viewed_files,
     );
     let raw_diff = diff_res?;
     let project_path = project_path.to_string();
@@ -28,7 +40,11 @@ pub async fn fetch_diff_view(
         Box::new(app::DiffView::new(mr_iid, project_path, raw_diff))
     })
     .await?;
-    Ok((diff_view, comments_res.map_err(|err| format!("{err:#}"))))
+    Ok((
+        diff_view,
+        comments_res.map_err(|err| format!("{err:#}")),
+        viewed_files.map(|result| result.map(Box::new).map_err(|err| format!("{err:#}"))),
+    ))
 }
 
 /// Derive `workflow` for every MR in place.
@@ -840,6 +856,49 @@ fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
         return None;
     }
     Some(pr)
+}
+
+/// Toggles inside this window reach GitHub as one request, and a file toggled
+/// back and forth sends only its final state. Follow-up flushes wait it too,
+/// which spaces out the batches of a large toggle.
+const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Schedules a pull request's flush. Viewed-sync events travel on the raw
+/// sender, not a `ScopedSender`: a node id names its pull request in any
+/// scope, and a result dropped by a scope switch would strand every batch
+/// queued behind it.
+pub fn spawn_viewed_sync_flush(
+    fx: &mut Effects,
+    pull_request_id: String,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    fx.spawn(async move {
+        tokio::time::sleep(VIEWED_SYNC_DEBOUNCE).await;
+        let _ = tx.send(Event::ViewedSyncFlush(pull_request_id));
+    });
+}
+
+/// Sends one batch of viewed-state `changes` of a PR to GitHub. `ViewedSync`
+/// keeps it the only request in flight and chains the next batch after it.
+pub fn spawn_viewed_files_sync(
+    fx: &mut Effects,
+    client: &domain::client::GitlabClient,
+    pull_request_id: String,
+    changes: Vec<(String, bool)>,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let client = client.clone();
+    fx.spawn(async move {
+        let result = client
+            .set_files_viewed(&pull_request_id, &changes)
+            .await
+            .map_err(|e| e.to_string());
+        let _ = tx.send(Event::ViewedFilesSynced {
+            pull_request_id,
+            changes,
+            result,
+        });
+    });
 }
 
 /// Fetch the comment or description of the GitHub notification in the

@@ -579,6 +579,40 @@ class GraphqlTests(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertEqual(json.loads(a)["source"]["commit"], "c" * 40)
 
+    MUTATION_SDL = '''
+type Query { viewer: User }
+type User { login: String! }
+type Mutation {
+  markFileAsViewed(input: MarkInput!): MarkPayload
+  deleteEverything: Boolean
+}
+input MarkInput { path: String! }
+type MarkPayload { clientMutationId: String }
+'''
+
+    def test_mutation_fields_are_kept_from_the_mutation_root(self) -> None:
+        cfg = {"graphql": {"viewer": {"login": {}}},
+               "graphql_mutation": {"markFileAsViewed": {"clientMutationId": {}}}}
+        doc = gen.build_graphql("acme", cfg, gen.table_from_sdl(self.MUTATION_SDL), SOURCE)
+        self.assertEqual(doc["mutation"], "Mutation")
+        self.assertEqual(doc["types"]["Mutation"]["fields"],
+                         {"markFileAsViewed": {"type": "MarkPayload", "args": ["input"]}})
+        self.assertEqual(doc["types"]["MarkPayload"]["fields"]["clientMutationId"]["type"], "String")
+
+    def test_a_listed_mutation_field_the_schema_lacks_is_an_error(self) -> None:
+        cfg = {"graphql_mutation": {"markFileAsSeen": {}}}
+        with self.assertRaises(gen.Problems) as ctx:
+            gen.build_graphql("acme", cfg, gen.table_from_sdl(self.MUTATION_SDL), SOURCE)
+        self.assertEqual(ctx.exception.items, [
+            "acme: Mutation.markFileAsSeen: listed as selected (mutation.markFileAsSeen), not in the schema"])
+
+    def test_mutation_fields_without_a_mutation_root_are_an_error(self) -> None:
+        cfg = {"graphql_mutation": {"markFileAsViewed": {}}}
+        with self.assertRaises(gen.Problems) as ctx:
+            gen.build_graphql("acme", cfg, gen.table_from_sdl(SDL), SOURCE)
+        self.assertEqual(ctx.exception.items, [
+            "acme: graphql_mutation is listed, but the schema has no mutation root"])
+
 
 class RunTests(unittest.TestCase):
     def setUp(self) -> None:

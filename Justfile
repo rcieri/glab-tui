@@ -59,8 +59,12 @@ gen-api-descriptions:
 test-api-descriptions:
     python3 -m unittest discover -s scripts -p 'test_*.py'
 
-# Run all CI checks locally (fmt check, clippy, unit tests, e2e tests)
-check: fmt-check lint test e2e
+# Check that AGENTS.md stays within the ceiling in scripts/check-agents-md-size.sh
+agents-md-size:
+    bash scripts/check-agents-md-size.sh
+
+# Run all CI checks locally (AGENTS.md size, fmt check, clippy, unit tests, e2e tests)
+check: agents-md-size fmt-check lint test e2e
 
 # Generate code coverage summary (requires cargo-llvm-cov)
 cov:

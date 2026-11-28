@@ -344,6 +344,21 @@ pub trait Backend: Send + Sync {
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
     async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>>;
+    /// The viewer's "Viewed" state of every file of a pull request. GitHub
+    /// only: GitLab keeps it in browser storage, out of reach of the API.
+    async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles>;
+    /// Marks (`true`) or unmarks files as viewed in one request and returns
+    /// the changes GitHub refused. `Err` when the reply carries no per-file
+    /// result, whatever GitHub applied. GitHub only.
+    async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>>;
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;

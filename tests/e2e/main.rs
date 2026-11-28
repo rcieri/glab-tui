@@ -34,6 +34,7 @@ mod state_filter;
 mod tabs;
 mod todos;
 mod unhandled_calls;
+mod viewed_files;
 mod workspace;
 
 // Declarations of libc functions

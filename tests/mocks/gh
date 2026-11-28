@@ -158,6 +158,24 @@ if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
     exit 0
 fi
 
+# "Viewed" checkboxes of the diff view: no file is viewed yet, and every
+# mark/unmark mutation succeeds. The reply check refuses keys the mutation
+# does not select, so answer exactly the `f<i>` aliases sent.
+if [[ "$*" == "api graphql"*"viewerViewedState"* ]]; then
+    echo '{"data":{"repository":{"pullRequest":{"id":"PR_mock","files":{
+        "pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+    exit 0
+fi
+
+if [[ "$*" == "api graphql"*"markFileAsViewed"* ]]; then
+    entries=()
+    for alias in $(grep -oE 'f[0-9]+:(un)?markFileAsViewed' <<<"$*"); do
+        entries+=("\"${alias%%:*}\":{\"clientMutationId\":null}")
+    done
+    (IFS=,; echo "{\"data\":{${entries[*]}}}")
+    exit 0
+fi
+
 # Pull requests. MOCK_GH_PR_DIFF_ERROR makes `pr diff` fail the way GitHub
 # does: `too_large` for a diff over 20,000 lines, `not_found` otherwise.
 # MOCK_GH_BASE_OID / MOCK_GH_HEAD_OID answer the commit-id lookup.

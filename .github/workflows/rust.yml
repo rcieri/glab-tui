@@ -88,3 +88,14 @@ jobs:
         if: runner.os != 'Windows'
         timeout-minutes: 25
         run: just e2e
+
+  agents-md-size:
+    name: AGENTS.md size
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check AGENTS.md size
+        run: bash scripts/check-agents-md-size.sh

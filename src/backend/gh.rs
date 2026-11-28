@@ -681,6 +681,27 @@ impl GhBackend {
         desc: &str,
         max_stdout_bytes: Option<usize>,
     ) -> Result<CapturedStdout> {
+        self.run_gh_capturing(args, desc, max_stdout_bytes, |_| false)
+            .await
+    }
+
+    /// `run_gh` that also returns the reply of a GraphQL call that failed
+    /// but carries `data`: aliased mutations run independently, so some of
+    /// them may have been applied. The call is logged as failed either way.
+    async fn run_gh_keeping_graphql_data(&self, args: &[&str], desc: &str) -> Result<String> {
+        let stdout = self
+            .run_gh_capturing(args, desc, None, has_graphql_data)
+            .await?;
+        Ok(String::from_utf8(stdout.bytes)?)
+    }
+
+    async fn run_gh_capturing(
+        &self,
+        args: &[&str],
+        desc: &str,
+        max_stdout_bytes: Option<usize>,
+        keeps_failed_stdout: fn(&[u8]) -> bool,
+    ) -> Result<CapturedStdout> {
         let tx = self.tx.clone();
         let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let desc = desc.to_string();
@@ -690,7 +711,7 @@ impl GhBackend {
             let desc = desc.clone();
             async move {
                 let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-                run_gh_command(tx, &args_refs, &desc, max_stdout_bytes).await
+                run_gh_command(tx, &args_refs, &desc, max_stdout_bytes, keeps_failed_stdout).await
             }
         })
         .await
@@ -731,11 +752,14 @@ impl GhBackend {
     }
 }
 
+/// Runs `gh` and returns its stdout. A failed call is an error unless
+/// `keeps_failed_stdout` accepts what it printed.
 async fn run_gh_command(
     tx: Option<UnboundedSender<Event>>,
     args: &[&str],
     desc: &str,
     max_stdout_bytes: Option<usize>,
+    keeps_failed_stdout: fn(&[u8]) -> bool,
 ) -> Result<CapturedStdout> {
     let logged = LoggedCommand::start(desc, Invocation::new(Program::Gh, args));
 
@@ -758,6 +782,9 @@ async fn run_gh_command(
         let child_output = output.child_output();
         let reason = logged.failure_reason(&child_output);
         logged.finish(tx.as_ref(), format!("Failed: {reason}"), child_output);
+        if keeps_failed_stdout(&output.stdout.bytes) {
+            return Ok(output.stdout);
+        }
         anyhow::bail!("gh command failed: {reason}")
     }
 }
@@ -1410,9 +1437,7 @@ fn parse_review_thread_resolution(raw: &str) -> Result<HashMap<u64, bool>> {
     let mut resolution = HashMap::new();
     for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
         let page = page.context("parsing review threads")?;
-        if let Some(error) = page.errors.first() {
-            anyhow::bail!("GraphQL error: {}", error.message);
-        }
+        first_graphql_error(&page.errors)?;
         let threads = page
             .data
             .and_then(|d| d.repository)
@@ -1640,11 +1665,7 @@ mod review_threads_types {
     pub(super) struct GhResponse {
         pub(super) data: Option<GhData>,
         #[serde(default)]
-        pub(super) errors: Vec<GhError>,
-    }
-    #[derive(Deserialize)]
-    pub(super) struct GhError {
-        pub(super) message: String,
+        pub(super) errors: Vec<super::GraphqlError>,
     }
     #[derive(Deserialize)]
     pub(super) struct GhData {
@@ -1674,6 +1695,170 @@ mod review_threads_types {
     pub(super) struct GhComment {
         #[serde(rename = "databaseId")]
         pub(super) database_id: u64,
+    }
+}
+
+/// Values travel as GraphQL variables (`gh api graphql -f name=value`), so
+/// paths and repository names need no escaping. 100 is the connection's
+/// page-size cap. `gh api graphql --paginate` feeds `$endCursor` back in until
+/// `pageInfo.hasNextPage` is false.
+const VIEWED_FILES_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!,$endCursor:String){\
+     repository(owner:$owner,name:$name){pullRequest(number:$number){id \
+     files(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} \
+     nodes{path viewerViewedState}}}}}";
+
+/// The pull request's node id and every file's viewed state, across every page
+/// `gh api graphql --paginate` printed (one JSON object per page, back to back).
+fn parse_viewed_files(raw: &str) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+    use viewed_files_types::*;
+    let mut viewed = crate::domain::viewed_files::PrViewedFiles::default();
+    for page in serde_json::Deserializer::from_str(raw).into_iter::<GhResponse>() {
+        let page = page.context("parsing viewed files")?;
+        first_graphql_error(&page.errors)?;
+        let pr = page
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .context("pull request not found")?;
+        viewed.pull_request_id = pr.id;
+        viewed.files.extend(
+            pr.files
+                .unwrap_or_default()
+                .nodes
+                .into_iter()
+                .map(|f| (f.path, f.viewer_viewed_state)),
+        );
+    }
+    anyhow::ensure!(!viewed.pull_request_id.is_empty(), "pull request not found");
+    Ok(viewed)
+}
+
+/// One aliased mutation per file, `markFileAsViewed` or `unmarkFileAsViewed`,
+/// all in a single request. `$pr` is the pull request's node ID and `$p<i>`
+/// the path of `changes[i]`.
+fn set_files_viewed_mutation(changes: &[(String, bool)]) -> String {
+    use std::fmt::Write;
+    let mut declarations = String::from("$pr:ID!");
+    let mut fields = String::new();
+    for (i, (_, viewed)) in changes.iter().enumerate() {
+        let mutation = if *viewed {
+            "markFileAsViewed"
+        } else {
+            "unmarkFileAsViewed"
+        };
+        let _ = write!(declarations, ",$p{i}:String!");
+        let _ = write!(
+            fields,
+            "f{i}:{mutation}(input:{{pullRequestId:$pr,path:$p{i}}}){{clientMutationId}} "
+        );
+    }
+    format!("mutation({declarations}){{{}}}", fields.trim_end())
+}
+
+#[derive(Deserialize)]
+struct GraphqlError {
+    message: String,
+    /// Response path of the field the error belongs to; its first entry is
+    /// the alias of an aliased root field.
+    #[serde(default)]
+    path: Vec<serde_json::Value>,
+}
+
+impl GraphqlError {
+    fn is_about(&self, alias: &str) -> bool {
+        self.path.first().and_then(serde_json::Value::as_str) == Some(alias)
+    }
+}
+
+fn first_graphql_error(errors: &[GraphqlError]) -> Result<()> {
+    match errors.first() {
+        Some(error) => anyhow::bail!("GraphQL error: {}", error.message),
+        None => Ok(()),
+    }
+}
+
+/// Whether a GraphQL reply carries results: `gh api graphql` exits 1 on any
+/// `errors` entry, also when `data` holds the aliases that did run.
+fn has_graphql_data(stdout: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Reply {
+        data: Option<serde::de::IgnoredAny>,
+    }
+    serde_json::from_slice::<Reply>(stdout).is_ok_and(|reply| reply.data.is_some())
+}
+
+/// The changes of a `set_files_viewed_mutation` reply GitHub did not apply:
+/// alias `f<i>` is `changes[i]`, null (or missing) when refused. `Err` when
+/// the reply carries no data at all.
+fn rejected_viewed_paths(
+    raw: &str,
+    changes: &[(String, bool)],
+) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+    #[derive(Deserialize)]
+    struct Reply {
+        data: Option<HashMap<String, Option<serde::de::IgnoredAny>>>,
+        #[serde(default)]
+        errors: Vec<GraphqlError>,
+    }
+    let reply: Reply = serde_json::from_str(raw).context("parsing the viewed-state reply")?;
+    let Some(data) = reply.data else {
+        first_graphql_error(&reply.errors)?;
+        anyhow::bail!("the viewed-state reply carries no data");
+    };
+    Ok(changes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (path, _))| {
+            let alias = format!("f{i}");
+            if matches!(data.get(&alias), Some(Some(_))) {
+                return None;
+            }
+            let reason = reply
+                .errors
+                .iter()
+                .find(|error| error.is_about(&alias))
+                .map_or_else(|| "not applied".to_string(), |error| error.message.clone());
+            Some(crate::domain::viewed_files::RejectedViewedPath {
+                path: path.clone(),
+                reason,
+            })
+        })
+        .collect())
+}
+
+mod viewed_files_types {
+    use crate::domain::viewed_files::FileViewedState;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+        #[serde(default)]
+        pub(super) errors: Vec<super::GraphqlError>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhPr>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPr {
+        pub(super) id: String,
+        pub(super) files: Option<GhFiles>,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhFiles {
+        pub(super) nodes: Vec<GhFile>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhFile {
+        pub(super) path: String,
+        #[serde(rename = "viewerViewedState")]
+        pub(super) viewer_viewed_state: FileViewedState,
     }
 }
 
@@ -2618,6 +2803,55 @@ impl Backend for GhBackend {
                 Ok(String::from_utf8(diff.bytes)?)
             }
         }
+    }
+
+    async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = format!("query={VIEWED_FILES_QUERY}");
+        let owner = format!("owner={owner}");
+        let name = format!("name={repo}");
+        let number = format!("number={iid}");
+        let args = [
+            "api",
+            "graphql",
+            "--paginate",
+            "-f",
+            &query,
+            "-f",
+            &owner,
+            "-f",
+            &name,
+            "-F",
+            &number,
+        ];
+        parse_viewed_files(&self.run_gh(&args, "Fetching Viewed Files").await?)
+    }
+
+    async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<Vec<crate::domain::viewed_files::RejectedViewedPath>> {
+        let query = format!("query={}", set_files_viewed_mutation(changes));
+        let pr = format!("pr={pull_request_id}");
+        let paths: Vec<String> = changes
+            .iter()
+            .enumerate()
+            .map(|(i, (path, _))| format!("p{i}={path}"))
+            .collect();
+        let mut args = vec!["api", "graphql", "-f", &query, "-f", &pr];
+        for path in &paths {
+            args.extend(["-f", path.as_str()]);
+        }
+        let raw = self
+            .run_gh_keeping_graphql_data(&args, "Syncing Viewed Files")
+            .await?;
+        rejected_viewed_paths(&raw, changes)
     }
 
     async fn list_mr_notes(&self, project: &str, mr_iid: u64) -> Result<Vec<DiscussionNote>> {
@@ -4496,6 +4730,112 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn viewed_files_reads_the_states_of_every_paginated_page() {
+        use crate::domain::viewed_files::FileViewedState;
+        let raw = r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
+            "pageInfo":{"hasNextPage":true,"endCursor":"MTAw"},
+            "nodes":[{"path":"a.rs","viewerViewedState":"VIEWED"},
+                     {"path":"b.rs","viewerViewedState":"DISMISSED"}]}}}}}
+            {"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
+            "pageInfo":{"hasNextPage":false,"endCursor":null},
+            "nodes":[{"path":"c.rs","viewerViewedState":"UNVIEWED"}]}}}}}"#;
+        let viewed = parse_viewed_files(raw).unwrap();
+        assert_eq!(viewed.pull_request_id, "PR_kw1");
+        assert_eq!(
+            viewed.files,
+            HashMap::from([
+                ("a.rs".to_string(), FileViewedState::Viewed),
+                ("b.rs".to_string(), FileViewedState::Dismissed),
+                ("c.rs".to_string(), FileViewedState::Unviewed),
+            ])
+        );
+    }
+
+    #[test]
+    fn viewed_files_query_takes_the_cursor_gh_paginate_feeds_back() {
+        assert!(VIEWED_FILES_QUERY.contains("$endCursor:String"));
+        assert!(VIEWED_FILES_QUERY.contains("after:$endCursor"));
+    }
+
+    #[test]
+    fn viewed_files_errors_and_missing_pull_request_are_errors() {
+        assert!(parse_viewed_files(r#"{"errors":[{"message":"nope"}]}"#).is_err());
+        assert!(parse_viewed_files(r#"{"data":{"repository":null}}"#).is_err());
+        assert!(parse_viewed_files("").is_err());
+        let good =
+            r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{"nodes":[]}}}}}"#;
+        let error_on_page_two = format!(r#"{good}{{"errors":[{{"message":"nope"}}]}}"#);
+        assert_eq!(
+            parse_viewed_files(&error_on_page_two)
+                .unwrap_err()
+                .to_string(),
+            "GraphQL error: nope"
+        );
+    }
+
+    #[test]
+    fn set_files_viewed_mutation_aliases_each_file_by_its_variable() {
+        let changes = vec![("a.rs".to_string(), true), ("b.rs".to_string(), false)];
+        assert_eq!(
+            set_files_viewed_mutation(&changes),
+            "mutation($pr:ID!,$p0:String!,$p1:String!){\
+             f0:markFileAsViewed(input:{pullRequestId:$pr,path:$p0}){clientMutationId} \
+             f1:unmarkFileAsViewed(input:{pullRequestId:$pr,path:$p1}){clientMutationId}}"
+        );
+    }
+
+    #[test]
+    fn viewed_state_reply_names_each_refused_change_with_its_reason() {
+        use crate::domain::viewed_files::RejectedViewedPath;
+        let changes = vec![
+            ("a.rs".to_string(), true),
+            ("gone.rs".to_string(), true),
+            ("c.rs".to_string(), false),
+        ];
+        let all_applied = r#"{"data":{"f0":{"clientMutationId":null},
+            "f1":{"clientMutationId":null},"f2":{"clientMutationId":null}}}"#;
+        assert_eq!(
+            rejected_viewed_paths(all_applied, &changes).unwrap(),
+            vec![]
+        );
+
+        let partial = r#"{"data":{"f0":{"clientMutationId":null},"f1":null},
+            "errors":[{"message":"Path is not part of the pull request","path":["f1"]}]}"#;
+        assert_eq!(
+            rejected_viewed_paths(partial, &changes).unwrap(),
+            vec![
+                RejectedViewedPath {
+                    path: "gone.rs".to_string(),
+                    reason: "Path is not part of the pull request".to_string(),
+                },
+                RejectedViewedPath {
+                    path: "c.rs".to_string(),
+                    reason: "not applied".to_string(),
+                },
+            ]
+        );
+
+        let rate_limited = r#"{"data":null,"errors":[{"message":"API rate limit exceeded"}]}"#;
+        assert_eq!(
+            rejected_viewed_paths(rate_limited, &changes)
+                .unwrap_err()
+                .to_string(),
+            "GraphQL error: API rate limit exceeded"
+        );
+    }
+
+    #[test]
+    fn a_failed_graphql_call_is_kept_only_when_its_reply_carries_data() {
+        assert!(has_graphql_data(
+            br#"{"data":{"f0":null},"errors":[{"message":"x"}]}"#
+        ));
+        assert!(!has_graphql_data(
+            br#"{"data":null,"errors":[{"message":"x"}]}"#
+        ));
+        assert!(!has_graphql_data(b"gh: HTTP 502"));
+    }
 
     #[test]
     fn a_github_notification_links_its_page_and_its_latest_comment() {

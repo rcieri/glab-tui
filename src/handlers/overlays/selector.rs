@@ -1131,40 +1131,28 @@ pub fn handle_key(
                             // When a workflow file is selected, parse
                             // its workflow_dispatch inputs and rebuild
                             // the edit menu fields to show per-input fields.
-                            if is_workflow_file {
-                                // Safe on the UI thread: pure local
-                                // git object-DB resolve, no network.
-                                let repo_root = std::process::Command::new("git")
-                                    .args(["rev-parse", "--show-toplevel"])
-                                    .output()
-                                    .ok()
-                                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                                    .map(|s| s.trim().to_string());
-
-                                if let Some(root) = repo_root {
-                                    let yaml_path =
-                                        format!("{root}/.github/workflows/{display_val}");
-                                    if let Some(inputs) =
-                                        crate::domain::workflow_inputs::parse_workflow_inputs(
-                                            &yaml_path,
-                                        )
-                                    {
-                                        menu.workflow_inputs = inputs.clone();
-                                        menu.fields.retain(|f| f.label != "Inputs");
-                                        let insert_pos = menu
-                                            .fields
-                                            .iter()
-                                            .position(|f| f.label == "Variables")
-                                            .unwrap_or(menu.fields.len());
-                                        for input in inputs.iter().rev() {
-                                            let label = format!("Input: {}", input.name);
-                                            let default_val =
-                                                input.default.clone().unwrap_or_default();
-                                            menu.fields.insert(
-                                                insert_pos,
-                                                crate::app::Field::text(&label, default_val),
-                                            );
-                                        }
+                            if is_workflow_file && let Some(root) = crate::git_helpers::repo_root()
+                            {
+                                let yaml_path = format!("{root}/.github/workflows/{display_val}");
+                                if let Some(inputs) =
+                                    crate::domain::workflow_inputs::parse_workflow_inputs(
+                                        &yaml_path,
+                                    )
+                                {
+                                    menu.workflow_inputs = inputs.clone();
+                                    menu.fields.retain(|f| f.label != "Inputs");
+                                    let insert_pos = menu
+                                        .fields
+                                        .iter()
+                                        .position(|f| f.label == "Variables")
+                                        .unwrap_or(menu.fields.len());
+                                    for input in inputs.iter().rev() {
+                                        let label = format!("Input: {}", input.name);
+                                        let default_val = input.default.clone().unwrap_or_default();
+                                        menu.fields.insert(
+                                            insert_pos,
+                                            crate::app::Field::text(&label, default_val),
+                                        );
                                     }
                                 }
                             }
